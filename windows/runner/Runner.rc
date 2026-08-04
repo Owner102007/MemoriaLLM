@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "io.github.owner102007" "\0"
-            VALUE "FileDescription", "memoria" "\0"
+            VALUE "CompanyName", "HohloBaron" "\0"
+            VALUE "FileDescription", "Memoria LLM HB" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "memoria" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 io.github.owner102007. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 HohloBaron. GPL-3.0." "\0"
             VALUE "OriginalFilename", "memoria.exe" "\0"
-            VALUE "ProductName", "memoria" "\0"
+            VALUE "ProductName", "Memoria LLM HB" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

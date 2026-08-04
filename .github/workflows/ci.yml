@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Забрать репозиторий
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Поставить Flutter
         uses: subosito/flutter-action@v2
@@ -29,6 +29,9 @@ jobs:
       - name: Зависимости
         run: flutter pub get
 
+      - name: Форматирование
+        run: dart format --output=none --set-exit-if-changed .
+
       - name: Статический анализ
         run: flutter analyze --fatal-infos --fatal-warnings
 
@@ -41,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Забрать репозиторий
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Есть ли папка android/
         id: probe
@@ -89,7 +92,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Забрать репозиторий
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Есть ли папка windows/
         id: probe
