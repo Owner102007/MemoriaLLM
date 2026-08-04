@@ -29,14 +29,49 @@ jobs:
       - name: Зависимости
         run: flutter pub get
 
+      # Логи прогона закрыты для неавторизованных, а у сессии разработки нет
+      # доступа к GitHub API — поэтому вывод анализа и тестов дублируется
+      # в сводку прогона, которая видна на странице run без входа в аккаунт.
       - name: Форматирование
-        run: dart format --output=none --set-exit-if-changed .
+        id: fmt
+        run: |
+          set -o pipefail
+          dart format --output=none --set-exit-if-changed . 2>&1 | tee /tmp/fmt.txt
 
       - name: Статический анализ
-        run: flutter analyze --fatal-infos --fatal-warnings
+        id: analyze
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          flutter analyze --fatal-infos --fatal-warnings 2>&1 | tee /tmp/analyze.txt
 
       - name: Тесты
-        run: flutter test --reporter expanded
+        id: tests
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          flutter test --reporter expanded 2>&1 | tee /tmp/tests.txt
+
+      - name: Сводка прогона
+        if: always()
+        run: |
+          {
+            echo '## Результаты'
+            for pair in 'Форматирование:/tmp/fmt.txt' \
+                        'Анализ:/tmp/analyze.txt' \
+                        'Тесты:/tmp/tests.txt'; do
+              title="${pair%%:*}"
+              file="${pair#*:}"
+              echo "### $title"
+              if [ -s "$file" ]; then
+                echo '```'
+                tail -c 40000 "$file"
+                echo '```'
+              else
+                echo '_шаг не выполнялся или ничего не вывел_'
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
   android:
     name: Сборка APK
