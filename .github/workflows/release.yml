@@ -1,5 +1,6 @@
-# Сборка релиза по тегу вида v0.1.0.
+# Сборка релиза по тегу вида v0.1.0 или v0.1.0-alpha.1.
 #
+# Тег с дефисом (alpha, beta, rc) публикуется как предварительный релиз.
 # Ключ подписи Android появляется в сессии S13; до тех пор сборки
 # подписываются отладочным ключом и годятся только для тестирования.
 name: Release
@@ -35,13 +36,20 @@ jobs:
 
       - run: flutter build appbundle --release
 
+      - name: Назвать файлы по версии
+        run: |
+          set -eu
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "out/memoria-${GITHUB_REF_NAME}.apk"
+          cp build/app/outputs/bundle/release/app-release.aab \
+            "out/memoria-${GITHUB_REF_NAME}.aab"
+
       - name: Выложить артефакты
         uses: actions/upload-artifact@v7
         with:
           name: release-android
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/bundle/release/app-release.aab
+          path: out/*
           if-no-files-found: error
 
   windows:
@@ -59,21 +67,24 @@ jobs:
 
       - run: flutter build windows --release
 
-      - name: Портативный ZIP
+      - run: dart run msix:create --store
+
+      - name: Назвать файлы по версии
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
           Compress-Archive -Path build/windows/x64/runner/Release/* `
-            -DestinationPath memoria-windows-portable.zip -Force
-
-      - run: dart run msix:create --store
+            -DestinationPath "out/memoria-$env:GITHUB_REF_NAME-windows.zip" -Force
+          Get-ChildItem build/windows/x64/runner/Release/*.msix |
+            ForEach-Object {
+              Copy-Item $_.FullName "out/memoria-$env:GITHUB_REF_NAME.msix"
+            }
 
       - name: Выложить артефакты
         uses: actions/upload-artifact@v7
         with:
           name: release-windows
-          path: |
-            memoria-windows-portable.zip
-            build/windows/x64/runner/Release/*.msix
+          path: out/*
           if-no-files-found: error
 
   publish:
@@ -87,13 +98,30 @@ jobs:
         with:
           path: dist
 
+      # В релиз идут только то, что человек может поставить руками: APK
+      # и портативный ZIP. AAB нужен магазинам, а MSIX пока подписан
+      # заглушечными данными Partner Center — обоим в релизе делать нечего,
+      # они остаются артефактами прогона.
       - name: Создать релиз
         uses: softprops/action-gh-release@v3
         with:
-          draft: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           files: |
-            dist/release-android/**/*.apk
-            dist/release-android/**/*.aab
-            dist/release-windows/**/*.zip
-            dist/release-windows/**/*.msix
+            dist/release-android/*.apk
+            dist/release-windows/*-windows.zip
+          body: |
+            ## Как поставить
+
+            **Android.** Скачайте `.apk` прямо на телефон и откройте его.
+            Android спросит разрешение на установку из этого источника —
+            это нормально для приложений вне магазина.
+
+            **Windows.** Скачайте ZIP, распакуйте, запустите `memoria.exe`.
+            Установка не требуется.
+
+            > ⚠️ Предварительная сборка. Приложение подписано **отладочным**
+            > ключом: обновиться поверх неё будущим релизом не получится,
+            > её нужно будет удалить и поставить заново. Чтения книг здесь
+            > ещё нет — это каркас с темами.
