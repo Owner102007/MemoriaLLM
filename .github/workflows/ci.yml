@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Забрать репозиторий
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Поставить Flutter
         uses: subosito/flutter-action@v2
@@ -52,6 +52,23 @@ jobs:
           set -o pipefail
           flutter test --reporter expanded 2>&1 | tee /tmp/tests.txt
 
+      # Сводка видна только авторизованным, а аннотации — всем, поэтому при
+      # падении вывод дублируется ещё и аннотацией.
+      - name: Ошибки в аннотации
+        if: failure()
+        run: |
+          for pair in 'Форматирование:/tmp/fmt.txt' \
+                      'Анализ:/tmp/analyze.txt' \
+                      'Тесты:/tmp/tests.txt'; do
+            title="${pair%%:*}"
+            file="${pair#*:}"
+            [ -s "$file" ] || continue
+            body=$(tail -n 40 "$file" \
+              | sed -e 's/%/%25/g' -e 's/\r/ /g' \
+              | awk '{printf "%s%%0A", $0}')
+            echo "::error title=$title::$body"
+          done
+
       - name: Сводка прогона
         if: always()
         run: |
@@ -79,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Забрать репозиторий
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Есть ли папка android/
         id: probe
@@ -93,7 +110,7 @@ jobs:
 
       - name: Поставить JDK 17
         if: steps.probe.outputs.ready == 'true'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -115,7 +132,7 @@ jobs:
 
       - name: Выложить APK
         if: steps.probe.outputs.ready == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: memoria-android-apk
           path: build/app/outputs/flutter-apk/app-release.apk
@@ -127,7 +144,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Забрать репозиторий
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Есть ли папка windows/
         id: probe
@@ -168,7 +185,7 @@ jobs:
 
       - name: Выложить сборки
         if: steps.probe.outputs.ready == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: memoria-windows
           path: |
