@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Анализ и тесты
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Поставить Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Версия Flutter
+        run: flutter --version
+
+      - name: Зависимости
+        run: flutter pub get
+
+      - name: Статический анализ
+        run: flutter analyze --fatal-infos --fatal-warnings
+
+      - name: Тесты
+        run: flutter test --reporter expanded
+
+  android:
+    name: Сборка APK
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Есть ли папка android/
+        id: probe
+        run: |
+          if [ -d android ]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::android/ ещё не сгенерирована — сборка пропущена'
+          fi
+
+      - name: Поставить JDK 17
+        if: steps.probe.outputs.ready == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Поставить Flutter
+        if: steps.probe.outputs.ready == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Зависимости
+        if: steps.probe.outputs.ready == 'true'
+        run: flutter pub get
+
+      - name: Собрать APK
+        if: steps.probe.outputs.ready == 'true'
+        run: flutter build apk --release
+
+      - name: Выложить APK
+        if: steps.probe.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memoria-android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  windows:
+    name: Сборка Windows и MSIX
+    needs: analyze
+    runs-on: windows-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Есть ли папка windows/
+        id: probe
+        shell: pwsh
+        run: |
+          if (Test-Path 'windows') {
+            'ready=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            'ready=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Output '::notice::windows/ ещё не сгенерирована — сборка пропущена'
+          }
+
+      - name: Поставить Flutter
+        if: steps.probe.outputs.ready == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Зависимости
+        if: steps.probe.outputs.ready == 'true'
+        run: flutter pub get
+
+      - name: Собрать Windows
+        if: steps.probe.outputs.ready == 'true'
+        run: flutter build windows --release
+
+      - name: Портативный ZIP
+        if: steps.probe.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/windows/x64/runner/Release/* `
+            -DestinationPath memoria-windows-portable.zip -Force
+
+      - name: Упаковать MSIX
+        if: steps.probe.outputs.ready == 'true'
+        run: dart run msix:create --store
+
+      - name: Выложить сборки
+        if: steps.probe.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memoria-windows
+          path: |
+            memoria-windows-portable.zip
+            build/windows/x64/runner/Release/*.msix
+          if-no-files-found: error

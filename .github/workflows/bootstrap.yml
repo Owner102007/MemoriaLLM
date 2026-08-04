@@ -1,0 +1,74 @@
+# Одноразовая генерация платформенных папок.
+#
+# У сессии разработки нет Flutter SDK (сеть контейнера закрыта для
+# storage.googleapis.com и pub.dev), поэтому android/ и windows/ создаёт
+# `flutter create` на раннере. Workflow сам себя выключает, как только папки
+# оказались в репозитории.
+name: Bootstrap
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scaffold:
+    name: Платформенные папки
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Нужна ли генерация
+        id: probe
+        run: |
+          if [ -d android ] && [ -d windows ]; then
+            echo 'needed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'needed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Поставить Flutter
+        if: steps.probe.outputs.needed == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Сгенерировать android/ и windows/
+        if: steps.probe.outputs.needed == 'true'
+        run: |
+          set -euo pipefail
+          flutter config --enable-windows-desktop --enable-android
+          mkdir -p /tmp/scaffold
+          cd /tmp/scaffold
+          flutter create \
+            --org io.github.owner102007 \
+            --project-name memoria \
+            --platforms=android,windows \
+            memoria
+          cd "$GITHUB_WORKSPACE"
+          [ -d android ] || cp -r /tmp/scaffold/memoria/android ./android
+          [ -d windows ] || cp -r /tmp/scaffold/memoria/windows ./windows
+
+      - name: Привести форматирование к dart format
+        if: steps.probe.outputs.needed == 'true'
+        run: |
+          flutter pub get
+          dart format .
+
+      - name: Закоммитить
+        if: steps.probe.outputs.needed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android windows lib test
+          if git diff --cached --quiet; then
+            echo 'нечего коммитить'
+          else
+            git commit -m 'S1: платформенные папки android/ и windows/ (flutter create) + dart format'
+            git push
+          fi

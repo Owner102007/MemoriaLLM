@@ -1,0 +1,33 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.lock.bak
+pubspec_overrides.yaml
+
+# Секреты — в открытом репозитории это не формальность
+.env
+*.keystore
+*.jks
+key.properties
+*.pfx
+*.p12
+
+# IDE и ОС
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# Windows
+windows/flutter/ephemeral/

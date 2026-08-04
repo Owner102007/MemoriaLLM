@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Вопрос или идея
+    url: https://github.com/Owner102007/MemoriaLLM/discussions
+    about: Для обсуждений, не связанных с конкретным багом

@@ -1,0 +1,26 @@
+name: Идея
+description: Предложение по функциональности
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Миссия проекта — вернуть электронной книге свойства бумажной
+        и превзойти их. Идеи, которые делают чтение спокойнее и проще,
+        имеют приоритет над теми, что добавляют элементы интерфейса.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какая проблема при чтении решается
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Как это могло бы работать
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Чем пользуетесь сейчас вместо этого

@@ -1,0 +1,49 @@
+name: Баг
+description: Что-то работает не так
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Если баг про конкретную книгу — приложите PDF или его первые
+        страницы, если это возможно. Большинство ошибок читалки
+        воспроизводятся только на конкретном файле.
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Платформа
+      options: [Android, Windows]
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Устройство и версия ОС
+      placeholder: Pixel 6a, Android 14 / Windows 11 23H2
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+      placeholder: |
+        1. Открыть книгу…
+        2. Переключить режим…
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Что ожидалось и что произошло
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Скриншоты, логи, файл книги
