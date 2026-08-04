@@ -32,7 +32,8 @@ void main() {
       expect(appPalettes.length, AppThemeId.values.length);
       for (final AppThemeId id in AppThemeId.values) {
         expect(appPalettes[id], isNotNull, reason: 'нет палитры для $id');
-        expect(appPalettes[id]!.id, id, reason: 'палитра $id лежит не на месте');
+        expect(appPalettes[id]!.id, id,
+            reason: 'палитра $id лежит не на месте');
       }
     });
 
