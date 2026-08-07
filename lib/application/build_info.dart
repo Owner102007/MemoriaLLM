@@ -20,8 +20,7 @@ const String appCommit = String.fromEnvironment(
 
 /// Короткая строка для экрана настроек: `0.2.0-alpha · a1b2c3d`.
 String get buildLabel {
-  final String commit = appCommit.length > 7
-      ? appCommit.substring(0, 7)
-      : appCommit;
+  final String commit =
+      appCommit.length > 7 ? appCommit.substring(0, 7) : appCommit;
   return '$appVersion · $commit';
 }
