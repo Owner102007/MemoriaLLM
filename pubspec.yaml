@@ -4,7 +4,7 @@ description: >-
   бумажной: страница во весь экран, неизменная вёрстка, объяснение слова
   и перевод по выделению.
 publish_to: none
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ^3.5.0
@@ -36,6 +36,6 @@ msix_config:
   publisher_display_name: HohloBaron
   identity_name: Owner102007.MemoriaLLMHB
   publisher: CN=Owner102007
-  msix_version: 0.1.0.0
+  msix_version: 0.2.0.0
   capabilities: internetClient
   store: true

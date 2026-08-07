@@ -229,3 +229,52 @@ jobs:
             memoria-windows-portable.zip
             build/windows/x64/runner/Release/*.msix
           if-no-files-found: error
+
+  latest:
+    name: Свежая сборка из main
+    needs: [android, windows]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Забрать артефакты
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      # Имена файлов постоянные — иначе ссылка «скачать последнее» будет
+      # меняться от сборки к сборке, а весь смысл именно в том, чтобы она
+      # не менялась никогда.
+      - name: Постоянные имена файлов
+        run: |
+          set -eu
+          mkdir -p out
+          apk=$(find dist -name '*.apk' | head -1)
+          zip=$(find dist -name '*-portable.zip' | head -1)
+          cp "$apk" out/memoria.apk
+          cp "$zip" out/memoria-windows.zip
+          ls -l out
+
+      # Тег `latest` переезжает на свежий коммит main. Релиз помечен
+      # предварительным, чтобы не подменять собой релизы этапов.
+      - name: Обновить релиз latest
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: latest
+          name: Свежая сборка из main
+          prerelease: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          files: out/*
+          body: |
+            Автоматическая сборка последнего коммита `main`. Обновляется
+            сама после каждого зелёного прогона CI, ссылки не меняются:
+
+            - Android: `releases/download/latest/memoria.apk`
+            - Windows: `releases/download/latest/memoria-windows.zip`
+
+            Это черновик между этапами. Если нужна стабильная точка —
+            берите релиз этапа со страницы релизов.
+
+            Коммит: ${{ github.sha }}
