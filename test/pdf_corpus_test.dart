@@ -80,7 +80,11 @@ void main() {
   }
 
   test('корпус на месте', () {
-    for (final String name in <String>[..._readable.keys, ..._unreadable.keys]) {
+    final List<String> all = <String>[
+      ..._readable.keys,
+      ..._unreadable.keys,
+    ];
+    for (final String name in all) {
       expect(
         File(_file(name)).existsSync(),
         isTrue,

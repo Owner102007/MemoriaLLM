@@ -30,6 +30,18 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Снимает дерево виджетов и даёт базе прибраться.
+  ///
+  /// Живые запросы drift при отписке планируют отложенную уборку обычным
+  /// таймером. В widget-тестах время подменено, и такой таймер, оставшийся
+  /// после теста, валит его сообщением «A Timer is still pending». Поэтому
+  /// экран снимается явно и прокручивается ещё один кадр — уборка
+  /// случается внутри теста, а не после него.
+  Future<void> unmount(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
   testWidgets('приложение запускается на экране библиотеки', (
     WidgetTester tester,
   ) async {
@@ -39,6 +51,8 @@ void main() {
     expect(find.byKey(const Key('nav-library')), findsOneWidget);
     expect(find.byKey(const Key('nav-settings')), findsOneWidget);
     expect(find.byKey(const Key('library-open-file')), findsOneWidget);
+
+    await unmount(tester);
   });
 
   testWidgets('по умолчанию включена тёмно-красная тема', (
@@ -52,6 +66,8 @@ void main() {
       Theme.of(context).scaffoldBackgroundColor,
       Color(expected.background),
     );
+
+    await unmount(tester);
   });
 
   testWidgets('смена темы в настройках перекрашивает приложение', (
@@ -71,6 +87,8 @@ void main() {
     final BuildContext context = tester.element(find.byType(Scaffold).first);
     final AppPalette sepia = appPalettes[AppThemeId.sepia]!;
     expect(Theme.of(context).scaffoldBackgroundColor, Color(sepia.background));
+
+    await unmount(tester);
   });
 
   testWidgets('на пустой полке предложено открыть файл', (
@@ -86,5 +104,7 @@ void main() {
     await tester.tap(find.byKey(const Key('library-open-file-empty')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('library-list')), findsNothing);
+
+    await unmount(tester);
   });
 }

@@ -2,7 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/reading/outline.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 
-/// Оглавление из трёх уровней — такое же, как в `test/fixtures/outline_nested.pdf`.
+/// Оглавление в три уровня — такое же, как в корпусном
+/// `test/fixtures/outline_nested.pdf`.
 const List<OutlineEntry> _nested = <OutlineEntry>[
   OutlineEntry(
     title: 'Часть I',

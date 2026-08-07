@@ -101,7 +101,7 @@ class ReaderController extends ChangeNotifier {
   bool get isOutlineLoading => _outlineLoading;
 
   /// Есть ли в книге оглавление. `null` — пока неизвестно.
-  bool? get hasOutline => _outline == null ? null : _outline!.isNotEmpty;
+  bool? get hasOutline => _outline?.isNotEmpty;
 
   /// Читает оглавление документа. Повторные вызовы бесплатны.
   Future<void> loadOutline() async {
