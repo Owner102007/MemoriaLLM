@@ -161,7 +161,11 @@ jobs:
 
       - name: Собрать APK
         if: steps.probe.outputs.ready == 'true'
-        run: flutter build apk --release
+        run: |
+          version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+          flutter build apk --release \
+            --dart-define=APP_VERSION="$version-main" \
+            --dart-define=APP_COMMIT="$GITHUB_SHA"
 
       - name: Выложить APK
         if: steps.probe.outputs.ready == 'true'
@@ -207,7 +211,12 @@ jobs:
 
       - name: Собрать Windows
         if: steps.probe.outputs.ready == 'true'
-        run: flutter build windows --release
+        shell: bash
+        run: |
+          version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+          flutter build windows --release \
+            --dart-define=APP_VERSION="$version-main" \
+            --dart-define=APP_COMMIT="$GITHUB_SHA"
 
       - name: Портативный ZIP
         if: steps.probe.outputs.ready == 'true'

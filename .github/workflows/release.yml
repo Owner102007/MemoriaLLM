@@ -35,7 +35,11 @@ jobs:
       - name: Кодогенерация drift
         run: dart run build_runner build
 
-      - run: flutter build apk --release
+      - name: Собрать APK
+        run: |
+          flutter build apk --release \
+            --dart-define=APP_VERSION="$GITHUB_REF_NAME" \
+            --dart-define=APP_COMMIT="$GITHUB_SHA"
 
       - run: flutter build appbundle --release
 
@@ -71,7 +75,12 @@ jobs:
       - name: Кодогенерация drift
         run: dart run build_runner build
 
-      - run: flutter build windows --release
+      - name: Собрать Windows
+        shell: bash
+        run: |
+          flutter build windows --release \
+            --dart-define=APP_VERSION="$GITHUB_REF_NAME" \
+            --dart-define=APP_COMMIT="$GITHUB_SHA"
 
       - run: dart run msix:create --store
 

@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../application/build_info.dart';
 import '../../application/theme/theme_controller.dart';
 import '../../domain/theme/app_palette.dart';
 
@@ -30,7 +33,9 @@ class SettingsScreen extends StatelessWidget {
                 _ThemeTile(
                   palette: palette,
                   selected: palette.id == current,
-                  onTap: () => themeController.select(palette.id),
+                  onTap: () {
+                    unawaited(themeController.select(palette.id));
+                  },
                 ),
               const Divider(),
               Padding(
@@ -41,6 +46,12 @@ class SettingsScreen extends StatelessWidget {
                   'в разных палитрах.',
                   style: theme.textTheme.bodySmall,
                 ),
+              ),
+              ListTile(
+                key: const Key('build-label'),
+                dense: true,
+                title: Text('Сборка', style: theme.textTheme.bodySmall),
+                subtitle: Text(buildLabel, style: theme.textTheme.bodySmall),
               ),
             ],
           );

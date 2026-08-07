@@ -56,8 +56,7 @@ void main() {
     final ThemeController first = await ThemeController.restore(data.settings);
     expect(first.value, defaultThemeId);
 
-    first.select(AppThemeId.sepia);
-    await pumpEventQueue();
+    await first.select(AppThemeId.sepia);
     expect(await data.settings.read(SettingsKeys.theme), 'sepia');
 
     final ThemeController second = await ThemeController.restore(data.settings);

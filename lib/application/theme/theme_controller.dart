@@ -28,15 +28,21 @@ class ThemeController extends ValueNotifier<AppThemeId> {
   /// Палитра текущей темы.
   AppPalette get palette => appPalettes[value]!;
 
-  /// Переключает тему. Повторный выбор той же темы ничего не делает.
-  void select(AppThemeId id) {
+  /// Переключает тему и сохраняет выбор.
+  ///
+  /// Интерфейс перекрашивается сразу, не дожидаясь записи, но сама запись
+  /// возвращается вызывающему: молча потерянная настройка выглядит для
+  /// человека как сломанное приложение, поэтому ошибка должна иметь
+  /// возможность всплыть, а тест — дождаться.
+  Future<void> select(AppThemeId id) async {
     if (id == value) {
       return;
     }
     value = id;
     final AppSettingsRepository? store = settings;
-    if (store != null) {
-      unawaited(store.write(SettingsKeys.theme, id.name));
+    if (store == null) {
+      return;
     }
+    await store.write(SettingsKeys.theme, id.name);
   }
 }
