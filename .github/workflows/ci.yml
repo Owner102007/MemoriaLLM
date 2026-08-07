@@ -49,8 +49,8 @@ jobs:
         run: |
           set -o pipefail
           dart format . > /dev/null
-          if ! git diff --quiet; then
-            git --no-pager diff | tee /tmp/fmt.txt
+          if ! git diff --quiet -- '*.dart'; then
+            git --no-pager diff -- '*.dart' | tee /tmp/fmt.txt
             echo '::error title=Форматирование::dart format переписал файлы, патч выше'
             exit 1
           fi
@@ -62,7 +62,7 @@ jobs:
         if: '!cancelled()'
         run: |
           set -o pipefail
-          dart run build_runner build --delete-conflicting-outputs 2>&1 \
+          dart run build_runner build 2>&1 \
             | tee /tmp/codegen.txt
 
       - name: Статический анализ
@@ -157,7 +157,7 @@ jobs:
 
       - name: Кодогенерация drift
         if: steps.probe.outputs.ready == 'true'
-        run: dart run build_runner build --delete-conflicting-outputs
+        run: dart run build_runner build
 
       - name: Собрать APK
         if: steps.probe.outputs.ready == 'true'
@@ -203,7 +203,7 @@ jobs:
 
       - name: Кодогенерация drift
         if: steps.probe.outputs.ready == 'true'
-        run: dart run build_runner build --delete-conflicting-outputs
+        run: dart run build_runner build
 
       - name: Собрать Windows
         if: steps.probe.outputs.ready == 'true'

@@ -12,13 +12,14 @@ import '../../domain/theme/app_palette.dart';
 class ThemeController extends ValueNotifier<AppThemeId> {
   /// Создаёт контроллер. Без хранилища выбор живёт только в памяти —
   /// так удобно в тестах и превью.
-  ThemeController({this.settings, AppThemeId initial = defaultThemeId})
-    : super(initial);
+  ThemeController({this.settings}) : super(defaultThemeId);
 
   /// Читает сохранённую тему и создаёт контроллер с ней.
   static Future<ThemeController> restore(AppSettingsRepository store) async {
     final String? saved = await store.read(SettingsKeys.theme);
-    return ThemeController(settings: store, initial: themeIdFromName(saved));
+    final ThemeController controller = ThemeController(settings: store);
+    controller.value = themeIdFromName(saved);
+    return controller;
   }
 
   /// Хранилище настроек. `null` — выбор не сохраняется.

@@ -9,7 +9,7 @@ import 'test_data.dart';
 Future<List<String>> _tableNames(AppDatabase db) async {
   final Selectable<QueryRow> q = db.customSelect(
     'SELECT name FROM sqlite_master WHERE type = ?',
-    variables: [Variable<String>('table')],
+    variables: [const Variable<String>('table')],
   );
   final List<QueryRow> result = await q.get();
   return result.map((QueryRow row) => row.read<String>('name')).toList();

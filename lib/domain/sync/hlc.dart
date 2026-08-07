@@ -114,13 +114,15 @@ class HlcClock {
     Hlc? last,
     DateTime Function()? now,
     void Function(Hlc stamp)? onIssued,
-  }) : _last = last ?? Hlc.zero(nodeId),
-       _now = now ?? DateTime.now,
-       _onIssued = onIssued;
+  }) {
+    _last = last ?? Hlc.zero(nodeId);
+    _now = now ?? DateTime.now;
+    _onIssued = onIssued;
+  }
 
-  final DateTime Function() _now;
-  final void Function(Hlc stamp)? _onIssued;
-  Hlc _last;
+  late final DateTime Function() _now;
+  late final void Function(Hlc stamp)? _onIssued;
+  late Hlc _last;
 
   /// Последняя выданная метка.
   Hlc get last => _last;
