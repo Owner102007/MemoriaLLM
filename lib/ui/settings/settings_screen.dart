@@ -36,8 +36,9 @@ class SettingsScreen extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  'Выбор темы пока не сохраняется между запусками: '
-                  'слой данных появится в сессии S2.',
+                  'Тема сохраняется на этом устройстве и не переносится '
+                  'на другие: читать ночью с телефона и днём с ПК удобнее '
+                  'в разных палитрах.',
                   style: theme.textTheme.bodySmall,
                 ),
               ),

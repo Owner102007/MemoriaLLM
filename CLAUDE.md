@@ -101,6 +101,8 @@ Windows-раннер существует именно потому, что у �
 
 ```bash
 flutter pub get
+dart run build_runner build --delete-conflicting-outputs   # код drift
+dart run drift_dev schema dump lib/infrastructure/database/app_database.dart drift_schemas/
 flutter analyze
 flutter test
 flutter test test/pdf_corpus_test.dart      # headless-прогон корпуса PDF
@@ -130,6 +132,17 @@ Claude работает в Linux-контейнере, сеть которого
 Платформенные папки `android/` и `windows/` сгенерированы на раннере
 workflow'ом `.github/workflows/bootstrap.yml` (`flutter create`) и лежат
 в репозитории; повторно он не запускается.
+
+Сгенерированный код drift (`*.g.dart`) в репозитории **не хранится**:
+сессия не может его пересобрать, а устаревший файл в коммите — источник
+необъяснимых падений. Его собирает CI шагом `build_runner` перед анализом,
+тестами и каждой сборкой.
+
+Проверку формата CI делает так: сам прогоняет `dart format` и, если файлы
+изменились, печатает готовый патч в лог и валит прогон. Без Dart SDK
+сессия иначе не узнает, что именно поправить. Анализ и тесты после этого
+идут по уже отформатированному коду — одна ошибка формата не съедает
+целый прогон.
 
 Push в GitHub зависит от режима запуска сессии: локально работает с токеном
 из `_secrets/github_token.txt`, в облачной сессии прокси срезает токен и

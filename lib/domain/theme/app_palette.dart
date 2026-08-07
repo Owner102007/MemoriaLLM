@@ -162,3 +162,17 @@ const Map<AppThemeId, AppPalette> appPalettes = <AppThemeId, AppPalette>{
 
 /// Тема, с которой приложение стартует при первом запуске.
 const AppThemeId defaultThemeId = AppThemeId.darkRed;
+
+/// Тема по сохранённому имени.
+///
+/// Неизвестное имя не считается ошибкой: файл настроек мог приехать
+/// с устройства, где стоит более новая версия приложения. Лучше открыться
+/// с темой по умолчанию, чем не открыться вовсе.
+AppThemeId themeIdFromName(String? name) {
+  for (final AppThemeId id in AppThemeId.values) {
+    if (id.name == name) {
+      return id;
+    }
+  }
+  return defaultThemeId;
+}

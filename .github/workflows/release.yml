@@ -32,6 +32,9 @@ jobs:
 
       - run: flutter pub get
 
+      - name: Кодогенерация drift
+        run: dart run build_runner build --delete-conflicting-outputs
+
       - run: flutter build apk --release
 
       - run: flutter build appbundle --release
@@ -64,6 +67,9 @@ jobs:
           cache: true
 
       - run: flutter pub get
+
+      - name: Кодогенерация drift
+        run: dart run build_runner build --delete-conflicting-outputs
 
       - run: flutter build windows --release
 

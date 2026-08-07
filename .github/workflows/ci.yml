@@ -29,14 +29,41 @@ jobs:
       - name: Зависимости
         run: flutter pub get
 
+      # Тесты слоя данных гоняют настоящий SQLite в памяти, а не заглушку.
+      # На устройствах библиотеку приносит sqlite3_flutter_libs, раннеру
+      # её ставим руками.
+      - name: Библиотека SQLite для тестов
+        run: sudo apt-get install -y libsqlite3-dev
+
       # Логи прогона закрыты для неавторизованных, а у сессии разработки нет
       # доступа к GitHub API — поэтому вывод анализа и тестов дублируется
       # в сводку прогона, которая видна на странице run без входа в аккаунт.
+      # Шаг не просто ругается, а показывает готовый патч: у сессии
+      # разработки нет Dart SDK и прогнать `dart format` до пуша она не
+      # может, поэтому единственный способ починить формат — увидеть
+      # точный diff в логе прогона. Файлы при этом остаются
+      # отформатированными, и анализ с тестами идут по нормальному коду:
+      # одна ошибка формата не съедает целый прогон.
       - name: Форматирование
         id: fmt
         run: |
           set -o pipefail
-          dart format --output=none --set-exit-if-changed . 2>&1 | tee /tmp/fmt.txt
+          dart format . > /dev/null
+          if ! git diff --quiet; then
+            git --no-pager diff | tee /tmp/fmt.txt
+            echo '::error title=Форматирование::dart format переписал файлы, патч выше'
+            exit 1
+          fi
+
+      # После проверки формата: сгенерированные файлы в репозитории не
+      # лежат, форматировать их незачем, а анализу и тестам они нужны.
+      - name: Кодогенерация drift
+        id: codegen
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          dart run build_runner build --delete-conflicting-outputs 2>&1 \
+            | tee /tmp/codegen.txt
 
       - name: Статический анализ
         id: analyze
@@ -58,6 +85,7 @@ jobs:
         if: failure()
         run: |
           for pair in 'Форматирование:/tmp/fmt.txt' \
+                      'Кодогенерация:/tmp/codegen.txt' \
                       'Анализ:/tmp/analyze.txt' \
                       'Тесты:/tmp/tests.txt'; do
             title="${pair%%:*}"
@@ -75,6 +103,7 @@ jobs:
           {
             echo '## Результаты'
             for pair in 'Форматирование:/tmp/fmt.txt' \
+                        'Кодогенерация:/tmp/codegen.txt' \
                         'Анализ:/tmp/analyze.txt' \
                         'Тесты:/tmp/tests.txt'; do
               title="${pair%%:*}"
@@ -126,6 +155,10 @@ jobs:
         if: steps.probe.outputs.ready == 'true'
         run: flutter pub get
 
+      - name: Кодогенерация drift
+        if: steps.probe.outputs.ready == 'true'
+        run: dart run build_runner build --delete-conflicting-outputs
+
       - name: Собрать APK
         if: steps.probe.outputs.ready == 'true'
         run: flutter build apk --release
@@ -167,6 +200,10 @@ jobs:
       - name: Зависимости
         if: steps.probe.outputs.ready == 'true'
         run: flutter pub get
+
+      - name: Кодогенерация drift
+        if: steps.probe.outputs.ready == 'true'
+        run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Собрать Windows
         if: steps.probe.outputs.ready == 'true'

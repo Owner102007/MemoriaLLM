@@ -1,0 +1,293 @@
+import 'package:drift/drift.dart';
+
+/// Колонки, общие для всех синхронизируемых таблиц.
+///
+/// Имена совпадают с теми, что ожидает `sqlite_crdt`: `hlc` — метка
+/// изменения, `node_id` — устройство-автор, `modified` — когда строка
+/// легла в эту базу, `is_deleted` — надгробие. Схема задаётся один раз
+/// сейчас, чтобы сессия S10 добавляла движок слияния, а не переписывала
+/// таблицы с данными живых пользователей.
+mixin SyncedRow on Table {
+  /// Метка изменения строки.
+  TextColumn get hlc => text().withDefault(const Constant<String>(''))();
+
+  /// Устройство, сделавшее изменение.
+  TextColumn get nodeId => text().withDefault(const Constant<String>(''))();
+
+  /// Когда изменение записано в эту базу.
+  TextColumn get modified => text().withDefault(const Constant<String>(''))();
+
+  /// Надгробие: строка удалена, но остаётся, пока об этом не узнают все
+  /// устройства. Физическое удаление — дело сборки мусора.
+  BoolColumn get isDeleted =>
+      boolean().withDefault(const Constant<bool>(false))();
+}
+
+/// Книги библиотеки.
+@DataClassName('BookRow')
+class Books extends Table with SyncedRow {
+  /// Идентификатор книги.
+  TextColumn get id => text()();
+
+  /// Заголовок.
+  TextColumn get title => text()();
+
+  /// Автор.
+  TextColumn get author => text().nullable()();
+
+  /// Путь к файлу на этом устройстве.
+  TextColumn get filePath => text()();
+
+  /// Размер файла в байтах.
+  IntColumn get fileSize => integer()();
+
+  /// Отпечаток содержимого.
+  TextColumn get fileHash => text()();
+
+  /// Число страниц.
+  IntColumn get pageCount => integer().nullable()();
+
+  /// Язык книги.
+  TextColumn get language => text().nullable()();
+
+  /// Есть ли текстовый слой.
+  BoolColumn get hasTextLayer => boolean().nullable()();
+
+  /// Путь к кэшу обложки.
+  TextColumn get coverPath => text().nullable()();
+
+  /// Когда добавлена.
+  DateTimeColumn get addedAt => dateTime()();
+
+  /// Когда открывали в последний раз.
+  DateTimeColumn get openedAt => dateTime().nullable()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
+/// Позиция чтения, по одной строке на книгу.
+@DataClassName('ReadingProgressRow')
+class ReadingProgress extends Table with SyncedRow {
+  /// Книга.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Страница, начиная с единицы.
+  IntColumn get page => integer().withDefault(const Constant<int>(1))();
+
+  /// Фрагмент внутри страницы.
+  IntColumn get fragment => integer().withDefault(const Constant<int>(0))();
+
+  /// Смещение внутри фрагмента, доля от 0 до 1.
+  RealColumn get offsetInFragment =>
+      real().withDefault(const Constant<double>(0))();
+
+  /// Доля прочитанного от книги.
+  RealColumn get progress => real().withDefault(const Constant<double>(0))();
+
+  /// Когда позиция обновлялась.
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{bookId};
+}
+
+/// Настройки чтения книги в конкретной ориентации экрана.
+@DataClassName('BookSettingsRow')
+class BookSettings extends Table with SyncedRow {
+  /// Книга.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Ориентация экрана.
+  TextColumn get orientation => text()();
+
+  /// Режим отображения.
+  TextColumn get displayMode => text()();
+
+  /// Обрезать поля автоматически.
+  BoolColumn get autoCrop =>
+      boolean().withDefault(const Constant<bool>(true))();
+
+  /// Игнорировать колонтитулы при автообрезке.
+  BoolColumn get ignoreRunningHeads =>
+      boolean().withDefault(const Constant<bool>(true))();
+
+  /// Левая граница рамки, выставленной руками.
+  RealColumn get cropLeft => real().nullable()();
+
+  /// Верхняя граница ручной рамки.
+  RealColumn get cropTop => real().nullable()();
+
+  /// Правая граница ручной рамки.
+  RealColumn get cropRight => real().nullable()();
+
+  /// Нижняя граница ручной рамки.
+  RealColumn get cropBottom => real().nullable()();
+
+  /// Светофильтр.
+  TextColumn get filter => text()();
+
+  /// Сила фильтра.
+  RealColumn get filterIntensity =>
+      real().withDefault(const Constant<double>(0))();
+
+  /// Яркость.
+  RealColumn get brightness => real().withDefault(const Constant<double>(1))();
+
+  /// Контраст.
+  RealColumn get contrast => real().withDefault(const Constant<double>(1))();
+
+  /// Гамма.
+  RealColumn get gamma => real().withDefault(const Constant<double>(1))();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{bookId, orientation};
+}
+
+/// Цитаты.
+@DataClassName('QuoteRow')
+class Quotes extends Table with SyncedRow {
+  /// Идентификатор.
+  TextColumn get id => text()();
+
+  /// Книга.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Страница.
+  IntColumn get page => integer()();
+
+  /// Текст цитаты.
+  TextColumn get content => text()();
+
+  /// Абзац вокруг выделения.
+  TextColumn get context => text().nullable()();
+
+  /// Цвет маркера.
+  IntColumn get color => integer().nullable()();
+
+  /// Когда сохранена.
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
+/// Заметки читателя.
+@DataClassName('NoteRow')
+class Notes extends Table with SyncedRow {
+  /// Идентификатор.
+  TextColumn get id => text()();
+
+  /// Книга.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Цитата, к которой привязана заметка.
+  TextColumn get quoteId =>
+      text().nullable().references(Quotes, #id, onDelete: KeyAction.setNull)();
+
+  /// Страница.
+  IntColumn get page => integer()();
+
+  /// Текст заметки.
+  TextColumn get body => text()();
+
+  /// Когда создана.
+  DateTimeColumn get createdAt => dateTime()();
+
+  /// Когда изменялась.
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
+/// Закладки.
+@DataClassName('BookmarkRow')
+class Bookmarks extends Table with SyncedRow {
+  /// Идентификатор.
+  TextColumn get id => text()();
+
+  /// Книга.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Страница.
+  IntColumn get page => integer()();
+
+  /// Фрагмент внутри страницы.
+  IntColumn get fragment => integer().withDefault(const Constant<int>(0))();
+
+  /// Подпись.
+  TextColumn get label => text().nullable()();
+
+  /// Когда поставлена.
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
+/// История запросов к языковой модели. Она же кэш ответов.
+@DataClassName('LlmQueryRow')
+class LlmQueries extends Table with SyncedRow {
+  /// Идентификатор.
+  TextColumn get id => text()();
+
+  /// Книга, если запрос сделан во время чтения.
+  TextColumn get bookId =>
+      text().nullable().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Задача: `meaning` или `translate`.
+  TextColumn get task => text()();
+
+  /// Выделенный текст.
+  TextColumn get selection => text()();
+
+  /// Абзац вокруг выделения.
+  TextColumn get context => text().nullable()();
+
+  /// Язык книги.
+  TextColumn get sourceLanguage => text().nullable()();
+
+  /// Язык перевода.
+  TextColumn get targetLanguage => text().nullable()();
+
+  /// Ответ модели.
+  TextColumn get answer => text().nullable()();
+
+  /// Кто отвечал: `cloud` или `local`.
+  TextColumn get source => text().nullable()();
+
+  /// Имя модели.
+  TextColumn get model => text().nullable()();
+
+  /// Задержка ответа в миллисекундах.
+  IntColumn get latencyMs => integer().nullable()();
+
+  /// Текст ошибки.
+  TextColumn get error => text().nullable()();
+
+  /// Когда сделан запрос.
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
+/// Локальные настройки приложения. Без полей CRDT: они не
+/// синхронизируются намеренно — см. `AppSettingsRepository`.
+@DataClassName('AppSettingRow')
+class AppSettings extends Table {
+  /// Ключ.
+  TextColumn get settingKey => text()();
+
+  /// Значение.
+  TextColumn get settingValue => text()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{settingKey};
+}
