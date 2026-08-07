@@ -89,6 +89,26 @@ class Book {
   }
 }
 
+/// Заголовок книги по имени файла.
+///
+/// Метаданных в PDF часто нет или в них лежит мусор вроде «Microsoft Word —
+/// Document1», поэтому имя файла — не запасной вариант, а основной.
+/// Расширение убирается, подчёркивания и точки между словами становятся
+/// пробелами: `voyna_i_mir.pdf` читается лучше, чем `voyna_i_mir`.
+String titleFromFileName(String fileName) {
+  String name = fileName.trim();
+  final int slash = name.lastIndexOf(RegExp(r'[\\/]'));
+  if (slash >= 0) {
+    name = name.substring(slash + 1);
+  }
+  if (name.toLowerCase().endsWith('.pdf')) {
+    name = name.substring(0, name.length - 4);
+  }
+  name = name.replaceAll(RegExp(r'[_.]+'), ' ').replaceAll(RegExp(r'\s+'), ' ');
+  name = name.trim();
+  return name.isEmpty ? 'Без названия' : name;
+}
+
 /// Доступ к библиотеке. Реализация живёт в `infrastructure`.
 abstract interface class LibraryRepository {
   /// Живой список книг: обновляется сам при изменениях в базе.

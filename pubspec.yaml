@@ -4,17 +4,23 @@ description: >-
   бумажной: страница во весь экран, неизменная вёрстка, объяснение слова
   и перевод по выделению.
 publish_to: none
-version: 0.2.0+2
+version: 0.3.0+3
 
+# pdfrx 2.4 требует Dart 3.10 и Flutter 3.41: движок PDFium приезжает
+# нативным ассетом через хуки сборки, а они появились именно там.
 environment:
-  sdk: ^3.5.0
+  flutter: '>=3.41.0'
+  sdk: ^3.10.0
 
 dependencies:
+  crypto: ^3.0.6
   drift: ^2.20.0
+  file_selector: ^1.1.0
   flutter:
     sdk: flutter
   path: ^1.9.0
   path_provider: ^2.1.4
+  pdfrx: ^2.4.7
   sqlite3_flutter_libs: ^0.5.24
 
 dev_dependencies:
@@ -36,6 +42,6 @@ msix_config:
   publisher_display_name: HohloBaron
   identity_name: Owner102007.MemoriaLLMHB
   publisher: CN=Owner102007
-  msix_version: 0.2.0.0
+  msix_version: 0.3.0.0
   capabilities: internetClient
   store: true

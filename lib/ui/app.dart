@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../application/app_services.dart';
 import '../application/theme/theme_controller.dart';
 import '../domain/theme/app_palette.dart';
 import 'library/library_screen.dart';
@@ -8,11 +9,18 @@ import 'theme/theme_builder.dart';
 
 /// Корневой виджет приложения.
 class MemoriaApp extends StatelessWidget {
-  /// Создаёт приложение с готовым контроллером тем.
-  const MemoriaApp({required this.themeController, super.key});
+  /// Создаёт приложение с готовым контроллером тем и службами.
+  const MemoriaApp({
+    required this.themeController,
+    required this.services,
+    super.key,
+  });
 
   /// Источник текущей темы.
   final ThemeController themeController;
+
+  /// Службы приложения: данные, движок PDF, диалог выбора файла.
+  final AppServices services;
 
   @override
   Widget build(BuildContext context) {
@@ -23,21 +31,30 @@ class MemoriaApp extends StatelessWidget {
           title: 'Memoria LLM HB',
           debugShowCheckedModeBanner: false,
           theme: buildTheme(appPalettes[themeId]!),
-          home: HomeShell(themeController: themeController),
+          home: HomeShell(
+            themeController: themeController,
+            services: services,
+          ),
         );
       },
     );
   }
 }
 
-/// Оболочка с нижней навигацией. Экраны — заглушки: чтение появляется
-/// в сессии S3, библиотека — в S5.
+/// Оболочка с нижней навигацией. Полка с обложками появится в S5.
 class HomeShell extends StatefulWidget {
   /// Создаёт оболочку.
-  const HomeShell({required this.themeController, super.key});
+  const HomeShell({
+    required this.themeController,
+    required this.services,
+    super.key,
+  });
 
   /// Контроллер тем, нужен экрану настроек.
   final ThemeController themeController;
+
+  /// Службы приложения.
+  final AppServices services;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -52,7 +69,7 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(
         index: _index,
         children: <Widget>[
-          const LibraryScreen(),
+          LibraryScreen(services: widget.services),
           SettingsScreen(themeController: widget.themeController),
         ],
       ),

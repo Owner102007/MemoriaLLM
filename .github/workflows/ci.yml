@@ -35,6 +35,24 @@ jobs:
       - name: Библиотека SQLite для тестов
         run: sudo apt-get install -y libsqlite3-dev
 
+      # Корпус проблемных PDF гоняется настоящим PDFium. В сборках его
+      # приносит pdfrx нативным ассетом, но в среде `flutter test` этот
+      # путь ненадёжен, поэтому библиотека кладётся руками, а pdfrx
+      # получает её через PDFIUM_PATH — единственный документированный
+      # способ указать модуль явно. Версия взята та же, что тянет
+      # pdfium_dart в сборки (pdfium_dart/hook/build.dart).
+      - name: Библиотека PDFium для корпус-тестов
+        run: |
+          set -eu
+          release='chromium%2F7811'
+          url="https://github.com/bblanchon/pdfium-binaries/releases/download"
+          curl -sSL --retry 3 -o /tmp/pdfium.tgz \
+            "$url/$release/pdfium-linux-x64.tgz"
+          mkdir -p /tmp/pdfium
+          tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
+          test -f /tmp/pdfium/lib/libpdfium.so
+          echo 'PDFIUM_PATH=/tmp/pdfium/lib/libpdfium.so' >> "$GITHUB_ENV"
+
       # Логи прогона закрыты для неавторизованных, а у сессии разработки нет
       # доступа к GitHub API — поэтому вывод анализа и тестов дублируется
       # в сводку прогона, которая видна на странице run без входа в аккаунт.

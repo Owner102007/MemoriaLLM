@@ -41,6 +41,26 @@
 - Комментарии и сообщения коммитов — по-русски, код и идентификаторы —
   по-английски.
 
+## Корпус проблемных PDF
+
+`test/pdf_corpus_test.dart` — единственный тест, которому нужен настоящий
+PDFium: он гоняет по корпусу из `test/fixtures` каждый файл по кругу
+«открыть → извлечь текст → отрендерить страницу». Состав корпуса и ожидания
+по каждому файлу — в [test/fixtures/README.md](test/fixtures/README.md),
+собирает его `tool/make_fixtures.py` (нужны `pikepdf` и `pypdfium2`).
+
+Если этот тест падает с `Failed to load PDFium module`, укажите библиотеку
+явно — так делает и CI:
+
+```bash
+# один раз: взять сборку PDFium той же версии, что тянет pdfrx
+curl -sSL -o /tmp/pdfium.tgz \
+  'https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7811/pdfium-linux-x64.tgz'
+mkdir -p /tmp/pdfium && tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
+
+PDFIUM_PATH=/tmp/pdfium/lib/libpdfium.so flutter test
+```
+
 ## Что покрывается тестами обязательно
 
 Геометрия читательской рамки (обрезка полей, деление на части, определение

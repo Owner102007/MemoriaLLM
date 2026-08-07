@@ -1,26 +1,50 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/application/app_services.dart';
+import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
 import 'package:memoria/domain/theme/app_palette.dart';
 import 'package:memoria/ui/app.dart';
 
+import 'data/test_data.dart';
+import 'support/fake_reading.dart';
+
 void main() {
+  late AppData data;
+  late AppServices services;
+
+  setUp(() async {
+    data = await openTestData();
+    services = AppServices(
+      data: data,
+      opener: FakeDocumentOpener(FakeReaderDocument(pages: <String>['текст'])),
+      picker: FakeBookFilePicker(null),
+    );
+  });
+  tearDown(() async => data.close());
+
+  Future<void> pumpApp(WidgetTester tester, ThemeController controller) async {
+    await tester.pumpWidget(
+      MemoriaApp(themeController: controller, services: services),
+    );
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('приложение запускается на экране библиотеки', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(MemoriaApp(themeController: ThemeController()));
-    await tester.pumpAndSettle();
+    await pumpApp(tester, ThemeController());
 
     expect(find.text('Memoria LLM HB'), findsOneWidget);
     expect(find.byKey(const Key('nav-library')), findsOneWidget);
     expect(find.byKey(const Key('nav-settings')), findsOneWidget);
+    expect(find.byKey(const Key('library-open-file')), findsOneWidget);
   });
 
   testWidgets('по умолчанию включена тёмно-красная тема', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(MemoriaApp(themeController: ThemeController()));
-    await tester.pumpAndSettle();
+    await pumpApp(tester, ThemeController());
 
     final BuildContext context = tester.element(find.byType(Scaffold).first);
     final AppPalette expected = appPalettes[AppThemeId.darkRed]!;
@@ -34,8 +58,7 @@ void main() {
     WidgetTester tester,
   ) async {
     final ThemeController controller = ThemeController();
-    await tester.pumpWidget(MemoriaApp(themeController: controller));
-    await tester.pumpAndSettle();
+    await pumpApp(tester, controller);
 
     await tester.tap(find.byKey(const Key('nav-settings')));
     await tester.pumpAndSettle();
@@ -48,5 +71,20 @@ void main() {
     final BuildContext context = tester.element(find.byType(Scaffold).first);
     final AppPalette sepia = appPalettes[AppThemeId.sepia]!;
     expect(Theme.of(context).scaffoldBackgroundColor, Color(sepia.background));
+  });
+
+  testWidgets('на пустой полке предложено открыть файл', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, ThemeController());
+
+    expect(find.byKey(const Key('library-open-file-empty')), findsOneWidget);
+    expect(find.byKey(const Key('library-list')), findsNothing);
+
+    // Человек закрыл диалог, ничего не выбрав: приложение не должно
+    // ни падать, ни заводить пустую книгу.
+    await tester.tap(find.byKey(const Key('library-open-file-empty')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('library-list')), findsNothing);
   });
 }
