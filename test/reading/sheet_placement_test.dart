@@ -84,18 +84,12 @@ void main() {
 
     test('на горизонтальном экране страница шире, чем в портрете', () {
       final SheetPlacement whole = place(fragment: CropBox.full);
-      final SheetPlacement top = place(
-        fragment: halves.first,
-        landscape: true,
-      );
+      final SheetPlacement top = place(fragment: halves.first, landscape: true);
       expect(top.scale, greaterThan(whole.scale));
     });
 
     test('боковые поля не срезаны, срезан только низ', () {
-      final SheetPlacement top = place(
-        fragment: halves.first,
-        landscape: true,
-      );
+      final SheetPlacement top = place(fragment: halves.first, landscape: true);
       final CropBox shown = visible(top, landscape: true);
 
       expect(shown.left, closeTo(0, 1e-9), reason: 'левое поле на месте');
@@ -202,9 +196,7 @@ void main() {
 
     test('вывернутый фрагмент — показывать нечего', () {
       expect(
-        place(
-          fragment: const CropBox(left: 1, top: 1, right: 0, bottom: 0),
-        ),
+        place(fragment: const CropBox(left: 1, top: 1, right: 0, bottom: 0)),
         SheetPlacement.none,
       );
     });
