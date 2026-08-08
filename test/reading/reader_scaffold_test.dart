@@ -299,7 +299,11 @@ void main() {
     });
 
     testWidgets('пустой результат так и написан', (WidgetTester tester) async {
-      final ReaderController controller = await makeController();
+      // Книга нарочно короче, чем шаг, на котором поиск уступает
+      // управление интерфейсу. В widget-тестах время подменено, и
+      // отложенная на «ноль секунд» пауза внутри поиска не наступит
+      // сама — тест повис бы, дожидаясь её.
+      final ReaderController controller = await makeController(pages: 4);
       final DocumentSearch search = DocumentSearch(
         document: controller.document,
       );
