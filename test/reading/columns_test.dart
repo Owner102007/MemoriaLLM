@@ -116,10 +116,7 @@ void main() {
       right: 0.9,
       bottom: 0.9,
     );
-    final List<ColumnBand> bands = detectColumns(
-      const <TextBox>[],
-      content,
-    );
+    final List<ColumnBand> bands = detectColumns(const <TextBox>[], content);
     expect(bands.length, 1);
     expect(bands.single, const ColumnBand(left: 0.1, right: 0.9));
   });

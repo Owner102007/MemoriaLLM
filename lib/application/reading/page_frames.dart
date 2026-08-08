@@ -114,9 +114,7 @@ class PageFrameSource {
       return PageFrame(
         pageNumber: pageNumber,
         content: CropBox.full,
-        columns: const <ColumnBand>[
-          ColumnBand(left: 0, right: 1),
-        ],
+        columns: const <ColumnBand>[ColumnBand(left: 0, right: 1)],
         fromText: false,
       );
     }
@@ -132,10 +130,7 @@ class PageFrameSource {
 
     PageFrame frame;
     if (boxes.length >= minTextBoxes) {
-      final CropBox content = contentBoxFromTextBoxes(
-        boxes,
-        options: _options,
-      );
+      final CropBox content = contentBoxFromTextBoxes(boxes, options: _options);
       frame = PageFrame(
         pageNumber: pageNumber,
         content: content,

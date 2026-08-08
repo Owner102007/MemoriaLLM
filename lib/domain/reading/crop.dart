@@ -123,8 +123,7 @@ List<TextLine> dropRunningHeads(
     return lines;
   }
   final List<double> gaps = <double>[
-    for (int i = 1; i < lines.length; i++)
-      lines[i].top - lines[i - 1].top,
+    for (int i = 1; i < lines.length; i++) lines[i].top - lines[i - 1].top,
   ];
   final double typical = median(gaps);
   if (typical <= 0) {
@@ -138,8 +137,7 @@ List<TextLine> dropRunningHeads(
   int end = lines.length;
   // Верхний колонтитул: оторван от следующей строки и не выше обычной
   // строки. Второе условие бережёт крупный заголовок главы.
-  if (gaps.first > typical * gapFactor &&
-      lines.first.height <= heights * 1.6) {
+  if (gaps.first > typical * gapFactor && lines.first.height <= heights * 1.6) {
     start = 1;
   }
   // Нижний колонтитул: оторван от предыдущей строки.
@@ -241,6 +239,12 @@ CropBox normalizeCrop(
       !box.top.isFinite ||
       !box.right.isFinite ||
       !box.bottom.isFinite) {
+    return CropBox.full;
+  }
+  // Вывернутую рамку нельзя «починить» растяжением до минимального
+  // размера: получился бы прямоугольник посреди страницы, к содержимому
+  // отношения не имеющий.
+  if (box.right <= box.left || box.bottom <= box.top) {
     return CropBox.full;
   }
   double left = box.left - options.padding;

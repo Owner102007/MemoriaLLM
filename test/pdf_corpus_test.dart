@@ -408,53 +408,54 @@ void main() {
 
   group('читательская рамка на корпусе', () {
     _readable.forEach((String name, int pages) {
-      test('$name: рамка не пустая и не вывернутая', () async {
-        final ReaderDocument document = await open(name);
-        final PageFrameSource frames = PageFrameSource(document: document);
-        // Шести страниц довольно: дальше повторяется та же вёрстка,
-        // а тысяча страниц превратила бы прогон в получасовой.
-        final int limit = math.min(document.pageCount, 6);
+      test(
+        '$name: рамка не пустая и не вывернутая',
+        () async {
+          final ReaderDocument document = await open(name);
+          final PageFrameSource frames = PageFrameSource(document: document);
+          // Шести страниц довольно: дальше повторяется та же вёрстка,
+          // а тысяча страниц превратила бы прогон в получасовой.
+          final int limit = math.min(document.pageCount, 6);
 
-        for (int page = 1; page <= limit; page++) {
-          final PageFrame frame = await frames.frameFor(page);
-          final String where = '$name, страница $page';
+          for (int page = 1; page <= limit; page++) {
+            final PageFrame frame = await frames.frameFor(page);
+            final String where = '$name, страница $page';
 
-          expect(frame.content.isValid, isTrue, reason: 'рамка: $where');
-          expect(frame.content.width, greaterThan(0.05), reason: where);
-          expect(frame.content.height, greaterThan(0.05), reason: where);
-          expect(frame.columns, isNotEmpty, reason: 'колонки: $where');
+            expect(frame.content.isValid, isTrue, reason: 'рамка: $where');
+            expect(frame.content.width, greaterThan(0.05), reason: where);
+            expect(frame.content.height, greaterThan(0.05), reason: where);
+            expect(frame.columns, isNotEmpty, reason: 'колонки: $where');
 
-          // Ни один режим не должен давать пустой или вывернутый фрагмент:
-          // это чёрный экран вместо книги.
-          for (final PageDisplayMode mode in PageDisplayMode.values) {
-            final List<CropBox> parts = fragmentsFor(
-              content: frame.content,
-              mode: mode,
-              columns: frame.columns,
-            );
-            expect(parts, isNotEmpty, reason: '$mode: $where');
-            expect(
-              parts.length,
-              fragmentCountFor(
+            // Ни один режим не должен давать пустой или вывернутый фрагмент:
+            // это чёрный экран вместо книги.
+            for (final PageDisplayMode mode in PageDisplayMode.values) {
+              final List<CropBox> parts = fragmentsFor(
+                content: frame.content,
                 mode: mode,
-                columnCount: frame.columns.length,
-              ),
-              reason: '$mode: $where',
-            );
-            for (final CropBox part in parts) {
-              expect(part.isValid, isTrue, reason: '$mode: $where');
-              expect(
-                part.left,
-                greaterThanOrEqualTo(frame.content.left - 1e-9),
+                columns: frame.columns,
               );
+              expect(parts, isNotEmpty, reason: '$mode: $where');
               expect(
-                part.right,
-                lessThanOrEqualTo(frame.content.right + 1e-9),
+                parts.length,
+                fragmentCountFor(mode: mode, columnCount: frame.columns.length),
+                reason: '$mode: $where',
               );
+              for (final CropBox part in parts) {
+                expect(part.isValid, isTrue, reason: '$mode: $where');
+                expect(
+                  part.left,
+                  greaterThanOrEqualTo(frame.content.left - 1e-9),
+                );
+                expect(
+                  part.right,
+                  lessThanOrEqualTo(frame.content.right + 1e-9),
+                );
+              }
             }
           }
-        }
-      }, timeout: const Timeout(Duration(minutes: 3)));
+        },
+        timeout: const Timeout(Duration(minutes: 3)),
+      );
     });
 
     test('обычная книга: поля обрезаются по тексту', () async {

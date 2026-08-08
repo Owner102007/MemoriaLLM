@@ -297,9 +297,7 @@ void main() {
             );
       final FakeReaderDocument document = FakeReaderDocument(
         pages: List<String>.generate(pages, (int i) => 'страница ${i + 1}'),
-        boxes: <int, List<TextBox>>{
-          for (int i = 1; i <= pages; i++) i: page,
-        },
+        boxes: <int, List<TextBox>>{for (int i = 1; i <= pages; i++) i: page},
       );
       final ReaderController controller = await ReaderController.open(
         book: book,

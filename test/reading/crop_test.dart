@@ -286,10 +286,7 @@ void main() {
     );
 
     test('по умолчанию — автообрезка', () {
-      expect(
-        effectiveCrop(settings: base, automatic: automatic),
-        automatic,
-      );
+      expect(effectiveCrop(settings: base, automatic: automatic), automatic);
     });
 
     test('автообрезка выключена — страница целиком', () {

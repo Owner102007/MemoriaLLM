@@ -80,44 +80,41 @@ void main() {
       final double gamma = (item['gamma']! as num).toDouble();
       final List<Object?> samples = item['samples']! as List<Object?>;
 
-      test(
-        '$name: сила $intensity, яркость $brightness, '
-        'контраст $contrast, гамма $gamma',
-        () {
-          final ReadingFilterPipeline pipeline = ReadingFilterPipeline(
-            filter: _filterByName(name),
-            intensity: intensity,
-            brightness: brightness,
-            contrast: contrast,
-            gamma: gamma,
+      test('$name: сила $intensity, яркость $brightness, '
+          'контраст $contrast, гамма $gamma', () {
+        final ReadingFilterPipeline pipeline = ReadingFilterPipeline(
+          filter: _filterByName(name),
+          intensity: intensity,
+          brightness: brightness,
+          contrast: contrast,
+          gamma: gamma,
+        );
+        for (final Object? raw in samples) {
+          final Map<String, Object?> sample = raw! as Map<String, Object?>;
+          final List<Object?> input = sample['in']! as List<Object?>;
+          final List<Object?> output = sample['out']! as List<Object?>;
+          final FilteredColor result = pipeline.apply(
+            (input[0]! as num).toDouble(),
+            (input[1]! as num).toDouble(),
+            (input[2]! as num).toDouble(),
           );
-          for (final Object? raw in samples) {
-            final Map<String, Object?> sample = raw! as Map<String, Object?>;
-            final List<Object?> input = sample['in']! as List<Object?>;
-            final List<Object?> output = sample['out']! as List<Object?>;
-            final FilteredColor result = pipeline.apply(
-              (input[0]! as num).toDouble(),
-              (input[1]! as num).toDouble(),
-              (input[2]! as num).toDouble(),
-            );
-            expect(
-              result.r,
-              closeTo((output[0]! as num).toDouble(), 1e-6),
-              reason: 'красный на $input',
-            );
-            expect(
-              result.g,
-              closeTo((output[1]! as num).toDouble(), 1e-6),
-              reason: 'зелёный на $input',
-            );
-            expect(
-              result.b,
-              closeTo((output[2]! as num).toDouble(), 1e-6),
-              reason: 'синий на $input',
-            );
-          }
-        },
-      );
+          expect(
+            result.r,
+            closeTo((output[0]! as num).toDouble(), 1e-6),
+            reason: 'красный на $input',
+          );
+          expect(
+            result.g,
+            closeTo((output[1]! as num).toDouble(), 1e-6),
+            reason: 'зелёный на $input',
+          );
+          expect(
+            result.b,
+            closeTo((output[2]! as num).toDouble(), 1e-6),
+            reason: 'синий на $input',
+          );
+        }
+      });
     }
   });
 
@@ -268,11 +265,7 @@ void main() {
         brightness: 0.9,
       );
       const FilteredColor source = FilteredColor(0.8, 0.5, 0.2);
-      final FilteredColor expected = sepia.apply(
-        source.r,
-        source.g,
-        source.b,
-      );
+      final FilteredColor expected = sepia.apply(source.r, source.g, source.b);
       final List<double> actual = await _throughEngine(
         sepia.colorMatrix(),
         source,

@@ -41,10 +41,7 @@ class ReaderController extends ChangeNotifier {
        _page = restorePage(position, document.pageCount) {
     _frames =
         frames ??
-        PageFrameSource(
-          document: document,
-          options: _cropOptions(_settings),
-        );
+        PageFrameSource(document: document, options: _cropOptions(_settings));
     _initialPage = _page;
     _fragment = position?.fragment ?? 0;
   }

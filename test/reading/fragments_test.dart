@@ -3,12 +3,7 @@ import 'package:memoria/domain/reading/columns.dart';
 import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reading.dart';
 
-const CropBox _content = CropBox(
-  left: 0.1,
-  top: 0.1,
-  right: 0.9,
-  bottom: 0.9,
-);
+const CropBox _content = CropBox(left: 0.1, top: 0.1, right: 0.9, bottom: 0.9);
 
 const List<ColumnBand> _twoColumns = <ColumnBand>[
   ColumnBand(left: 0.1, right: 0.45),
@@ -172,16 +167,8 @@ void main() {
 
     test('обратный переход возвращает примерно туда же', () {
       for (int i = 0; i < 3; i++) {
-        final int toHalf = remapFragment(
-          index: i,
-          oldCount: 3,
-          newCount: 2,
-        );
-        final int back = remapFragment(
-          index: toHalf,
-          oldCount: 2,
-          newCount: 3,
-        );
+        final int toHalf = remapFragment(index: i, oldCount: 3, newCount: 2);
+        final int back = remapFragment(index: toHalf, oldCount: 2, newCount: 3);
         expect((back - i).abs(), lessThanOrEqualTo(1));
       }
     });

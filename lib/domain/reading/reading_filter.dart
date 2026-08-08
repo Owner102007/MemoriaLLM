@@ -173,8 +173,7 @@ class ReadingFilterPipeline {
   /// Гамма нелинейна, а двойная инверсия картинок смотрит на насыщенность
   /// каждого пикселя — ни то, ни другое цветовой матрицей не выражается.
   bool get needsShader =>
-      safeGamma != 1 ||
-      (filter == ReadingFilter.invert && safeIntensity > 0);
+      safeGamma != 1 || (filter == ReadingFilter.invert && safeIntensity > 0);
 
   /// Сила фильтра, приведённая к допустимому диапазону.
   double get safeIntensity => _clamp(intensity, 0, 1);
@@ -368,17 +367,10 @@ _Linear _gammaApproximation(double gamma) {
 
 _Linear _contrastStep(double contrast) {
   final double shift = 0.5 - 0.5 * contrast;
-  return _Linear(<double>[
-    contrast,
-    0,
-    0,
-    0,
-    contrast,
-    0,
-    0,
-    0,
-    contrast,
-  ], <double>[shift, shift, shift]);
+  return _Linear(
+    <double>[contrast, 0, 0, 0, contrast, 0, 0, 0, contrast],
+    <double>[shift, shift, shift],
+  );
 }
 
 _Linear _filterStep(ReadingFilter filter, double intensity) {

@@ -190,10 +190,7 @@ class _CropEditorScreenState extends State<CropEditorScreen> {
                   aspectRatio: _aspect,
                   child: LayoutBuilder(
                     builder: (BuildContext context, BoxConstraints limits) {
-                      final Size size = Size(
-                        limits.maxWidth,
-                        limits.maxHeight,
-                      );
+                      final Size size = Size(limits.maxWidth, limits.maxHeight);
                       return Stack(
                         children: <Widget>[
                           Positioned.fill(
