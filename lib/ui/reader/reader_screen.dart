@@ -139,10 +139,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _flow = flow;
       _appliedBox = null;
     });
-    await widget.services.data.settings.write(
-      SettingsKeys.pageFlow,
-      flow.name,
-    );
+    await widget.services.data.settings.write(SettingsKeys.pageFlow, flow.name);
     if (flow == PageFlow.paged) {
       await _applyFrame();
     }

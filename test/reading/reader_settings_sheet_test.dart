@@ -209,18 +209,21 @@ void main() {
     build();
     await pumpSheet(tester);
 
-    await tester.drag(
-      find.byKey(const Key('reader-brightness')),
-      const Offset(-80, 0),
-    );
-    await tester.pump();
+    // Панель длиннее тестового экрана, и ползунки лежат ниже его края:
+    // без прокрутки жест уходит в пустоту, а тест падает так, будто
+    // сломан сам ползунок.
+    Future<void> slide(String key, Offset by) async {
+      final Finder finder = find.byKey(Key(key));
+      await tester.ensureVisible(finder);
+      await tester.pump();
+      await tester.drag(finder, by);
+      await tester.pump();
+    }
+
+    await slide('reader-brightness', const Offset(-80, 0));
     expect(controller.settings.brightness, lessThan(1));
 
-    await tester.drag(
-      find.byKey(const Key('reader-contrast')),
-      const Offset(60, 0),
-    );
-    await tester.pump();
+    await slide('reader-contrast', const Offset(60, 0));
     expect(controller.settings.contrast, greaterThan(1));
   });
 }
