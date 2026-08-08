@@ -105,20 +105,28 @@ void main() {
     expect(find.byKey(const Key('reader-filter-intensity')), findsNothing);
   });
 
-  testWidgets('автообрезку можно выключить', (WidgetTester tester) async {
+  testWidgets('автообрезка выключена по умолчанию и включается', (
+    WidgetTester tester,
+  ) async {
     build();
     await pumpSheet(tester);
 
-    expect(controller.settings.autoCrop, isTrue);
-    await tester.tap(find.byKey(const Key('reader-autocrop-switch')));
-    await tester.pump();
-
+    // Поля по умолчанию не режутся: страница показывается как свёрстана.
     expect(controller.settings.autoCrop, isFalse);
-    // Колонтитулы без обрезки настраивать нечего.
-    final SwitchListTile heads = tester.widget(
+    // Пока обрезки нет, настраивать колонтитулы нечего.
+    final SwitchListTile off = tester.widget(
       find.byKey(const Key('reader-runningheads-switch')),
     );
-    expect(heads.onChanged, isNull);
+    expect(off.onChanged, isNull);
+
+    await tester.tap(find.byKey(const Key('reader-autocrop-switch')));
+    await tester.pump();
+    expect(controller.settings.autoCrop, isTrue);
+
+    final SwitchListTile on = tester.widget(
+      find.byKey(const Key('reader-runningheads-switch')),
+    );
+    expect(on.onChanged, isNotNull);
   });
 
   testWidgets('ручная правка рамки открывается кнопкой', (

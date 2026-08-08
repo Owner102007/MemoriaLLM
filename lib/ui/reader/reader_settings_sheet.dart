@@ -102,7 +102,10 @@ class ReaderSettingsSheet extends StatelessWidget {
                     key: const Key('reader-autocrop-switch'),
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Обрезать белые поля'),
-                    subtitle: const Text('Страница занимает весь экран'),
+                    subtitle: const Text(
+                      'Страница займёт больше экрана, но её края будут '
+                      'подрезаны автоматически',
+                    ),
                     value: settings.autoCrop,
                     onChanged: (bool value) =>
                         unawaited(controller.setAutoCrop(value)),

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +15,7 @@ import '../../domain/settings/app_settings.dart';
 import 'crop_editor_screen.dart';
 import 'reader_scaffold.dart';
 import 'reader_settings_sheet.dart';
+import 'reader_sheet.dart';
 import 'reading_filter_layer.dart';
 
 /// Экран чтения.
@@ -56,9 +56,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   AppLifecycleListener? _lifecycle;
   ScreenOrientation _orientation = ScreenOrientation.portrait;
   ScreenOrientation _rotation = ScreenOrientation.portrait;
-  CropBox? _appliedBox;
-  int _appliedPage = 0;
-  bool _applying = false;
 
   @override
   void initState() {
@@ -135,14 +132,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (flow == _flow) {
       return;
     }
-    setState(() {
-      _flow = flow;
-      _appliedBox = null;
-    });
+    setState(() => _flow = flow);
     await widget.services.data.settings.write(SettingsKeys.pageFlow, flow.name);
-    if (flow == PageFlow.paged) {
-      await _applyFrame();
-    }
   }
 
   /// Смена режима отображения заодно поворачивает чтение.
@@ -167,7 +158,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final ReaderController? controller = _controller;
     _controller = null;
     if (controller != null) {
-      controller.removeListener(_onFrameChanged);
+      controller.removeListener(_onControllerChanged);
       unawaited(controller.close().then((_) => controller.dispose()));
     }
     super.dispose();
@@ -195,7 +186,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         controller.dispose();
         return;
       }
-      controller.addListener(_onFrameChanged);
+      controller.addListener(_onControllerChanged);
       unawaited(controller.loadFrame());
       setState(() {
         _controller = controller;
@@ -213,114 +204,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  /// Рамка или страница изменились — надо привести экран в соответствие.
-  ///
-  /// Проверка на «изменилось ли» обязательна: контроллер уведомляет и о
-  /// том, что дочиталось оглавление, а перескакивать при этом на начало
-  /// фрагмента значило бы дёргать страницу под руками у читателя.
-  void _onFrameChanged() {
-    final ReaderController? controller = _controller;
-    if (controller == null || _flow != PageFlow.paged) {
-      return;
+  void _onControllerChanged() {
+    if (mounted) {
+      setState(() {});
     }
-    final CropBox box = controller.fragmentBox;
-    if (box == _appliedBox && controller.page == _appliedPage) {
-      return;
-    }
-    unawaited(_applyFrame());
-  }
-
-  Future<void> _applyFrame({
-    Duration duration = const Duration(milliseconds: 200),
-  }) async {
-    final ReaderController? controller = _controller;
-    if (controller == null || _applying || !_viewer.isReady) {
-      return;
-    }
-    if (_flow != PageFlow.paged) {
-      return;
-    }
-    _applying = true;
-    controller.beginViewerNavigation();
-    try {
-      final CropBox box = controller.fragmentBox;
-      final int page = controller.page;
-      _appliedBox = box;
-      _appliedPage = page;
-      if (isSpreadMode(controller.settings.displayMode)) {
-        await _goToSpread(controller, page, duration);
-      } else {
-        await _viewer.goToRectInsidePage(
-          pageNumber: page,
-          rect: _pdfRect(page, box),
-          anchor: PdfPageAnchor.all,
-          duration: duration,
-        );
-      }
-    } on Object {
-      // Просмотрщик мог не успеть разложить страницы. Следующее движение
-      // читателя повторит попытку — ронять чтение из-за этого нельзя.
-      _appliedBox = null;
-    } finally {
-      controller.endViewerNavigation();
-      _applying = false;
-    }
-  }
-
-  /// Разворот: две соседние страницы в поле зрения.
-  ///
-  /// В раскладке разворотами страницы пары стоят вплотную, поэтому
-  /// разворот — это прямоугольник, накрывающий обе, без чёрной полосы
-  /// посередине. В режиме половины разворота от этого прямоугольника
-  /// берётся верхняя или нижняя полоса: строка идёт через обе страницы
-  /// сразу, и делить его по вертикали нельзя.
-  Future<void> _goToSpread(
-    ReaderController controller,
-    int page,
-    Duration duration,
-  ) async {
-    final List<int> pages = spreadPages(page, _viewer.pageCount);
-    final CropBox content = controller.contentBox;
-    Rect area = _viewer.calcRectForRectInsidePage(
-      pageNumber: pages.first,
-      rect: _pdfRect(pages.first, content),
-    );
-    for (final int other in pages.skip(1)) {
-      area = area.expandToInclude(
-        _viewer.calcRectForRectInsidePage(
-          pageNumber: other,
-          rect: _pdfRect(other, content),
-        ),
-      );
-    }
-    final CropBox fragment = controller.fragmentBox;
-    if (content.height > 0 && fragment != content) {
-      final double from = (fragment.top - content.top) / content.height;
-      final double to = (fragment.bottom - content.top) / content.height;
-      area = Rect.fromLTRB(
-        area.left,
-        area.top + area.height * from.clamp(0.0, 1.0),
-        area.right,
-        area.top + area.height * to.clamp(0.0, 1.0),
-      );
-    }
-    await _viewer.goToArea(
-      rect: area,
-      anchor: PdfPageAnchor.all,
-      duration: duration,
-    );
-  }
-
-  /// Переводит рамку из долей отображаемой страницы в координаты PDF.
-  PdfRect _pdfRect(int pageNumber, CropBox box) {
-    final PdfPage page = _viewer.pages[pageNumber - 1];
-    final Rect rect = Rect.fromLTRB(
-      box.left * page.width,
-      box.top * page.height,
-      box.right * page.width,
-      box.bottom * page.height,
-    );
-    return rect.toPdfRect(page: page);
   }
 
   Future<void> _goToPage(int page) async {
@@ -329,11 +216,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     await controller.goToPage(page);
-    if (_flow == PageFlow.paged) {
-      await _applyFrame();
-      return;
-    }
-    if (_viewer.isReady) {
+    if (_flow == PageFlow.continuous && _viewer.isReady) {
       await _viewer.goToPage(pageNumber: page);
     }
   }
@@ -477,64 +360,56 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return AnimatedBuilder(
           animation: controller,
           builder: (BuildContext context, Widget? child) {
-            return ReadingFilterLayer(filter: controller.filter, child: child!);
+            return ReadingFilterLayer(
+              filter: controller.filter,
+              // Лента строится один раз и передаётся мимо перестроений:
+              // пересоздавать просмотрщик на каждое уведомление значило бы
+              // терять место прокрутки под руками у читателя.
+              child: child ?? _buildSheet(context, controller, onTap),
+            );
           },
-          child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints limits) {
-              final Size size = Size(limits.maxWidth, limits.maxHeight);
-              return PdfViewer.file(
-                widget.book.filePath,
-                controller: _viewer,
-                initialPageNumber: controller.initialPage,
-                params: PdfViewerParams(
-                  // Фон под страницей — цвет темы, а не белый: белые поля
-                  // вокруг страницы ночью бьют в глаза сильнее самой
-                  // страницы.
-                  backgroundColor: Theme.of(context).colorScheme.surface,
-                  margin: _flow == PageFlow.paged ? 32 : 6,
-                  layoutPages: _flow != PageFlow.paged
-                      ? null
-                      : (isSpreadMode(controller.settings.displayMode)
-                            ? _layoutSpreads
-                            : _layoutSideBySide),
-                  pageDropShadow: null,
-                  enableKeyboardNavigation: true,
-                  // Обрезанный фрагмент занимает весь экран, а значит,
-                  // требует куда большего увеличения, чем страница
-                  // целиком. Восьмикратного потолка по умолчанию на трети
-                  // страницы уже не хватает.
-                  sizeDelegateProvider:
-                      const PdfViewerSizeDelegateProviderLegacy(maxScale: 24),
-                  onViewerReady:
-                      (
-                        PdfDocument document,
-                        PdfViewerController viewerController,
-                      ) {
-                        unawaited(_applyFrame(duration: Duration.zero));
-                      },
-                  onPageChanged: (int? page) {
-                    if (page != null) {
-                      controller.onPageChanged(page);
-                    }
-                  },
-                  onGeneralTap:
-                      (
-                        BuildContext context,
-                        PdfViewerController viewerController,
-                        PdfViewerGeneralTapHandlerDetails details,
-                      ) {
-                        // Панели переключает только простое нажатие.
-                        // Двойное нажатие — это масштаб, долгое —
-                        // выделение текста; отбирать их у просмотрщика
-                        // нельзя.
-                        if (details.type != PdfViewerGeneralTapType.tap ||
-                            details.tapOn == PdfViewerPart.selectedText) {
-                          return false;
-                        }
-                        _onTap(details.localPosition, size, onTap);
-                        return true;
-                      },
-                ),
+          child: _flow == PageFlow.continuous
+              ? _buildRibbon(context, controller, onTap)
+              : null,
+        );
+      },
+    );
+  }
+
+  /// Чтение по страницам: жёсткая раскладка, никакого зума.
+  ///
+  /// Лист вписывается в экран целиком, масштаб один и тот же на каждой
+  /// странице. Читатель не может ни увести страницу пальцем, ни поймать
+  /// случайный масштаб — а именно этого от читалки и ждут.
+  Widget _buildSheet(
+    BuildContext context,
+    ReaderController controller,
+    VoidCallback onTap,
+  ) {
+    final Color background = Theme.of(context).colorScheme.surface;
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints limits) {
+        final Size size = Size(limits.maxWidth, limits.maxHeight);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: (TapUpDetails details) =>
+              _onTap(details.localPosition, size, onTap),
+          child: PdfDocumentViewBuilder.file(
+            widget.book.filePath,
+            builder: (BuildContext context, PdfDocument? document) {
+              if (document == null) {
+                return ColoredBox(
+                  color: background,
+                  child: const SizedBox.expand(),
+                );
+              }
+              return ReaderSheet(
+                document: document,
+                pages: isSpreadMode(controller.settings.displayMode)
+                    ? spreadPages(controller.page, document.pages.length)
+                    : <int>[controller.page],
+                fragment: controller.fragmentBox,
+                background: background,
               );
             },
           ),
@@ -542,75 +417,51 @@ class _ReaderScreenState extends State<ReaderScreen> {
       },
     );
   }
-}
 
-/// Раскладка «страница за страницей»: страницы стоят в ряд.
-///
-/// Каждая страница получает столбец шириной с самую широкую страницу
-/// книги, поэтому при листании узкие страницы не прыгают влево-вправо.
-/// Соседние страницы разделены полем: при показе фрагмента экран заполнен
-/// не целиком, и в остаток должен попадать фон, а не край чужой страницы.
-PdfPageLayout _layoutSideBySide(List<PdfPage> pages, PdfViewerParams params) {
-  double widest = 0;
-  double tallest = 0;
-  for (final PdfPage page in pages) {
-    widest = math.max(widest, page.width);
-    tallest = math.max(tallest, page.height);
-  }
-  final double column = widest + params.margin;
-  final List<Rect> layouts = <Rect>[];
-  double x = params.margin;
-  for (final PdfPage page in pages) {
-    layouts.add(
-      Rect.fromLTWH(
-        x + (widest - page.width) / 2,
-        params.margin + (tallest - page.height) / 2,
-        page.width,
-        page.height,
+  /// Непрерывная лента: свободное чтение с зумом и прокруткой.
+  ///
+  /// Здесь читатель сам решает, что и как разглядывать, поэтому режимы
+  /// отображения в ленте не действуют — это другой способ читать.
+  Widget _buildRibbon(
+    BuildContext context,
+    ReaderController controller,
+    VoidCallback onTap,
+  ) {
+    return PdfViewer.file(
+      widget.book.filePath,
+      controller: _viewer,
+      initialPageNumber: controller.initialPage,
+      params: PdfViewerParams(
+        // Фон под страницей — цвет темы, а не белый: белые поля вокруг
+        // страницы ночью бьют в глаза сильнее самой страницы.
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        margin: 6,
+        pageDropShadow: null,
+        enableKeyboardNavigation: true,
+        onPageChanged: (int? page) {
+          if (page != null) {
+            controller.onPageChanged(page);
+          }
+        },
+        onGeneralTap:
+            (
+              BuildContext context,
+              PdfViewerController viewerController,
+              PdfViewerGeneralTapHandlerDetails details,
+            ) {
+              // Панели переключает только простое нажатие. Двойное — это
+              // масштаб, долгое — выделение текста; отбирать их у
+              // просмотрщика нельзя.
+              if (details.type != PdfViewerGeneralTapType.tap ||
+                  details.tapOn == PdfViewerPart.selectedText) {
+                return false;
+              }
+              onTap();
+              return true;
+            },
       ),
     );
-    x += column;
   }
-  return PdfPageLayout(
-    pageLayouts: layouts,
-    documentSize: Size(x, tallest + params.margin * 2),
-  );
-}
-
-/// Раскладка разворотами: страницы пары стоят вплотную.
-///
-/// Между страницами разворота не должно быть ничего: чёрная полоса
-/// посередине книги — это не переплёт, а дыра. Зазор остаётся только
-/// между разворотами, чтобы при показе одного не выглядывал соседний.
-PdfPageLayout _layoutSpreads(List<PdfPage> pages, PdfViewerParams params) {
-  double widest = 0;
-  double tallest = 0;
-  for (final PdfPage page in pages) {
-    widest = math.max(widest, page.width);
-    tallest = math.max(tallest, page.height);
-  }
-  final List<Rect> layouts = List<Rect>.filled(pages.length, Rect.zero);
-  double x = params.margin;
-  int page = 1;
-  while (page <= pages.length) {
-    final List<int> pair = spreadPages(page, pages.length);
-    for (final int number in pair) {
-      final PdfPage current = pages[number - 1];
-      layouts[number - 1] = Rect.fromLTWH(
-        x + (widest - current.width) / 2,
-        params.margin + (tallest - current.height) / 2,
-        current.width,
-        current.height,
-      );
-      x += widest;
-    }
-    x += params.margin;
-    page = pair.last + 1;
-  }
-  return PdfPageLayout(
-    pageLayouts: layouts,
-    documentSize: Size(x, tallest + params.margin * 2),
-  );
 }
 
 /// Экран «книга не открылась».

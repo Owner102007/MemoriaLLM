@@ -311,20 +311,23 @@ void main() {
       return controller;
     }
 
-    test('поля обрезаны, страница занимает экран целиком', () async {
+    test('по умолчанию показывается вся страница, с полями', () async {
+      // Читатель просил страницу такой, какой её свёрстали: обрезка —
+      // отдельная возможность, а не поведение по умолчанию.
       final ReaderController controller = await openFramed();
       expect(controller.frame, isNotNull);
-      expect(controller.contentBox.isValid, isTrue);
-      expect(controller.contentBox.width, lessThan(0.85));
-      expect(controller.fragmentBox, controller.contentBox);
+      expect(controller.contentBox, CropBox.full);
+      expect(controller.fragmentBox, CropBox.full);
       await controller.close();
       controller.dispose();
     });
 
-    test('без автообрезки показывается вся страница', () async {
+    test('включённая обрезка срезает поля', () async {
       final ReaderController controller = await openFramed();
-      await controller.setAutoCrop(false);
-      expect(controller.contentBox, CropBox.full);
+      await controller.setAutoCrop(true);
+      expect(controller.contentBox.isValid, isTrue);
+      expect(controller.contentBox.width, lessThan(0.85));
+      expect(controller.fragmentBox, controller.contentBox);
       await controller.close();
       controller.dispose();
     });
@@ -512,6 +515,7 @@ void main() {
 
     test('ручная рамка главнее автообрезки и снимается сбросом', () async {
       final ReaderController controller = await openFramed();
+      await controller.setAutoCrop(true);
       const CropBox manual = CropBox(
         left: 0.05,
         top: 0.05,

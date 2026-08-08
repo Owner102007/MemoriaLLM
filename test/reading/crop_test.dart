@@ -285,17 +285,17 @@ void main() {
       bottom: 0.9,
     );
 
-    test('по умолчанию — автообрезка', () {
-      expect(effectiveCrop(settings: base, automatic: automatic), automatic);
+    test('по умолчанию поля не режутся', () {
+      expect(effectiveCrop(settings: base, automatic: automatic), CropBox.full);
     });
 
-    test('автообрезка выключена — страница целиком', () {
+    test('с включённой обрезкой показывается содержимое', () {
       expect(
         effectiveCrop(
-          settings: base.copyWith(autoCrop: false),
+          settings: base.copyWith(autoCrop: true),
           automatic: automatic,
         ),
-        CropBox.full,
+        automatic,
       );
     });
 
@@ -318,7 +318,7 @@ void main() {
     test('испорченная автоматическая рамка не показывается', () {
       expect(
         effectiveCrop(
-          settings: base,
+          settings: base.copyWith(autoCrop: true),
           automatic: const CropBox(left: 1, top: 1, right: 0, bottom: 0),
         ),
         CropBox.full,

@@ -190,7 +190,7 @@ class BookReadingSettings {
     required this.bookId,
     required this.orientation,
     this.displayMode = PageDisplayMode.full,
-    this.autoCrop = true,
+    this.autoCrop = false,
     this.ignoreRunningHeads = true,
     this.manualCrop,
     this.filter = ReadingFilter.none,
@@ -210,6 +210,11 @@ class BookReadingSettings {
   final PageDisplayMode displayMode;
 
   /// Обрезать поля автоматически.
+  ///
+  /// По умолчанию выключено: страница показывается ровно такой, какой её
+  /// свёрстали, со всеми полями. Обрезка — отдельная возможность для
+  /// того, кто её осознанно захотел, а не поведение по умолчанию, из-за
+  /// которого книга каждый раз выглядит чуть иначе.
   final bool autoCrop;
 
   /// Не считать колонтитулы содержимым при автообрезке.
