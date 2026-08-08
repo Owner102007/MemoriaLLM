@@ -66,7 +66,9 @@ double defaultFilterIntensity(ReadingFilter filter) {
     case ReadingFilter.none:
       return 0;
     case ReadingFilter.nightRed:
-      return 0.9;
+      // Полный монохром режет глаз сильнее, чем помогает: половины силы
+      // хватает, чтобы страница стала красной, но осталась страницей.
+      return 0.5;
     case ReadingFilter.warm:
       return 0.6;
     case ReadingFilter.sepia:

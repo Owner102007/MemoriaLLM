@@ -190,7 +190,7 @@ void main() {
           expect(intensity, 0);
           continue;
         }
-        expect(intensity, greaterThan(0.5), reason: '$filter');
+        expect(intensity, greaterThanOrEqualTo(0.5), reason: '$filter');
       }
     });
 

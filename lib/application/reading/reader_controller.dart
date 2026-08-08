@@ -158,6 +158,13 @@ class ReaderController extends ChangeNotifier {
   /// Сколько фрагментов на текущей странице.
   int get fragmentCount => fragments.length;
 
+  /// Куда идёт чтение внутри страницы — вниз или вправо.
+  FragmentFlow get fragmentFlow => fragmentFlowFor(fragments);
+
+  /// В каком положении экрана этот режим имеет смысл.
+  ScreenOrientation get preferredOrientation =>
+      preferredOrientationFor(_settings.displayMode);
+
   /// Область страницы, которую надо показать сейчас.
   CropBox get fragmentBox {
     final List<CropBox> parts = fragments;
@@ -386,15 +393,28 @@ class ReaderController extends ChangeNotifier {
       _updateSettings(_settings.copyWith(gamma: value));
 
   /// Читатель повернул экран: настройки для новой ориентации свои.
+  ///
+  /// Своими остаются рамка, фильтр, яркость — то, что зависит от того,
+  /// как экран стоит. **Режим отображения переносится**: читатель выбрал
+  /// половину страницы, экран повернулся ради неё же, и обнаружить после
+  /// поворота обратно целую страницу было бы издевательством.
   Future<void> setOrientation(ScreenOrientation orientation) async {
     if (orientation == _settings.orientation || _closed) {
       return;
     }
     final int oldCount = fragmentCount;
     final int oldIndex = fragment;
+    final PageDisplayMode mode = _settings.displayMode;
     _settings = await _reading.settings(book.id, orientation);
     if (_closed) {
       return;
+    }
+    if (_settings.displayMode != mode) {
+      _settings = _settings.copyWith(displayMode: mode);
+      await _reading.saveSettings(_settings);
+      if (_closed) {
+        return;
+      }
     }
     _frames.options = _cropOptions(_settings);
     _fragment = remapFragment(

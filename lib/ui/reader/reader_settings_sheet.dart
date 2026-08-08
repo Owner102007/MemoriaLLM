@@ -14,12 +14,27 @@ class ReaderSettingsSheet extends StatelessWidget {
   /// Создаёт панель.
   const ReaderSettingsSheet({
     required this.controller,
+    required this.flow,
+    required this.onFlow,
+    required this.onDisplayMode,
     required this.onEditCrop,
     super.key,
   });
 
   /// Состояние книги.
   final ReaderController controller;
+
+  /// Как листается книга сейчас.
+  final PageFlow flow;
+
+  /// Сменить способ листания.
+  final ValueChanged<PageFlow> onFlow;
+
+  /// Сменить режим отображения.
+  ///
+  /// Режим меняет не панель, а экран: вместе с режимом поворачивается
+  /// чтение, а поворот — дело экрана, не панели.
+  final ValueChanged<PageDisplayMode> onDisplayMode;
 
   /// Открыть ручную правку рамки.
   final VoidCallback onEditCrop;
@@ -43,7 +58,17 @@ class ReaderSettingsSheet extends StatelessWidget {
                 children: <Widget>[
                   const _Title(text: 'Режим отображения'),
                   const SizedBox(height: 8),
-                  _ModeSelector(controller: controller),
+                  _ModeSelector(
+                    controller: controller,
+                    onDisplayMode: onDisplayMode,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Деление страницы увеличивает текст только на широком '
+                    'экране, поэтому чтение поворачивается само.',
+                    key: const Key('reader-mode-hint'),
+                    style: theme.textTheme.bodySmall,
+                  ),
                   if (controller.frame?.hasColumns ?? false) ...<Widget>[
                     const SizedBox(height: 6),
                     Text(
@@ -52,6 +77,25 @@ class ReaderSettingsSheet extends StatelessWidget {
                       style: theme.textTheme.bodySmall,
                     ),
                   ],
+                  const SizedBox(height: 16),
+                  const _Title(text: 'Листание'),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: <Widget>[
+                      for (final PageFlow value in PageFlow.values)
+                        ChoiceChip(
+                          key: Key('reader-flow-${value.name}'),
+                          label: Text(pageFlowName(value)),
+                          selected: flow == value,
+                          onSelected: (bool selected) {
+                            if (selected) {
+                              onFlow(value);
+                            }
+                          },
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 16),
                   const _Title(text: 'Поля'),
                   SwitchListTile(
@@ -160,9 +204,10 @@ class _Title extends StatelessWidget {
 }
 
 class _ModeSelector extends StatelessWidget {
-  const _ModeSelector({required this.controller});
+  const _ModeSelector({required this.controller, required this.onDisplayMode});
 
   final ReaderController controller;
+  final ValueChanged<PageDisplayMode> onDisplayMode;
 
   @override
   Widget build(BuildContext context) {
@@ -177,7 +222,7 @@ class _ModeSelector extends StatelessWidget {
             selected: controller.settings.displayMode == mode,
             onSelected: (bool selected) {
               if (selected) {
-                unawaited(controller.setDisplayMode(mode));
+                onDisplayMode(mode);
               }
             },
           ),
@@ -273,6 +318,18 @@ String displayModeName(PageDisplayMode mode) {
       return 'Треть';
     case PageDisplayMode.spread:
       return 'Разворот';
+    case PageDisplayMode.spreadHalf:
+      return 'Полразворота';
+  }
+}
+
+/// Человеческое название способа листания.
+String pageFlowName(PageFlow flow) {
+  switch (flow) {
+    case PageFlow.continuous:
+      return 'Лента';
+    case PageFlow.paged:
+      return 'По страницам';
   }
 }
 

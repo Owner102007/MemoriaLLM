@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
@@ -14,6 +16,8 @@ void main() {
   late FakeReadingRepository reading;
   late FakeReaderDocument document;
   late ReaderController controller;
+  PageFlow? pickedFlow;
+  PageDisplayMode? pickedMode;
 
   ReaderController build({Map<int, List<TextBox>>? boxes}) {
     document = FakeReaderDocument(
@@ -21,6 +25,8 @@ void main() {
       boxes: boxes ?? const <int, List<TextBox>>{},
     );
     reading = FakeReadingRepository();
+    pickedFlow = null;
+    pickedMode = null;
     return controller = ReaderController(
       book: fakeBook(pageCount: 6),
       document: document,
@@ -36,12 +42,19 @@ void main() {
   Future<void> pumpSheet(
     WidgetTester tester, {
     VoidCallback? onEditCrop,
+    PageFlow flow = PageFlow.paged,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: ReaderSettingsSheet(
             controller: controller,
+            flow: flow,
+            onFlow: (PageFlow value) => pickedFlow = value,
+            onDisplayMode: (PageDisplayMode mode) {
+              pickedMode = mode;
+              unawaited(controller.setDisplayMode(mode));
+            },
             onEditCrop: onEditCrop ?? () {},
           ),
         ),
@@ -59,6 +72,8 @@ void main() {
     await tester.tap(find.byKey(const Key('reader-mode-half')));
     await tester.pump();
 
+    // Режим меняет экран, а не панель: вместе с ним поворачивается чтение.
+    expect(pickedMode, PageDisplayMode.half);
     expect(controller.settings.displayMode, PageDisplayMode.half);
     final BookReadingSettings saved = await reading.settings(
       controller.book.id,
@@ -77,7 +92,7 @@ void main() {
     await tester.pump();
 
     expect(controller.settings.filter, ReadingFilter.nightRed);
-    expect(controller.settings.filterIntensity, greaterThan(0.5));
+    expect(controller.settings.filterIntensity, greaterThanOrEqualTo(0.5));
     // Ползунок силы появляется только когда есть чему быть сильным.
     expect(find.byKey(const Key('reader-filter-intensity')), findsOneWidget);
   });
@@ -166,6 +181,26 @@ void main() {
     await pumpSheet(tester);
 
     expect(find.byKey(const Key('reader-columns-hint')), findsOneWidget);
+  });
+
+  testWidgets('способ листания переехал в настройки', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('reader-flow-continuous')));
+    await tester.pump();
+
+    expect(pickedFlow, PageFlow.continuous);
+  });
+
+  testWidgets('сказано, зачем режимы поворачивают экран', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+    expect(find.byKey(const Key('reader-mode-hint')), findsOneWidget);
   });
 
   testWidgets('яркость, контраст и гамма меняются ползунками', (

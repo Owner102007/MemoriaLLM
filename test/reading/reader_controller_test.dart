@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -384,16 +385,74 @@ void main() {
       reopened.dispose();
     });
 
-    test('в альбомной ориентации настройки свои', () async {
+    test('поворот экрана не сбрасывает режим отображения', () async {
+      // Экран поворачивается ради самого режима: обнаружить после
+      // поворота целую страницу вместо выбранной половины — издевательство.
       final ReaderController controller = await openFramed();
       await controller.setDisplayMode(PageDisplayMode.half);
       await controller.setOrientation(ScreenOrientation.landscape);
 
       expect(controller.settings.orientation, ScreenOrientation.landscape);
-      expect(controller.settings.displayMode, PageDisplayMode.full);
+      expect(controller.settings.displayMode, PageDisplayMode.half);
 
       await controller.setOrientation(ScreenOrientation.portrait);
       expect(controller.settings.displayMode, PageDisplayMode.half);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('фильтр у каждой ориентации свой', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setFilter(ReadingFilter.nightRed);
+      await controller.setOrientation(ScreenOrientation.landscape);
+
+      expect(controller.settings.filter, ReadingFilter.none);
+      await controller.setOrientation(ScreenOrientation.portrait);
+      expect(controller.settings.filter, ReadingFilter.nightRed);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('режим сам просит нужное положение экрана', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.preferredOrientation, ScreenOrientation.portrait);
+
+      await controller.setDisplayMode(PageDisplayMode.half);
+      expect(controller.preferredOrientation, ScreenOrientation.landscape);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('направление листания следует делению страницы', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.fragmentFlow, FragmentFlow.horizontal);
+
+      await controller.setDisplayMode(PageDisplayMode.half);
+      expect(controller.fragmentFlow, FragmentFlow.vertical);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('на двухколоночной странице половина листается вбок', () async {
+      final ReaderController controller = await openFramed(twoColumns: true);
+      await controller.setDisplayMode(PageDisplayMode.half);
+      expect(controller.fragmentFlow, FragmentFlow.horizontal);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('половина разворота делит его по горизонтали', () async {
+      final ReaderController controller = await openFramed(twoColumns: true);
+      await controller.setDisplayMode(PageDisplayMode.spreadHalf);
+
+      expect(controller.fragmentCount, 2);
+      expect(controller.fragmentFlow, FragmentFlow.vertical);
+      // Колонки внутри страниц тут ни при чём: строка идёт через обе
+      // страницы разворота сразу.
+      expect(
+        controller.fragmentBox.width,
+        closeTo(controller.contentBox.width, 1e-9),
+      );
       await controller.close();
       controller.dispose();
     });

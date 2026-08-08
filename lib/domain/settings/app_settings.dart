@@ -6,6 +6,17 @@ abstract final class SettingsKeys {
   /// Выбранная тема оформления.
   static const String theme = 'ui.theme';
 
+  /// Положение экрана при чтении: `portrait` или `landscape`.
+  ///
+  /// Настройка устройства, а не книги: деление страницы на полосы
+  /// увеличивает текст только на широком экране, и приложение
+  /// поворачивается само, не полагаясь на автоповорот системы — тот у
+  /// многих выключен насовсем.
+  static const String readingRotation = 'ui.reading_rotation';
+
+  /// Как листается книга: `continuous` или `paged`.
+  static const String pageFlow = 'ui.page_flow';
+
   /// Идентификатор этого устройства для меток HLC.
   static const String nodeId = 'sync.node_id';
 

@@ -14,10 +14,18 @@
 /// | `half` | две полосы сверху вниз | две колонки |
 /// | `third` | три полосы | две колонки, каждая пополам |
 /// | `spread` | вся рамка (разворот собирается раскладкой) | вся рамка |
+/// | `spreadHalf` | две полосы сверху вниз | две полосы сверху вниз |
 ///
 /// На двухколоночной странице колонка **и есть** половина, поэтому режим
 /// трети даёт там половину колонки — следующий шаг увеличения. Делить
 /// колонку на три было бы уже не чтение, а разглядывание.
+///
+/// **Половина без поворота экрана ничего не даёт.** Полоса вдвое ниже
+/// страницы, но той же ширины, а в вертикальный экран телефона страница
+/// вписывается именно по ширине — увеличение выходит ровно единица.
+/// Кегль растёт только тогда, когда широкую и низкую полосу показывают на
+/// широком и низком экране, поэтому режимы деления неразрывно связаны с
+/// [preferredOrientationFor].
 library;
 
 import 'columns.dart';
@@ -47,6 +55,10 @@ List<CropBox> fragmentsFor({
     case PageDisplayMode.full:
     case PageDisplayMode.spread:
       return <CropBox>[content];
+    case PageDisplayMode.spreadHalf:
+      // Разворот делится только по горизонтали: колонки внутри страниц
+      // тут ни при чём, полоса идёт через обе страницы сразу.
+      return _rows(content, 2, overlap);
     case PageDisplayMode.half:
       if (twoColumns) {
         return <CropBox>[
@@ -91,10 +103,86 @@ int fragmentCountFor({
     case PageDisplayMode.spread:
       return 1;
     case PageDisplayMode.half:
+    case PageDisplayMode.spreadHalf:
       return 2;
     case PageDisplayMode.third:
       return twoColumns ? 4 : 3;
   }
+}
+
+/// Показывает ли режим сразу две страницы.
+bool isSpreadMode(PageDisplayMode mode) =>
+    mode == PageDisplayMode.spread || mode == PageDisplayMode.spreadHalf;
+
+/// Куда двигается читатель, переходя к следующему фрагменту.
+enum FragmentFlow {
+  /// Фрагменты идут сверху вниз: полосы страницы или разворота.
+  vertical,
+
+  /// Фрагменты идут слева направо: колонки, целые страницы, развороты.
+  horizontal,
+}
+
+/// Направление деления страницы.
+///
+/// По нему интерфейс решает, где ловить нажатие для перехода: читатель
+/// должен нажимать туда, где лежит следующий кусок текста, а не туда,
+/// где он лежал бы в какой-то другой книге. Направление берётся по
+/// первому переходу и держится всю страницу: зоны, меняющиеся под рукой
+/// на последнем фрагменте, — худшее, что можно сделать с листанием.
+FragmentFlow fragmentFlowFor(List<CropBox> fragments) {
+  if (fragments.length < 2) {
+    return FragmentFlow.horizontal;
+  }
+  final CropBox first = fragments[0];
+  final CropBox second = fragments[1];
+  final double down = second.top - first.top;
+  final double right = second.left - first.left;
+  return down.abs() >= right.abs()
+      ? FragmentFlow.vertical
+      : FragmentFlow.horizontal;
+}
+
+/// В каком положении экрана этот режим имеет смысл.
+///
+/// Деление страницы на полосы увеличивает текст только на широком и
+/// низком экране: см. пояснение в заголовке файла. Поэтому выбор режима
+/// сам поворачивает чтение, а не оставляет читателя гадать, почему
+/// «половина» выглядит как целая страница.
+ScreenOrientation preferredOrientationFor(PageDisplayMode mode) {
+  switch (mode) {
+    case PageDisplayMode.full:
+      return ScreenOrientation.portrait;
+    case PageDisplayMode.half:
+    case PageDisplayMode.third:
+    case PageDisplayMode.spread:
+    case PageDisplayMode.spreadHalf:
+      return ScreenOrientation.landscape;
+  }
+}
+
+/// Во сколько раз фрагмент крупнее на экране, чем страница целиком.
+///
+/// Обе величины — доли сторон: фрагмент и экран описываются отношением
+/// ширины к высоте, а масштаб считается вписыванием прямоугольника в
+/// прямоугольник. Функция существует ради одного вопроса, ради которого
+/// затевались режимы: **действительно ли текст стал крупнее**. Ответ
+/// «нет» — это ошибка, и её должен ловить тест, а не глаз читателя.
+double fragmentScale({
+  required double fragmentWidth,
+  required double fragmentHeight,
+  required double screenWidth,
+  required double screenHeight,
+}) {
+  if (fragmentWidth <= 0 ||
+      fragmentHeight <= 0 ||
+      screenWidth <= 0 ||
+      screenHeight <= 0) {
+    return 0;
+  }
+  final double byWidth = screenWidth / fragmentWidth;
+  final double byHeight = screenHeight / fragmentHeight;
+  return byWidth < byHeight ? byWidth : byHeight;
 }
 
 /// Куда попадает фрагмент [index] при смене числа фрагментов на странице.

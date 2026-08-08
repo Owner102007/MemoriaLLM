@@ -122,10 +122,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
             subtitle: controller.label,
             extraActions: widget.extraActions,
             onBack: () => Navigator.of(context).maybePop(),
-            onOutline: () {
-              unawaited(controller.loadOutline());
-              _scaffoldKey.currentState?.openDrawer();
-            },
             onSearch: () => _scaffoldKey.currentState?.openEndDrawer(),
           ),
           _BottomBar(
@@ -133,6 +129,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
             page: controller.page,
             pageCount: controller.pageCount,
             onPage: (int page) => unawaited(_goTo(page)),
+            onOutline: () {
+              unawaited(controller.loadOutline());
+              _scaffoldKey.currentState?.openDrawer();
+            },
           ),
         ],
       ),
@@ -147,7 +147,6 @@ class _TopBar extends StatelessWidget {
     required this.subtitle,
     required this.extraActions,
     required this.onBack,
-    required this.onOutline,
     required this.onSearch,
   });
 
@@ -156,7 +155,6 @@ class _TopBar extends StatelessWidget {
   final String subtitle;
   final List<Widget> extraActions;
   final VoidCallback onBack;
-  final VoidCallback onOutline;
   final VoidCallback onSearch;
 
   @override
@@ -202,12 +200,6 @@ class _TopBar extends StatelessWidget {
                 ),
                 ...extraActions,
                 IconButton(
-                  key: const Key('reader-outline-button'),
-                  icon: const Icon(Icons.list_alt_outlined),
-                  tooltip: 'Оглавление',
-                  onPressed: onOutline,
-                ),
-                IconButton(
                   key: const Key('reader-search-button'),
                   icon: const Icon(Icons.search),
                   tooltip: 'Поиск по книге',
@@ -228,12 +220,14 @@ class _BottomBar extends StatelessWidget {
     required this.page,
     required this.pageCount,
     required this.onPage,
+    required this.onOutline,
   });
 
   final bool visible;
   final int page;
   final int pageCount;
   final void Function(int page) onPage;
+  final VoidCallback onOutline;
 
   @override
   Widget build(BuildContext context) {
@@ -289,6 +283,15 @@ class _BottomBar extends StatelessWidget {
                     '${progressPercent(progressForPage(page, pageCount))}%',
                     key: const Key('reader-progress-percent'),
                     style: theme.textTheme.bodySmall,
+                  ),
+                  // Оглавление живёт рядом со шкалой прогресса: и то, и
+                  // другое отвечает на вопрос «где я в книге», а наверху
+                  // эта кнопка путалась с настройками.
+                  IconButton(
+                    key: const Key('reader-outline-button'),
+                    icon: const Icon(Icons.list_alt_outlined),
+                    tooltip: 'Оглавление',
+                    onPressed: onOutline,
                   ),
                 ],
               ),

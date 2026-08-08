@@ -193,5 +193,169 @@ void main() {
       expect(spreadPages(1, 0), <int>[1]);
       expect(spreadPages(1, 1), <int>[1]);
     });
+
+    test('половина разворота делит его по горизонтали', () {
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.spreadHalf,
+        columns: _twoColumns,
+      );
+      expect(parts.length, 2);
+      // Строка идёт через обе страницы сразу, поэтому колонки внутри
+      // страниц разворот не делят.
+      expect(parts.first.left, _content.left);
+      expect(parts.first.right, _content.right);
+      expect(parts.first.top, _content.top);
+      expect(parts.last.bottom, _content.bottom);
+      expect(parts.first.bottom, greaterThan(parts.last.top));
+    });
+
+    test('разворот и его половина показывают по две страницы', () {
+      expect(isSpreadMode(PageDisplayMode.spread), isTrue);
+      expect(isSpreadMode(PageDisplayMode.spreadHalf), isTrue);
+      expect(isSpreadMode(PageDisplayMode.half), isFalse);
+      expect(isSpreadMode(PageDisplayMode.full), isFalse);
+    });
+  });
+
+  group('направление листания', () {
+    test('полосы сверху вниз листаются сверху вниз', () {
+      for (final PageDisplayMode mode in <PageDisplayMode>[
+        PageDisplayMode.half,
+        PageDisplayMode.third,
+        PageDisplayMode.spreadHalf,
+      ]) {
+        expect(
+          fragmentFlowFor(fragmentsFor(content: _content, mode: mode)),
+          FragmentFlow.vertical,
+          reason: '$mode',
+        );
+      }
+    });
+
+    test('колонки листаются вбок', () {
+      expect(
+        fragmentFlowFor(
+          fragmentsFor(
+            content: _content,
+            mode: PageDisplayMode.half,
+            columns: _twoColumns,
+          ),
+        ),
+        FragmentFlow.horizontal,
+      );
+    });
+
+    test('одному фрагменту деваться некуда — листаем вбок', () {
+      for (final PageDisplayMode mode in <PageDisplayMode>[
+        PageDisplayMode.full,
+        PageDisplayMode.spread,
+      ]) {
+        expect(
+          fragmentFlowFor(fragmentsFor(content: _content, mode: mode)),
+          FragmentFlow.horizontal,
+          reason: '$mode',
+        );
+      }
+    });
+  });
+
+  group('положение экрана', () {
+    test('целая страница читается вертикально, деление — горизонтально', () {
+      expect(
+        preferredOrientationFor(PageDisplayMode.full),
+        ScreenOrientation.portrait,
+      );
+      for (final PageDisplayMode mode in <PageDisplayMode>[
+        PageDisplayMode.half,
+        PageDisplayMode.third,
+        PageDisplayMode.spread,
+        PageDisplayMode.spreadHalf,
+      ]) {
+        expect(
+          preferredOrientationFor(mode),
+          ScreenOrientation.landscape,
+          reason: '$mode',
+        );
+      }
+    });
+  });
+
+  group('ради чего всё затевалось: текст должен стать крупнее', () {
+    // Обрезанное содержимое страницы А4 и экран телефона 1080×2400.
+    const double pageWidth = 428;
+    const double pageHeight = 640;
+    const double screenShort = 1080;
+    const double screenLong = 2400;
+
+    double scale({
+      required double width,
+      required double height,
+      required bool landscape,
+    }) {
+      return fragmentScale(
+        fragmentWidth: width,
+        fragmentHeight: height,
+        screenWidth: landscape ? screenLong : screenShort,
+        screenHeight: landscape ? screenShort : screenLong,
+      );
+    }
+
+    final double wholeInPortrait = scale(
+      width: pageWidth,
+      height: pageHeight,
+      landscape: false,
+    );
+
+    test('половина на вертикальном экране не даёт ничего', () {
+      // Ровно то, на что наткнулся владелец: полоса вдвое ниже, но той же
+      // ширины, а страница вписывается в вертикальный экран по ширине.
+      final double halfInPortrait = scale(
+        width: pageWidth,
+        height: pageHeight / 2,
+        landscape: false,
+      );
+      expect(halfInPortrait, closeTo(wholeInPortrait, 1e-9));
+    });
+
+    test('половина на горизонтальном экране крупнее', () {
+      final double halfInLandscape = scale(
+        width: pageWidth,
+        height: pageHeight / 2,
+        landscape: true,
+      );
+      expect(halfInLandscape, greaterThan(wholeInPortrait));
+      expect(halfInLandscape / wholeInPortrait, greaterThan(1.3));
+    });
+
+    test('треть на горизонтальном экране крупнее вдвое', () {
+      final double thirdInLandscape = scale(
+        width: pageWidth,
+        height: pageHeight / 3,
+        landscape: true,
+      );
+      expect(thirdInLandscape / wholeInPortrait, greaterThan(1.9));
+    });
+
+    test('бессмысленные размеры дают ноль, а не бесконечность', () {
+      expect(
+        fragmentScale(
+          fragmentWidth: 0,
+          fragmentHeight: 10,
+          screenWidth: 100,
+          screenHeight: 100,
+        ),
+        0,
+      );
+      expect(
+        fragmentScale(
+          fragmentWidth: 10,
+          fragmentHeight: 10,
+          screenWidth: -1,
+          screenHeight: 100,
+        ),
+        0,
+      );
+    });
   });
 }

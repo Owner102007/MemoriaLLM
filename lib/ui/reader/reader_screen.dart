@@ -12,19 +12,11 @@ import '../../domain/library/book.dart';
 import '../../domain/reading/fragments.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
+import '../../domain/settings/app_settings.dart';
 import 'crop_editor_screen.dart';
 import 'reader_scaffold.dart';
 import 'reader_settings_sheet.dart';
 import 'reading_filter_layer.dart';
-
-/// Как листается книга.
-enum PageFlow {
-  /// Непрерывная лента страниц сверху вниз.
-  continuous,
-
-  /// Страница за страницей вбок — с читательской рамкой.
-  paged,
-}
 
 /// Экран чтения.
 ///
@@ -63,6 +55,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   PageFlow _flow = PageFlow.paged;
   AppLifecycleListener? _lifecycle;
   ScreenOrientation _orientation = ScreenOrientation.portrait;
+  ScreenOrientation _rotation = ScreenOrientation.portrait;
   CropBox? _appliedBox;
   int _appliedPage = 0;
   bool _applying = false;
@@ -81,12 +74,97 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onInactive: () => unawaited(_controller?.flush()),
       onDetach: () => unawaited(_controller?.flush()),
     );
+    unawaited(_restoreDeviceSettings());
     unawaited(_open());
+  }
+
+  /// Положение экрана и способ листания — настройки устройства, а не
+  /// книги: держать телефон боком читатель привыкает один раз.
+  Future<void> _restoreDeviceSettings() async {
+    final AppSettingsRepository settings = widget.services.data.settings;
+    final String? rotation = await settings.read(SettingsKeys.readingRotation);
+    final String? flow = await settings.read(SettingsKeys.pageFlow);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _rotation = rotation == ScreenOrientation.landscape.name
+          ? ScreenOrientation.landscape
+          : ScreenOrientation.portrait;
+      _flow = flow == PageFlow.continuous.name
+          ? PageFlow.continuous
+          : PageFlow.paged;
+    });
+    await _applyRotation();
+  }
+
+  /// Поворачивает экран сам, не спрашивая систему.
+  ///
+  /// Автоповорот у многих выключен насовсем, а без поворота деление
+  /// страницы на полосы не даёт ровным счётом ничего: полоса той же
+  /// ширины вписывается в вертикальный экран тем же масштабом, что и
+  /// целая страница. Принудительная ориентация сильнее пользовательской
+  /// блокировки — именно так поступают видеоплееры.
+  Future<void> _applyRotation() async {
+    await SystemChrome.setPreferredOrientations(
+      _rotation == ScreenOrientation.landscape
+          ? const <DeviceOrientation>[
+              DeviceOrientation.landscapeLeft,
+              DeviceOrientation.landscapeRight,
+            ]
+          : const <DeviceOrientation>[
+              DeviceOrientation.portraitUp,
+              DeviceOrientation.portraitDown,
+            ],
+    );
+  }
+
+  Future<void> _setRotation(ScreenOrientation rotation) async {
+    if (rotation == _rotation) {
+      return;
+    }
+    setState(() => _rotation = rotation);
+    await widget.services.data.settings.write(
+      SettingsKeys.readingRotation,
+      rotation.name,
+    );
+    await _applyRotation();
+  }
+
+  Future<void> _setFlow(PageFlow flow) async {
+    if (flow == _flow) {
+      return;
+    }
+    setState(() {
+      _flow = flow;
+      _appliedBox = null;
+    });
+    await widget.services.data.settings.write(
+      SettingsKeys.pageFlow,
+      flow.name,
+    );
+    if (flow == PageFlow.paged) {
+      await _applyFrame();
+    }
+  }
+
+  /// Смена режима отображения заодно поворачивает чтение.
+  ///
+  /// Без поворота режимы бессмысленны, и объяснять это читателю текстом
+  /// вместо действия — плохой размен.
+  Future<void> _setDisplayMode(PageDisplayMode mode) async {
+    final ReaderController? controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    await controller.setDisplayMode(mode);
+    await _setRotation(controller.preferredOrientation);
   }
 
   @override
   void dispose() {
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     _lifecycle?.dispose();
     _search?.dispose();
     final ReaderController? controller = _controller;
@@ -172,8 +250,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final int page = controller.page;
       _appliedBox = box;
       _appliedPage = page;
-      if (controller.settings.displayMode == PageDisplayMode.spread) {
-        await _goToSpread(page, box, duration);
+      if (isSpreadMode(controller.settings.displayMode)) {
+        await _goToSpread(controller, page, duration);
       } else {
         await _viewer.goToRectInsidePage(
           pageNumber: page,
@@ -192,22 +270,41 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  /// Разворот: две соседние страницы целиком в поле зрения.
+  /// Разворот: две соседние страницы в поле зрения.
   ///
-  /// В постраничной раскладке страницы уже стоят в ряд, поэтому разворот —
-  /// это просто прямоугольник, накрывающий обе.
-  Future<void> _goToSpread(int page, CropBox box, Duration duration) async {
+  /// В раскладке разворотами страницы пары стоят вплотную, поэтому
+  /// разворот — это прямоугольник, накрывающий обе, без чёрной полосы
+  /// посередине. В режиме половины разворота от этого прямоугольника
+  /// берётся верхняя или нижняя полоса: строка идёт через обе страницы
+  /// сразу, и делить его по вертикали нельзя.
+  Future<void> _goToSpread(
+    ReaderController controller,
+    int page,
+    Duration duration,
+  ) async {
     final List<int> pages = spreadPages(page, _viewer.pageCount);
+    final CropBox content = controller.contentBox;
     Rect area = _viewer.calcRectForRectInsidePage(
       pageNumber: pages.first,
-      rect: _pdfRect(pages.first, box),
+      rect: _pdfRect(pages.first, content),
     );
     for (final int other in pages.skip(1)) {
       area = area.expandToInclude(
         _viewer.calcRectForRectInsidePage(
           pageNumber: other,
-          rect: _pdfRect(other, box),
+          rect: _pdfRect(other, content),
         ),
+      );
+    }
+    final CropBox fragment = controller.fragmentBox;
+    if (content.height > 0 && fragment != content) {
+      final double from = (fragment.top - content.top) / content.height;
+      final double to = (fragment.bottom - content.top) / content.height;
+      area = Rect.fromLTRB(
+        area.left,
+        area.top + area.height * from.clamp(0.0, 1.0),
+        area.right,
+        area.top + area.height * to.clamp(0.0, 1.0),
       );
     }
     await _viewer.goToArea(
@@ -244,13 +341,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  /// Нажатие по странице: переход к соседнему фрагменту или панели.
+  ///
+  /// Зоны следуют направлению деления: полосы идут сверху вниз — значит
+  /// и нажимать надо сверху и снизу, там, где лежит следующий кусок
+  /// текста. Колонки, целые страницы и развороты листаются привычно,
+  /// слева и справа.
   void _onTap(Offset position, Size size, VoidCallback toggleChrome) {
     final ReaderController? controller = _controller;
-    if (controller == null || _flow != PageFlow.paged || size.width <= 0) {
+    if (controller == null || _flow != PageFlow.paged) {
       toggleChrome();
       return;
     }
-    final double share = position.dx / size.width;
+    final bool vertical = controller.fragmentFlow == FragmentFlow.vertical;
+    final double extent = vertical ? size.height : size.width;
+    if (extent <= 0) {
+      toggleChrome();
+      return;
+    }
+    final double share = (vertical ? position.dy : position.dx) / extent;
     if (share < _tapZone) {
       unawaited(controller.previousFragment());
       return;
@@ -274,6 +383,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       builder: (BuildContext context) {
         return ReaderSettingsSheet(
           controller: controller,
+          flow: _flow,
+          onFlow: (PageFlow value) => unawaited(_setFlow(value)),
+          onDisplayMode: (PageDisplayMode mode) =>
+              unawaited(_setDisplayMode(mode)),
           onEditCrop: () {
             Navigator.of(context).pop();
             unawaited(_editCrop());
@@ -339,24 +452,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onGoToPage: _goToPage,
       extraActions: <Widget>[
         IconButton(
-          key: const Key('reader-flow-button'),
+          key: const Key('reader-rotation-button'),
           icon: Icon(
-            _flow == PageFlow.continuous ? Icons.swap_vert : Icons.swap_horiz,
+            _rotation == ScreenOrientation.landscape
+                ? Icons.stay_current_landscape
+                : Icons.stay_current_portrait,
           ),
-          tooltip: _flow == PageFlow.continuous
-              ? 'Листать постранично, с рамкой'
-              : 'Листать лентой',
-          onPressed: () {
-            setState(() {
-              _flow = _flow == PageFlow.continuous
-                  ? PageFlow.paged
-                  : PageFlow.continuous;
-              _appliedBox = null;
-            });
-            if (_flow == PageFlow.paged) {
-              unawaited(_applyFrame());
-            }
-          },
+          tooltip: _rotation == ScreenOrientation.landscape
+              ? 'Читать вертикально'
+              : 'Читать горизонтально',
+          onPressed: () => unawaited(
+            _setRotation(
+              _rotation == ScreenOrientation.landscape
+                  ? ScreenOrientation.portrait
+                  : ScreenOrientation.landscape,
+            ),
+          ),
         ),
         IconButton(
           key: const Key('reader-settings-button'),
@@ -384,9 +495,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   // страницы.
                   backgroundColor: Theme.of(context).colorScheme.surface,
                   margin: _flow == PageFlow.paged ? 32 : 6,
-                  layoutPages: _flow == PageFlow.paged
-                      ? _layoutSideBySide
-                      : null,
+                  layoutPages: _flow != PageFlow.paged
+                      ? null
+                      : (isSpreadMode(controller.settings.displayMode)
+                            ? _layoutSpreads
+                            : _layoutSideBySide),
                   pageDropShadow: null,
                   enableKeyboardNavigation: true,
                   // Обрезанный фрагмент занимает весь экран, а значит,
@@ -460,6 +573,42 @@ PdfPageLayout _layoutSideBySide(List<PdfPage> pages, PdfViewerParams params) {
       ),
     );
     x += column;
+  }
+  return PdfPageLayout(
+    pageLayouts: layouts,
+    documentSize: Size(x, tallest + params.margin * 2),
+  );
+}
+
+/// Раскладка разворотами: страницы пары стоят вплотную.
+///
+/// Между страницами разворота не должно быть ничего: чёрная полоса
+/// посередине книги — это не переплёт, а дыра. Зазор остаётся только
+/// между разворотами, чтобы при показе одного не выглядывал соседний.
+PdfPageLayout _layoutSpreads(List<PdfPage> pages, PdfViewerParams params) {
+  double widest = 0;
+  double tallest = 0;
+  for (final PdfPage page in pages) {
+    widest = math.max(widest, page.width);
+    tallest = math.max(tallest, page.height);
+  }
+  final List<Rect> layouts = List<Rect>.filled(pages.length, Rect.zero);
+  double x = params.margin;
+  int page = 1;
+  while (page <= pages.length) {
+    final List<int> pair = spreadPages(page, pages.length);
+    for (final int number in pair) {
+      final PdfPage current = pages[number - 1];
+      layouts[number - 1] = Rect.fromLTWH(
+        x + (widest - current.width) / 2,
+        params.margin + (tallest - current.height) / 2,
+        current.width,
+        current.height,
+      );
+      x += widest;
+    }
+    x += params.margin;
+    page = pair.last + 1;
   }
   return PdfPageLayout(
     pageLayouts: layouts,
