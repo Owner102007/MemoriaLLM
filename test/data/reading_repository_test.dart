@@ -66,7 +66,8 @@ void main() {
 
     expect(settings.displayMode, PageDisplayMode.full);
     expect(settings.filter, ReadingFilter.none);
-    expect(settings.autoCrop, isTrue);
+    // Поля по умолчанию не режутся: страница показывается как свёрстана.
+    expect(settings.autoCrop, isFalse);
     expect(settings.manualCrop, isNull);
     expect(settings.brightness, 1);
   });
