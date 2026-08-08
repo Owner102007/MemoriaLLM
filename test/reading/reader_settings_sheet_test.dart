@@ -1,0 +1,191 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/application/reading/reader_controller.dart';
+import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/text_geometry.dart';
+import 'package:memoria/ui/reader/reader_settings_sheet.dart';
+
+import '../support/fake_reading.dart';
+
+/// Панель настроек проверяется на хранилище в памяти, а не на базе:
+/// живые запросы drift оставляют после себя таймер, а в widget-тестах
+/// время подменено, и тест падает на ровном месте (находка S3).
+void main() {
+  late FakeReadingRepository reading;
+  late FakeReaderDocument document;
+  late ReaderController controller;
+
+  ReaderController build({Map<int, List<TextBox>>? boxes}) {
+    document = FakeReaderDocument(
+      pages: List<String>.filled(6, 'текст'),
+      boxes: boxes ?? const <int, List<TextBox>>{},
+    );
+    reading = FakeReadingRepository();
+    return controller = ReaderController(
+      book: fakeBook(pageCount: 6),
+      document: document,
+      reading: reading,
+    );
+  }
+
+  tearDown(() async {
+    await controller.close();
+    controller.dispose();
+  });
+
+  Future<void> pumpSheet(
+    WidgetTester tester, {
+    VoidCallback? onEditCrop,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ReaderSettingsSheet(
+            controller: controller,
+            onEditCrop: onEditCrop ?? () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+  }
+
+  testWidgets('режим отображения переключается и запоминается', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('reader-mode-half')));
+    await tester.pump();
+
+    expect(controller.settings.displayMode, PageDisplayMode.half);
+    final BookReadingSettings saved = await reading.settings(
+      controller.book.id,
+      ScreenOrientation.portrait,
+    );
+    expect(saved.displayMode, PageDisplayMode.half);
+  });
+
+  testWidgets('выбранный фильтр сразу получает заметную силу', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('reader-filter-nightRed')));
+    await tester.pump();
+
+    expect(controller.settings.filter, ReadingFilter.nightRed);
+    expect(controller.settings.filterIntensity, greaterThan(0.5));
+    // Ползунок силы появляется только когда есть чему быть сильным.
+    expect(find.byKey(const Key('reader-filter-intensity')), findsOneWidget);
+  });
+
+  testWidgets('ползунка силы нет, пока нет фильтра', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+    expect(find.byKey(const Key('reader-filter-intensity')), findsNothing);
+  });
+
+  testWidgets('автообрезку можно выключить', (WidgetTester tester) async {
+    build();
+    await pumpSheet(tester);
+
+    expect(controller.settings.autoCrop, isTrue);
+    await tester.tap(find.byKey(const Key('reader-autocrop-switch')));
+    await tester.pump();
+
+    expect(controller.settings.autoCrop, isFalse);
+    // Колонтитулы без обрезки настраивать нечего.
+    final SwitchListTile heads = tester.widget(
+      find.byKey(const Key('reader-runningheads-switch')),
+    );
+    expect(heads.onChanged, isNull);
+  });
+
+  testWidgets('ручная правка рамки открывается кнопкой', (
+    WidgetTester tester,
+  ) async {
+    build();
+    bool asked = false;
+    await pumpSheet(tester, onEditCrop: () => asked = true);
+
+    await tester.tap(find.byKey(const Key('reader-edit-crop')));
+    await tester.pump();
+
+    expect(asked, isTrue);
+  });
+
+  testWidgets('кнопка сброса рамки появляется только при ручной рамке', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+    expect(find.byKey(const Key('reader-reset-crop')), findsNothing);
+
+    await controller.setManualCrop(
+      const CropBox(left: 0.2, top: 0.2, right: 0.8, bottom: 0.8),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('reader-reset-crop')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('reader-reset-crop')));
+    await tester.pump();
+    expect(controller.settings.manualCrop, isNull);
+  });
+
+  testWidgets('про двухколоночную страницу сказано прямо', (
+    WidgetTester tester,
+  ) async {
+    build(
+      boxes: <int, List<TextBox>>{
+        1: <TextBox>[
+          ...textBlock(
+            left: 0.08,
+            top: 0.1,
+            right: 0.46,
+            bottom: 0.9,
+            lines: 20,
+            charsPerLine: 15,
+          ),
+          ...textBlock(
+            left: 0.54,
+            top: 0.1,
+            right: 0.92,
+            bottom: 0.9,
+            lines: 20,
+            charsPerLine: 15,
+          ),
+        ],
+      },
+    );
+    await controller.loadFrame();
+    await pumpSheet(tester);
+
+    expect(find.byKey(const Key('reader-columns-hint')), findsOneWidget);
+  });
+
+  testWidgets('яркость, контраст и гамма меняются ползунками', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+
+    await tester.drag(
+      find.byKey(const Key('reader-brightness')),
+      const Offset(-80, 0),
+    );
+    await tester.pump();
+    expect(controller.settings.brightness, lessThan(1));
+
+    await tester.drag(
+      find.byKey(const Key('reader-contrast')),
+      const Offset(60, 0),
+    );
+    await tester.pump();
+    expect(controller.settings.contrast, greaterThan(1));
+  });
+}

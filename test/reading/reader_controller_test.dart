@@ -4,6 +4,7 @@ import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/text_geometry.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
@@ -254,6 +255,256 @@ void main() {
       controller.onPageChanged(50);
       expect(controller.label, '50 / 200');
       expect(controller.progress, closeTo(0.25, 1e-9));
+      await controller.close();
+      controller.dispose();
+    });
+  });
+
+  group('читательская рамка', () {
+    Future<ReaderController> openFramed({
+      int pages = 6,
+      bool twoColumns = false,
+      ScreenOrientation orientation = ScreenOrientation.portrait,
+    }) async {
+      final Book book = fakeBook(pageCount: pages);
+      await data.library.save(book);
+      final List<TextBox> page = twoColumns
+          ? <TextBox>[
+              ...textBlock(
+                left: 0.08,
+                top: 0.1,
+                right: 0.46,
+                bottom: 0.9,
+                lines: 20,
+                charsPerLine: 15,
+              ),
+              ...textBlock(
+                left: 0.54,
+                top: 0.1,
+                right: 0.92,
+                bottom: 0.9,
+                lines: 20,
+                charsPerLine: 15,
+              ),
+            ]
+          : textBlock(
+              left: 0.15,
+              top: 0.12,
+              right: 0.85,
+              bottom: 0.88,
+              lines: 14,
+              charsPerLine: 24,
+            );
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: List<String>.generate(pages, (int i) => 'страница ${i + 1}'),
+        boxes: <int, List<TextBox>>{
+          for (int i = 1; i <= pages; i++) i: page,
+        },
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: book,
+        opener: FakeDocumentOpener(document),
+        reading: data.reading,
+        orientation: orientation,
+        saveDelay: _saveDelay,
+      );
+      await controller.loadFrame();
+      return controller;
+    }
+
+    test('поля обрезаны, страница занимает экран целиком', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.frame, isNotNull);
+      expect(controller.contentBox.isValid, isTrue);
+      expect(controller.contentBox.width, lessThan(0.85));
+      expect(controller.fragmentBox, controller.contentBox);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('без автообрезки показывается вся страница', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setAutoCrop(false);
+      expect(controller.contentBox, CropBox.full);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('половина страницы вдвое ниже целой', () async {
+      final ReaderController controller = await openFramed();
+      final double whole = controller.fragmentBox.height;
+      await controller.setDisplayMode(PageDisplayMode.half);
+      expect(controller.fragmentCount, 2);
+      expect(whole / controller.fragmentBox.height, closeTo(2, 0.15));
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('на двухколоночной странице половина — это колонка', () async {
+      final ReaderController controller = await openFramed(twoColumns: true);
+      await controller.setDisplayMode(PageDisplayMode.half);
+      expect(controller.fragmentCount, 2);
+      // Колонка занимает всю высоту содержимого и половину ширины.
+      expect(
+        controller.fragmentBox.height,
+        closeTo(controller.contentBox.height, 1e-9),
+      );
+      expect(
+        controller.fragmentBox.width,
+        lessThan(controller.contentBox.width * 0.6),
+      );
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('смена режима не теряет место на странице', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setDisplayMode(PageDisplayMode.half);
+      await controller.nextFragment();
+      expect(controller.fragment, 1);
+
+      await controller.setDisplayMode(PageDisplayMode.third);
+      expect(controller.fragmentCount, 3);
+      expect(controller.fragment, 2, reason: 'низ страницы остался низом');
+      expect(controller.page, 1, reason: 'страница не сменилась');
+
+      await controller.setDisplayMode(PageDisplayMode.full);
+      expect(controller.fragment, 0);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('режим отображения переживает переоткрытие книги', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setDisplayMode(PageDisplayMode.third);
+      await controller.close();
+      controller.dispose();
+
+      final ReaderController reopened = await openFramed();
+      expect(reopened.settings.displayMode, PageDisplayMode.third);
+      await reopened.close();
+      reopened.dispose();
+    });
+
+    test('в альбомной ориентации настройки свои', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setDisplayMode(PageDisplayMode.half);
+      await controller.setOrientation(ScreenOrientation.landscape);
+
+      expect(controller.settings.orientation, ScreenOrientation.landscape);
+      expect(controller.settings.displayMode, PageDisplayMode.full);
+
+      await controller.setOrientation(ScreenOrientation.portrait);
+      expect(controller.settings.displayMode, PageDisplayMode.half);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('фрагменты листаются вперёд и переходят на страницу', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setDisplayMode(PageDisplayMode.half);
+
+      expect(await controller.nextFragment(), isTrue);
+      expect(controller.page, 1);
+      expect(controller.fragment, 1);
+
+      expect(await controller.nextFragment(), isTrue);
+      expect(controller.page, 2);
+      expect(controller.fragment, 0);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('назад читатель попадает в низ предыдущей страницы', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setDisplayMode(PageDisplayMode.half);
+      await controller.goToPage(3);
+
+      expect(await controller.previousFragment(), isTrue);
+      expect(controller.page, 2);
+      expect(controller.fragment, 1, reason: 'низ предыдущей страницы');
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('на краях книги листание упирается, а не ломается', () async {
+      final ReaderController controller = await openFramed(pages: 2);
+      await controller.setDisplayMode(PageDisplayMode.full);
+      expect(await controller.previousFragment(), isFalse);
+      expect(controller.page, 1);
+
+      await controller.goToPage(2);
+      expect(await controller.nextFragment(), isFalse);
+      expect(controller.page, 2);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('в базу пишется и страница, и фрагмент', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setDisplayMode(PageDisplayMode.third);
+      await controller.nextFragment();
+      await controller.flush();
+
+      final ReadingPosition saved = (await data.reading.position('book-read'))!;
+      expect(saved.page, 1);
+      expect(saved.fragment, 1);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('ручная рамка главнее автообрезки и снимается сбросом', () async {
+      final ReaderController controller = await openFramed();
+      const CropBox manual = CropBox(
+        left: 0.05,
+        top: 0.05,
+        right: 0.95,
+        bottom: 0.95,
+      );
+      await controller.setManualCrop(manual);
+      expect(controller.contentBox, manual);
+
+      await controller.setManualCrop(null);
+      expect(controller.contentBox, isNot(manual));
+      expect(controller.contentBox.isValid, isTrue);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('вывернутая ручная рамка не принимается', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setManualCrop(
+        const CropBox(left: 0.9, top: 0.9, right: 0.1, bottom: 0.1),
+      );
+      expect(controller.settings.manualCrop, isNull);
+      expect(controller.contentBox.isValid, isTrue);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('колонтитулы можно вернуть в содержимое', () async {
+      final ReaderController controller = await openFramed();
+      final CropBox before = controller.contentBox;
+      await controller.setIgnoreRunningHeads(false);
+      expect(controller.settings.ignoreRunningHeads, isFalse);
+      expect(controller.contentBox.isValid, isTrue);
+      // Рамка пересчитана заново, а не осталась от прошлых настроек.
+      expect(controller.frame, isNotNull);
+      expect(before.isValid, isTrue);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('светофильтр собирается из настроек книги', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.filter.isIdentity, isTrue);
+
+      await controller.setFilter(ReadingFilter.nightRed);
+      expect(controller.filter.filter, ReadingFilter.nightRed);
+      expect(controller.filter.isIdentity, isFalse);
+
+      await controller.setGamma(1.4);
+      expect(controller.filter.needsShader, isTrue);
       await controller.close();
       controller.dispose();
     });

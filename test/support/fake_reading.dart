@@ -4,6 +4,7 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/text_geometry.dart';
 
 /// Документ-заглушка: страницы заданы списком строк.
 ///
@@ -18,6 +19,7 @@ class FakeReaderDocument implements ReaderDocument {
     this.sourceName = 'fake.pdf',
     this.pageWidth = 595,
     this.pageHeight = 842,
+    this.boxes = const <int, List<TextBox>>{},
   });
 
   /// Документ из [count] пустых страниц.
@@ -31,6 +33,9 @@ class FakeReaderDocument implements ReaderDocument {
   /// Оглавление.
   final List<OutlineEntry> outlineNodes;
 
+  /// Прямоугольники символов по страницам. Пустая страница — «нет текста».
+  final Map<int, List<TextBox>> boxes;
+
   @override
   final String sourceName;
 
@@ -43,6 +48,13 @@ class FakeReaderDocument implements ReaderDocument {
   /// Сколько раз читали текст каждой страницы — по этому счётчику видно,
   /// не перечитывает ли поиск одно и то же.
   final Map<int, int> textReads = <int, int>{};
+
+  /// Сколько раз спрашивали прямоугольники символов: по нему видно, что
+  /// рамка страницы считается один раз, а не в каждом кадре.
+  final Map<int, int> boxReads = <int, int>{};
+
+  /// Сколько раз рисовали страницу.
+  final Map<int, int> renders = <int, int>{};
 
   /// Закрыт ли документ.
   bool closed = false;
@@ -64,6 +76,12 @@ class FakeReaderDocument implements ReaderDocument {
   }
 
   @override
+  Future<List<TextBox>> pageTextBoxes(int pageNumber) async {
+    boxReads[pageNumber] = (boxReads[pageNumber] ?? 0) + 1;
+    return boxes[pageNumber] ?? const <TextBox>[];
+  }
+
+  @override
   Future<List<OutlineEntry>> outline() async {
     if (failOutline) {
       throw StateError('оглавление испорчено');
@@ -77,6 +95,7 @@ class FakeReaderDocument implements ReaderDocument {
     required int width,
     required int height,
   }) async {
+    renders[pageNumber] = (renders[pageNumber] ?? 0) + 1;
     return PageRaster(
       width: width,
       height: height,
@@ -166,6 +185,39 @@ class FakeBookFilePicker implements BookFilePicker {
 
   @override
   Future<PickedFile?> pickPdf() async => result;
+}
+
+/// Прямоугольники символов ровного текстового блока.
+///
+/// Блок занимает прямоугольник [left]…[right] по горизонтали и [top]…
+/// [bottom] по вертикали, в нём [lines] строк по [charsPerLine] символов.
+/// Высота символа — 60 % шага строки, так что между строками остаётся
+/// просвет, как в настоящей вёрстке: без него группировка строк не
+/// проверялась бы вовсе.
+List<TextBox> textBlock({
+  double left = 0.1,
+  double top = 0.1,
+  double right = 0.9,
+  double bottom = 0.9,
+  int lines = 10,
+  int charsPerLine = 20,
+}) {
+  if (lines < 1 || charsPerLine < 1) {
+    return const <TextBox>[];
+  }
+  final double step = (bottom - top) / lines;
+  final double glyph = step * 0.6;
+  final double charWidth = (right - left) / charsPerLine;
+  return <TextBox>[
+    for (int line = 0; line < lines; line++)
+      for (int i = 0; i < charsPerLine; i++)
+        TextBox(
+          left: left + i * charWidth,
+          top: top + line * step,
+          right: left + i * charWidth + charWidth * 0.9,
+          bottom: top + line * step + glyph,
+        ),
+  ];
 }
 
 /// Книга-заготовка для тестов чтения.

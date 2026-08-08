@@ -1,8 +1,13 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/document_search.dart';
+import 'package:memoria/application/reading/page_frames.dart';
+import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/text_geometry.dart';
 import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
 import 'package:pdfrx/pdfrx.dart' show pdfrxInitialize;
@@ -398,6 +403,149 @@ void main() {
       await search.start('что угодно');
       expect(search.isEmptyResult, isTrue);
       expect(search.scannedPages, 2);
+    });
+  });
+
+  group('читательская рамка на корпусе', () {
+    _readable.forEach((String name, int pages) {
+      test('$name: рамка не пустая и не вывернутая', () async {
+        final ReaderDocument document = await open(name);
+        final PageFrameSource frames = PageFrameSource(document: document);
+        // Шести страниц довольно: дальше повторяется та же вёрстка,
+        // а тысяча страниц превратила бы прогон в получасовой.
+        final int limit = math.min(document.pageCount, 6);
+
+        for (int page = 1; page <= limit; page++) {
+          final PageFrame frame = await frames.frameFor(page);
+          final String where = '$name, страница $page';
+
+          expect(frame.content.isValid, isTrue, reason: 'рамка: $where');
+          expect(frame.content.width, greaterThan(0.05), reason: where);
+          expect(frame.content.height, greaterThan(0.05), reason: where);
+          expect(frame.columns, isNotEmpty, reason: 'колонки: $where');
+
+          // Ни один режим не должен давать пустой или вывернутый фрагмент:
+          // это чёрный экран вместо книги.
+          for (final PageDisplayMode mode in PageDisplayMode.values) {
+            final List<CropBox> parts = fragmentsFor(
+              content: frame.content,
+              mode: mode,
+              columns: frame.columns,
+            );
+            expect(parts, isNotEmpty, reason: '$mode: $where');
+            expect(
+              parts.length,
+              fragmentCountFor(
+                mode: mode,
+                columnCount: frame.columns.length,
+              ),
+              reason: '$mode: $where',
+            );
+            for (final CropBox part in parts) {
+              expect(part.isValid, isTrue, reason: '$mode: $where');
+              expect(
+                part.left,
+                greaterThanOrEqualTo(frame.content.left - 1e-9),
+              );
+              expect(
+                part.right,
+                lessThanOrEqualTo(frame.content.right + 1e-9),
+              );
+            }
+          }
+        }
+      }, timeout: const Timeout(Duration(minutes: 3)));
+    });
+
+    test('обычная книга: поля обрезаются по тексту', () async {
+      final ReaderDocument document = await open('basic_text.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final PageFrame frame = await frames.frameFor(1);
+
+      expect(frame.fromText, isTrue, reason: 'текстовый слой есть');
+      expect(frame.content.width, lessThan(0.8), reason: 'поля срезаны');
+      expect(frame.hasColumns, isFalse);
+    });
+
+    test('ни один символ не остаётся за рамкой', () async {
+      final ReaderDocument document = await open('basic_text.pdf');
+      final List<TextBox> boxes = await document.pageTextBoxes(1);
+      expect(boxes, isNotEmpty);
+
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final CropBox content = (await frames.frameFor(1)).content;
+      for (final TextBox box in boxes) {
+        expect(box.left, greaterThanOrEqualTo(content.left));
+        expect(box.right, lessThanOrEqualTo(content.right));
+        expect(box.top, greaterThanOrEqualTo(content.top));
+        expect(box.bottom, lessThanOrEqualTo(content.bottom));
+      }
+    });
+
+    test('двухколоночная статья делится по колонкам', () async {
+      final ReaderDocument document = await open('two_columns.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final PageFrame frame = await frames.frameFor(1);
+
+      expect(frame.hasColumns, isTrue, reason: 'колонки не найдены');
+      expect(frame.columns.length, 2);
+      expect(
+        frame.columns.last.left - frame.columns.first.right,
+        greaterThan(0.05),
+        reason: 'между колонками обязан быть просвет',
+      );
+
+      final List<CropBox> halves = fragmentsFor(
+        content: frame.content,
+        mode: PageDisplayMode.half,
+        columns: frame.columns,
+      );
+      // Половина двухколоночной страницы — колонка, а не верх страницы.
+      expect(halves.first.height, closeTo(frame.content.height, 1e-9));
+      expect(halves.first.width, lessThan(frame.content.width * 0.6));
+    });
+
+    test('скан без текста разбирается по пикселям', () async {
+      final ReaderDocument document = await open('scan_no_text.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final PageFrame frame = await frames.frameFor(1);
+
+      expect(frame.fromText, isFalse);
+      expect(frame.content.isValid, isTrue);
+      expect(frame.content.width, lessThan(0.95), reason: 'поля скана срезаны');
+    });
+
+    test('прямоугольники символов приходят в долях страницы', () async {
+      final ReaderDocument document = await open('basic_text.pdf');
+      final List<TextBox> boxes = await document.pageTextBoxes(1);
+      for (final TextBox box in boxes) {
+        expect(box.isValid, isTrue, reason: '$box');
+      }
+      // Пробелы отброшены: иначе концевые пробелы строк растянули бы
+      // рамку до самого края поля.
+      final String text = await document.pageText(1);
+      expect(boxes.length, lessThan(text.length));
+    });
+
+    test('повёрнутые страницы: рамка в координатах читателя', () async {
+      final ReaderDocument document = await open('rotated_pages.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      for (int page = 1; page <= document.pageCount; page++) {
+        final PageFrame frame = await frames.frameFor(page);
+        expect(frame.content.isValid, isTrue, reason: 'страница $page');
+      }
+
+      final List<TextBox> boxes = await document.pageTextBoxes(2);
+      final PageGeometry geometry = document.geometry(2);
+      expect(geometry.isLandscape, isTrue);
+      if (boxes.isNotEmpty) {
+        // Доли считаются от повёрнутой страницы: иначе на альбомной
+        // странице рамка вылезла бы за её край.
+        for (final TextBox box in boxes) {
+          expect(box.right, lessThanOrEqualTo(1));
+          expect(box.bottom, lessThanOrEqualTo(1));
+        }
+      }
     });
   });
 }

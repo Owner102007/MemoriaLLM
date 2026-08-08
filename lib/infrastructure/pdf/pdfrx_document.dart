@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:pdfrx/pdfrx.dart';
 
 import '../../domain/reading/reader_document.dart';
+import '../../domain/reading/text_geometry.dart';
 
 /// Открывает PDF движком PDFium через `pdfrx`.
 ///
@@ -97,6 +99,55 @@ class PdfrxReaderDocument implements ReaderDocument {
   }
 
   @override
+  Future<List<TextBox>> pageTextBoxes(int pageNumber) async {
+    final PdfPage page = _pageAt(pageNumber);
+    final PdfPageRawText? raw = await page.loadText();
+    if (raw == null) {
+      return const <TextBox>[];
+    }
+    final List<PdfRect> rects = raw.charRects;
+    if (rects.isEmpty) {
+      return const <TextBox>[];
+    }
+    final List<int> codes = _alignedCodes(raw.fullText, rects.length);
+    final double width = page.width;
+    final double height = page.height;
+    if (width <= 0 || height <= 0) {
+      return const <TextBox>[];
+    }
+
+    final List<TextBox> boxes = <TextBox>[];
+    for (int i = 0; i < rects.length; i++) {
+      if (i < codes.length && _isBlank(codes[i])) {
+        continue;
+      }
+      final PdfRect rect = rects[i];
+      if (rect.isEmpty) {
+        continue;
+      }
+      // Координаты символов лежат в неповёрнутом пространстве страницы
+      // и снизу вверх; `toRect` разворачивает их в то, что видит читатель.
+      final Rect display = rect.toRect(page: page);
+      final TextBox box = TextBox(
+        left: (display.left / width).clamp(0.0, 1.0),
+        top: (display.top / height).clamp(0.0, 1.0),
+        right: (display.right / width).clamp(0.0, 1.0),
+        bottom: (display.bottom / height).clamp(0.0, 1.0),
+      );
+      if (!box.isValid) {
+        continue;
+      }
+      // Символ размером в треть страницы — это не буквица, а мусор из
+      // сломанного шрифта. Такой прямоугольник растянул бы рамку на всё.
+      if (box.height > 0.3 || box.width > 0.5) {
+        continue;
+      }
+      boxes.add(box);
+    }
+    return boxes;
+  }
+
+  @override
   Future<List<OutlineEntry>> outline() async {
     // Оглавление читается один раз: панель открывают и закрывают часто,
     // а дерево от этого не меняется.
@@ -160,6 +211,51 @@ class PdfrxReaderDocument implements ReaderDocument {
           children: _convertOutline(node.children),
         ),
     ];
+  }
+
+  /// Коды символов, выровненные с прямоугольниками один к одному.
+  ///
+  /// PDFium отдаёт по прямоугольнику на символ, а текст приходит строкой:
+  /// символ вне основной плоскости Юникода занимает в ней две единицы, и
+  /// прямое обращение по индексу после первого же такого символа поедет.
+  /// Поэтому берётся та разбивка, длина которой сошлась с числом
+  /// прямоугольников; если не сошлась ни одна, пробелы просто не
+  /// отфильтровываются — рамка получится чуть шире, но не поедет.
+  List<int> _alignedCodes(String text, int expected) {
+    final List<int> runes = text.runes.toList();
+    if (runes.length == expected) {
+      return runes;
+    }
+    if (text.length == expected) {
+      return text.codeUnits;
+    }
+    return const <int>[];
+  }
+
+  bool _isBlank(int code) {
+    switch (code) {
+      case 0x09:
+      case 0x0A:
+      case 0x0B:
+      case 0x0C:
+      case 0x0D:
+      case 0x20:
+      case 0x85:
+      case 0xA0:
+      case 0x1680:
+      case 0x2028:
+      case 0x2029:
+      case 0x202F:
+      case 0x205F:
+      case 0x2060:
+      case 0x3000:
+      case 0xFEFF:
+      case 0xFFFE:
+      case 0xFFFF:
+        return true;
+      default:
+        return (code >= 0x2000 && code <= 0x200B) || code == 0;
+    }
   }
 
   int? _pageOfDest(PdfDest? dest) {
