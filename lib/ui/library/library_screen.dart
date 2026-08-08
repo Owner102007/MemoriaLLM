@@ -104,8 +104,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 book: book,
                 reading: widget.services.data.reading,
                 onTap: () => unawaited(_openBook(book)),
-                onRemove: () =>
-                    widget.services.data.library.delete(book.id),
+                onRemove: () => widget.services.data.library.delete(book.id),
               );
             },
           );
@@ -192,24 +191,22 @@ class _BookTile extends StatelessWidget {
       title: Text(book.title, maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: StreamBuilder<ReadingPosition?>(
         stream: reading.watchPosition(book.id),
-        builder: (
-          BuildContext context,
-          AsyncSnapshot<ReadingPosition?> snapshot,
-        ) {
-          final ReadingPosition? position = snapshot.data;
-          final int pages = book.pageCount ?? 0;
-          final List<String> parts = <String>[
-            if (pages > 0) 'страниц: $pages',
-            if (position != null && pages > 0)
-              'остановились на ${position.page} '
-                  '(${progressPercent(position.progress)}%)',
-            if (book.hasTextLayer == false) 'скан без текстового слоя',
-          ];
-          return Text(
-            parts.isEmpty ? 'ещё не открывали' : parts.join(' · '),
-            style: theme.textTheme.bodySmall,
-          );
-        },
+        builder:
+            (BuildContext context, AsyncSnapshot<ReadingPosition?> snapshot) {
+              final ReadingPosition? position = snapshot.data;
+              final int pages = book.pageCount ?? 0;
+              final List<String> parts = <String>[
+                if (pages > 0) 'страниц: $pages',
+                if (position != null && pages > 0)
+                  'остановились на ${position.page} '
+                      '(${progressPercent(position.progress)}%)',
+                if (book.hasTextLayer == false) 'скан без текстового слоя',
+              ];
+              return Text(
+                parts.isEmpty ? 'ещё не открывали' : parts.join(' · '),
+                style: theme.textTheme.bodySmall,
+              );
+            },
       ),
       trailing: IconButton(
         key: Key('library-remove-${book.id}'),

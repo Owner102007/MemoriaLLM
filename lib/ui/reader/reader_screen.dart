@@ -143,9 +143,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         IconButton(
           key: const Key('reader-flow-button'),
           icon: Icon(
-            _flow == PageFlow.continuous
-                ? Icons.swap_vert
-                : Icons.swap_horiz,
+            _flow == PageFlow.continuous ? Icons.swap_vert : Icons.swap_horiz,
           ),
           tooltip: _flow == PageFlow.continuous
               ? 'Листать постранично'

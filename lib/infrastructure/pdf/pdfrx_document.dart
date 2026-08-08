@@ -58,11 +58,7 @@ class PdfrxDocumentOpener implements DocumentOpener {
         cause: error,
       );
     } on PdfException catch (error) {
-      throw DocumentOpenException(
-        DocumentProblem.damaged,
-        path,
-        cause: error,
-      );
+      throw DocumentOpenException(DocumentProblem.damaged, path, cause: error);
     } on Exception catch (error) {
       throw DocumentOpenException(DocumentProblem.unknown, path, cause: error);
     }

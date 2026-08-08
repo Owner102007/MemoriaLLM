@@ -147,11 +147,7 @@ class ReaderController extends ChangeNotifier {
     }
     _dirty = false;
     await _reading.savePosition(
-      positionForPage(
-        bookId: book.id,
-        page: _page,
-        pageCount: pageCount,
-      ),
+      positionForPage(bookId: book.id, page: _page, pageCount: pageCount),
     );
   }
 

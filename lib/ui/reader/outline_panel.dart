@@ -126,10 +126,7 @@ class _OutlinePanelState extends State<OutlinePanel> {
           key: Key('outline-item-${item.id}'),
           dense: true,
           selected: isCurrent,
-          contentPadding: EdgeInsets.only(
-            left: 16 + item.depth * 16,
-            right: 8,
-          ),
+          contentPadding: EdgeInsets.only(left: 16 + item.depth * 16, right: 8),
           leading: item.hasChildren
               ? IconButton(
                   key: Key('outline-toggle-${item.id}'),
@@ -154,10 +151,7 @@ class _OutlinePanelState extends State<OutlinePanel> {
           ),
           trailing: item.pageNumber == null
               ? null
-              : Text(
-                  '${item.pageNumber}',
-                  style: theme.textTheme.bodySmall,
-                ),
+              : Text('${item.pageNumber}', style: theme.textTheme.bodySmall),
           onTap: item.isNavigable
               ? () => widget.onSelect(item.pageNumber!)
               : null,

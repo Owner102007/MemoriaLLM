@@ -84,20 +84,14 @@ void main() {
     });
 
     test('позиция возвращает туда, где остановились', () {
-      const ReadingPosition position = ReadingPosition(
-        bookId: 'b',
-        page: 42,
-      );
+      const ReadingPosition position = ReadingPosition(bookId: 'b', page: 42);
       expect(restorePage(position, 100), 42);
     });
 
     test('позиция за краем прижимается к концу, а не к началу', () {
       // Книгу заменили редакцией покороче. Потерять место в конце
       // обиднее всего, поэтому открываем последнюю страницу.
-      const ReadingPosition position = ReadingPosition(
-        bookId: 'b',
-        page: 900,
-      );
+      const ReadingPosition position = ReadingPosition(bookId: 'b', page: 900);
       expect(restorePage(position, 100), 100);
     });
   });

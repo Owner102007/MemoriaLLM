@@ -42,8 +42,7 @@ double progressForPage(int page, int pageCount, {double offset = 0}) {
     return 0;
   }
   final int safePage = clampPage(page, pageCount);
-  final double safeOffset =
-      offset.isFinite ? offset.clamp(0.0, 1.0) : 0.0;
+  final double safeOffset = offset.isFinite ? offset.clamp(0.0, 1.0) : 0.0;
   final double value = (safePage + safeOffset) / pageCount;
   return value > 1 ? 1 : value;
 }

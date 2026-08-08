@@ -31,10 +31,10 @@ void main() {
   group('flattenOutline', () {
     test('свёрнутое дерево показывает только верхний уровень', () {
       final List<FlatOutlineEntry> items = flattenOutline(_nested);
-      expect(
-        items.map((FlatOutlineEntry e) => e.title),
-        <String>['Часть I', 'Часть II'],
-      );
+      expect(items.map((FlatOutlineEntry e) => e.title), <String>[
+        'Часть I',
+        'Часть II',
+      ]);
       expect(items.every((FlatOutlineEntry e) => e.depth == 0), isTrue);
       expect(items.first.hasChildren, isTrue);
     });
@@ -44,10 +44,12 @@ void main() {
         _nested,
         expanded: <String>{'0'},
       );
-      expect(
-        items.map((FlatOutlineEntry e) => e.title),
-        <String>['Часть I', 'Глава 1', 'Глава 2', 'Часть II'],
-      );
+      expect(items.map((FlatOutlineEntry e) => e.title), <String>[
+        'Часть I',
+        'Глава 1',
+        'Глава 2',
+        'Часть II',
+      ]);
       expect(items[1].depth, 1);
     });
 
@@ -74,16 +76,16 @@ void main() {
     });
 
     test('пустой заголовок не оставляет пустую строку в списке', () {
-      final List<FlatOutlineEntry> items = flattenOutline(
-        const <OutlineEntry>[OutlineEntry(title: '   ', pageNumber: 1)],
-      );
+      final List<FlatOutlineEntry> items = flattenOutline(const <OutlineEntry>[
+        OutlineEntry(title: '   ', pageNumber: 1),
+      ]);
       expect(items.single.title, 'Без названия');
     });
 
     test('пункт без страницы виден, но не нажимается', () {
-      final List<FlatOutlineEntry> items = flattenOutline(
-        const <OutlineEntry>[OutlineEntry(title: 'Приложение')],
-      );
+      final List<FlatOutlineEntry> items = flattenOutline(const <OutlineEntry>[
+        OutlineEntry(title: 'Приложение'),
+      ]);
       expect(items.single.isNavigable, isFalse);
     });
 

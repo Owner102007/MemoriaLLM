@@ -33,10 +33,7 @@ void main() {
       ),
     );
     await search.start('слово');
-    expect(
-      search.hits.map((SearchHit h) => h.pageNumber),
-      <int>[1, 3, 4],
-    );
+    expect(search.hits.map((SearchHit h) => h.pageNumber), <int>[1, 3, 4]);
     search.dispose();
   });
 
@@ -128,10 +125,7 @@ void main() {
     final DocumentSearch search = DocumentSearch(document: document);
     await search.start('текст');
     expect(document.textReads.length, 25);
-    expect(
-      document.textReads.values.every((int count) => count == 1),
-      isTrue,
-    );
+    expect(document.textReads.values.every((int count) => count == 1), isTrue);
     search.dispose();
   });
 }

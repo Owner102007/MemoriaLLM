@@ -115,9 +115,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       ),
       body: Stack(
         children: <Widget>[
-          Positioned.fill(
-            child: widget.viewerBuilder(context, toggleChrome),
-          ),
+          Positioned.fill(child: widget.viewerBuilder(context, toggleChrome)),
           _TopBar(
             visible: _chromeVisible,
             title: controller.book.title,

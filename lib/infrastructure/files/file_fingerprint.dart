@@ -30,10 +30,7 @@ Future<String> fileFingerprint(String path) async {
       await handle.setPosition(from);
       tail = await handle.read(size - from);
     }
-    final Digest digest = sha256.convert(<int>[
-      ...head,
-      ...tail,
-    ]);
+    final Digest digest = sha256.convert(<int>[...head, ...tail]);
     return '$size-$digest';
   } finally {
     await handle.close();

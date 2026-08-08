@@ -80,10 +80,7 @@ void main() {
   }
 
   test('корпус на месте', () {
-    final List<String> all = <String>[
-      ..._readable.keys,
-      ..._unreadable.keys,
-    ];
+    final List<String> all = <String>[..._readable.keys, ..._unreadable.keys];
     for (final String name in all) {
       expect(
         File(_file(name)).existsSync(),
@@ -157,17 +154,19 @@ void main() {
   });
 
   group('текстовый слой', () {
-    test('обычная книга: текст на месте и разный на разных страницах',
-        () async {
-      final ReaderDocument document = await open('basic_text.pdf');
-      expect(await hasTextLayer(document), isTrue);
-      expect(await document.pageText(1), contains('Memoria page 1'));
-      expect(await document.pageText(8), contains('Memoria page 8'));
-      expect(
-        await document.pageText(1),
-        contains('The quick brown fox jumps over the lazy dog.'),
-      );
-    });
+    test(
+      'обычная книга: текст на месте и разный на разных страницах',
+      () async {
+        final ReaderDocument document = await open('basic_text.pdf');
+        expect(await hasTextLayer(document), isTrue);
+        expect(await document.pageText(1), contains('Memoria page 1'));
+        expect(await document.pageText(8), contains('Memoria page 8'));
+        expect(
+          await document.pageText(1),
+          contains('The quick brown fox jumps over the lazy dog.'),
+        );
+      },
+    );
 
     test('скан: текстового слоя нет — предупреждаем при импорте', () async {
       final ReaderDocument document = await open('scan_no_text.pdf');
@@ -175,14 +174,16 @@ void main() {
       expect(await hasTextLayer(document), isFalse);
     });
 
-    test('CJK: текст извлекается по ToUnicode без встроенного шрифта',
-        () async {
-      final ReaderDocument document = await open('cjk.pdf');
-      final String text = await document.pageText(1);
-      expect(text, contains('日本語'));
-      expect(text, contains('中文'));
-      expect(text, contains('한국어'));
-    });
+    test(
+      'CJK: текст извлекается по ToUnicode без встроенного шрифта',
+      () async {
+        final ReaderDocument document = await open('cjk.pdf');
+        final String text = await document.pageText(1);
+        expect(text, contains('日本語'));
+        expect(text, contains('中文'));
+        expect(text, contains('한국어'));
+      },
+    );
 
     test('RTL: арабица и иврит доезжают до приложения', () async {
       final ReaderDocument document = await open('rtl.pdf');
@@ -221,17 +222,16 @@ void main() {
       expect(outline.first.children.length, 2);
       expect(outline.first.children.first.title, 'Chapter 1');
       expect(outline.first.children.first.children.length, 2);
-      expect(
-        outline.first.children.first.children.first.pageNumber,
-        3,
-      );
+      expect(outline.first.children.first.children.first.pageNumber, 3);
     });
 
-    test('у книги без оглавления оглавление пустое, а не отсутствует',
-        () async {
-      final ReaderDocument document = await open('two_columns.pdf');
-      expect(await document.outline(), isEmpty);
-    });
+    test(
+      'у книги без оглавления оглавление пустое, а не отсутствует',
+      () async {
+        final ReaderDocument document = await open('two_columns.pdf');
+        expect(await document.outline(), isEmpty);
+      },
+    );
   });
 
   group('геометрия страниц', () {
@@ -257,8 +257,7 @@ void main() {
   });
 
   group('рендер', () {
-    test('текстовая страница рисуется, а не остаётся белым листом',
-        () async {
+    test('текстовая страница рисуется, а не остаётся белым листом', () async {
       final ReaderDocument document = await open('basic_text.pdf');
       final PageRaster raster = (await document.renderPage(
         1,
@@ -332,23 +331,27 @@ void main() {
   });
 
   group('очень большая книга', () {
-    test('1200 страниц: открывается, последняя доступна', () async {
-      final Stopwatch watch = Stopwatch()..start();
-      final ReaderDocument document = await open('huge_1200_pages.pdf');
-      watch.stop();
+    test(
+      '1200 страниц: открывается, последняя доступна',
+      () async {
+        final Stopwatch watch = Stopwatch()..start();
+        final ReaderDocument document = await open('huge_1200_pages.pdf');
+        watch.stop();
 
-      expect(document.pageCount, 1200);
-      expect(await document.pageText(1200), contains('Long book page'));
-      expect(document.geometry(1200).width, greaterThan(0));
-      // Не измерение производительности, а страховка от квадратичных
-      // алгоритмов: то, что незаметно на десяти страницах, вешает
-      // приложение на тысяче.
-      expect(
-        watch.elapsed,
-        lessThan(const Duration(seconds: 60)),
-        reason: 'открытие тысячестраничной книги подозрительно долгое',
-      );
-    }, timeout: const Timeout(Duration(minutes: 5)));
+        expect(document.pageCount, 1200);
+        expect(await document.pageText(1200), contains('Long book page'));
+        expect(document.geometry(1200).width, greaterThan(0));
+        // Не измерение производительности, а страховка от квадратичных
+        // алгоритмов: то, что незаметно на десяти страницах, вешает
+        // приложение на тысяче.
+        expect(
+          watch.elapsed,
+          lessThan(const Duration(seconds: 60)),
+          reason: 'открытие тысячестраничной книги подозрительно долгое',
+        );
+      },
+      timeout: const Timeout(Duration(minutes: 5)),
+    );
 
     test('страница за краем книги — RangeError, а не тихий мусор', () async {
       final ReaderDocument document = await open('basic_text.pdf');

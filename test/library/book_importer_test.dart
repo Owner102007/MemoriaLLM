@@ -69,15 +69,16 @@ void main() {
         FakeReaderDocument(pages: <String>['текст']),
       ).register(_picked);
 
-      final Book second = await importer(
-        FakeReaderDocument(pages: <String>['текст', 'ещё']),
-        id: 'id-2',
-      ).register(
-        const PickedFile(
-          path: 'test/fixtures/basic_text.pdf',
-          name: 'other-name.pdf',
-        ),
-      );
+      final Book second =
+          await importer(
+            FakeReaderDocument(pages: <String>['текст', 'ещё']),
+            id: 'id-2',
+          ).register(
+            const PickedFile(
+              path: 'test/fixtures/basic_text.pdf',
+              name: 'other-name.pdf',
+            ),
+          );
 
       // Идентификатор книги остаётся прежним — иначе место, на котором
       // её оставили, потерялось бы при повторном импорте.

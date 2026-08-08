@@ -12,11 +12,7 @@ import '../../domain/reading/text_search.dart';
 /// а нужное обычно находится в первой сотне.
 class SearchPanel extends StatefulWidget {
   /// Создаёт панель.
-  const SearchPanel({
-    required this.search,
-    required this.onSelect,
-    super.key,
-  });
+  const SearchPanel({required this.search, required this.onSelect, super.key});
 
   /// Поиск по книге.
   final DocumentSearch search;
@@ -156,16 +152,11 @@ class _SearchPanelState extends State<SearchPanel> {
         return ListTile(
           key: Key('search-hit-$index'),
           dense: true,
-          leading: Text(
-            '${hit.pageNumber}',
-            style: theme.textTheme.bodySmall,
-          ),
+          leading: Text('${hit.pageNumber}', style: theme.textTheme.bodySmall),
           title: Text.rich(
             TextSpan(
               children: <InlineSpan>[
-                TextSpan(
-                  text: hit.snippet.substring(0, hit.snippetMatchStart),
-                ),
+                TextSpan(text: hit.snippet.substring(0, hit.snippetMatchStart)),
                 TextSpan(
                   text: hit.matchedText,
                   style: TextStyle(

@@ -12,9 +12,7 @@ const List<OutlineEntry> _outline = <OutlineEntry>[
   OutlineEntry(
     title: 'Часть I',
     pageNumber: 1,
-    children: <OutlineEntry>[
-      OutlineEntry(title: 'Глава 1', pageNumber: 3),
-    ],
+    children: <OutlineEntry>[OutlineEntry(title: 'Глава 1', pageNumber: 3)],
   ),
   OutlineEntry(title: 'Часть II', pageNumber: 6),
 ];

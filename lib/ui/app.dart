@@ -31,10 +31,7 @@ class MemoriaApp extends StatelessWidget {
           title: 'Memoria LLM HB',
           debugShowCheckedModeBanner: false,
           theme: buildTheme(appPalettes[themeId]!),
-          home: HomeShell(
-            themeController: themeController,
-            services: services,
-          ),
+          home: HomeShell(themeController: themeController, services: services),
         );
       },
     );

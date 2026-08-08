@@ -22,9 +22,7 @@ class FakeReaderDocument implements ReaderDocument {
 
   /// Документ из [count] пустых страниц.
   factory FakeReaderDocument.blank(int count) {
-    return FakeReaderDocument(
-      pages: List<String>.filled(count, ''),
-    );
+    return FakeReaderDocument(pages: List<String>.filled(count, ''));
   }
 
   /// Тексты страниц.
@@ -123,8 +121,7 @@ class FakeDocumentOpener implements DocumentOpener {
 /// смешивать их значит ловить зависания на ровном месте. Проверять же
 /// саму запись в базу лучше обычными тестами — они для этого и есть.
 class FakeReadingRepository implements ReadingRepository {
-  final Map<String, ReadingPosition> _positions =
-      <String, ReadingPosition>{};
+  final Map<String, ReadingPosition> _positions = <String, ReadingPosition>{};
   final Map<String, BookReadingSettings> _settings =
       <String, BookReadingSettings>{};
 

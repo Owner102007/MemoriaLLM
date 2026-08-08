@@ -154,8 +154,9 @@ List<SearchHit> findInPageText({
     return const <SearchHit>[];
   }
   final SearchableText prepared = SearchableText.of(pageText);
-  final String haystack =
-      caseSensitive ? prepared.text : prepared.text.toLowerCase();
+  final String haystack = caseSensitive
+      ? prepared.text
+      : prepared.text.toLowerCase();
   final String pattern = caseSensitive ? needle : needle.toLowerCase();
 
   final List<SearchHit> hits = <SearchHit>[];

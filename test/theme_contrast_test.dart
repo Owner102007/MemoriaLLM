@@ -51,7 +51,8 @@ void main() {
           expect(
             ratio,
             greaterThanOrEqualTo(wcagAaNormalText),
-            reason: '$what на фоне «$on» даёт ${ratio.toStringAsFixed(2)}:1, '
+            reason:
+                '$what на фоне «$on» даёт ${ratio.toStringAsFixed(2)}:1, '
                 'нужно не ниже $wcagAaNormalText:1',
           );
         }
