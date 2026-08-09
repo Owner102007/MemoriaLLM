@@ -67,14 +67,24 @@ void main() {
     await tester.pump();
   }
 
+  /// Панель длиннее тестового экрана: до нижних переключателей надо
+  /// сперва домотать, иначе нажатие уходит в пустоту и тест падает так,
+  /// будто сломана сама кнопка.
+  Future<void> tapKey(WidgetTester tester, String key) async {
+    final Finder finder = find.byKey(Key(key));
+    await tester.ensureVisible(finder);
+    await tester.pump();
+    await tester.tap(finder);
+    await tester.pump();
+  }
+
   testWidgets('режим отображения переключается и запоминается', (
     WidgetTester tester,
   ) async {
     build();
     await pumpSheet(tester);
 
-    await tester.tap(find.byKey(const Key('reader-mode-half')));
-    await tester.pump();
+    await tapKey(tester, 'reader-mode-half');
 
     // Режим меняет экран, а не панель: вместе с ним поворачивается чтение.
     expect(pickedMode, PageDisplayMode.half);
@@ -92,8 +102,7 @@ void main() {
     build();
     await pumpSheet(tester);
 
-    await tester.tap(find.byKey(const Key('reader-filter-nightRed')));
-    await tester.pump();
+    await tapKey(tester, 'reader-filter-nightRed');
 
     expect(controller.settings.filter, ReadingFilter.nightRed);
     expect(controller.settings.filterIntensity, greaterThanOrEqualTo(0.5));
@@ -123,8 +132,7 @@ void main() {
     );
     expect(off.onChanged, isNull);
 
-    await tester.tap(find.byKey(const Key('reader-autocrop-switch')));
-    await tester.pump();
+    await tapKey(tester, 'reader-autocrop-switch');
     expect(controller.settings.autoCrop, isTrue);
 
     final SwitchListTile on = tester.widget(
@@ -140,8 +148,7 @@ void main() {
     bool asked = false;
     await pumpSheet(tester, onEditCrop: () => asked = true);
 
-    await tester.tap(find.byKey(const Key('reader-edit-crop')));
-    await tester.pump();
+    await tapKey(tester, 'reader-edit-crop');
 
     expect(asked, isTrue);
   });
@@ -159,8 +166,7 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('reader-reset-crop')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('reader-reset-crop')));
-    await tester.pump();
+    await tapKey(tester, 'reader-reset-crop');
     expect(controller.settings.manualCrop, isNull);
   });
 
@@ -201,8 +207,7 @@ void main() {
     build();
     await pumpSheet(tester);
 
-    await tester.tap(find.byKey(const Key('reader-flow-continuous')));
-    await tester.pump();
+    await tapKey(tester, 'reader-flow-continuous');
 
     expect(pickedFlow, PageFlow.continuous);
   });
@@ -211,12 +216,7 @@ void main() {
     build();
     await pumpSheet(tester);
 
-    final Finder finder = find.byKey(const Key('reader-snapback-switch'));
-    await tester.ensureVisible(finder);
-    await tester.pump();
-    await tester.tap(finder);
-    await tester.pump();
-
+    await tapKey(tester, 'reader-snapback-switch');
     expect(pickedSnapBack, isFalse);
   });
 
