@@ -5,7 +5,10 @@ import 'tables.dart';
 part 'app_database.g.dart';
 
 /// Версия схемы. Растёт вместе с каждой миграцией.
-const int appSchemaVersion = 1;
+///
+/// 1 — исходная схема (S2). 2 — запас по краям полосы в настройках книги
+/// (S4.6): читатель уменьшает полосу щипком, и это надо помнить.
+const int appSchemaVersion = 2;
 
 /// База данных приложения.
 ///
@@ -39,8 +42,12 @@ class AppDatabase extends _$AppDatabase {
         await m.createAll();
       },
       onUpgrade: (Migrator m, int from, int to) async {
-        // Схема существует в единственной версии, миграций пока нет.
-        // Каждая следующая версия добавляет сюда свою ветку и тест.
+        // Каждая версия добавляет сюда свою ветку и тест. Ветки идут
+        // по возрастанию и не заменяют друг друга: база живого читателя
+        // может приехать с любой прошлой версии, а не только с соседней.
+        if (from < 2) {
+          await m.addColumn(bookSettings, bookSettings.stripFit);
+        }
       },
       beforeOpen: (OpeningDetails details) async {
         // Без этого SQLite молча игнорирует внешние ключи, и каскадное

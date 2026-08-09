@@ -77,9 +77,12 @@ void main() {
   });
 
   group('половина страницы', () {
+    // Просвет ровно посередине: раскладку проверяем на чистом делении,
+    // а нахлёст «слепой» границы — там, где ему место, в тестах деления.
     final List<CropBox> halves = fragmentsFor(
       content: CropBox.full,
       mode: PageDisplayMode.half,
+      breaks: const <double>[0.5],
     );
 
     test('на горизонтальном экране страница шире, чем в портрете', () {
@@ -178,6 +181,104 @@ void main() {
       );
       expect(small.sheetWidth, lessThanOrEqualTo(_shortSide + 1e-9));
       expect(small.sheetHeight, lessThanOrEqualTo(_longSide + 1e-9));
+    });
+  });
+
+  group('запас по краям', () {
+    final List<CropBox> halves = fragmentsFor(
+      content: CropBox.full,
+      mode: PageDisplayMode.half,
+      breaks: const <double>[0.5],
+    );
+
+    SheetPlacement placeWithFit(double fit) {
+      return placeFragment(
+        sheetWidth: _pageWidth,
+        sheetHeight: _pageHeight,
+        fragment: halves.first,
+        screenWidth: _longSide,
+        screenHeight: _shortSide,
+        fit: fit,
+      );
+    }
+
+    test('уменьшение отодвигает полосу от краёв экрана', () {
+      final SheetPlacement tight = placeWithFit(1);
+      final SheetPlacement loose = placeWithFit(0.85);
+      expect(loose.scale, closeTo(tight.scale * 0.85, 1e-9));
+
+      final SheetViewport window = fragmentViewport(
+        placement: loose,
+        fragment: halves.first,
+        screenWidth: _longSide,
+        screenHeight: _shortSide,
+      );
+      expect(window.left, greaterThan(0));
+      expect(window.top, greaterThan(0));
+      expect(window.width + window.left, lessThan(_longSide));
+      expect(window.height + window.top, lessThan(_shortSide));
+    });
+
+    test('вплотную окно совпадает с той стороной, которой не хватало', () {
+      final SheetPlacement tight = placeWithFit(1);
+      final SheetViewport window = fragmentViewport(
+        placement: tight,
+        fragment: halves.first,
+        screenWidth: _longSide,
+        screenHeight: _shortSide,
+      );
+      // Половина А4 ниже и шире экрана телефона: масштаб упирается в
+      // высоту, по бокам остаётся фон.
+      expect(window.height, closeTo(_shortSide, 1e-9));
+      expect(window.width, lessThan(_longSide));
+    });
+
+    test('окно фрагмента не выходит за экран', () {
+      for (final double fit in <double>[1, 0.9, 0.8, 0.7]) {
+        final SheetPlacement placement = placeWithFit(fit);
+        final SheetViewport window = fragmentViewport(
+          placement: placement,
+          fragment: halves.first,
+          screenWidth: _longSide,
+          screenHeight: _shortSide,
+        );
+        expect(window.isVisible, isTrue, reason: 'запас $fit');
+        expect(window.left, greaterThanOrEqualTo(-1e-9));
+        expect(window.top, greaterThanOrEqualTo(-1e-9));
+        expect(window.left + window.width, lessThanOrEqualTo(_longSide + 1e-9));
+        expect(
+          window.top + window.height,
+          lessThanOrEqualTo(_shortSide + 1e-9),
+        );
+      }
+    });
+
+    test('мельче предела полоса не уменьшается', () {
+      expect(clampStripFit(0.1), kMinStripFit);
+      expect(clampStripFit(-3), kMinStripFit);
+      expect(clampStripFit(double.nan), 1);
+      expect(clampStripFit(2), 1);
+      expect(clampStripFit(0.9), 0.9);
+      expect(placeWithFit(0.1).scale, closeTo(placeWithFit(0).scale, 1e-9));
+    });
+
+    test('запас не меняет того, какая часть листа показана', () {
+      // Уменьшение — это про края экрана, а не про содержимое: полоса
+      // остаётся той же, иначе читатель терял бы строки при подгонке.
+      final SheetPlacement loose = placeWithFit(0.8);
+      final SheetViewport window = fragmentViewport(
+        placement: loose,
+        fragment: halves.first,
+        screenWidth: _longSide,
+        screenHeight: _shortSide,
+      );
+      expect(
+        window.width / window.height,
+        closeTo(
+          halves.first.width * _pageWidth / (halves.first.height * _pageHeight),
+          1e-9,
+        ),
+      );
     });
   });
 

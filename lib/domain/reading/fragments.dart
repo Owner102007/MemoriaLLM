@@ -31,12 +31,23 @@ library;
 import 'columns.dart';
 import 'reading.dart';
 
-/// Насколько соседние полосы налезают друг на друга, в долях высоты полосы.
+/// Насколько соседние полосы налезают там, где просвет **нашёлся**.
 ///
-/// Ноль: половины делятся **чёткой линией**. Нахлёст задумывался как
-/// забота о строке на границе, но на деле повторял её на обоих экранах,
-/// и читатель спотыкался — глаз видит знакомый текст и теряет место.
+/// Ноль: половины делятся чёткой линией. Нахлёст задумывался как забота о
+/// строке на границе, но на деле повторял её на обоих экранах, и читатель
+/// спотыкался — глаз видит знакомый текст и теряет место. Раз граница
+/// проходит между строк, повторять нечего.
 const double kFragmentOverlap = 0;
+
+/// Насколько полосы налезают там, где просвет **не нашёлся**.
+///
+/// В долях высоты полосы; примерно строка текста. Просвета нет там, где
+/// строк не видно вовсе (испорченный текстовый слой, страница-картинка,
+/// набор без междустрочья) — и тогда граница неизбежно рассекает строку.
+/// Из двух зол выбрано меньшее: строка **повторяется** на обоих экранах,
+/// а не исчезает между ними. Потерянную строку читатель не восстановит
+/// никак; повторённую — просто пропустит глазом.
+const double kBlindOverlap = 0.03;
 
 /// Насколько далеко граница может уехать к просвету между строками.
 ///
@@ -54,7 +65,7 @@ List<CropBox> fragmentsFor({
   required PageDisplayMode mode,
   List<ColumnBand> columns = const <ColumnBand>[],
   List<double> breaks = const <double>[],
-  double overlap = kFragmentOverlap,
+  double blindOverlap = kBlindOverlap,
 }) {
   if (!content.isValid) {
     return const <CropBox>[CropBox.full];
@@ -67,7 +78,7 @@ List<CropBox> fragmentsFor({
     case PageDisplayMode.spreadHalf:
       // Разворот делится только по горизонтали: колонки внутри страниц
       // тут ни при чём, полоса идёт через обе страницы сразу.
-      return _rows(content, 2, overlap, breaks);
+      return _rows(content, 2, blindOverlap, breaks);
     case PageDisplayMode.half:
       if (twoColumns) {
         return <CropBox>[
@@ -80,7 +91,7 @@ List<CropBox> fragmentsFor({
             ),
         ];
       }
-      return _rows(content, 2, overlap, breaks);
+      return _rows(content, 2, blindOverlap, breaks);
     case PageDisplayMode.third:
       if (twoColumns) {
         return <CropBox>[
@@ -93,12 +104,12 @@ List<CropBox> fragmentsFor({
                 bottom: content.bottom,
               ),
               2,
-              overlap,
+              blindOverlap,
               breaks,
             ),
         ];
       }
-      return _rows(content, 3, overlap, breaks);
+      return _rows(content, 3, blindOverlap, breaks);
   }
 }
 
@@ -233,14 +244,15 @@ List<int> spreadPages(int page, int pageCount) {
 /// ближайший просвет и переезжает в него, но не дальше [kBreakSearch]
 /// от исходного места: иначе полосы разъедутся по высоте так, что кегль
 /// начнёт скакать от экрана к экрану.
-List<double> _edges(CropBox content, int count, List<double> breaks) {
+List<_Edge> _edges(CropBox content, int count, List<double> breaks) {
   final double step = content.height / count;
   final double reach = step * kBreakSearch;
-  final List<double> edges = <double>[];
+  final List<_Edge> edges = <_Edge>[];
   for (int i = 1; i < count; i++) {
     final double ideal = content.top + step * i;
     double best = ideal;
     double bestDistance = reach;
+    bool snapped = false;
     for (final double candidate in breaks) {
       if (candidate <= content.top || candidate >= content.bottom) {
         continue;
@@ -249,29 +261,46 @@ List<double> _edges(CropBox content, int count, List<double> breaks) {
       if (distance < bestDistance) {
         bestDistance = distance;
         best = candidate;
+        snapped = true;
       }
     }
-    edges.add(best);
+    edges.add(_Edge(at: best, snapped: snapped));
   }
   return edges;
+}
+
+/// Граница между полосами и то, попала ли она в просвет между строками.
+class _Edge {
+  const _Edge({required this.at, required this.snapped});
+
+  final double at;
+
+  /// Нашёлся ли просвет. Если нет — граница режет строку, и полосы вокруг
+  /// неё расходятся на [kBlindOverlap], чтобы строка не пропала.
+  final bool snapped;
 }
 
 List<CropBox> _rows(
   CropBox content,
   int count,
-  double overlap,
+  double blindOverlap,
   List<double> breaks,
 ) {
-  final List<double> edges = _edges(content, count, breaks);
+  final List<_Edge> edges = _edges(content, count, breaks);
   final double step = content.height / count;
-  final double margin = step * overlap;
+  final List<double> margins = <double>[
+    for (final _Edge edge in edges)
+      edge.snapped ? step * kFragmentOverlap : step * blindOverlap,
+  ];
   return <CropBox>[
     for (int i = 0; i < count; i++)
       CropBox(
         left: content.left,
-        top: _clamp01(i == 0 ? content.top : edges[i - 1] - margin),
+        top: _clamp01(i == 0 ? content.top : edges[i - 1].at - margins[i - 1]),
         right: content.right,
-        bottom: _clamp01(i == count - 1 ? content.bottom : edges[i] + margin),
+        bottom: _clamp01(
+          i == count - 1 ? content.bottom : edges[i].at + margins[i],
+        ),
       ),
   ];
 }

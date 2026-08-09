@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../application/reading/reader_controller.dart';
 import '../../domain/reading/reading.dart';
+import '../../domain/reading/sheet_placement.dart';
 
 /// Панель читательской рамки: режим, обрезка полей, светофильтр.
 ///
@@ -114,6 +115,22 @@ class ReaderSettingsSheet extends StatelessWidget {
                     ),
                     value: snapBack,
                     onChanged: onSnapBack,
+                  ),
+                  _ValueSlider(
+                    valueKey: const Key('reader-strip-fit'),
+                    label: 'Запас по краям',
+                    value: settings.stripFit,
+                    min: kMinStripFit,
+                    max: 1,
+                    onChanged: (double value) =>
+                        unawaited(controller.setStripFit(value)),
+                  ),
+                  Text(
+                    'Полоса вписана в экран вплотную, и её крайняя строка '
+                    'приходится на самый край. Щипок внутрь прямо на '
+                    'странице оставляет запас — и запоминается для книги.',
+                    key: const Key('reader-strip-fit-hint'),
+                    style: theme.textTheme.bodySmall,
                   ),
                   const SizedBox(height: 16),
                   const _Title(text: 'Поля'),

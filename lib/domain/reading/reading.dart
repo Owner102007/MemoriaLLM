@@ -210,6 +210,7 @@ class BookReadingSettings {
     this.brightness = 1,
     this.contrast = 1,
     this.gamma = 1,
+    this.stripFit = 1,
   });
 
   /// Книга.
@@ -250,6 +251,14 @@ class BookReadingSettings {
   /// Гамма: 1 — как есть.
   final double gamma;
 
+  /// Насколько уменьшена полоса: 1 — вписана в экран вплотную.
+  ///
+  /// Меньше единицы означает запас по краям. Ставится щипком внутрь прямо
+  /// в чтении и запоминается для книги: подбирается он один раз — под
+  /// кегль этой книги и это устройство, — и повторять подбор на каждой
+  /// странице читатель не должен.
+  final double stripFit;
+
   /// Копия с изменёнными полями.
   BookReadingSettings copyWith({
     PageDisplayMode? displayMode,
@@ -261,6 +270,7 @@ class BookReadingSettings {
     double? brightness,
     double? contrast,
     double? gamma,
+    double? stripFit,
   }) {
     return BookReadingSettings(
       bookId: bookId,
@@ -274,6 +284,7 @@ class BookReadingSettings {
       brightness: brightness ?? this.brightness,
       contrast: contrast ?? this.contrast,
       gamma: gamma ?? this.gamma,
+      stripFit: stripFit ?? this.stripFit,
     );
   }
 }

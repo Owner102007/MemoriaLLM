@@ -35,12 +35,14 @@ void main() {
       expect(parts.last.right, _content.right);
     });
 
-    test('половины делятся чёткой линией, без повторов', () {
+    test('по просвету половины делятся чёткой линией, без повторов', () {
       // Нахлёст задумывался как забота о строке на границе, но повторял
-      // её на обоих экранах, и читатель терял место. Граница одна.
+      // её на обоих экранах, и читатель терял место. Раз граница попала
+      // в просвет, повторять нечего: граница одна.
       final List<CropBox> parts = fragmentsFor(
         content: _content,
         mode: PageDisplayMode.half,
+        breaks: const <double>[0.5],
       );
       expect(parts.first.bottom, closeTo(parts.last.top, 1e-9));
       expect(
@@ -167,16 +169,45 @@ void main() {
       );
     });
 
-    test('без просветов деление остаётся геометрическим', () {
-      // Скан: строк нет вовсе, резать приходится по середине.
+    test('без просветов граница остаётся у середины', () {
+      // Просветов нет вовсе: резать приходится по середине, и полосы
+      // расходятся вокруг неё — середина между ними всё та же.
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.half,
+      );
+      final double middle = (parts.first.bottom + parts.last.top) / 2;
+      expect(middle, closeTo(_content.top + _content.height / 2, 1e-9));
+    });
+
+    test('без просвета строка повторяется, а не теряется', () {
+      // Потерянную строку читатель не восстановит никак: он даже не
+      // узнает, что её не видел. Повторённую — просто пропустит глазом.
       final List<CropBox> parts = fragmentsFor(
         content: _content,
         mode: PageDisplayMode.half,
       );
       expect(
         parts.first.bottom,
-        closeTo(_content.top + _content.height / 2, 1e-9),
+        greaterThan(parts.last.top),
+        reason: 'между полосами не должно быть щели',
       );
+      final double step = _content.height / 2;
+      expect(
+        parts.first.bottom - parts.last.top,
+        closeTo(2 * step * kBlindOverlap, 1e-9),
+        reason: 'нахлёст примерно в строку, а не в пол-экрана',
+      );
+    });
+
+    test('нахлёста нет там, где просвет нашёлся', () {
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.half,
+        breaks: const <double>[0.52],
+      );
+      expect(parts.first.bottom, closeTo(0.52, 1e-9));
+      expect(parts.last.top, closeTo(0.52, 1e-9));
     });
 
     test('далёкий просвет границу не утаскивает', () {
@@ -185,10 +216,8 @@ void main() {
         mode: PageDisplayMode.half,
         breaks: const <double>[0.15, 0.85],
       );
-      expect(
-        parts.first.bottom,
-        closeTo(_content.top + _content.height / 2, 1e-9),
-      );
+      final double middle = (parts.first.bottom + parts.last.top) / 2;
+      expect(middle, closeTo(_content.top + _content.height / 2, 1e-9));
     });
 
     test('полосы по-прежнему стыкуются без щели и без повтора', () {
@@ -289,6 +318,7 @@ void main() {
         content: _content,
         mode: PageDisplayMode.spreadHalf,
         columns: _twoColumns,
+        breaks: const <double>[0.5],
       );
       expect(parts.length, 2);
       // Строка идёт через обе страницы сразу, поэтому колонки внутри

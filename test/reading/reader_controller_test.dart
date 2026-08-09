@@ -4,6 +4,7 @@ import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/sheet_placement.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
 
 import '../data/test_data.dart';
@@ -527,6 +528,30 @@ void main() {
       // Рамка пересчитана заново, а не осталась от прошлых настроек.
       expect(controller.frame, isNotNull);
       expect(before.isValid, isTrue);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('запас по краям запоминается и не выходит за предел', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.settings.stripFit, 1);
+
+      await controller.setStripFit(0.85);
+      expect(controller.settings.stripFit, closeTo(0.85, 1e-9));
+
+      // Щипок легко уносит масштаб куда угодно, а полоса мельче предела
+      // перестаёт быть чтением.
+      await controller.setStripFit(0.1);
+      expect(controller.settings.stripFit, kMinStripFit);
+      await controller.setStripFit(3);
+      expect(controller.settings.stripFit, 1);
+
+      await controller.setStripFit(0.9);
+      final BookReadingSettings saved = await data.reading.settings(
+        controller.book.id,
+        kSettingsSlot,
+      );
+      expect(saved.stripFit, closeTo(0.9, 1e-9));
       await controller.close();
       controller.dispose();
     });

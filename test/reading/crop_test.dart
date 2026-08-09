@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/reading/crop.dart';
+import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -42,6 +43,42 @@ PageRaster _scan({
   }
   for (final List<int> speck in speckles) {
     ink(speck[0], speck[1]);
+  }
+  return PageRaster(width: width, height: height, pixels: pixels);
+}
+
+/// Скан с настоящими строками: тёмные полосы через просветы.
+///
+/// Первая полоса начинается на [top], каждая занимает [ink] рядов, между
+/// полосами [gap] рядов пустоты. Так выглядит страница книги в глазах
+/// пиксельного разбора — и именно по этим просветам её надо делить.
+PageRaster _scanLines({
+  int width = 100,
+  int height = 100,
+  int top = 10,
+  int lines = 5,
+  int ink = 6,
+  int gap = 4,
+  int left = 10,
+  int right = 89,
+}) {
+  final Uint8List pixels = Uint8List(width * height * 4);
+  for (int i = 0; i < width * height; i++) {
+    pixels[i * 4] = 255;
+    pixels[i * 4 + 1] = 255;
+    pixels[i * 4 + 2] = 255;
+    pixels[i * 4 + 3] = 255;
+  }
+  for (int line = 0; line < lines; line++) {
+    final int from = top + line * (ink + gap);
+    for (int y = from; y < from + ink && y < height; y++) {
+      for (int x = left; x <= right && x < width; x++) {
+        final int base = (y * width + x) * 4;
+        pixels[base] = 20;
+        pixels[base + 1] = 20;
+        pixels[base + 2] = 20;
+      }
+    }
   }
   return PageRaster(width: width, height: height, pixels: pixels);
 }
@@ -239,6 +276,76 @@ void main() {
         PageRaster(width: 10, height: 10, pixels: Uint8List(4)),
       );
       expect(crop, CropBox.full);
+    });
+  });
+
+  group('просветы скана', () {
+    // Страница книги в глазах пиксельного разбора: 16 строк по 3 ряда
+    // через 2 ряда просвета. Шаг строки — 5 % высоты полосы, как в
+    // настоящей книге; на пяти строках во весь лист просвет оказался бы
+    // дальше допуска, и делить было бы нечем.
+    const int lineCount = 16;
+    const int inkRows = 3;
+    const int gapRows = 2;
+    const int firstRow = 10;
+    const int pitch = inkRows + gapRows;
+    final RasterAnalysis scan = analyzeRaster(
+      _scanLines(top: firstRow, lines: lineCount, ink: inkRows, gap: gapRows),
+    );
+
+    double lineTop(int line) => (firstRow + line * pitch) / 100;
+    double lineBottom(int line) => (firstRow + line * pitch + inkRows) / 100;
+
+    test('найдены все просветы между строками, и только они', () {
+      // Просветов на один меньше, чем строк: над первой и под последней
+      // резать нечего — там кончается содержимое.
+      expect(scan.breaks.length, lineCount - 1);
+    });
+
+    test('каждый просвет лежит между строками, а не на строке', () {
+      for (int line = 0; line < lineCount - 1; line++) {
+        expect(scan.breaks[line], greaterThan(lineBottom(line) - 1e-9));
+        expect(scan.breaks[line], lessThan(lineTop(line + 1) + 1e-9));
+      }
+    });
+
+    test('у скана без строк просветов нет, и это не ошибка', () {
+      final RasterAnalysis solid = analyzeRaster(
+        _scan(left: 20, top: 20, right: 79, bottom: 79),
+      );
+      expect(solid.content.isValid, isTrue);
+      expect(solid.breaks, isEmpty);
+    });
+
+    test('несогласованный растр не даёт ни рамки, ни просветов', () {
+      final RasterAnalysis broken = analyzeRaster(
+        PageRaster(width: 10, height: 10, pixels: Uint8List(4)),
+      );
+      expect(broken.content, CropBox.full);
+      expect(broken.breaks, isEmpty);
+    });
+
+    test('по этим просветам страница делится между строк', () {
+      // Ровно то, чего не было у скана до сих пор: половина резалась по
+      // геометрической середине и рассекала строку.
+      final List<CropBox> parts = fragmentsFor(
+        content: scan.content,
+        mode: PageDisplayMode.half,
+        breaks: scan.breaks,
+      );
+      expect(
+        parts.first.bottom,
+        closeTo(parts.last.top, 1e-9),
+        reason: 'просвет нашёлся — повторять строку не надо',
+      );
+      final double edge = parts.first.bottom;
+      for (int line = 0; line < lineCount; line++) {
+        expect(
+          lineTop(line) < edge && lineBottom(line) > edge,
+          isFalse,
+          reason: 'строка $line рассечена границей $edge',
+        );
+      }
     });
   });
 

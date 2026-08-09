@@ -70,6 +70,25 @@ void main() {
     expect(settings.autoCrop, isFalse);
     expect(settings.manualCrop, isNull);
     expect(settings.brightness, 1);
+    // Полоса вписана вплотную: запас по краям читатель просит сам.
+    expect(settings.stripFit, 1);
+  });
+
+  test('запас по краям полосы запоминается для книги', () async {
+    await data.reading.saveSettings(
+      const BookReadingSettings(
+        bookId: 'book-1',
+        orientation: ScreenOrientation.portrait,
+        displayMode: PageDisplayMode.half,
+        stripFit: 0.86,
+      ),
+    );
+
+    final BookReadingSettings loaded = await data.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    expect(loaded.stripFit, closeTo(0.86, 1e-9));
   });
 
   test('настройки сохраняются вместе с ручной рамкой', () async {

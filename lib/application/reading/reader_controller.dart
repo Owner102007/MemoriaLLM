@@ -10,6 +10,7 @@ import '../../domain/reading/navigation.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/reading_filter.dart';
+import '../../domain/reading/sheet_placement.dart';
 import 'page_frames.dart';
 
 /// Состояние открытой книги: где читатель сейчас и что об этом знает база.
@@ -356,9 +357,23 @@ class ReaderController extends ChangeNotifier {
       brightness: _settings.brightness,
       contrast: _settings.contrast,
       gamma: _settings.gamma,
+      stripFit: _settings.stripFit,
     );
     _fragment = clampFragment(_fragment, fragmentCount);
     await _saveSettings();
+  }
+
+  /// Меняет запас по краям полосы.
+  ///
+  /// Значение приводится к допустимому диапазону здесь, а не в интерфейсе:
+  /// щипок легко уносит масштаб куда угодно, а полоса мельче [kMinStripFit]
+  /// перестаёт быть чтением.
+  Future<void> setStripFit(double value) async {
+    final double safe = clampStripFit(value);
+    if (safe == _settings.stripFit) {
+      return;
+    }
+    await _updateSettings(_settings.copyWith(stripFit: safe));
   }
 
   /// Выбирает светофильтр и сразу даёт ему заметную силу.

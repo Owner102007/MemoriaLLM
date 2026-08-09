@@ -53,7 +53,7 @@ class PageFrameSource {
   PageFrameSource({
     required ReaderDocument document,
     CropOptions options = CropOptions.standard,
-    int rasterWidth = 220,
+    int rasterWidth = 320,
     int cacheSize = 96,
   }) : _document = document,
        _options = options,
@@ -145,16 +145,18 @@ class PageFrameSource {
         fromText: true,
       );
     } else {
-      // У скана строк нет, и резать приходится по геометрии: попиксельный
-      // разбор даёт прямоугольник содержимого, но не разметку строк.
-      final CropBox content = await _rasterContent(pageNumber);
+      // У скана текстового слоя нет, но строки на нём всё равно есть —
+      // просто нарисованные. Пиксельный профиль страницы, посчитанный
+      // ради рамки, показывает и просветы между ними, так что полосы и
+      // здесь делятся между строк, а не по живому.
+      final RasterAnalysis raster = await _rasterAnalysis(pageNumber);
       frame = PageFrame(
         pageNumber: pageNumber,
-        content: content,
+        content: raster.content,
         columns: <ColumnBand>[
-          ColumnBand(left: content.left, right: content.right),
+          ColumnBand(left: raster.content.left, right: raster.content.right),
         ],
-        breaks: const <double>[],
+        breaks: raster.breaks,
         fromText: false,
       );
     }
@@ -163,14 +165,16 @@ class PageFrameSource {
     return frame;
   }
 
-  Future<CropBox> _rasterContent(int pageNumber) async {
+  Future<RasterAnalysis> _rasterAnalysis(int pageNumber) async {
     try {
       final PageGeometry geometry = _document.geometry(pageNumber);
       if (geometry.width <= 0 || geometry.height <= 0) {
-        return CropBox.full;
+        return RasterAnalysis.nothing;
       }
-      // Рендер намеренно крошечный: поля видно и на превью, а полный
-      // разбор страницы в разрешении экрана стоил бы секунды.
+      // Рендер намеренно маленький: поля и междустрочья видно и на превью,
+      // а полный разбор страницы в разрешении экрана стоил бы секунды.
+      // Ширины в 320 точек хватает, чтобы строки скана не слились в одну
+      // полосу, — на 220 они местами слипались, и делить было негде.
       final int height = (_rasterWidth * geometry.height / geometry.width)
           .round()
           .clamp(8, 4000);
@@ -180,11 +184,11 @@ class PageFrameSource {
         height: height,
       );
       if (raster == null) {
-        return CropBox.full;
+        return RasterAnalysis.nothing;
       }
-      return contentBoxFromRaster(raster, options: _options);
+      return analyzeRaster(raster, options: _options);
     } on Object {
-      return CropBox.full;
+      return RasterAnalysis.nothing;
     }
   }
 

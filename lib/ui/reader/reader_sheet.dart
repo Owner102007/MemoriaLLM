@@ -17,6 +17,12 @@ import 'reading_progress_book.dart';
 /// на место. Так разглядывание не превращается в потерянный масштаб,
 /// который потом непонятно как вернуть. Тем, кому такое поведение мешает,
 /// возврат отключается в настройках.
+///
+/// **Щипок внутрь работает иначе, и намеренно.** Он не разглядывает, а
+/// подгоняет полосу под глаза и под этот экран: строка у самого края
+/// уходит от закруглённого угла и выреза камеры. Такую подгонку делают
+/// один раз, поэтому она не отпружинивает обратно, а запоминается для
+/// книги — [onStripFit].
 class ReaderSheet extends StatefulWidget {
   /// Создаёт лист.
   const ReaderSheet({
@@ -27,6 +33,8 @@ class ReaderSheet extends StatefulWidget {
     required this.page,
     required this.pageCount,
     required this.snapBack,
+    this.stripFit = 1,
+    this.onStripFit,
     super.key,
   });
 
@@ -53,6 +61,12 @@ class ReaderSheet extends StatefulWidget {
 
   /// Возвращать ли масштаб, когда читатель отпустил пальцы.
   final bool snapBack;
+
+  /// Запас по краям полосы: 1 — вписана вплотную.
+  final double stripFit;
+
+  /// Читатель уменьшил полосу щипком.
+  final ValueChanged<double>? onStripFit;
 
   @override
   State<ReaderSheet> createState() => _ReaderSheetState();
@@ -97,6 +111,20 @@ class _ReaderSheetState extends State<ReaderSheet>
   }
 
   void _onInteractionEnd(ScaleEndDetails details) {
+    final double gesture = _zoom.value.getMaxScaleOnAxis();
+    // Щипок внутрь — это не разглядывание, а подгонка полосы: она
+    // запоминается для книги, а лист сразу встаёт на место в новом
+    // масштабе. Иначе читателю пришлось бы держать пальцы, чтобы видеть
+    // строку у края.
+    if (gesture < 0.995) {
+      final ValueChanged<double>? report = widget.onStripFit;
+      _release.stop();
+      _zoom.value = Matrix4.identity();
+      if (report != null) {
+        report(clampStripFit(widget.stripFit * gesture));
+      }
+      return;
+    }
     if (!widget.snapBack || _zoom.value == Matrix4.identity()) {
       return;
     }
@@ -147,44 +175,67 @@ class _ReaderSheetState extends State<ReaderSheet>
             fragment: widget.fragment,
             screenWidth: limits.maxWidth,
             screenHeight: limits.maxHeight,
+            fit: widget.stripFit,
           );
           if (!placement.isVisible) {
             return const SizedBox.expand();
           }
+          final SheetViewport window = fragmentViewport(
+            placement: placement,
+            fragment: widget.fragment,
+            screenWidth: limits.maxWidth,
+            screenHeight: limits.maxHeight,
+          );
           return Stack(
             children: <Widget>[
               Positioned.fill(
                 child: InteractiveViewer(
                   transformationController: _zoom,
-                  minScale: 1,
+                  // Уменьшать разрешено: щипок внутрь подгоняет полосу и
+                  // запоминается. Увеличение остаётся временным.
+                  minScale: kMinStripFit,
                   maxScale: ReaderSheet.maxZoom,
                   onInteractionEnd: _onInteractionEnd,
-                  child: ClipRect(
-                    child: Stack(
-                      children: <Widget>[
-                        Positioned(
-                          left: placement.left,
-                          top: placement.top,
-                          width: placement.sheetWidth,
-                          height: placement.sheetHeight,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Stack(
+                    children: <Widget>[
+                      // Лист обрезан ровно по фрагменту: в запас по краям
+                      // иначе заглядывает соседняя полоса, и торчащая
+                      // половина строки сбивает чтение сильнее, чем пустое
+                      // поле.
+                      Positioned(
+                        left: window.left,
+                        top: window.top,
+                        width: window.width,
+                        height: window.height,
+                        child: ClipRect(
+                          child: Stack(
                             children: <Widget>[
-                              for (final PdfPage page in sheet)
-                                SizedBox(
-                                  width: page.width * placement.scale,
-                                  height: page.height * placement.scale,
-                                  child: PdfPageView(
-                                    document: widget.document,
-                                    pageNumber: page.pageNumber,
-                                    decorationBuilder: _plainPage,
-                                  ),
+                              Positioned(
+                                left: placement.left - window.left,
+                                top: placement.top - window.top,
+                                width: placement.sheetWidth,
+                                height: placement.sheetHeight,
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    for (final PdfPage page in sheet)
+                                      SizedBox(
+                                        width: page.width * placement.scale,
+                                        height: page.height * placement.scale,
+                                        child: PdfPageView(
+                                          document: widget.document,
+                                          pageNumber: page.pageNumber,
+                                          decorationBuilder: _plainPage,
+                                        ),
+                                      ),
+                                  ],
                                 ),
+                              ),
                             ],
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),

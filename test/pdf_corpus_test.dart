@@ -535,6 +535,33 @@ void main() {
       expect(frame.content.width, lessThan(0.95), reason: 'поля скана срезаны');
     });
 
+    test('у скана просветы между строками тоже находятся', () async {
+      // Текстового слоя нет, а строки есть — просто нарисованные. Без
+      // просветов половина скана резалась по геометрической середине и
+      // рассекала строку: читать её было нельзя ни на одном экране.
+      final ReaderDocument document = await open('scan_no_text.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final PageFrame frame = await frames.frameFor(1);
+
+      expect(frame.breaks, isNotEmpty, reason: 'строки скана не разделены');
+      for (final double gap in frame.breaks) {
+        expect(gap, greaterThan(0));
+        expect(gap, lessThan(1));
+      }
+
+      final List<CropBox> halves = fragmentsFor(
+        content: frame.content,
+        mode: PageDisplayMode.half,
+        columns: frame.columns,
+        breaks: frame.breaks,
+      );
+      expect(
+        halves.first.bottom,
+        closeTo(halves.last.top, 1e-9),
+        reason: 'просвет нашёлся — повторять строку не надо',
+      );
+    });
+
     test('прямоугольники символов приходят в долях страницы', () async {
       final ReaderDocument document = await open('basic_text.pdf');
       final List<TextBox> boxes = await document.pageTextBoxes(1);

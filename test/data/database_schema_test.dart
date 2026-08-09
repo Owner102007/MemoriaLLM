@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — первая', () {
+  test('версия схемы — вторая: запас по краям полосы', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 1);
+    expect(appSchemaVersion, 2);
   });
 
   test('созданы все таблицы слоя данных', () async {

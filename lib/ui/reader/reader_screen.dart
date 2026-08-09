@@ -412,6 +412,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   page: controller.page,
                   pageCount: controller.pageCount,
                   snapBack: _snapBack,
+                  stripFit: controller.settings.stripFit,
+                  onStripFit: (double value) =>
+                      unawaited(controller.setStripFit(value)),
                 ),
         );
       },

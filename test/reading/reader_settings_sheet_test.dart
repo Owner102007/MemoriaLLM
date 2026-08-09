@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/sheet_placement.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
 import 'package:memoria/ui/reader/reader_settings_sheet.dart';
 
@@ -250,5 +251,26 @@ void main() {
 
     await slide('reader-contrast', const Offset(60, 0));
     expect(controller.settings.contrast, greaterThan(1));
+  });
+
+  testWidgets('запас по краям есть в панели и меняется ползунком', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+
+    // Щипок на странице — главный способ, но найти его читатель должен
+    // не наугад: в панели про него написано, и то же самое делает ползунок.
+    expect(find.byKey(const Key('reader-strip-fit-hint')), findsOneWidget);
+    expect(controller.settings.stripFit, 1);
+
+    final Finder slider = find.byKey(const Key('reader-strip-fit'));
+    await tester.ensureVisible(slider);
+    await tester.pump();
+    await tester.drag(slider, const Offset(-120, 0));
+    await tester.pump();
+
+    expect(controller.settings.stripFit, lessThan(1));
+    expect(controller.settings.stripFit, greaterThanOrEqualTo(kMinStripFit));
   });
 }

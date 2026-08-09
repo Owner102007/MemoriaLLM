@@ -142,6 +142,9 @@ class BookSettings extends Table with SyncedRow {
   /// Гамма.
   RealColumn get gamma => real().withDefault(const Constant<double>(1))();
 
+  /// Насколько уменьшена полоса: 1 — вписана в экран вплотную.
+  RealColumn get stripFit => real().withDefault(const Constant<double>(1))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId, orientation};
 }

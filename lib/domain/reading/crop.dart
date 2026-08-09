@@ -152,6 +152,42 @@ List<TextLine> dropRunningHeads(
 
 /// Прямоугольник содержимого по пикселям рендера.
 ///
+/// Тонкая обёртка над [analyzeRaster] для тех, кому нужна только рамка.
+CropBox contentBoxFromRaster(
+  PageRaster raster, {
+  double inkThreshold = 0.12,
+  double minInkShare = 0.02,
+  CropOptions options = CropOptions.standard,
+}) {
+  return analyzeRaster(
+    raster,
+    inkThreshold: inkThreshold,
+    minInkShare: minInkShare,
+    options: options,
+  ).content;
+}
+
+/// Что дал пиксельный разбор страницы: рамка содержимого и просветы.
+class RasterAnalysis {
+  /// Создаёт разбор.
+  const RasterAnalysis({required this.content, required this.breaks});
+
+  /// Разбор, ничего не нашедший: страница целиком, резать негде.
+  static const RasterAnalysis nothing = RasterAnalysis(
+    content: CropBox.full,
+    breaks: <double>[],
+  );
+
+  /// Прямоугольник содержимого в долях страницы.
+  final CropBox content;
+
+  /// Просветы между строками — середины пустых горизонтальных полос,
+  /// сверху вниз, в долях страницы.
+  final List<double> breaks;
+}
+
+/// Разбирает страницу по пикселям рендера.
+///
 /// Единственный путь для сканов. Работает по фону: уровень фона берётся
 /// с краёв страницы, «чернилами» считается всё, что отличается от него
 /// больше чем на [inkThreshold]. Разница берётся по модулю, поэтому
@@ -160,14 +196,19 @@ List<TextLine> dropRunningHeads(
 /// Строка или столбец считаются содержимым, только если чернил в них
 /// набралось хотя бы [minInkShare]: у сканов края в крапинку от пыли на
 /// стекле, и без этого порога рамка всегда получалась бы во всю страницу.
-CropBox contentBoxFromRaster(
+///
+/// Тот же профиль строк отдаёт и **просветы между строками**: у скана
+/// текстового слоя нет, а полосы делить надо там же, где у обычной
+/// страницы — между строк, а не по живому. Профиль уже посчитан ради
+/// рамки, поэтому просветы достаются бесплатно.
+RasterAnalysis analyzeRaster(
   PageRaster raster, {
   double inkThreshold = 0.12,
   double minInkShare = 0.02,
   CropOptions options = CropOptions.standard,
 }) {
   if (!raster.isConsistent) {
-    return CropBox.full;
+    return RasterAnalysis.nothing;
   }
   final int width = raster.width;
   final int height = raster.height;
@@ -212,18 +253,54 @@ CropBox contentBoxFromRaster(
   final int left = _firstAbove(columnInk, columnThreshold);
   final int right = _lastAbove(columnInk, columnThreshold);
   if (top < 0 || bottom < 0 || left < 0 || right < 0) {
-    return CropBox.full;
+    return RasterAnalysis.nothing;
   }
 
-  return normalizeCrop(
-    CropBox(
-      left: left / width,
-      top: top / height,
-      right: (right + 1) / width,
-      bottom: (bottom + 1) / height,
+  return RasterAnalysis(
+    content: normalizeCrop(
+      CropBox(
+        left: left / width,
+        top: top / height,
+        right: (right + 1) / width,
+        bottom: (bottom + 1) / height,
+      ),
+      options: options,
     ),
-    options: options,
+    breaks: _rowGaps(rowInk, rowThreshold, top, bottom, height),
   );
+}
+
+/// Середины пустых горизонтальных полос между строками скана.
+///
+/// Полоса считается просветом, если в её строках чернил меньше порога —
+/// того же, по которому ищется рамка. Края содержимого не в счёт: резать
+/// там нечего, а «просвет» на границе только сбивал бы выбор ближайшего.
+List<double> _rowGaps(
+  List<int> rowInk,
+  int threshold,
+  int top,
+  int bottom,
+  int height,
+) {
+  if (height <= 0 || bottom <= top) {
+    return const <double>[];
+  }
+  final List<double> gaps = <double>[];
+  int? start;
+  for (int y = top; y <= bottom; y++) {
+    final bool blank = rowInk[y] < threshold;
+    if (blank) {
+      start ??= y;
+      continue;
+    }
+    if (start != null) {
+      // Полоса кончилась чернилами, а началась после них — значит она
+      // целиком внутри содержимого.
+      gaps.add((start + y) / 2 / height);
+      start = null;
+    }
+  }
+  return gaps;
 }
 
 /// Приводит рамку к пригодному виду: запас, минимальный размер, сетка.

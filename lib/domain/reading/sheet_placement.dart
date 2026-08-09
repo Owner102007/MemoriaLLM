@@ -13,6 +13,23 @@ library;
 
 import 'reading.dart';
 
+/// Насколько сильно читателю позволено уменьшить полосу.
+///
+/// Полоса вписывается в экран вплотную, и её крайняя строка приходится
+/// ровно на границу экрана: закруглённый угол, вырез камеры или просто
+/// неудачно вставшая граница полосы съедают её у самого края. Щипок
+/// внутрь даёт запас — небольшой, потому что каждый процент запаса
+/// отнимается у кегля, ради которого режимы и затевались.
+const double kMinStripFit = 0.7;
+
+/// Приводит уменьшение полосы к допустимому диапазону.
+double clampStripFit(double value) {
+  if (!value.isFinite || value >= 1) {
+    return 1;
+  }
+  return value < kMinStripFit ? kMinStripFit : value;
+}
+
 /// Готовая раскладка листа на экране.
 class SheetPlacement {
   /// Создаёт раскладку.
@@ -82,12 +99,18 @@ class SheetPlacement {
 ///
 /// Если по одной из сторон остаётся запас, фрагмент центрируется: пустота
 /// по краям выглядит куда спокойнее, чем прижатая к углу страница.
+///
+/// [fit] меньше единицы оставляет запас по всем краям: полоса становится
+/// мельче, зато её крайние строки уходят от границы экрана. Это ответ на
+/// закруглённые углы, вырезы камеры и просто на желание видеть строку
+/// целиком, а не вплотную к краю.
 SheetPlacement placeFragment({
   required double sheetWidth,
   required double sheetHeight,
   required CropBox fragment,
   required double screenWidth,
   required double screenHeight,
+  double fit = 1,
 }) {
   if (sheetWidth <= 0 ||
       sheetHeight <= 0 ||
@@ -104,7 +127,8 @@ SheetPlacement placeFragment({
 
   final double byWidth = screenWidth / visibleWidth;
   final double byHeight = screenHeight / visibleHeight;
-  final double scale = byWidth < byHeight ? byWidth : byHeight;
+  final double scale =
+      (byWidth < byHeight ? byWidth : byHeight) * clampStripFit(fit);
 
   final double sheetOnScreenWidth = sheetWidth * scale;
   final double sheetOnScreenHeight = sheetHeight * scale;
@@ -119,5 +143,96 @@ SheetPlacement placeFragment({
         fragment.top * sheetOnScreenHeight,
     sheetWidth: sheetOnScreenWidth,
     sheetHeight: sheetOnScreenHeight,
+  );
+}
+
+/// Окно фрагмента: куда именно на экране попал показываемый кусок листа.
+class SheetViewport {
+  /// Создаёт окно.
+  const SheetViewport({
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
+  });
+
+  /// Пустое окно.
+  static const SheetViewport none = SheetViewport(
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+  );
+
+  /// Отступ слева.
+  final double left;
+
+  /// Отступ сверху.
+  final double top;
+
+  /// Ширина.
+  final double width;
+
+  /// Высота.
+  final double height;
+
+  /// Есть ли что показывать.
+  bool get isVisible => width > 0 && height > 0;
+
+  @override
+  bool operator ==(Object other) {
+    return other is SheetViewport &&
+        other.left == left &&
+        other.top == top &&
+        other.width == width &&
+        other.height == height;
+  }
+
+  @override
+  int get hashCode => Object.hash(left, top, width, height);
+
+  @override
+  String toString() => 'SheetViewport($left, $top, ${width}x$height)';
+}
+
+/// Границы фрагмента на экране — то, что позволено видеть.
+///
+/// Нужно там, где полоса уменьшена: при запасе по краям вокруг фрагмента
+/// освобождается место, и в него заглядывают соседние полосы. Половина
+/// строки, торчащая из-за края, хуже, чем её отсутствие: глаз цепляется
+/// за неё и теряет строку, которую читал. Поэтому лист обрезается ровно
+/// по фрагменту, а вокруг остаётся фон.
+///
+/// Окно всегда лежит внутри экрана: наружу фрагмент не выходит никогда,
+/// он в него вписан.
+SheetViewport fragmentViewport({
+  required SheetPlacement placement,
+  required CropBox fragment,
+  required double screenWidth,
+  required double screenHeight,
+}) {
+  if (!placement.isVisible ||
+      !fragment.isValid ||
+      screenWidth <= 0 ||
+      screenHeight <= 0) {
+    return SheetViewport.none;
+  }
+  final double left = placement.left + fragment.left * placement.sheetWidth;
+  final double top = placement.top + fragment.top * placement.sheetHeight;
+  final double right = left + fragment.width * placement.sheetWidth;
+  final double bottom = top + fragment.height * placement.sheetHeight;
+
+  final double clampedLeft = left < 0 ? 0 : left;
+  final double clampedTop = top < 0 ? 0 : top;
+  final double clampedRight = right > screenWidth ? screenWidth : right;
+  final double clampedBottom = bottom > screenHeight ? screenHeight : bottom;
+  if (clampedRight <= clampedLeft || clampedBottom <= clampedTop) {
+    return SheetViewport.none;
+  }
+  return SheetViewport(
+    left: clampedLeft,
+    top: clampedTop,
+    width: clampedRight - clampedLeft,
+    height: clampedBottom - clampedTop,
   );
 }
