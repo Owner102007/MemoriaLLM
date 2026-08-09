@@ -269,13 +269,9 @@ List<CropBox> _rows(
     for (int i = 0; i < count; i++)
       CropBox(
         left: content.left,
-        top: _clamp01(
-          i == 0 ? content.top : edges[i - 1] - margin,
-        ),
+        top: _clamp01(i == 0 ? content.top : edges[i - 1] - margin),
         right: content.right,
-        bottom: _clamp01(
-          i == count - 1 ? content.bottom : edges[i] + margin,
-        ),
+        bottom: _clamp01(i == count - 1 ? content.bottom : edges[i] + margin),
       ),
   ];
 }
