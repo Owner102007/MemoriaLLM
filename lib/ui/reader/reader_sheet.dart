@@ -125,7 +125,16 @@ class _ReaderSheetState extends State<ReaderSheet>
       }
       return;
     }
-    if (!widget.snapBack || _zoom.value == Matrix4.identity()) {
+    if (gesture <= 1.005) {
+      // Пальцы двигали лист, не масштабировали. Уводить страницу в
+      // сторону читалка не даёт вовсе: место на странице — не то, что
+      // должно зависеть от случайного движения руки. Запас границ у
+      // просмотрщика нужен только ради щипка внутрь.
+      _release.stop();
+      _zoom.value = Matrix4.identity();
+      return;
+    }
+    if (!widget.snapBack) {
       return;
     }
     _back = Matrix4Tween(
@@ -195,6 +204,12 @@ class _ReaderSheetState extends State<ReaderSheet>
                   // запоминается. Увеличение остаётся временным.
                   minScale: kMinStripFit,
                   maxScale: ReaderSheet.maxZoom,
+                  // Без запаса границ `InteractiveViewer` просто **не даёт**
+                  // уменьшить масштаб: он не разрешает отвести края листа
+                  // внутрь окна. Запас нужен не для панорамирования, а
+                  // чтобы щипок внутрь вообще работал; лист всё равно
+                  // возвращается на место, как только пальцы убраны.
+                  boundaryMargin: const EdgeInsets.all(1200),
                   onInteractionEnd: _onInteractionEnd,
                   child: Stack(
                     children: <Widget>[
