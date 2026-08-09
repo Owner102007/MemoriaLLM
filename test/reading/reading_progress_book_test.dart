@@ -28,11 +28,7 @@ void main() {
         home: Scaffold(
           body: Stack(
             children: <Widget>[
-              ReadingProgressBook(
-                slot: slot,
-                page: page,
-                pageCount: pageCount,
-              ),
+              ReadingProgressBook(slot: slot, page: page, pageCount: pageCount),
             ],
           ),
         ),
