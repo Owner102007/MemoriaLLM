@@ -142,12 +142,16 @@ class ReaderController extends ChangeNotifier {
   /// Колонки текущей страницы.
   List<ColumnBand> get columns => _frame?.columns ?? const <ColumnBand>[];
 
+  /// Просветы между строками текущей страницы.
+  List<double> get breaks => _frame?.breaks ?? const <double>[];
+
   /// Фрагменты текущей страницы в порядке чтения.
   List<CropBox> get fragments {
     return fragmentsFor(
       content: contentBox,
       mode: _settings.displayMode,
       columns: columns,
+      breaks: breaks,
     );
   }
 

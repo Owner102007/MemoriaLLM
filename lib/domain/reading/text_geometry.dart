@@ -198,6 +198,34 @@ List<TextLine> groupTextLines(
   return lines;
 }
 
+/// Просветы между строками — места, где страницу можно разрезать.
+///
+/// Возвращает середины промежутков между соседними строками, сверху вниз.
+/// Именно по ним делятся половины и трети: граница, проведённая по
+/// геометрической середине, рассекает ту строку, которая на ней стоит, и
+/// читатель либо теряет её, либо вынужден искать в следующем экране.
+///
+/// Строки, стоящие вплотную (промежуток меньше [minGap] от медианной
+/// высоты строки), пропускаются: резать между ними некуда, а точка
+/// разреза посреди междустрочья в один пиксель ничем не лучше произвольной.
+List<double> lineBreaks(List<TextLine> lines, {double minGap = 0.15}) {
+  if (lines.length < 2) {
+    return const <double>[];
+  }
+  final double height = median(<double>[
+    for (final TextLine line in lines) line.height,
+  ]);
+  final double threshold = height * minGap;
+  final List<double> breaks = <double>[];
+  for (int i = 1; i < lines.length; i++) {
+    final double gap = lines[i].top - lines[i - 1].bottom;
+    if (gap >= threshold) {
+      breaks.add(lines[i - 1].bottom + gap / 2);
+    }
+  }
+  return breaks;
+}
+
 /// Медиана списка. Пустой список даёт `0`.
 double median(List<double> values) {
   if (values.isEmpty) {

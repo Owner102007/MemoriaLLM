@@ -2,6 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/reading/columns.dart';
 import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/text_geometry.dart';
+
+import '../support/fake_reading.dart';
 
 const CropBox _content = CropBox(left: 0.1, top: 0.1, right: 0.9, bottom: 0.9);
 
@@ -118,6 +121,88 @@ void main() {
       mode: PageDisplayMode.half,
     );
     expect(parts, <CropBox>[CropBox.full]);
+  });
+
+  group('граница проходит между строк', () {
+    // Ровный блок из десяти строк: шаг 0.08, буквы 0.048, просвет 0.032.
+    final List<TextLine> lines = groupTextLines(
+      textBlock(left: 0.1, top: 0.1, right: 0.9, bottom: 0.9, lines: 10),
+    );
+    final List<double> breaks = lineBreaks(lines);
+
+    test('просветы найдены между всеми соседними строками', () {
+      expect(breaks.length, lines.length - 1);
+      for (int i = 1; i < lines.length; i++) {
+        expect(breaks[i - 1], greaterThan(lines[i - 1].bottom));
+        expect(breaks[i - 1], lessThan(lines[i].top));
+      }
+    });
+
+    test('ни одна строка не разрезана пополам', () {
+      // Ровно та беда, на которую наткнулся владелец: половина строки
+      // остаётся на одном экране, половина на другом, и читать нельзя
+      // ни там, ни там.
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.half,
+        breaks: breaks,
+      );
+      final double edge = parts.first.bottom;
+      for (final TextLine line in lines) {
+        final bool cut = line.top < edge && line.bottom > edge;
+        expect(cut, isFalse, reason: 'строка $line рассечена границей $edge');
+      }
+    });
+
+    test('граница уезжает к просвету, но недалеко', () {
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.half,
+        breaks: breaks,
+      );
+      final double ideal = _content.top + _content.height / 2;
+      expect(
+        (parts.first.bottom - ideal).abs(),
+        lessThan(_content.height / 2 * kBreakSearch + 1e-9),
+      );
+    });
+
+    test('без просветов деление остаётся геометрическим', () {
+      // Скан: строк нет вовсе, резать приходится по середине.
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.half,
+      );
+      expect(
+        parts.first.bottom,
+        closeTo(_content.top + _content.height / 2, 1e-9),
+      );
+    });
+
+    test('далёкий просвет границу не утаскивает', () {
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.half,
+        breaks: const <double>[0.15, 0.85],
+      );
+      expect(
+        parts.first.bottom,
+        closeTo(_content.top + _content.height / 2, 1e-9),
+      );
+    });
+
+    test('полосы по-прежнему стыкуются без щели и без повтора', () {
+      final List<CropBox> parts = fragmentsFor(
+        content: _content,
+        mode: PageDisplayMode.third,
+        breaks: breaks,
+      );
+      expect(parts.length, 3);
+      expect(parts[0].bottom, closeTo(parts[1].top, 1e-9));
+      expect(parts[1].bottom, closeTo(parts[2].top, 1e-9));
+      expect(parts.first.top, _content.top);
+      expect(parts.last.bottom, _content.bottom);
+    });
   });
 
   group('число фрагментов', () {

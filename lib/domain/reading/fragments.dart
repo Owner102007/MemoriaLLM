@@ -36,8 +36,14 @@ import 'reading.dart';
 /// Ноль: половины делятся **чёткой линией**. Нахлёст задумывался как
 /// забота о строке на границе, но на деле повторял её на обоих экранах,
 /// и читатель спотыкался — глаз видит знакомый текст и теряет место.
-/// Разрезанная строка — цена меньшая, чем сбитое чтение.
 const double kFragmentOverlap = 0;
+
+/// Насколько далеко граница может уехать к просвету между строками.
+///
+/// В долях высоты полосы. Слишком щедрый допуск сделал бы полосы разными
+/// по высоте настолько, что кегль скакал бы между экранами; слишком
+/// скупой не спас бы строку, которая стоит чуть в стороне от середины.
+const double kBreakSearch = 0.18;
 
 /// Фрагменты страницы в порядке чтения.
 ///
@@ -47,6 +53,7 @@ List<CropBox> fragmentsFor({
   required CropBox content,
   required PageDisplayMode mode,
   List<ColumnBand> columns = const <ColumnBand>[],
+  List<double> breaks = const <double>[],
   double overlap = kFragmentOverlap,
 }) {
   if (!content.isValid) {
@@ -60,7 +67,7 @@ List<CropBox> fragmentsFor({
     case PageDisplayMode.spreadHalf:
       // Разворот делится только по горизонтали: колонки внутри страниц
       // тут ни при чём, полоса идёт через обе страницы сразу.
-      return _rows(content, 2, overlap);
+      return _rows(content, 2, overlap, breaks);
     case PageDisplayMode.half:
       if (twoColumns) {
         return <CropBox>[
@@ -73,7 +80,7 @@ List<CropBox> fragmentsFor({
             ),
         ];
       }
-      return _rows(content, 2, overlap);
+      return _rows(content, 2, overlap, breaks);
     case PageDisplayMode.third:
       if (twoColumns) {
         return <CropBox>[
@@ -87,10 +94,11 @@ List<CropBox> fragmentsFor({
               ),
               2,
               overlap,
+              breaks,
             ),
         ];
       }
-      return _rows(content, 3, overlap);
+      return _rows(content, 3, overlap, breaks);
   }
 }
 
@@ -217,17 +225,56 @@ List<int> spreadPages(int page, int pageCount) {
   return <int>[left, left + 1];
 }
 
-List<CropBox> _rows(CropBox content, int count, double overlap) {
+/// Границы полос, притянутые к просветам между строками.
+///
+/// Геометрическая середина почти всегда попадает на строку и режет её
+/// пополам: верхняя половина строки остаётся на одном экране, нижняя на
+/// другом, и читать нельзя ни там, ни там. Поэтому граница ищет
+/// ближайший просвет и переезжает в него, но не дальше [kBreakSearch]
+/// от исходного места: иначе полосы разъедутся по высоте так, что кегль
+/// начнёт скакать от экрана к экрану.
+List<double> _edges(CropBox content, int count, List<double> breaks) {
+  final double step = content.height / count;
+  final double reach = step * kBreakSearch;
+  final List<double> edges = <double>[];
+  for (int i = 1; i < count; i++) {
+    final double ideal = content.top + step * i;
+    double best = ideal;
+    double bestDistance = reach;
+    for (final double candidate in breaks) {
+      if (candidate <= content.top || candidate >= content.bottom) {
+        continue;
+      }
+      final double distance = (candidate - ideal).abs();
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = candidate;
+      }
+    }
+    edges.add(best);
+  }
+  return edges;
+}
+
+List<CropBox> _rows(
+  CropBox content,
+  int count,
+  double overlap,
+  List<double> breaks,
+) {
+  final List<double> edges = _edges(content, count, breaks);
   final double step = content.height / count;
   final double margin = step * overlap;
   return <CropBox>[
     for (int i = 0; i < count; i++)
       CropBox(
         left: content.left,
-        top: _clamp01(content.top + i * step - (i == 0 ? 0 : margin)),
+        top: _clamp01(
+          i == 0 ? content.top : edges[i - 1] - margin,
+        ),
         right: content.right,
         bottom: _clamp01(
-          content.top + (i + 1) * step + (i == count - 1 ? 0 : margin),
+          i == count - 1 ? content.bottom : edges[i] + margin,
         ),
       ),
   ];

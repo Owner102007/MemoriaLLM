@@ -13,6 +13,7 @@ class PageFrame {
     required this.pageNumber,
     required this.content,
     required this.columns,
+    required this.breaks,
     required this.fromText,
   });
 
@@ -24,6 +25,10 @@ class PageFrame {
 
   /// Колонки внутри содержимого; одна — обычная вёрстка.
   final List<ColumnBand> columns;
+
+  /// Просветы между строками: по ним делятся половины и трети, чтобы
+  /// граница не рассекала строку.
+  final List<double> breaks;
 
   /// Считана ли рамка по тексту. `false` — страница разбиралась попиксельно.
   final bool fromText;
@@ -115,6 +120,7 @@ class PageFrameSource {
         pageNumber: pageNumber,
         content: CropBox.full,
         columns: const <ColumnBand>[ColumnBand(left: 0, right: 1)],
+        breaks: const <double>[],
         fromText: false,
       );
     }
@@ -135,9 +141,12 @@ class PageFrameSource {
         pageNumber: pageNumber,
         content: content,
         columns: detectColumns(boxes, content),
+        breaks: lineBreaks(groupTextLines(boxes)),
         fromText: true,
       );
     } else {
+      // У скана строк нет, и резать приходится по геометрии: попиксельный
+      // разбор даёт прямоугольник содержимого, но не разметку строк.
       final CropBox content = await _rasterContent(pageNumber);
       frame = PageFrame(
         pageNumber: pageNumber,
@@ -145,6 +154,7 @@ class PageFrameSource {
         columns: <ColumnBand>[
           ColumnBand(left: content.left, right: content.right),
         ],
+        breaks: const <double>[],
         fromText: false,
       );
     }
