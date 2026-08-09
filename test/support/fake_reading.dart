@@ -62,6 +62,11 @@ class FakeReaderDocument implements ReaderDocument {
   /// Бросать ли ошибку при чтении оглавления.
   bool failOutline = false;
 
+  /// У подставного документа движка нет — и это отдельно проверяется:
+  /// экран чтения обязан пережить документ, который нечем рисовать.
+  @override
+  Object? get engineDocument => null;
+
   @override
   int get pageCount => pages.length;
 

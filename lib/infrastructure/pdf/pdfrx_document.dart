@@ -80,6 +80,9 @@ class PdfrxReaderDocument implements ReaderDocument {
   bool _closed = false;
 
   @override
+  Object? get engineDocument => _document;
+
+  @override
   int get pageCount => _document.pages.length;
 
   @override

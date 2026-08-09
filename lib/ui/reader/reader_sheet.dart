@@ -43,7 +43,19 @@ class ReaderSheet extends StatelessWidget {
           document.pages[number - 1],
     ];
     if (sheet.isEmpty) {
-      return ColoredBox(color: background, child: const SizedBox.expand());
+      // Молчаливый чёрный прямоугольник — худший из возможных ответов:
+      // по нему не отличить «страница ещё грузится» от «книга сломана».
+      return ColoredBox(
+        color: background,
+        child: const Center(
+          child: SizedBox(
+            key: Key('reader-sheet-waiting'),
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
     }
 
     double sheetWidth = 0;

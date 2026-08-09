@@ -10,7 +10,7 @@ import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
 import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
-import 'package:pdfrx/pdfrx.dart' show pdfrxInitialize;
+import 'package:pdfrx/pdfrx.dart' show PdfDocument, pdfrxInitialize;
 
 /// Прогон корпуса проблемных PDF через настоящий PDFium.
 ///
@@ -457,6 +457,21 @@ void main() {
         timeout: const Timeout(Duration(minutes: 3)),
       );
     });
+
+    test('движок отдаёт тот же документ, что читает текст', () async {
+      // Рисовать страницу должен тот же открытый файл: второе открытие
+      // стоит вдвое больше памяти, а на большой книге отдаёт страницы
+      // не сразу — и вместо содержимого читатель видит пустой экран.
+      final ReaderDocument document = await open('huge_1200_pages.pdf');
+      final Object? engine = document.engineDocument;
+      expect(engine, isNotNull);
+      expect(engine, isA<PdfDocument>());
+      expect(
+        (engine! as PdfDocument).pages.length,
+        document.pageCount,
+        reason: 'страницы должны быть на месте все сразу',
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('обычная книга: поля обрезаются по тексту', () async {
       final ReaderDocument document = await open('basic_text.pdf');

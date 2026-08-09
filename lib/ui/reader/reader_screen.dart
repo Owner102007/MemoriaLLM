@@ -390,29 +390,26 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints limits) {
         final Size size = Size(limits.maxWidth, limits.maxHeight);
+        // Рисуем тем же документом, который уже открыл контроллер:
+        // второе открытие той же книги стоило вдвое больше памяти, а на
+        // большой книге отдавало страницы не сразу — и вместо содержимого
+        // читатель видел пустой экран.
+        final Object? engine = controller.document.engineDocument;
+        final PdfDocument? document = engine is PdfDocument ? engine : null;
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (TapUpDetails details) =>
               _onTap(details.localPosition, size, onTap),
-          child: PdfDocumentViewBuilder.file(
-            widget.book.filePath,
-            builder: (BuildContext context, PdfDocument? document) {
-              if (document == null) {
-                return ColoredBox(
-                  color: background,
-                  child: const SizedBox.expand(),
-                );
-              }
-              return ReaderSheet(
-                document: document,
-                pages: isSpreadMode(controller.settings.displayMode)
-                    ? spreadPages(controller.page, document.pages.length)
-                    : <int>[controller.page],
-                fragment: controller.fragmentBox,
-                background: background,
-              );
-            },
-          ),
+          child: document == null
+              ? ColoredBox(color: background, child: const SizedBox.expand())
+              : ReaderSheet(
+                  document: document,
+                  pages: isSpreadMode(controller.settings.displayMode)
+                      ? spreadPages(controller.page, controller.pageCount)
+                      : <int>[controller.page],
+                  fragment: controller.fragmentBox,
+                  background: background,
+                ),
         );
       },
     );
