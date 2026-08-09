@@ -458,20 +458,24 @@ void main() {
       );
     });
 
-    test('движок отдаёт тот же документ, что читает текст', () async {
-      // Рисовать страницу должен тот же открытый файл: второе открытие
-      // стоит вдвое больше памяти, а на большой книге отдаёт страницы
-      // не сразу — и вместо содержимого читатель видит пустой экран.
-      final ReaderDocument document = await open('huge_1200_pages.pdf');
-      final Object? engine = document.engineDocument;
-      expect(engine, isNotNull);
-      expect(engine, isA<PdfDocument>());
-      expect(
-        (engine! as PdfDocument).pages.length,
-        document.pageCount,
-        reason: 'страницы должны быть на месте все сразу',
-      );
-    }, timeout: const Timeout(Duration(minutes: 3)));
+    test(
+      'движок отдаёт тот же документ, что читает текст',
+      () async {
+        // Рисовать страницу должен тот же открытый файл: второе открытие
+        // стоит вдвое больше памяти, а на большой книге отдаёт страницы
+        // не сразу — и вместо содержимого читатель видит пустой экран.
+        final ReaderDocument document = await open('huge_1200_pages.pdf');
+        final Object? engine = document.engineDocument;
+        expect(engine, isNotNull);
+        expect(engine, isA<PdfDocument>());
+        expect(
+          (engine! as PdfDocument).pages.length,
+          document.pageCount,
+          reason: 'страницы должны быть на месте все сразу',
+        );
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
 
     test('обычная книга: поля обрезаются по тексту', () async {
       final ReaderDocument document = await open('basic_text.pdf');
