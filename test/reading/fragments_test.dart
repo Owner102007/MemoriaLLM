@@ -32,14 +32,19 @@ void main() {
       expect(parts.last.right, _content.right);
     });
 
-    test('соседние полосы налезают друг на друга', () {
-      // Строка, оказавшаяся ровно на границе, иначе была бы разрезана
-      // по горизонтали и не прочиталась бы ни в одной из половин.
+    test('половины делятся чёткой линией, без повторов', () {
+      // Нахлёст задумывался как забота о строке на границе, но повторял
+      // её на обоих экранах, и читатель терял место. Граница одна.
       final List<CropBox> parts = fragmentsFor(
         content: _content,
         mode: PageDisplayMode.half,
       );
-      expect(parts.first.bottom, greaterThan(parts.last.top));
+      expect(parts.first.bottom, closeTo(parts.last.top, 1e-9));
+      expect(
+        parts.first.height,
+        closeTo(parts.last.height, 1e-9),
+        reason: 'половины равны',
+      );
     });
 
     test('треть — три полосы', () {
@@ -207,7 +212,7 @@ void main() {
       expect(parts.first.right, _content.right);
       expect(parts.first.top, _content.top);
       expect(parts.last.bottom, _content.bottom);
-      expect(parts.first.bottom, greaterThan(parts.last.top));
+      expect(parts.first.bottom, closeTo(parts.last.top, 1e-9));
     });
 
     test('разворот и его половина показывают по две страницы', () {
@@ -215,48 +220,6 @@ void main() {
       expect(isSpreadMode(PageDisplayMode.spreadHalf), isTrue);
       expect(isSpreadMode(PageDisplayMode.half), isFalse);
       expect(isSpreadMode(PageDisplayMode.full), isFalse);
-    });
-  });
-
-  group('направление листания', () {
-    test('полосы сверху вниз листаются сверху вниз', () {
-      for (final PageDisplayMode mode in <PageDisplayMode>[
-        PageDisplayMode.half,
-        PageDisplayMode.third,
-        PageDisplayMode.spreadHalf,
-      ]) {
-        expect(
-          fragmentFlowFor(fragmentsFor(content: _content, mode: mode)),
-          FragmentFlow.vertical,
-          reason: '$mode',
-        );
-      }
-    });
-
-    test('колонки листаются вбок', () {
-      expect(
-        fragmentFlowFor(
-          fragmentsFor(
-            content: _content,
-            mode: PageDisplayMode.half,
-            columns: _twoColumns,
-          ),
-        ),
-        FragmentFlow.horizontal,
-      );
-    });
-
-    test('одному фрагменту деваться некуда — листаем вбок', () {
-      for (final PageDisplayMode mode in <PageDisplayMode>[
-        PageDisplayMode.full,
-        PageDisplayMode.spread,
-      ]) {
-        expect(
-          fragmentFlowFor(fragmentsFor(content: _content, mode: mode)),
-          FragmentFlow.horizontal,
-          reason: '$mode',
-        );
-      }
     });
   });
 

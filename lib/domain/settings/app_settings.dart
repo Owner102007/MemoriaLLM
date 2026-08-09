@@ -17,6 +17,9 @@ abstract final class SettingsKeys {
   /// Как листается книга: `continuous` или `paged`.
   static const String pageFlow = 'ui.page_flow';
 
+  /// Возвращать ли масштаб, когда читатель отпустил пальцы: `true`/`false`.
+  static const String zoomSnapBack = 'ui.zoom_snap_back';
+
   /// Идентификатор этого устройства для меток HLC.
   static const String nodeId = 'sync.node_id';
 

@@ -18,6 +18,7 @@ void main() {
   late ReaderController controller;
   PageFlow? pickedFlow;
   PageDisplayMode? pickedMode;
+  bool? pickedSnapBack;
 
   ReaderController build({Map<int, List<TextBox>>? boxes}) {
     document = FakeReaderDocument(
@@ -27,6 +28,7 @@ void main() {
     reading = FakeReadingRepository();
     pickedFlow = null;
     pickedMode = null;
+    pickedSnapBack = null;
     return controller = ReaderController(
       book: fakeBook(pageCount: 6),
       document: document,
@@ -50,6 +52,8 @@ void main() {
           body: ReaderSettingsSheet(
             controller: controller,
             flow: flow,
+            snapBack: true,
+            onSnapBack: (bool value) => pickedSnapBack = value,
             onFlow: (PageFlow value) => pickedFlow = value,
             onDisplayMode: (PageDisplayMode mode) {
               pickedMode = mode;
@@ -201,6 +205,19 @@ void main() {
     await tester.pump();
 
     expect(pickedFlow, PageFlow.continuous);
+  });
+
+  testWidgets('возврат масштаба выключается', (WidgetTester tester) async {
+    build();
+    await pumpSheet(tester);
+
+    final Finder finder = find.byKey(const Key('reader-snapback-switch'));
+    await tester.ensureVisible(finder);
+    await tester.pump();
+    await tester.tap(finder);
+    await tester.pump();
+
+    expect(pickedSnapBack, isFalse);
   });
 
   testWidgets('сказано, зачем режимы поворачивают экран', (

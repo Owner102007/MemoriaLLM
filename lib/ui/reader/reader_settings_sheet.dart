@@ -15,6 +15,8 @@ class ReaderSettingsSheet extends StatelessWidget {
   const ReaderSettingsSheet({
     required this.controller,
     required this.flow,
+    required this.snapBack,
+    required this.onSnapBack,
     required this.onFlow,
     required this.onDisplayMode,
     required this.onEditCrop,
@@ -26,6 +28,12 @@ class ReaderSettingsSheet extends StatelessWidget {
 
   /// Как листается книга сейчас.
   final PageFlow flow;
+
+  /// Возвращается ли масштаб после щипка.
+  final bool snapBack;
+
+  /// Переключить возврат масштаба.
+  final ValueChanged<bool> onSnapBack;
 
   /// Сменить способ листания.
   final ValueChanged<PageFlow> onFlow;
@@ -95,6 +103,17 @@ class ReaderSettingsSheet extends StatelessWidget {
                           },
                         ),
                     ],
+                  ),
+                  SwitchListTile(
+                    key: const Key('reader-snapback-switch'),
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Возвращать масштаб'),
+                    subtitle: const Text(
+                      'Приближение щипком отпускает страницу обратно, как '
+                      'только убрали пальцы',
+                    ),
+                    value: snapBack,
+                    onChanged: onSnapBack,
                   ),
                   const SizedBox(height: 16),
                   const _Title(text: 'Поля'),

@@ -54,8 +54,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _loading = true;
   PageFlow _flow = PageFlow.paged;
   AppLifecycleListener? _lifecycle;
-  ScreenOrientation _orientation = ScreenOrientation.portrait;
   ScreenOrientation _rotation = ScreenOrientation.portrait;
+  bool _snapBack = true;
 
   @override
   void initState() {
@@ -81,6 +81,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final AppSettingsRepository settings = widget.services.data.settings;
     final String? rotation = await settings.read(SettingsKeys.readingRotation);
     final String? flow = await settings.read(SettingsKeys.pageFlow);
+    final String? snapBack = await settings.read(SettingsKeys.zoomSnapBack);
     if (!mounted) {
       return;
     }
@@ -91,6 +92,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _flow = flow == PageFlow.continuous.name
           ? PageFlow.continuous
           : PageFlow.paged;
+      _snapBack = snapBack != 'false';
     });
     await _applyRotation();
   }
@@ -126,6 +128,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
       rotation.name,
     );
     await _applyRotation();
+  }
+
+  Future<void> _setSnapBack(bool value) async {
+    if (value == _snapBack) {
+      return;
+    }
+    setState(() => _snapBack = value);
+    await widget.services.data.settings.write(
+      SettingsKeys.zoomSnapBack,
+      value.toString(),
+    );
   }
 
   Future<void> _setFlow(PageFlow flow) async {
@@ -174,7 +187,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         book: widget.book,
         opener: widget.services.opener,
         reading: widget.services.data.reading,
-        orientation: _orientation,
         password: password,
       );
       await widget.services.data.library.markOpened(
@@ -223,23 +235,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Нажатие по странице: переход к соседнему фрагменту или панели.
   ///
-  /// Зоны следуют направлению деления: полосы идут сверху вниз — значит
-  /// и нажимать надо сверху и снизу, там, где лежит следующий кусок
-  /// текста. Колонки, целые страницы и развороты листаются привычно,
-  /// слева и справа.
+  /// Зоны всегда слева и справа, в любом режиме и в любом положении
+  /// экрана. Пробовали привязать их к направлению деления — читатель
+  /// каждый раз вспоминал, куда нажимать в этом режиме. Привычка «вправо
+  /// значит дальше» сильнее любой логики раскладки.
   void _onTap(Offset position, Size size, VoidCallback toggleChrome) {
     final ReaderController? controller = _controller;
     if (controller == null || _flow != PageFlow.paged) {
       toggleChrome();
       return;
     }
-    final bool vertical = controller.fragmentFlow == FragmentFlow.vertical;
-    final double extent = vertical ? size.height : size.width;
+    final double extent = size.width;
     if (extent <= 0) {
       toggleChrome();
       return;
     }
-    final double share = (vertical ? position.dy : position.dx) / extent;
+    final double share = position.dx / extent;
     if (share < _tapZone) {
       unawaited(controller.previousFragment());
       return;
@@ -264,6 +275,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return ReaderSettingsSheet(
           controller: controller,
           flow: _flow,
+          snapBack: _snapBack,
+          onSnapBack: (bool value) => unawaited(_setSnapBack(value)),
           onFlow: (PageFlow value) => unawaited(_setFlow(value)),
           onDisplayMode: (PageDisplayMode mode) =>
               unawaited(_setDisplayMode(mode)),
@@ -295,18 +308,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  void _syncOrientation(BuildContext context) {
-    final ScreenOrientation now =
-        MediaQuery.orientationOf(context) == Orientation.landscape
-        ? ScreenOrientation.landscape
-        : ScreenOrientation.portrait;
-    if (now == _orientation) {
-      return;
-    }
-    _orientation = now;
-    unawaited(_controller?.setOrientation(now));
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -324,7 +325,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     }
 
-    _syncOrientation(context);
     final ReaderController controller = _controller!;
     return ReaderScaffold(
       controller: controller,
@@ -409,6 +409,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       : <int>[controller.page],
                   fragment: controller.fragmentBox,
                   background: background,
+                  page: controller.page,
+                  pageCount: controller.pageCount,
+                  snapBack: _snapBack,
                 ),
         );
       },

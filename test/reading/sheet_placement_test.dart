@@ -109,7 +109,7 @@ void main() {
       expect(shown.top, greaterThan(0.25), reason: 'верх обрезан');
     });
 
-    test('половины покрывают страницу целиком и перекрываются', () {
+    test('половины стыкуются ровно и ничего не повторяют', () {
       final CropBox top = visible(
         place(fragment: halves.first, landscape: true),
         landscape: true,
@@ -118,7 +118,9 @@ void main() {
         place(fragment: halves.last, landscape: true),
         landscape: true,
       );
-      expect(top.bottom, greaterThan(bottom.top), reason: 'нахлёст есть');
+      // Ни щели, ни повтора: где кончилась первая половина, там ровно
+      // и начинается вторая.
+      expect(top.bottom, closeTo(bottom.top, 1e-9));
       expect(top.top, closeTo(0, 1e-9));
       expect(bottom.bottom, closeTo(1, 1e-9));
     });
