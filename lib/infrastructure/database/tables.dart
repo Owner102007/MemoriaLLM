@@ -145,6 +145,14 @@ class BookSettings extends Table with SyncedRow {
   /// Насколько уменьшена полоса: 1 — вписана в экран вплотную.
   RealColumn get stripFit => real().withDefault(const Constant<double>(1))();
 
+  /// Насколько гаснет часть страницы вне читаемой полосы.
+  ///
+  /// Значение по умолчанию продублировано числом намеренно: генератор
+  /// drift переносит выражение в сгенерированный файл дословно, и ссылка
+  /// на `kDefaultDimOutside` утащила бы за собой доменный импорт.
+  RealColumn get dimOutside =>
+      real().withDefault(const Constant<double>(0.6))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId, orientation};
 }

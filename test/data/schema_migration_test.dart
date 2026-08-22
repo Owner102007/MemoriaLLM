@@ -51,11 +51,14 @@ void main() {
   test('новая база создаётся сразу текущей версией', () async {
     final AppData data = await launch();
     expect(await versionOf(data), appSchemaVersion);
-    expect(await columnsOf(data, 'book_settings'), contains('strip_fit'));
+    expect(
+      await columnsOf(data, 'book_settings'),
+      containsAll(<String>['strip_fit', 'dim_outside']),
+    );
     await data.close();
   });
 
-  test('база версии 1 доезжает до 2 и не теряет настройки книги', () async {
+  test('база версии 1 доезжает до конца и не теряет настройки книги', () async {
     final AppData first = await launch();
     await first.library.save(testBook());
     await first.reading.saveSettings(
@@ -69,9 +72,14 @@ void main() {
       ),
     );
 
-    // Откат к версии 1: колонки запаса по краям тогда не было.
+    // Откат к версии 1: ни запаса по краям, ни затемнения тогда не было.
+    // База читателя может приехать с любой прошлой версии, а не только
+    // с соседней, — поэтому проверяется самый дальний путь.
     await first.database.customStatement(
       'ALTER TABLE book_settings DROP COLUMN strip_fit',
+    );
+    await first.database.customStatement(
+      'ALTER TABLE book_settings DROP COLUMN dim_outside',
     );
     await first.database.customStatement('PRAGMA user_version = 1');
     expect(
@@ -82,7 +90,10 @@ void main() {
 
     final AppData second = await launch();
     expect(await versionOf(second), appSchemaVersion);
-    expect(await columnsOf(second, 'book_settings'), contains('strip_fit'));
+    expect(
+      await columnsOf(second, 'book_settings'),
+      containsAll(<String>['strip_fit', 'dim_outside']),
+    );
 
     final BookReadingSettings loaded = await second.reading.settings(
       'book-1',
@@ -93,17 +104,51 @@ void main() {
     expect(loaded.filter, ReadingFilter.nightRed);
     expect(loaded.filterIntensity, 0.5);
     expect(loaded.brightness, 0.6);
-    // А новая настройка приходит со значением по умолчанию: книга, которую
-    // читали до обновления, открывается точно так же, как открывалась.
+    // А новые настройки приходят со значениями по умолчанию: книга,
+    // которую читали до обновления, открывается точно так же, как
+    // открывалась.
     expect(loaded.stripFit, 1);
+    expect(loaded.dimOutside, kDefaultDimOutside);
     await second.close();
   });
 
-  test('после миграции запас по краям пишется и читается', () async {
+  test('база версии 2 доезжает до 3 и получает затемнение', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await first.reading.saveSettings(
+      const BookReadingSettings(
+        bookId: 'book-1',
+        orientation: ScreenOrientation.portrait,
+        displayMode: PageDisplayMode.third,
+        stripFit: 0.9,
+      ),
+    );
+    await first.database.customStatement(
+      'ALTER TABLE book_settings DROP COLUMN dim_outside',
+    );
+    await first.database.customStatement('PRAGMA user_version = 2');
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    final BookReadingSettings loaded = await second.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    expect(loaded.displayMode, PageDisplayMode.third);
+    expect(loaded.stripFit, closeTo(0.9, 1e-9));
+    expect(loaded.dimOutside, kDefaultDimOutside);
+    await second.close();
+  });
+
+  test('после миграции новые настройки пишутся и читаются', () async {
     final AppData first = await launch();
     await first.library.save(testBook());
     await first.database.customStatement(
       'ALTER TABLE book_settings DROP COLUMN strip_fit',
+    );
+    await first.database.customStatement(
+      'ALTER TABLE book_settings DROP COLUMN dim_outside',
     );
     await first.database.customStatement('PRAGMA user_version = 1');
     await first.close();
@@ -114,6 +159,7 @@ void main() {
         bookId: 'book-1',
         orientation: ScreenOrientation.portrait,
         stripFit: 0.8,
+        dimOutside: 0.4,
       ),
     );
     final BookReadingSettings loaded = await second.reading.settings(
@@ -121,6 +167,7 @@ void main() {
       ScreenOrientation.portrait,
     );
     expect(loaded.stripFit, closeTo(0.8, 1e-9));
+    expect(loaded.dimOutside, closeTo(0.4, 1e-9));
     await second.close();
   });
 }

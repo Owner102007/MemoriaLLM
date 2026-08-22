@@ -72,6 +72,26 @@ void main() {
     expect(settings.brightness, 1);
     // Полоса вписана вплотную: запас по краям читатель просит сам.
     expect(settings.stripFit, 1);
+    // А нечитаемая часть страницы гаснет сразу: в этом весь смысл
+    // режимов половины и трети — страница видна, читается полоса.
+    expect(settings.dimOutside, kDefaultDimOutside);
+  });
+
+  test('сила затемнения запоминается для книги', () async {
+    await data.reading.saveSettings(
+      const BookReadingSettings(
+        bookId: 'book-1',
+        orientation: ScreenOrientation.portrait,
+        displayMode: PageDisplayMode.third,
+        dimOutside: 0.35,
+      ),
+    );
+
+    final BookReadingSettings loaded = await data.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    expect(loaded.dimOutside, closeTo(0.35, 1e-9));
   });
 
   test('запас по краям полосы запоминается для книги', () async {

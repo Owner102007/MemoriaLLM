@@ -122,7 +122,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
             subtitle: controller.label,
             extraActions: widget.extraActions,
             onBack: () => Navigator.of(context).maybePop(),
-            onSearch: () => _scaffoldKey.currentState?.openEndDrawer(),
           ),
           _BottomBar(
             visible: _chromeVisible,
@@ -133,6 +132,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
               unawaited(controller.loadOutline());
               _scaffoldKey.currentState?.openDrawer();
             },
+            onSearch: () => _scaffoldKey.currentState?.openEndDrawer(),
           ),
         ],
       ),
@@ -140,6 +140,12 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   }
 }
 
+/// Верхняя панель: чем управляют, глядя на страницу.
+///
+/// Здесь живёт всё, что меняет вид страницы прямо сейчас, — деление,
+/// поворот, замок, рамка и фильтр. Поиск и оглавление отсюда уехали вниз,
+/// к шкале прогресса: они отвечают на другой вопрос — «где я в книге», —
+/// и вместе с ними панель переставала помещаться в ширину телефона.
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.visible,
@@ -147,7 +153,6 @@ class _TopBar extends StatelessWidget {
     required this.subtitle,
     required this.extraActions,
     required this.onBack,
-    required this.onSearch,
   });
 
   final bool visible;
@@ -155,7 +160,6 @@ class _TopBar extends StatelessWidget {
   final String subtitle;
   final List<Widget> extraActions;
   final VoidCallback onBack;
-  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -199,12 +203,6 @@ class _TopBar extends StatelessWidget {
                   ),
                 ),
                 ...extraActions,
-                IconButton(
-                  key: const Key('reader-search-button'),
-                  icon: const Icon(Icons.search),
-                  tooltip: 'Поиск по книге',
-                  onPressed: onSearch,
-                ),
               ],
             ),
           ),
@@ -221,6 +219,7 @@ class _BottomBar extends StatelessWidget {
     required this.pageCount,
     required this.onPage,
     required this.onOutline,
+    required this.onSearch,
   });
 
   final bool visible;
@@ -228,6 +227,7 @@ class _BottomBar extends StatelessWidget {
   final int pageCount;
   final void Function(int page) onPage;
   final VoidCallback onOutline;
+  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -251,6 +251,7 @@ class _BottomBar extends StatelessWidget {
                     key: const Key('reader-prev-page'),
                     icon: const Icon(Icons.chevron_left),
                     tooltip: 'Предыдущая страница',
+                    visualDensity: VisualDensity.compact,
                     onPressed: page > 1
                         ? () => onPage(previousPage(page, pageCount))
                         : null,
@@ -274,6 +275,7 @@ class _BottomBar extends StatelessWidget {
                     key: const Key('reader-next-page'),
                     icon: const Icon(Icons.chevron_right),
                     tooltip: 'Следующая страница',
+                    visualDensity: VisualDensity.compact,
                     onPressed: page < pageCount
                         ? () => onPage(nextPage(page, pageCount))
                         : null,
@@ -284,14 +286,22 @@ class _BottomBar extends StatelessWidget {
                     key: const Key('reader-progress-percent'),
                     style: theme.textTheme.bodySmall,
                   ),
-                  // Оглавление живёт рядом со шкалой прогресса: и то, и
-                  // другое отвечает на вопрос «где я в книге», а наверху
-                  // эта кнопка путалась с настройками.
+                  // Оглавление и поиск живут рядом со шкалой прогресса:
+                  // все трое отвечают на вопрос «где я в книге», а
+                  // наверху эти кнопки путались с настройками вида.
                   IconButton(
                     key: const Key('reader-outline-button'),
                     icon: const Icon(Icons.list_alt_outlined),
                     tooltip: 'Оглавление',
+                    visualDensity: VisualDensity.compact,
                     onPressed: onOutline,
+                  ),
+                  IconButton(
+                    key: const Key('reader-search-button'),
+                    icon: const Icon(Icons.search),
+                    tooltip: 'Поиск по книге',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onSearch,
                   ),
                 ],
               ),

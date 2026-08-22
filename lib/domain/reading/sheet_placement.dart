@@ -30,6 +30,19 @@ double clampStripFit(double value) {
   return value < kMinStripFit ? kMinStripFit : value;
 }
 
+/// Не трогал ли читатель масштаб страницы пальцами.
+///
+/// Пальцы почти никогда не оставляют ровную единицу, поэтому «не трогал»
+/// — это узкая окрестность вокруг неё, а не точное равенство. Правило
+/// нужно в одном месте: когда захлопывается замок. Страницу, которую
+/// только сдвинули, не меняя масштаба, надо вернуть на место — сдвинутая
+/// на палец страница выглядит поломкой, и при запертом замке вернуть её
+/// было бы нечем. А настоящий масштаб, выставленный осознанно, замок
+/// обязан сохранить: в этом весь его смысл.
+bool isSheetZoomNeutral(double scale) {
+  return scale.isFinite && scale > 0.995 && scale < 1.005;
+}
+
 /// Готовая раскладка листа на экране.
 class SheetPlacement {
   /// Создаёт раскладку.
@@ -146,7 +159,7 @@ SheetPlacement placeFragment({
   );
 }
 
-/// Окно фрагмента: куда именно на экране попал показываемый кусок листа.
+/// Окно фрагмента: где на экране лежит читаемая часть листа.
 class SheetViewport {
   /// Создаёт окно.
   const SheetViewport({
@@ -195,44 +208,29 @@ class SheetViewport {
   String toString() => 'SheetViewport($left, $top, ${width}x$height)';
 }
 
-/// Границы фрагмента на экране — то, что позволено видеть.
+/// Где на экране лежит читаемая полоса.
 ///
-/// Нужно там, где полоса уменьшена: при запасе по краям вокруг фрагмента
-/// освобождается место, и в него заглядывают соседние полосы. Половина
-/// строки, торчащая из-за края, хуже, чем её отсутствие: глаз цепляется
-/// за неё и теряет строку, которую читал. Поэтому лист обрезается ровно
-/// по фрагменту, а вокруг остаётся фон.
-///
-/// Окно всегда лежит внутри экрана: наружу фрагмент не выходит никогда,
-/// он в него вписан.
-SheetViewport fragmentViewport({
+/// Это светлое окно: всё остальное на листе гаснет. Границы намеренно
+/// **не** подрезаются краем экрана — полоса и так в него вписана, а
+/// подрезка сломала бы главное свойство затемнения: тень должна
+/// оставаться на месте, когда читатель уменьшает страницу щипком и
+/// затемнённые части листа въезжают в кадр из-за края.
+SheetViewport fragmentBounds({
   required SheetPlacement placement,
   required CropBox fragment,
-  required double screenWidth,
-  required double screenHeight,
 }) {
-  if (!placement.isVisible ||
-      !fragment.isValid ||
-      screenWidth <= 0 ||
-      screenHeight <= 0) {
+  if (!placement.isVisible || !fragment.isValid) {
     return SheetViewport.none;
   }
-  final double left = placement.left + fragment.left * placement.sheetWidth;
-  final double top = placement.top + fragment.top * placement.sheetHeight;
-  final double right = left + fragment.width * placement.sheetWidth;
-  final double bottom = top + fragment.height * placement.sheetHeight;
-
-  final double clampedLeft = left < 0 ? 0 : left;
-  final double clampedTop = top < 0 ? 0 : top;
-  final double clampedRight = right > screenWidth ? screenWidth : right;
-  final double clampedBottom = bottom > screenHeight ? screenHeight : bottom;
-  if (clampedRight <= clampedLeft || clampedBottom <= clampedTop) {
+  final double width = fragment.width * placement.sheetWidth;
+  final double height = fragment.height * placement.sheetHeight;
+  if (width <= 0 || height <= 0) {
     return SheetViewport.none;
   }
   return SheetViewport(
-    left: clampedLeft,
-    top: clampedTop,
-    width: clampedRight - clampedLeft,
-    height: clampedBottom - clampedTop,
+    left: placement.left + fragment.left * placement.sheetWidth,
+    top: placement.top + fragment.top * placement.sheetHeight,
+    width: width,
+    height: height,
   );
 }

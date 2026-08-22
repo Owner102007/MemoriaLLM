@@ -16,8 +16,6 @@ class ReaderSettingsSheet extends StatelessWidget {
   const ReaderSettingsSheet({
     required this.controller,
     required this.flow,
-    required this.snapBack,
-    required this.onSnapBack,
     required this.onFlow,
     required this.onDisplayMode,
     required this.onEditCrop,
@@ -29,12 +27,6 @@ class ReaderSettingsSheet extends StatelessWidget {
 
   /// Как листается книга сейчас.
   final PageFlow flow;
-
-  /// Возвращается ли масштаб после щипка.
-  final bool snapBack;
-
-  /// Переключить возврат масштаба.
-  final ValueChanged<bool> onSnapBack;
 
   /// Сменить способ листания.
   final ValueChanged<PageFlow> onFlow;
@@ -73,7 +65,8 @@ class ReaderSettingsSheet extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Деление страницы увеличивает текст только на широком '
+                    'Половина и треть переключаются кнопками ½ и ⅓ прямо '
+                    'в чтении. Деление увеличивает текст только на широком '
                     'экране, поэтому чтение поворачивается само.',
                     key: const Key('reader-mode-hint'),
                     style: theme.textTheme.bodySmall,
@@ -105,17 +98,8 @@ class ReaderSettingsSheet extends StatelessWidget {
                         ),
                     ],
                   ),
-                  SwitchListTile(
-                    key: const Key('reader-snapback-switch'),
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Возвращать масштаб'),
-                    subtitle: const Text(
-                      'Приближение щипком отпускает страницу обратно, как '
-                      'только убрали пальцы',
-                    ),
-                    value: snapBack,
-                    onChanged: onSnapBack,
-                  ),
+                  const SizedBox(height: 16),
+                  const _Title(text: 'Полоса на экране'),
                   _ValueSlider(
                     valueKey: const Key('reader-strip-fit'),
                     label: 'Запас по краям',
@@ -127,9 +111,27 @@ class ReaderSettingsSheet extends StatelessWidget {
                   ),
                   Text(
                     'Полоса вписана в экран вплотную, и её крайняя строка '
-                    'приходится на самый край. Щипок внутрь прямо на '
-                    'странице оставляет запас — и запоминается для книги.',
+                    'приходится на самый край — там, где у телефона '
+                    'закруглённый угол и вырез камеры. Запас отодвигает её '
+                    'от границы; страница при этом перерисовывается мельче, '
+                    'поэтому текст остаётся резким.',
                     key: const Key('reader-strip-fit-hint'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  _ValueSlider(
+                    valueKey: const Key('reader-dim-outside'),
+                    label: 'Затемнение',
+                    value: settings.dimOutside,
+                    min: 0,
+                    max: kMaxDimOutside,
+                    onChanged: (double value) =>
+                        unawaited(controller.setDimOutside(value)),
+                  ),
+                  Text(
+                    'В половине и трети страница видна целиком, а всё, что '
+                    'сейчас не читается, уходит в тень. Ноль гасить '
+                    'перестаёт — страница показывается как есть.',
+                    key: const Key('reader-dim-hint'),
                     style: theme.textTheme.bodySmall,
                   ),
                   const SizedBox(height: 16),
@@ -242,8 +244,19 @@ class _Title extends StatelessWidget {
   }
 }
 
+/// Режимы, которых нет на кнопках в чтении.
+///
+/// Половина и треть переехали в верхнюю панель чтения: к ним возвращаются
+/// по десять раз за книгу, и место им там. Развороты остались здесь —
+/// их выбирают один раз на книгу, обычно на большом экране.
 class _ModeSelector extends StatelessWidget {
   const _ModeSelector({required this.controller, required this.onDisplayMode});
+
+  static const List<PageDisplayMode> _modes = <PageDisplayMode>[
+    PageDisplayMode.full,
+    PageDisplayMode.spread,
+    PageDisplayMode.spreadHalf,
+  ];
 
   final ReaderController controller;
   final ValueChanged<PageDisplayMode> onDisplayMode;
@@ -254,7 +267,7 @@ class _ModeSelector extends StatelessWidget {
       spacing: 8,
       runSpacing: 8,
       children: <Widget>[
-        for (final PageDisplayMode mode in PageDisplayMode.values)
+        for (final PageDisplayMode mode in _modes)
           ChoiceChip(
             key: Key('reader-mode-${mode.name}'),
             label: Text(displayModeName(mode)),

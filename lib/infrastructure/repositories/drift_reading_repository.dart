@@ -91,6 +91,7 @@ class DriftReadingRepository implements ReadingRepository {
       contrast: Value<double>(settings.contrast),
       gamma: Value<double>(settings.gamma),
       stripFit: Value<double>(settings.stripFit),
+      dimOutside: Value<double>(settings.dimOutside),
       hlc: Value<String>(mark),
       nodeId: Value<String>(stamp.nodeId),
       modified: Value<String>(mark),
@@ -136,6 +137,7 @@ class DriftReadingRepository implements ReadingRepository {
       contrast: row.contrast,
       gamma: row.gamma,
       stripFit: row.stripFit,
+      dimOutside: row.dimOutside,
     );
   }
 

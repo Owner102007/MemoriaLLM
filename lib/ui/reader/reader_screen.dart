@@ -13,6 +13,7 @@ import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
 import 'crop_editor_screen.dart';
+import 'display_mode_buttons.dart';
 import 'reader_scaffold.dart';
 import 'reader_settings_sheet.dart';
 import 'reader_sheet.dart';
@@ -55,7 +56,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   PageFlow _flow = PageFlow.paged;
   AppLifecycleListener? _lifecycle;
   ScreenOrientation _rotation = ScreenOrientation.portrait;
-  bool _snapBack = true;
+  bool _zoomLocked = true;
 
   @override
   void initState() {
@@ -81,7 +82,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final AppSettingsRepository settings = widget.services.data.settings;
     final String? rotation = await settings.read(SettingsKeys.readingRotation);
     final String? flow = await settings.read(SettingsKeys.pageFlow);
-    final String? snapBack = await settings.read(SettingsKeys.zoomSnapBack);
+    final String? locked = await settings.read(SettingsKeys.zoomLock);
     if (!mounted) {
       return;
     }
@@ -92,7 +93,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _flow = flow == PageFlow.continuous.name
           ? PageFlow.continuous
           : PageFlow.paged;
-      _snapBack = snapBack != 'false';
+      // Заперто по умолчанию: обычное чтение — это листание, и страница,
+      // уехавшая от случайного движения двумя пальцами, читателю ничего
+      // не даёт, а вернуть её он не догадается.
+      _zoomLocked = locked != 'false';
     });
     await _applyRotation();
   }
@@ -130,13 +134,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
     await _applyRotation();
   }
 
-  Future<void> _setSnapBack(bool value) async {
-    if (value == _snapBack) {
+  /// Запирает и отпирает масштаб.
+  ///
+  /// Настройка устройства, а не книги: привычка держать страницу
+  /// запертой не меняется от книги к книге.
+  Future<void> _setZoomLocked(bool value) async {
+    if (value == _zoomLocked) {
       return;
     }
-    setState(() => _snapBack = value);
+    setState(() => _zoomLocked = value);
     await widget.services.data.settings.write(
-      SettingsKeys.zoomSnapBack,
+      SettingsKeys.zoomLock,
       value.toString(),
     );
   }
@@ -275,8 +283,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return ReaderSettingsSheet(
           controller: controller,
           flow: _flow,
-          snapBack: _snapBack,
-          onSnapBack: (bool value) => unawaited(_setSnapBack(value)),
           onFlow: (PageFlow value) => unawaited(_setFlow(value)),
           onDisplayMode: (PageDisplayMode mode) =>
               unawaited(_setDisplayMode(mode)),
@@ -331,6 +337,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
       search: _search!,
       onGoToPage: _goToPage,
       extraActions: <Widget>[
+        // Деление страницы стоит там, где им пользуются, — на странице, а
+        // не в панели настроек: это способ читать, а не настройка.
+        DisplayModeButtons(
+          mode: controller.settings.displayMode,
+          onMode: (PageDisplayMode mode) => unawaited(_setDisplayMode(mode)),
+        ),
+        IconButton(
+          key: const Key('reader-zoom-lock-button'),
+          icon: Icon(_zoomLocked ? Icons.lock_outline : Icons.lock_open),
+          tooltip: _zoomLocked
+              ? 'Разрешить двигать и масштабировать страницу'
+              : 'Запереть масштаб',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => unawaited(_setZoomLocked(!_zoomLocked)),
+        ),
         IconButton(
           key: const Key('reader-rotation-button'),
           icon: Icon(
@@ -341,6 +362,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           tooltip: _rotation == ScreenOrientation.landscape
               ? 'Читать вертикально'
               : 'Читать горизонтально',
+          visualDensity: VisualDensity.compact,
           onPressed: () => unawaited(
             _setRotation(
               _rotation == ScreenOrientation.landscape
@@ -353,6 +375,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           key: const Key('reader-settings-button'),
           icon: const Icon(Icons.tune),
           tooltip: 'Рамка и светофильтр',
+          visualDensity: VisualDensity.compact,
           onPressed: () => unawaited(_openSettings()),
         ),
       ],
@@ -376,11 +399,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  /// Чтение по страницам: жёсткая раскладка, никакого зума.
+  /// Чтение по страницам: жёсткая раскладка, страница целиком.
   ///
-  /// Лист вписывается в экран целиком, масштаб один и тот же на каждой
-  /// странице. Читатель не может ни увести страницу пальцем, ни поймать
-  /// случайный масштаб — а именно этого от читалки и ждут.
+  /// Лист кладётся так, что читаемая часть занимает экран, а остальная
+  /// страница гаснет вокруг неё. Масштаб один и тот же на каждой странице
+  /// книги — пока замок заперт. Отперев его, читатель двигает и
+  /// масштабирует страницу как в обычном просмотрщике, и она остаётся в
+  /// том виде, в каком он её оставил.
   Widget _buildSheet(
     BuildContext context,
     ReaderController controller,
@@ -411,10 +436,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   background: background,
                   page: controller.page,
                   pageCount: controller.pageCount,
-                  snapBack: _snapBack,
+                  locked: _zoomLocked,
                   stripFit: controller.settings.stripFit,
-                  onStripFit: (double value) =>
-                      unawaited(controller.setStripFit(value)),
+                  dim: controller.settings.dimOutside,
                 ),
         );
       },

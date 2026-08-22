@@ -195,6 +195,24 @@ class ReadingPosition {
 /// читателей ради снятого признака дороже, чем не пользоваться колонкой.
 const ScreenOrientation kSettingsSlot = ScreenOrientation.portrait;
 
+/// Насколько по умолчанию гаснет то, что сейчас не читается.
+const double kDefaultDimOutside = 0.6;
+
+/// Сильнее этого гасить нельзя.
+///
+/// Полная чернота вернула бы обрезку, от которой мы и уходим: смысл
+/// затемнения в том, что страница остаётся видна целиком и читатель
+/// понимает, где он на ней стоит.
+const double kMaxDimOutside = 0.9;
+
+/// Приводит силу затемнения к допустимому диапазону.
+double clampDimOutside(double value) {
+  if (!value.isFinite || value <= 0) {
+    return 0;
+  }
+  return value > kMaxDimOutside ? kMaxDimOutside : value;
+}
+
 /// Настройки чтения одной книги.
 class BookReadingSettings {
   /// Создаёт настройки.
@@ -211,6 +229,7 @@ class BookReadingSettings {
     this.contrast = 1,
     this.gamma = 1,
     this.stripFit = 1,
+    this.dimOutside = kDefaultDimOutside,
   });
 
   /// Книга.
@@ -253,11 +272,21 @@ class BookReadingSettings {
 
   /// Насколько уменьшена полоса: 1 — вписана в экран вплотную.
   ///
-  /// Меньше единицы означает запас по краям. Ставится щипком внутрь прямо
-  /// в чтении и запоминается для книги: подбирается он один раз — под
+  /// Меньше единицы означает запас по краям: крайняя строка полосы уходит
+  /// от закруглённого угла и выреза камеры. Подбирается он один раз — под
   /// кегль этой книги и это устройство, — и повторять подбор на каждой
-  /// странице читатель не должен.
+  /// странице читатель не должен, поэтому значение живёт в настройках
+  /// книги. Страница при этом **перерисовывается** мельче, а не
+  /// сжимается растром: текст остаётся резким.
   final double stripFit;
+
+  /// Насколько гаснет часть страницы, которую сейчас не читают.
+  ///
+  /// В режимах половины и трети страница видна целиком: читаемая полоса
+  /// занимает максимум экрана, а всё остальное уходит в тень. Так место
+  /// на странице остаётся понятным — сколько прочитано, сколько осталось
+  /// до конца листа, — и при этом глаз не цепляется за соседние строки.
+  final double dimOutside;
 
   /// Копия с изменёнными полями.
   BookReadingSettings copyWith({
@@ -271,6 +300,7 @@ class BookReadingSettings {
     double? contrast,
     double? gamma,
     double? stripFit,
+    double? dimOutside,
   }) {
     return BookReadingSettings(
       bookId: bookId,
@@ -285,6 +315,7 @@ class BookReadingSettings {
       contrast: contrast ?? this.contrast,
       gamma: gamma ?? this.gamma,
       stripFit: stripFit ?? this.stripFit,
+      dimOutside: dimOutside ?? this.dimOutside,
     );
   }
 }

@@ -7,8 +7,9 @@ part 'app_database.g.dart';
 /// Версия схемы. Растёт вместе с каждой миграцией.
 ///
 /// 1 — исходная схема (S2). 2 — запас по краям полосы в настройках книги
-/// (S4.6): читатель уменьшает полосу щипком, и это надо помнить.
-const int appSchemaVersion = 2;
+/// (S4.6). 3 — сила затемнения нечитаемой части страницы (S4.7): страница
+/// в режимах половины и трети больше не обрезается, а гаснет.
+const int appSchemaVersion = 3;
 
 /// База данных приложения.
 ///
@@ -47,6 +48,9 @@ class AppDatabase extends _$AppDatabase {
         // может приехать с любой прошлой версии, а не только с соседней.
         if (from < 2) {
           await m.addColumn(bookSettings, bookSettings.stripFit);
+        }
+        if (from < 3) {
+          await m.addColumn(bookSettings, bookSettings.dimOutside);
         }
       },
       beforeOpen: (OpeningDetails details) async {

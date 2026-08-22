@@ -358,6 +358,7 @@ class ReaderController extends ChangeNotifier {
       contrast: _settings.contrast,
       gamma: _settings.gamma,
       stripFit: _settings.stripFit,
+      dimOutside: _settings.dimOutside,
     );
     _fragment = clampFragment(_fragment, fragmentCount);
     await _saveSettings();
@@ -366,14 +367,22 @@ class ReaderController extends ChangeNotifier {
   /// Меняет запас по краям полосы.
   ///
   /// Значение приводится к допустимому диапазону здесь, а не в интерфейсе:
-  /// щипок легко уносит масштаб куда угодно, а полоса мельче [kMinStripFit]
-  /// перестаёт быть чтением.
+  /// полоса мельче [kMinStripFit] перестаёт быть чтением.
   Future<void> setStripFit(double value) async {
     final double safe = clampStripFit(value);
     if (safe == _settings.stripFit) {
       return;
     }
     await _updateSettings(_settings.copyWith(stripFit: safe));
+  }
+
+  /// Меняет силу затемнения нечитаемой части страницы.
+  Future<void> setDimOutside(double value) async {
+    final double safe = clampDimOutside(value);
+    if (safe == _settings.dimOutside) {
+      return;
+    }
+    await _updateSettings(_settings.copyWith(dimOutside: safe));
   }
 
   /// Выбирает светофильтр и сразу даёт ему заметную силу.

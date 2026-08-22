@@ -17,8 +17,12 @@ abstract final class SettingsKeys {
   /// Как листается книга: `continuous` или `paged`.
   static const String pageFlow = 'ui.page_flow';
 
-  /// Возвращать ли масштаб, когда читатель отпустил пальцы: `true`/`false`.
-  static const String zoomSnapBack = 'ui.zoom_snap_back';
+  /// Заперт ли масштаб страницы: `true`/`false`.
+  ///
+  /// Заперт — щипок и перетаскивание выключены, страница стоит там, где
+  /// её положила раскладка. Отперт — страница двигается и масштабируется
+  /// как в обычном просмотрщике и остаётся в этом состоянии.
+  static const String zoomLock = 'ui.zoom_lock';
 
   /// Идентификатор этого устройства для меток HLC.
   static const String nodeId = 'sync.node_id';

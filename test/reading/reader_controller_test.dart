@@ -556,6 +556,31 @@ void main() {
       controller.dispose();
     });
 
+    test('затемнение запоминается и не доходит до черноты', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.settings.dimOutside, kDefaultDimOutside);
+
+      await controller.setDimOutside(0.35);
+      expect(controller.settings.dimOutside, closeTo(0.35, 1e-9));
+
+      // Полная чернота вернула бы обрезку, от которой мы и ушли: смысл
+      // затемнения в том, что страница остаётся видна целиком.
+      await controller.setDimOutside(1);
+      expect(controller.settings.dimOutside, kMaxDimOutside);
+      // Ноль — законный выбор: гасить перестаём совсем.
+      await controller.setDimOutside(-1);
+      expect(controller.settings.dimOutside, 0);
+
+      await controller.setDimOutside(0.5);
+      final BookReadingSettings saved = await data.reading.settings(
+        controller.book.id,
+        kSettingsSlot,
+      );
+      expect(saved.dimOutside, closeTo(0.5, 1e-9));
+      await controller.close();
+      controller.dispose();
+    });
+
     test('светофильтр собирается из настроек книги', () async {
       final ReaderController controller = await openFramed();
       expect(controller.filter.isIdentity, isTrue);

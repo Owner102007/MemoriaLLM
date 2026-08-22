@@ -4,25 +4,29 @@ import 'package:pdfrx/pdfrx.dart';
 import '../../domain/reading/progress_slot.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/sheet_placement.dart';
+import 'dim_outside.dart';
 import 'reading_progress_book.dart';
 
-/// Лист книги на экране: жёсткая раскладка без постоянного зума.
+/// Лист книги на экране: жёсткая раскладка, страница целиком.
 ///
 /// Читалка не наводит объектив на кусок страницы, а кладёт лист так, что
-/// нужный прямоугольник занимает экран целиком. Масштаб определяется
-/// только размерами листа и экрана — одинаковый на каждой странице.
+/// читаемая часть занимает экран целиком. Масштаб определяется размерами
+/// листа и экрана — одинаковый на каждой странице книги.
 ///
-/// Приблизить всё-таки можно: щипком, чтобы разглядеть схему или сноску.
-/// Но это увеличение **временное** — палец отпущен, и лист возвращается
-/// на место. Так разглядывание не превращается в потерянный масштаб,
-/// который потом непонятно как вернуть. Тем, кому такое поведение мешает,
-/// возврат отключается в настройках.
+/// **Страница при этом не обрезается.** В режимах половины и трети лист
+/// рисуется целиком, а всё за пределами читаемой полосы гаснет. Крупная
+/// полоса занимает весь экран, и затемнённая часть страницы обычно лежит
+/// за его краем — но она есть: отперев замок и уменьшив страницу щипком,
+/// читатель видит её целиком, тёмной вокруг светлой полосы. Прежде на
+/// её месте не было ничего, и страница ощущалась обрезанной.
 ///
-/// **Щипок внутрь работает иначе, и намеренно.** Он не разглядывает, а
-/// подгоняет полосу под глаза и под этот экран: строка у самого края
-/// уходит от закруглённого угла и выреза камеры. Такую подгонку делают
-/// один раз, поэтому она не отпружинивает обратно, а запоминается для
-/// книги — [onStripFit].
+/// **Замок решает, можно ли трогать страницу пальцами.** Заперт — щипок
+/// и перетаскивание выключены совсем, страница стоит там, где её
+/// положили, и случайное движение руки не собьёт масштаб. Отперт —
+/// страница ведёт себя как в обычном просмотрщике: её можно двигать и
+/// масштабировать, и она **остаётся** в этом состоянии, а не отпружинивает
+/// назад. Прежний возврат масштаба и был главной жалобой: разглядеть
+/// схему получалось только удерживая пальцы на экране.
 class ReaderSheet extends StatefulWidget {
   /// Создаёт лист.
   const ReaderSheet({
@@ -32,14 +36,22 @@ class ReaderSheet extends StatefulWidget {
     required this.background,
     required this.page,
     required this.pageCount,
-    required this.snapBack,
+    required this.locked,
     this.stripFit = 1,
-    this.onStripFit,
+    this.dim = kDefaultDimOutside,
     super.key,
   });
 
   /// Наибольшее увеличение щипком.
   static const double maxZoom = 5;
+
+  /// Наименьшее уменьшение щипком.
+  ///
+  /// Полоса вписана в экран, поэтому лист в режиме трети втрое выше
+  /// экрана: чтобы увидеть страницу целиком, уменьшать надо не меньше чем
+  /// втрое. Предел взят с запасом — иначе страница упиралась бы в него
+  /// ровно в тот момент, когда читатель хочет оглядеть её всю.
+  static const double minZoom = 0.2;
 
   /// Открытый документ.
   final PdfDocument document;
@@ -47,7 +59,7 @@ class ReaderSheet extends StatefulWidget {
   /// Номера страниц листа, начиная с единицы.
   final List<int> pages;
 
-  /// Какую часть листа показывать, в долях листа.
+  /// Какую часть листа читают сейчас, в долях листа.
   final CropBox fragment;
 
   /// Фон вокруг страницы.
@@ -59,89 +71,40 @@ class ReaderSheet extends StatefulWidget {
   /// Всего страниц в книге.
   final int pageCount;
 
-  /// Возвращать ли масштаб, когда читатель отпустил пальцы.
-  final bool snapBack;
+  /// Заперт ли масштаб.
+  final bool locked;
 
   /// Запас по краям полосы: 1 — вписана вплотную.
   final double stripFit;
 
-  /// Читатель уменьшил полосу щипком.
-  final ValueChanged<double>? onStripFit;
+  /// Сила затемнения нечитаемой части страницы.
+  final double dim;
 
   @override
   State<ReaderSheet> createState() => _ReaderSheetState();
 }
 
-class _ReaderSheetState extends State<ReaderSheet>
-    with SingleTickerProviderStateMixin {
+class _ReaderSheetState extends State<ReaderSheet> {
   final TransformationController _zoom = TransformationController();
-  late final AnimationController _release = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 180),
-  );
-  Animation<Matrix4>? _back;
-
-  @override
-  void initState() {
-    super.initState();
-    _release.addListener(() {
-      final Animation<Matrix4>? back = _back;
-      if (back != null) {
-        _zoom.value = back.value;
-      }
-    });
-  }
 
   @override
   void didUpdateWidget(ReaderSheet oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Сменилась страница или фрагмент — увеличение к ним не относится.
-    if (oldWidget.page != widget.page ||
-        oldWidget.fragment != widget.fragment) {
-      _release.stop();
+    // Замок захлопнулся — страница замирает как есть. Но если её только
+    // сдвинули, не меняя масштаба, сдвиг снимается: смещённая на палец
+    // страница выглядит не выбором читателя, а поломкой, и вернуть её
+    // при запертом замке было бы нечем.
+    if (widget.locked &&
+        !oldWidget.locked &&
+        isSheetZoomNeutral(_zoom.value.getMaxScaleOnAxis())) {
       _zoom.value = Matrix4.identity();
     }
   }
 
   @override
   void dispose() {
-    _release.dispose();
     _zoom.dispose();
     super.dispose();
-  }
-
-  void _onInteractionEnd(ScaleEndDetails details) {
-    final double gesture = _zoom.value.getMaxScaleOnAxis();
-    // Щипок внутрь — это не разглядывание, а подгонка полосы: она
-    // запоминается для книги, а лист сразу встаёт на место в новом
-    // масштабе. Иначе читателю пришлось бы держать пальцы, чтобы видеть
-    // строку у края.
-    if (gesture < 0.995) {
-      final ValueChanged<double>? report = widget.onStripFit;
-      _release.stop();
-      _zoom.value = Matrix4.identity();
-      if (report != null) {
-        report(clampStripFit(widget.stripFit * gesture));
-      }
-      return;
-    }
-    if (gesture <= 1.005) {
-      // Пальцы двигали лист, не масштабировали. Уводить страницу в
-      // сторону читалка не даёт вовсе: место на странице — не то, что
-      // должно зависеть от случайного движения руки. Запас границ у
-      // просмотрщика нужен только ради щипка внутрь.
-      _release.stop();
-      _zoom.value = Matrix4.identity();
-      return;
-    }
-    if (!widget.snapBack) {
-      return;
-    }
-    _back = Matrix4Tween(
-      begin: _zoom.value,
-      end: Matrix4.identity(),
-    ).animate(CurvedAnimation(parent: _release, curve: Curves.easeOut));
-    _release.forward(from: 0);
   }
 
   @override
@@ -189,65 +152,77 @@ class _ReaderSheetState extends State<ReaderSheet>
           if (!placement.isVisible) {
             return const SizedBox.expand();
           }
-          final SheetViewport window = fragmentViewport(
+          final SheetViewport window = fragmentBounds(
             placement: placement,
             fragment: widget.fragment,
-            screenWidth: limits.maxWidth,
-            screenHeight: limits.maxHeight,
           );
           return Stack(
             children: <Widget>[
               Positioned.fill(
                 child: InteractiveViewer(
                   transformationController: _zoom,
-                  // Уменьшать разрешено: щипок внутрь подгоняет полосу и
-                  // запоминается. Увеличение остаётся временным.
-                  minScale: kMinStripFit,
+                  panEnabled: !widget.locked,
+                  scaleEnabled: !widget.locked,
+                  minScale: ReaderSheet.minZoom,
                   maxScale: ReaderSheet.maxZoom,
-                  // Без запаса границ `InteractiveViewer` просто **не даёт**
+                  // Без запаса границ `InteractiveViewer` **не даёт**
                   // уменьшить масштаб: он не разрешает отвести края листа
-                  // внутрь окна. Запас нужен не для панорамирования, а
-                  // чтобы щипок внутрь вообще работал; лист всё равно
-                  // возвращается на место, как только пальцы убраны.
-                  boundaryMargin: const EdgeInsets.all(1200),
-                  onInteractionEnd: _onInteractionEnd,
+                  // внутрь окна и молча съедает жест. Запас должен быть
+                  // тем больше, чем сильнее разрешено уменьшать: окно
+                  // обязано умещаться в границы и после сжатия. Две
+                  // тысячи точек дают предел около 0.17 — с запасом ниже
+                  // [ReaderSheet.minZoom], но не настолько, чтобы
+                  // страницу можно было увести в другую галактику.
+                  boundaryMargin: const EdgeInsets.all(2000),
                   child: Stack(
+                    // Клипа нет намеренно: лист рисуется целиком, даже
+                    // та его часть, что сейчас за краем экрана. Обрезать
+                    // её здесь значило бы обрезать её и после щипка —
+                    // читатель уменьшил бы страницу и увидел ту же
+                    // полосу, только мельче. Край экрана обрезает сам
+                    // просмотрщик, уже после преобразования.
+                    clipBehavior: Clip.none,
                     children: <Widget>[
-                      // Лист обрезан ровно по фрагменту: в запас по краям
-                      // иначе заглядывает соседняя полоса, и торчащая
-                      // половина строки сбивает чтение сильнее, чем пустое
-                      // поле.
+                      // Лист кладётся целиком: страница в режимах
+                      // половины и трети рисуется вся, лишнее не
+                      // вырезается, а гаснет.
                       Positioned(
-                        left: window.left,
-                        top: window.top,
-                        width: window.width,
-                        height: window.height,
-                        child: ClipRect(
-                          child: Stack(
-                            children: <Widget>[
-                              Positioned(
-                                left: placement.left - window.left,
-                                top: placement.top - window.top,
-                                width: placement.sheetWidth,
-                                height: placement.sheetHeight,
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: <Widget>[
-                                    for (final PdfPage page in sheet)
-                                      SizedBox(
-                                        width: page.width * placement.scale,
-                                        height: page.height * placement.scale,
-                                        child: PdfPageView(
-                                          document: widget.document,
-                                          pageNumber: page.pageNumber,
-                                          decorationBuilder: _plainPage,
-                                        ),
-                                      ),
-                                  ],
+                        left: placement.left,
+                        top: placement.top,
+                        width: placement.sheetWidth,
+                        height: placement.sheetHeight,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            for (final PdfPage page in sheet)
+                              SizedBox(
+                                width: page.width * placement.scale,
+                                height: page.height * placement.scale,
+                                child: PdfPageView(
+                                  document: widget.document,
+                                  pageNumber: page.pageNumber,
+                                  decorationBuilder: _plainPage,
                                 ),
                               ),
-                            ],
+                          ],
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: DimOutside(
+                          key: const Key('reader-dim-outside'),
+                          sheet: Rect.fromLTWH(
+                            placement.left,
+                            placement.top,
+                            placement.sheetWidth,
+                            placement.sheetHeight,
                           ),
+                          fragment: Rect.fromLTWH(
+                            window.left,
+                            window.top,
+                            window.width,
+                            window.height,
+                          ),
+                          dim: widget.dim,
                         ),
                       ),
                     ],

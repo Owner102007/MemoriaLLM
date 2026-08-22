@@ -207,11 +207,9 @@ void main() {
       final SheetPlacement loose = placeWithFit(0.85);
       expect(loose.scale, closeTo(tight.scale * 0.85, 1e-9));
 
-      final SheetViewport window = fragmentViewport(
+      final SheetViewport window = fragmentBounds(
         placement: loose,
         fragment: halves.first,
-        screenWidth: _longSide,
-        screenHeight: _shortSide,
       );
       expect(window.left, greaterThan(0));
       expect(window.top, greaterThan(0));
@@ -221,11 +219,9 @@ void main() {
 
     test('вплотную окно совпадает с той стороной, которой не хватало', () {
       final SheetPlacement tight = placeWithFit(1);
-      final SheetViewport window = fragmentViewport(
+      final SheetViewport window = fragmentBounds(
         placement: tight,
         fragment: halves.first,
-        screenWidth: _longSide,
-        screenHeight: _shortSide,
       );
       // Половина А4 ниже и шире экрана телефона: масштаб упирается в
       // высоту, по бокам остаётся фон.
@@ -233,14 +229,12 @@ void main() {
       expect(window.width, lessThan(_longSide));
     });
 
-    test('окно фрагмента не выходит за экран', () {
+    test('читаемая полоса не выходит за экран', () {
       for (final double fit in <double>[1, 0.9, 0.8, 0.7]) {
         final SheetPlacement placement = placeWithFit(fit);
-        final SheetViewport window = fragmentViewport(
+        final SheetViewport window = fragmentBounds(
           placement: placement,
           fragment: halves.first,
-          screenWidth: _longSide,
-          screenHeight: _shortSide,
         );
         expect(window.isVisible, isTrue, reason: 'запас $fit');
         expect(window.left, greaterThanOrEqualTo(-1e-9));
@@ -251,6 +245,21 @@ void main() {
           lessThanOrEqualTo(_shortSide + 1e-9),
         );
       }
+    });
+
+    test('затемнённая часть листа остаётся за краем экрана, а не пропадает', () {
+      // Главное свойство затемнения: соседние полосы не вырезаны, они
+      // просто лежат за краем. Уменьшил щипком — увидел страницу целиком.
+      final SheetPlacement placement = placeWithFit(1);
+      final SheetViewport window = fragmentBounds(
+        placement: placement,
+        fragment: halves.first,
+      );
+      expect(
+        placement.top + placement.sheetHeight,
+        greaterThan(window.top + window.height + 1),
+        reason: 'вторая половина листа существует ниже экрана',
+      );
     });
 
     test('мельче предела полоса не уменьшается', () {
@@ -266,11 +275,9 @@ void main() {
       // Уменьшение — это про края экрана, а не про содержимое: полоса
       // остаётся той же, иначе читатель терял бы строки при подгонке.
       final SheetPlacement loose = placeWithFit(0.8);
-      final SheetViewport window = fragmentViewport(
+      final SheetViewport window = fragmentBounds(
         placement: loose,
         fragment: halves.first,
-        screenWidth: _longSide,
-        screenHeight: _shortSide,
       );
       expect(
         window.width / window.height,
@@ -302,6 +309,29 @@ void main() {
         place(fragment: const CropBox(left: 1, top: 1, right: 0, bottom: 0)),
         SheetPlacement.none,
       );
+    });
+
+    test('у пустой раскладки нет и полосы', () {
+      expect(
+        fragmentBounds(placement: SheetPlacement.none, fragment: CropBox.full),
+        SheetViewport.none,
+      );
+    });
+  });
+
+  group('замок и масштаб', () {
+    test('нетронутый масштаб узнаётся с поправкой на пальцы', () {
+      // Ровной единицы жест не оставляет почти никогда, поэтому «не
+      // трогал» — это окрестность, а не равенство.
+      expect(isSheetZoomNeutral(1), isTrue);
+      expect(isSheetZoomNeutral(1.001), isTrue);
+      expect(isSheetZoomNeutral(0.999), isTrue);
+    });
+
+    test('осознанный масштаб замок обязан сохранить', () {
+      expect(isSheetZoomNeutral(1.4), isFalse);
+      expect(isSheetZoomNeutral(0.5), isFalse);
+      expect(isSheetZoomNeutral(double.nan), isFalse);
     });
   });
 }

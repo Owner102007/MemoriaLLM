@@ -19,7 +19,6 @@ void main() {
   late ReaderController controller;
   PageFlow? pickedFlow;
   PageDisplayMode? pickedMode;
-  bool? pickedSnapBack;
 
   ReaderController build({Map<int, List<TextBox>>? boxes}) {
     document = FakeReaderDocument(
@@ -29,7 +28,6 @@ void main() {
     reading = FakeReadingRepository();
     pickedFlow = null;
     pickedMode = null;
-    pickedSnapBack = null;
     return controller = ReaderController(
       book: fakeBook(pageCount: 6),
       document: document,
@@ -53,8 +51,6 @@ void main() {
           body: ReaderSettingsSheet(
             controller: controller,
             flow: flow,
-            snapBack: true,
-            onSnapBack: (bool value) => pickedSnapBack = value,
             onFlow: (PageFlow value) => pickedFlow = value,
             onDisplayMode: (PageDisplayMode mode) {
               pickedMode = mode;
@@ -79,22 +75,37 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('режим отображения переключается и запоминается', (
+  testWidgets('разворот переключается и запоминается', (
     WidgetTester tester,
   ) async {
     build();
     await pumpSheet(tester);
 
-    await tapKey(tester, 'reader-mode-half');
+    await tapKey(tester, 'reader-mode-spread');
 
     // Режим меняет экран, а не панель: вместе с ним поворачивается чтение.
-    expect(pickedMode, PageDisplayMode.half);
-    expect(controller.settings.displayMode, PageDisplayMode.half);
+    expect(pickedMode, PageDisplayMode.spread);
+    expect(controller.settings.displayMode, PageDisplayMode.spread);
     final BookReadingSettings saved = await reading.settings(
       controller.book.id,
       ScreenOrientation.portrait,
     );
-    expect(saved.displayMode, PageDisplayMode.half);
+    expect(saved.displayMode, PageDisplayMode.spread);
+  });
+
+  testWidgets('половина и треть из панели уехали в чтение', (
+    WidgetTester tester,
+  ) async {
+    // К делению страницы возвращаются по десять раз за книгу, и место
+    // ему на кнопках ½ и ⅓ в верхней панели, а не через два нажатия
+    // в панели, которая эту самую страницу и закрывает.
+    build();
+    await pumpSheet(tester);
+
+    expect(find.byKey(const Key('reader-mode-half')), findsNothing);
+    expect(find.byKey(const Key('reader-mode-third')), findsNothing);
+    expect(find.byKey(const Key('reader-mode-full')), findsOneWidget);
+    expect(find.byKey(const Key('reader-mode-spread')), findsOneWidget);
   });
 
   testWidgets('выбранный фильтр сразу получает заметную силу', (
@@ -213,12 +224,23 @@ void main() {
     expect(pickedFlow, PageFlow.continuous);
   });
 
-  testWidgets('возврат масштаба выключается', (WidgetTester tester) async {
+  testWidgets('затемнение есть в панели и меняется ползунком', (
+    WidgetTester tester,
+  ) async {
     build();
     await pumpSheet(tester);
 
-    await tapKey(tester, 'reader-snapback-switch');
-    expect(pickedSnapBack, isFalse);
+    expect(find.byKey(const Key('reader-dim-hint')), findsOneWidget);
+    expect(controller.settings.dimOutside, kDefaultDimOutside);
+
+    final Finder slider = find.byKey(const Key('reader-dim-outside'));
+    await tester.ensureVisible(slider);
+    await tester.pump();
+    await tester.drag(slider, const Offset(-120, 0));
+    await tester.pump();
+
+    expect(controller.settings.dimOutside, lessThan(kDefaultDimOutside));
+    expect(controller.settings.dimOutside, greaterThanOrEqualTo(0));
   });
 
   testWidgets('сказано, зачем режимы поворачивают экран', (
@@ -259,8 +281,9 @@ void main() {
     build();
     await pumpSheet(tester);
 
-    // Щипок на странице — главный способ, но найти его читатель должен
-    // не наугад: в панели про него написано, и то же самое делает ползунок.
+    // Запас по краям — единственный способ отодвинуть крайнюю строку от
+    // выреза камеры так, чтобы страница **перерисовалась** мельче, а не
+    // сжалась растром. Поэтому он остаётся ползунком с объяснением.
     expect(find.byKey(const Key('reader-strip-fit-hint')), findsOneWidget);
     expect(controller.settings.stripFit, 1);
 
