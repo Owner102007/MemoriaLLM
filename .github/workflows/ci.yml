@@ -102,14 +102,30 @@ jobs:
       - name: Ошибки в аннотации
         if: failure()
         run: |
+          # У падения тестов хвост вывода бесполезен: последними идут те
+          # тесты, что прошли, а упавшие уехали вверх на сотни строк.
+          # Поэтому они вынимаются отдельно — по метке `[E]`, которой их
+          # помечает расширенный отчёт. Без этого сессия разработки видит
+          # «-2» и не видит, что именно упало: логи прогона закрыты для
+          # неавторизованных, а аннотации — единственное, что видно всем.
+          if [ -s /tmp/tests.txt ]; then
+            { grep -B 2 -A 15 '\[E\]' /tmp/tests.txt || true; } \
+              | head -n 200 > /tmp/failures.txt
+          fi
           for pair in 'Форматирование:/tmp/fmt.txt' \
                       'Кодогенерация:/tmp/codegen.txt' \
                       'Анализ:/tmp/analyze.txt' \
+                      'Упавшие тесты:/tmp/failures.txt' \
                       'Тесты:/tmp/tests.txt'; do
             title="${pair%%:*}"
             file="${pair#*:}"
             [ -s "$file" ] || continue
-            body=$(tail -n 40 "$file" \
+            if [ "$title" = 'Упавшие тесты' ]; then
+              text=$(cat "$file")
+            else
+              text=$(tail -n 40 "$file")
+            fi
+            body=$(printf '%s\n' "$text" \
               | sed -e 's/%/%25/g' -e 's/\r/ /g' \
               | awk '{printf "%s%%0A", $0}')
             echo "::error title=$title::$body"
