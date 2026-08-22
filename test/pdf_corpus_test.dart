@@ -440,10 +440,7 @@ void main() {
                 part.left,
                 greaterThanOrEqualTo(frame.content.left - 1e-9),
               );
-              expect(
-                part.right,
-                lessThanOrEqualTo(frame.content.right + 1e-9),
-              );
+              expect(part.right, lessThanOrEqualTo(frame.content.right + 1e-9));
             }
           }
         }
