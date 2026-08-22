@@ -32,7 +32,7 @@ class DisplayModeButtons extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         _FractionButton(
-          key: const Key('reader-mode-half-button'),
+          buttonKey: const Key('reader-mode-half-button'),
           denominator: 2,
           selected: mode == PageDisplayMode.half,
           onPressed: () => onMode(_toggle(PageDisplayMode.half)),
@@ -41,7 +41,7 @@ class DisplayModeButtons extends StatelessWidget {
               : 'Половина страницы',
         ),
         _FractionButton(
-          key: const Key('reader-mode-third-button'),
+          buttonKey: const Key('reader-mode-third-button'),
           denominator: 3,
           selected: mode == PageDisplayMode.third,
           onPressed: () => onMode(_toggle(PageDisplayMode.third)),
@@ -60,12 +60,18 @@ class DisplayModeButtons extends StatelessWidget {
 
 class _FractionButton extends StatelessWidget {
   const _FractionButton({
+    required this.buttonKey,
     required this.denominator,
     required this.selected,
     required this.onPressed,
     required this.tooltip,
-    super.key,
   });
+
+  /// Ключ ставится на саму кнопку, а не на обёртку.
+  ///
+  /// Иначе `find.byKey` в тестах находит обёртку, и всё, что спрашивает
+  /// у кнопки её свойства, падает на ровном месте.
+  final Key buttonKey;
 
   final int denominator;
   final bool selected;
@@ -77,6 +83,7 @@ class _FractionButton extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final Color color = selected ? scheme.secondary : scheme.onSurface;
     return IconButton(
+      key: buttonKey,
       // Кнопок в панели чтения много, а ширина телефона в портрете одна:
       // без уплотнения заголовок книги съедается кнопками до многоточия.
       visualDensity: VisualDensity.compact,

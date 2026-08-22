@@ -336,27 +336,23 @@ void main() {
   });
 
   group('очень большая книга', () {
-    test(
-      '1200 страниц: открывается, последняя доступна',
-      () async {
-        final Stopwatch watch = Stopwatch()..start();
-        final ReaderDocument document = await open('huge_1200_pages.pdf');
-        watch.stop();
+    test('1200 страниц: открывается, последняя доступна', () async {
+      final Stopwatch watch = Stopwatch()..start();
+      final ReaderDocument document = await open('huge_1200_pages.pdf');
+      watch.stop();
 
-        expect(document.pageCount, 1200);
-        expect(await document.pageText(1200), contains('Long book page'));
-        expect(document.geometry(1200).width, greaterThan(0));
-        // Не измерение производительности, а страховка от квадратичных
-        // алгоритмов: то, что незаметно на десяти страницах, вешает
-        // приложение на тысяче.
-        expect(
-          watch.elapsed,
-          lessThan(const Duration(seconds: 60)),
-          reason: 'открытие тысячестраничной книги подозрительно долгое',
-        );
-      },
-      timeout: const Timeout(Duration(minutes: 5)),
-    );
+      expect(document.pageCount, 1200);
+      expect(await document.pageText(1200), contains('Long book page'));
+      expect(document.geometry(1200).width, greaterThan(0));
+      // Не измерение производительности, а страховка от квадратичных
+      // алгоритмов: то, что незаметно на десяти страницах, вешает
+      // приложение на тысяче.
+      expect(
+        watch.elapsed,
+        lessThan(const Duration(seconds: 60)),
+        reason: 'открытие тысячестраничной книги подозрительно долгое',
+      );
+    }, timeout: const Timeout(Duration(minutes: 5)));
 
     test('страница за краем книги — RangeError, а не тихий мусор', () async {
       final ReaderDocument document = await open('basic_text.pdf');
@@ -408,74 +404,66 @@ void main() {
 
   group('читательская рамка на корпусе', () {
     _readable.forEach((String name, int pages) {
-      test(
-        '$name: рамка не пустая и не вывернутая',
-        () async {
-          final ReaderDocument document = await open(name);
-          final PageFrameSource frames = PageFrameSource(document: document);
-          // Шести страниц довольно: дальше повторяется та же вёрстка,
-          // а тысяча страниц превратила бы прогон в получасовой.
-          final int limit = math.min(document.pageCount, 6);
+      test('$name: рамка не пустая и не вывернутая', () async {
+        final ReaderDocument document = await open(name);
+        final PageFrameSource frames = PageFrameSource(document: document);
+        // Шести страниц довольно: дальше повторяется та же вёрстка,
+        // а тысяча страниц превратила бы прогон в получасовой.
+        final int limit = math.min(document.pageCount, 6);
 
-          for (int page = 1; page <= limit; page++) {
-            final PageFrame frame = await frames.frameFor(page);
-            final String where = '$name, страница $page';
+        for (int page = 1; page <= limit; page++) {
+          final PageFrame frame = await frames.frameFor(page);
+          final String where = '$name, страница $page';
 
-            expect(frame.content.isValid, isTrue, reason: 'рамка: $where');
-            expect(frame.content.width, greaterThan(0.05), reason: where);
-            expect(frame.content.height, greaterThan(0.05), reason: where);
-            expect(frame.columns, isNotEmpty, reason: 'колонки: $where');
+          expect(frame.content.isValid, isTrue, reason: 'рамка: $where');
+          expect(frame.content.width, greaterThan(0.05), reason: where);
+          expect(frame.content.height, greaterThan(0.05), reason: where);
+          expect(frame.columns, isNotEmpty, reason: 'колонки: $where');
 
-            // Ни один режим не должен давать пустой или вывернутый фрагмент:
-            // это чёрный экран вместо книги.
-            for (final PageDisplayMode mode in PageDisplayMode.values) {
-              final List<CropBox> parts = fragmentsFor(
-                content: frame.content,
-                mode: mode,
-                columns: frame.columns,
-              );
-              expect(parts, isNotEmpty, reason: '$mode: $where');
+          // Ни один режим не должен давать пустой или вывернутый фрагмент:
+          // это чёрный экран вместо книги.
+          for (final PageDisplayMode mode in PageDisplayMode.values) {
+            final List<CropBox> parts = fragmentsFor(
+              content: frame.content,
+              mode: mode,
+              columns: frame.columns,
+            );
+            expect(parts, isNotEmpty, reason: '$mode: $where');
+            expect(
+              parts.length,
+              fragmentCountFor(mode: mode, columnCount: frame.columns.length),
+              reason: '$mode: $where',
+            );
+            for (final CropBox part in parts) {
+              expect(part.isValid, isTrue, reason: '$mode: $where');
               expect(
-                parts.length,
-                fragmentCountFor(mode: mode, columnCount: frame.columns.length),
-                reason: '$mode: $where',
+                part.left,
+                greaterThanOrEqualTo(frame.content.left - 1e-9),
               );
-              for (final CropBox part in parts) {
-                expect(part.isValid, isTrue, reason: '$mode: $where');
-                expect(
-                  part.left,
-                  greaterThanOrEqualTo(frame.content.left - 1e-9),
-                );
-                expect(
-                  part.right,
-                  lessThanOrEqualTo(frame.content.right + 1e-9),
-                );
-              }
+              expect(
+                part.right,
+                lessThanOrEqualTo(frame.content.right + 1e-9),
+              );
             }
           }
-        },
-        timeout: const Timeout(Duration(minutes: 3)),
-      );
+        }
+      }, timeout: const Timeout(Duration(minutes: 3)));
     });
 
-    test(
-      'движок отдаёт тот же документ, что читает текст',
-      () async {
-        // Рисовать страницу должен тот же открытый файл: второе открытие
-        // стоит вдвое больше памяти, а на большой книге отдаёт страницы
-        // не сразу — и вместо содержимого читатель видит пустой экран.
-        final ReaderDocument document = await open('huge_1200_pages.pdf');
-        final Object? engine = document.engineDocument;
-        expect(engine, isNotNull);
-        expect(engine, isA<PdfDocument>());
-        expect(
-          (engine! as PdfDocument).pages.length,
-          document.pageCount,
-          reason: 'страницы должны быть на месте все сразу',
-        );
-      },
-      timeout: const Timeout(Duration(minutes: 3)),
-    );
+    test('движок отдаёт тот же документ, что читает текст', () async {
+      // Рисовать страницу должен тот же открытый файл: второе открытие
+      // стоит вдвое больше памяти, а на большой книге отдаёт страницы
+      // не сразу — и вместо содержимого читатель видит пустой экран.
+      final ReaderDocument document = await open('huge_1200_pages.pdf');
+      final Object? engine = document.engineDocument;
+      expect(engine, isNotNull);
+      expect(engine, isA<PdfDocument>());
+      expect(
+        (engine! as PdfDocument).pages.length,
+        document.pageCount,
+        reason: 'страницы должны быть на месте все сразу',
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
 
     test('обычная книга: поля обрезаются по тексту', () async {
       final ReaderDocument document = await open('basic_text.pdf');

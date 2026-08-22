@@ -120,11 +120,14 @@ jobs:
             title="${pair%%:*}"
             file="${pair#*:}"
             [ -s "$file" ] || continue
-            if [ "$title" = 'Упавшие тесты' ]; then
-              text=$(cat "$file")
-            else
-              text=$(tail -n 40 "$file")
-            fi
+            # Патч форматирования надо видеть целиком: применить его
+            # сессии больше нечем — Dart SDK у неё нет. Хвост в сорок
+            # строк показывал последний файл и прятал остальные.
+            case "$title" in
+              'Упавшие тесты') text=$(cat "$file") ;;
+              'Форматирование') text=$(head -n 400 "$file") ;;
+              *) text=$(tail -n 40 "$file") ;;
+            esac
             body=$(printf '%s\n' "$text" \
               | sed -e 's/%/%25/g' -e 's/\r/ /g' \
               | awk '{printf "%s%%0A", $0}')
