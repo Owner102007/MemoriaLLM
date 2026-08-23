@@ -15,18 +15,26 @@ analyzer:
 
 linter:
   rules:
-    - always_declare_return_types
-    - avoid_dynamic_calls
-    - avoid_print
-    - cancel_subscriptions
-    - close_sinks
-    - directives_ordering
-    - only_throw_errors
-    - prefer_const_constructors
-    - prefer_const_declarations
-    - prefer_final_locals
-    - prefer_single_quotes
-    - require_trailing_commas
-    - sort_pub_dependencies
-    - unawaited_futures
-    - use_super_parameters
+    always_declare_return_types: true
+    avoid_dynamic_calls: true
+    avoid_print: true
+    cancel_subscriptions: true
+    close_sinks: true
+    directives_ordering: true
+    only_throw_errors: true
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_locals: true
+    prefer_single_quotes: true
+    require_trailing_commas: true
+    sort_pub_dependencies: true
+    unawaited_futures: true
+    use_super_parameters: true
+
+    # Правило требует `{required this._field}` там, где приватное поле
+    # заполняется из именованного параметра, — а такой параметр Dart
+    # запрещает: имя именованного параметра не может начинаться с
+    # подчёркивания. Совет невыполним, и в проекте таких конструкторов
+    # десяток. Выключено осознанно (S5.1): анализатор начал сообщать об
+    # этом сам собой, на файлах, которых сессия не касалась.
+    prefer_initializing_formals: false

@@ -153,17 +153,18 @@ void main() {
         FakeReaderDocument(pages: <String>['текст']),
       ).register(_picked);
 
-      final Book relinked = await importer(
-        FakeReaderDocument(pages: <String>['текст', 'ещё']),
-        hash: 'hash-другой',
-        id: 'id-2',
-      ).relink(
-        book,
-        const PickedFile(
-          path: 'test/fixtures/two_columns.pdf',
-          name: 'воскресшая.pdf',
-        ),
-      );
+      final Book relinked =
+          await importer(
+            FakeReaderDocument(pages: <String>['текст', 'ещё']),
+            hash: 'hash-другой',
+            id: 'id-2',
+          ).relink(
+            book,
+            const PickedFile(
+              path: 'test/fixtures/two_columns.pdf',
+              name: 'воскресшая.pdf',
+            ),
+          );
 
       // Идентификатор прежний: место чтения, цитаты и заметки
       // принадлежат книге, а не файлу.

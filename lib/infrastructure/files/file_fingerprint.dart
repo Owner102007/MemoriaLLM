@@ -31,7 +31,9 @@ Future<String> bookFingerprint(BookHandle book) async {
 
   Uint8List tail = Uint8List(0);
   if (size > _probeSize) {
-    final int from = size - _probeSize < _probeSize ? _probeSize : size - _probeSize;
+    final int from = size - _probeSize < _probeSize
+        ? _probeSize
+        : size - _probeSize;
     tail = Uint8List(size - from);
     await book.read(tail, from, tail.length);
   }

@@ -1,5 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:saf_util/saf_util.dart';
+// `SafDocumentFile` живёт в интерфейсе платформы, а не в основном файле
+// пакета, и оттуда не реэкспортируется.
+import 'package:saf_util/saf_util_platform_interface.dart';
 
 import 'uri_permissions.dart';
 

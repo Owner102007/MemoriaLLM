@@ -18,15 +18,14 @@ typedef PositionalRead =
     int Function(int fd, Pointer<Uint8> buffer, int count, int offset);
 
 /// Читает подряд, двигая позицию дескриптора.
-typedef SequentialRead =
-    int Function(int fd, Pointer<Uint8> buffer, int count);
+typedef SequentialRead = int Function(int fd, Pointer<Uint8> buffer, int count);
 
 /// `pread` — чтение с указанной позиции.
 ///
 /// Именно он, а не `read`, потому что PDF читается перескоками: позиция
 /// дескриптора при этом не двигается, и один дескриптор выдерживает
 /// нескольких читателей.
-late final PositionalRead positionalRead = _lookup<PositionalRead>(
+final PositionalRead positionalRead = _lookup<PositionalRead>(
   // `pread64` берёт 64-битное смещение на любой разрядности. Обычный
   // `pread` на 32-битном Android получил бы 32-битное, и книга за
   // границей в два гигабайта прочиталась бы не с того места.
@@ -49,7 +48,7 @@ late final PositionalRead positionalRead = _lookup<PositionalRead>(
 /// Нужен единственному сценарию: провайдер отдал не файл, а трубу, по
 /// которой не перескочить. Тогда книга потоково переносится в приложение,
 /// а перескоки достаются уже нашей копии.
-late final SequentialRead sequentialRead = _lookup<SequentialRead>(
+final SequentialRead sequentialRead = _lookup<SequentialRead>(
   primary: () => DynamicLibrary.process()
       .lookupFunction<
         IntPtr Function(Int32, Pointer<Uint8>, IntPtr),
@@ -59,7 +58,7 @@ late final SequentialRead sequentialRead = _lookup<SequentialRead>(
   fallback: () => throw UnsupportedError('read не найден в libc'),
 );
 
-late final int Function(int fd, int offset, int whence) _seek =
+final int Function(int fd, int offset, int whence) _seek =
     _lookup<int Function(int, int, int)>(
       primary: () => DynamicLibrary.process()
           .lookupFunction<

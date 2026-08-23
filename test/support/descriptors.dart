@@ -67,9 +67,10 @@ void writeDescriptor(int descriptor, List<int> bytes) {
 }
 
 final int Function(Pointer<Int32> pair) _pipe = DynamicLibrary.process()
-    .lookupFunction<Int32 Function(Pointer<Int32>), int Function(Pointer<Int32>)>(
-      'pipe',
-    );
+    .lookupFunction<
+      Int32 Function(Pointer<Int32>),
+      int Function(Pointer<Int32>)
+    >('pipe');
 
 final int Function(int fd, Pointer<Uint8> buffer, int count) _write =
     DynamicLibrary.process().lookupFunction<
@@ -100,8 +101,7 @@ class DescriptorFileStorage implements BookStorage {
   int openCount = 0;
 
   @override
-  Future<BookSource> adopt(PickedFile file) async =>
-      FilePathSource(file.path!);
+  Future<BookSource> adopt(PickedFile file) async => FilePathSource(file.path!);
 
   @override
   Future<BookHandle> open(BookSource source) async {

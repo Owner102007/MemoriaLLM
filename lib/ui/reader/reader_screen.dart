@@ -204,10 +204,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         reading: widget.services.data.reading,
         password: password,
       );
-      await widget.services.data.library.markOpened(
-        _book.id,
-        DateTime.now(),
-      );
+      await widget.services.data.library.markOpened(_book.id, DateTime.now());
       if (!mounted) {
         await controller.close();
         controller.dispose();

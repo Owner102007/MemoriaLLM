@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/sheet_placement.dart';
@@ -81,7 +82,7 @@ void main() {
       await data.library.save(book);
       const DocumentOpenException failure = DocumentOpenException(
         DocumentProblem.damaged,
-        '/books/read.pdf',
+        FilePathSource('/books/read.pdf'),
       );
       await expectLater(
         ReaderController.open(
