@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../../domain/library/book.dart';
+import '../../domain/library/book_source.dart';
 import '../../domain/sync/hlc.dart';
 import '../database/app_database.dart';
 
@@ -55,7 +56,7 @@ class DriftLibraryRepository implements LibraryRepository {
       id: Value<String>(book.id),
       title: Value<String>(book.title),
       author: Value<String?>(book.author),
-      filePath: Value<String>(book.filePath),
+      filePath: Value<String>(book.source.encode()),
       fileSize: Value<int>(book.fileSize),
       fileHash: Value<String>(book.fileHash),
       pageCount: Value<int?>(book.pageCount),
@@ -119,7 +120,7 @@ class DriftLibraryRepository implements LibraryRepository {
     return Book(
       id: row.id,
       title: row.title,
-      filePath: row.filePath,
+      source: BookSource.decode(row.filePath),
       fileSize: row.fileSize,
       fileHash: row.fileHash,
       addedAt: row.addedAt,

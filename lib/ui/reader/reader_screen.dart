@@ -5,9 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 import '../../application/app_services.dart';
+import '../../application/library/book_importer.dart';
 import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/library/book.dart';
+import '../../domain/library/book_file_picker.dart';
 import '../../domain/reading/fragments.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
@@ -49,6 +51,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   static const double _tapZone = 0.3;
 
   final PdfViewerController _viewer = PdfViewerController();
+
+  /// Книга может смениться прямо на этом экране: если файл переехал,
+  /// читатель выбирает его заново, и у книги становится новый источник.
+  /// Идентификатор при этом прежний — место чтения и цитаты не теряются.
+  late Book _book = widget.book;
   ReaderController? _controller;
   DocumentSearch? _search;
   DocumentOpenException? _failure;
@@ -192,13 +199,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     });
     try {
       final ReaderController controller = await ReaderController.open(
-        book: widget.book,
+        book: _book,
         opener: widget.services.opener,
         reading: widget.services.data.reading,
         password: password,
       );
       await widget.services.data.library.markOpened(
-        widget.book.id,
+        _book.id,
         DateTime.now(),
       );
       if (!mounted) {
@@ -221,6 +228,42 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _failure = error;
         _loading = false;
       });
+    }
+  }
+
+  /// Привязывает книгу к заново выбранному файлу.
+  ///
+  /// Файл переименовали, унесли карту памяти, отозвали разрешение на
+  /// ссылку — книга при этом никуда не делась: место чтения, цитаты и
+  /// заметки принадлежат ей, а не файлу. Поэтому «файл недоступен» — это
+  /// не тупик с кнопкой «назад», а предложение показать файл заново.
+  Future<void> _relink() async {
+    final PickedFile? file = await widget.services.picker.pickPdf();
+    if (file == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _failure = null;
+    });
+    final BookImporter importer = BookImporter(
+      library: widget.services.data.library,
+      storage: widget.services.storage,
+      opener: widget.services.opener,
+    );
+    try {
+      _book = await importer.relink(_book, file);
+    } on DocumentOpenException catch (error) {
+      if (mounted) {
+        setState(() {
+          _failure = error;
+          _loading = false;
+        });
+      }
+      return;
+    }
+    if (mounted) {
+      await _open();
     }
   }
 
@@ -328,6 +371,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return _FailureScreen(
         failure: failure,
         onPassword: (String password) => unawaited(_open(password: password)),
+        onRelink: () => unawaited(_relink()),
       );
     }
 
@@ -454,8 +498,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
     ReaderController controller,
     VoidCallback onTap,
   ) {
-    return PdfViewer.file(
-      widget.book.filePath,
+    // Тем же документом, который уже открыл контроллер. Прежде лента
+    // открывала книгу по пути во второй раз — но у документа Android
+    // пути нет вовсе, а второе открытие большой книги и без того стоило
+    // вдвое больше памяти. `autoDispose: false` потому, что закрывает
+    // документ контроллер: он его и открыл.
+    final Object? engine = controller.document.engineDocument;
+    final PdfDocument? document = engine is PdfDocument ? engine : null;
+    if (document == null) {
+      return ColoredBox(
+        color: Theme.of(context).colorScheme.surface,
+        child: const SizedBox.expand(),
+      );
+    }
+    return PdfViewer(
+      PdfDocumentRefDirect(document, autoDispose: false),
       controller: _viewer,
       initialPageNumber: controller.initialPage,
       params: PdfViewerParams(
@@ -496,10 +553,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
 /// Причина названа своими словами, а не кодом ошибки: человеку надо
 /// понять, что делать дальше, а не что сломалось внутри.
 class _FailureScreen extends StatefulWidget {
-  const _FailureScreen({required this.failure, required this.onPassword});
+  const _FailureScreen({
+    required this.failure,
+    required this.onPassword,
+    required this.onRelink,
+  });
 
   final DocumentOpenException failure;
   final void Function(String password) onPassword;
+  final VoidCallback onRelink;
 
   @override
   State<_FailureScreen> createState() => _FailureScreenState();
@@ -521,6 +583,9 @@ class _FailureScreenState extends State<_FailureScreen> {
     final bool needsPassword =
         problem == DocumentProblem.passwordRequired ||
         problem == DocumentProblem.wrongPassword;
+    // Файл потерялся — значит, его можно показать заново. Всё остальное
+    // (повреждён, пустой) перевыбором того же файла не лечится.
+    final bool canRelink = problem == DocumentProblem.missing;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Книга не открылась')),
@@ -562,6 +627,22 @@ class _FailureScreenState extends State<_FailureScreen> {
                 child: const Text('Открыть'),
               ),
             ],
+            if (canRelink) ...<Widget>[
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                key: const Key('reader-relink'),
+                onPressed: widget.onRelink,
+                icon: const Icon(Icons.file_open_outlined),
+                label: const Text('Выбрать файл заново'),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Место чтения, цитаты и заметки останутся на месте: они '
+                'принадлежат книге, а не файлу.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
           ],
         ),
       ),
@@ -573,8 +654,8 @@ class _FailureScreenState extends State<_FailureScreen> {
 String describeDocumentProblem(DocumentProblem problem) {
   switch (problem) {
     case DocumentProblem.missing:
-      return 'Файла больше нет по прежнему пути. Возможно, его перенесли '
-          'или удалили — выберите книгу заново.';
+      return 'До файла не добраться. Возможно, его переименовали, '
+          'перенесли или отозвали разрешение на доступ.';
     case DocumentProblem.empty:
       return 'Файл пустой: в нём ноль байт. Скорее всего, он не докачался.';
     case DocumentProblem.damaged:

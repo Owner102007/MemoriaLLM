@@ -1,14 +1,16 @@
+import 'book_source.dart';
+
 /// Книга в библиотеке.
 ///
-/// Путь к файлу у каждого устройства свой, поэтому одну и ту же книгу на
-/// телефоне и на ПК опознаёт [fileHash], а не [filePath]: это понадобится
+/// Место файла у каждого устройства своё, поэтому одну и ту же книгу на
+/// телефоне и на ПК опознаёт [fileHash], а не [source]: это понадобится
 /// синхронизации в S11.
 class Book {
   /// Создаёт книгу.
   const Book({
     required this.id,
     required this.title,
-    required this.filePath,
+    required this.source,
     required this.fileSize,
     required this.fileHash,
     required this.addedAt,
@@ -29,8 +31,8 @@ class Book {
   /// Автор, если известен.
   final String? author;
 
-  /// Путь к файлу на этом устройстве.
-  final String filePath;
+  /// Где лежит книга на этом устройстве: путь, ссылка или наша копия.
+  final BookSource source;
 
   /// Размер файла в байтах.
   final int fileSize;
@@ -62,7 +64,7 @@ class Book {
   Book copyWith({
     String? title,
     String? author,
-    String? filePath,
+    BookSource? source,
     int? fileSize,
     String? fileHash,
     int? pageCount,
@@ -75,7 +77,7 @@ class Book {
     return Book(
       id: id,
       title: title ?? this.title,
-      filePath: filePath ?? this.filePath,
+      source: source ?? this.source,
       fileSize: fileSize ?? this.fileSize,
       fileHash: fileHash ?? this.fileHash,
       addedAt: addedAt ?? this.addedAt,

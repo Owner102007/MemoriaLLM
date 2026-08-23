@@ -1,10 +1,15 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/library/book_importer.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
+import 'package:memoria/domain/library/book_source.dart';
+import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/infrastructure/files/file_fingerprint.dart';
+import 'package:memoria/infrastructure/files/local_book_storage.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
@@ -25,11 +30,13 @@ void main() {
     DocumentOpenException? failure,
     String hash = 'hash-fixture',
     String id = 'id-1',
+    BookStorage? storage,
   }) {
     return BookImporter(
       library: data.library,
+      storage: storage ?? const LocalBookStorage(),
       opener: FakeDocumentOpener(document, failure: failure),
-      fingerprint: (String path) async => hash,
+      fingerprint: (BookHandle book) async => hash,
       newId: () => id,
       now: () => DateTime.utc(2026, 8, 7, 12),
     );
@@ -47,6 +54,25 @@ void main() {
       expect(book.hasTextLayer, isTrue);
       expect(book.fileSize, greaterThan(0));
       expect(await data.library.bookById('id-1'), isNotNull);
+    });
+
+    test('файл не копируется: источник указывает на него самого', () async {
+      final Book book = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked);
+
+      final BookSource source = book.source;
+      expect(source, isA<FilePathSource>());
+      expect((source as FilePathSource).path, _picked.path);
+      // Копии не делали — значит, и удалять при снятии с полки нечего.
+      expect(source.owned, isFalse);
+    });
+
+    test('размер книги берётся из самого файла', () async {
+      final Book book = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked);
+      expect(book.fileSize, File(_picked.path!).lengthSync());
     });
 
     test('скан помечается как книга без текстового слоя', () async {
@@ -94,12 +120,82 @@ void main() {
           FakeReaderDocument.blank(1),
           failure: const DocumentOpenException(
             DocumentProblem.damaged,
-            'test/fixtures/truncated.pdf',
+            FilePathSource('test/fixtures/truncated.pdf'),
           ),
         ).register(_picked),
         throwsA(isA<DocumentOpenException>()),
       );
       expect(await data.library.books(), isEmpty);
+    });
+
+    test('нечитаемая книга отпускает принятый источник', () async {
+      final RecordingStorage storage = RecordingStorage();
+      await expectLater(
+        importer(
+          FakeReaderDocument.blank(1),
+          storage: storage,
+          failure: const DocumentOpenException(
+            DocumentProblem.damaged,
+            FilePathSource('test/fixtures/truncated.pdf'),
+          ),
+        ).register(_picked),
+        throwsA(isA<DocumentOpenException>()),
+      );
+      // Иначе в папке приложения копились бы копии нечитаемых книг, а на
+      // Android — ещё и закреплённые ссылки в никуда.
+      expect(storage.released, <BookSource>[FilePathSource(_picked.path!)]);
+    });
+  });
+
+  group('перевыбор файла', () {
+    test('книга остаётся той же, а источник меняется', () async {
+      final Book book = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked);
+
+      final Book relinked = await importer(
+        FakeReaderDocument(pages: <String>['текст', 'ещё']),
+        hash: 'hash-другой',
+        id: 'id-2',
+      ).relink(
+        book,
+        const PickedFile(
+          path: 'test/fixtures/two_columns.pdf',
+          name: 'воскресшая.pdf',
+        ),
+      );
+
+      // Идентификатор прежний: место чтения, цитаты и заметки
+      // принадлежат книге, а не файлу.
+      expect(relinked.id, book.id);
+      expect(relinked.title, book.title);
+      expect(
+        (relinked.source as FilePathSource).path,
+        'test/fixtures/two_columns.pdf',
+      );
+      expect(relinked.pageCount, 2);
+      expect((await data.library.books()).length, 1);
+    });
+
+    test('прежний источник отпускается', () async {
+      final RecordingStorage storage = RecordingStorage();
+      final Book book = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(_picked);
+
+      await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).relink(
+        book,
+        const PickedFile(
+          path: 'test/fixtures/two_columns.pdf',
+          name: 'другая.pdf',
+        ),
+      );
+
+      expect(storage.released, <BookSource>[FilePathSource(_picked.path!)]);
     });
   });
 
@@ -121,7 +217,7 @@ void main() {
     });
   });
 
-  group('fileFingerprint', () {
+  group('bookFingerprint', () {
     test('одинаков для одного файла и различает разные', () async {
       final String basic = await fileFingerprint(
         'test/fixtures/basic_text.pdf',
@@ -144,5 +240,42 @@ void main() {
         startsWith('0-'),
       );
     });
+
+    test('книга длиннее пробы: отпечаток берёт и начало, и конец', () async {
+      final Directory dir = await Directory.systemTemp.createTemp('memoria-fp');
+      addTearDown(() => dir.delete(recursive: true));
+      final File head = File('${dir.path}/head.bin');
+      final File tail = File('${dir.path}/tail.bin');
+      // Файлы длиннее 128 КБ и различаются только последним байтом:
+      // отпечаток, читающий одно начало, их не различил бы.
+      final List<int> body = List<int>.filled(200 * 1024, 7);
+      head.writeAsBytesSync(<int>[...body, 1]);
+      tail.writeAsBytesSync(<int>[...body, 2]);
+
+      expect(
+        await fileFingerprint(head.path),
+        isNot(await fileFingerprint(tail.path)),
+      );
+    });
   });
+}
+
+/// Хранилище, которое помнит, что у него отпускали.
+class RecordingStorage implements BookStorage {
+  final LocalBookStorage _files = const LocalBookStorage();
+
+  /// Источники, переданные в [release].
+  final List<BookSource> released = <BookSource>[];
+
+  @override
+  Future<BookSource> adopt(PickedFile file) => _files.adopt(file);
+
+  @override
+  Future<BookHandle> open(BookSource source) => _files.open(source);
+
+  @override
+  Future<bool> available(BookSource source) => _files.available(source);
+
+  @override
+  Future<void> release(BookSource source) async => released.add(source);
 }

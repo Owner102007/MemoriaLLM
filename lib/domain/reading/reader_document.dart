@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../library/book_source.dart';
 import 'text_geometry.dart';
 
 /// Что именно помешало открыть книгу.
@@ -10,7 +11,8 @@ import 'text_geometry.dart';
 /// общее «не удалось открыть» превращает три разных разговора с читателем
 /// в один бесполезный.
 enum DocumentProblem {
-  /// Файла нет по указанному пути.
+  /// До файла не добраться: его нет по прежнему пути, его переименовали
+  /// или отозвали разрешение на ссылку.
   missing,
 
   /// Файл нулевой длины.
@@ -32,19 +34,19 @@ enum DocumentProblem {
 /// Книгу открыть не удалось.
 class DocumentOpenException implements Exception {
   /// Создаёт исключение.
-  const DocumentOpenException(this.problem, this.path, {this.cause});
+  const DocumentOpenException(this.problem, this.source, {this.cause});
 
   /// Причина.
   final DocumentProblem problem;
 
-  /// Путь к файлу.
-  final String path;
+  /// Источник, который не открылся.
+  final BookSource source;
 
   /// Исходная ошибка движка, если она была.
   final Object? cause;
 
   @override
-  String toString() => 'DocumentOpenException($problem, $path)';
+  String toString() => 'DocumentOpenException($problem, $source)';
 }
 
 /// Размеры страницы в точках PDF (1/72 дюйма) — уже с учётом поворота
@@ -219,11 +221,11 @@ abstract interface class ReaderDocument {
 /// Открывает файл и отдаёт [ReaderDocument]. Реализация — в
 /// `infrastructure`, чтобы тесты сценариев могли подставить свою.
 abstract interface class DocumentOpener {
-  /// Открывает файл.
+  /// Открывает книгу из её источника.
   ///
   /// Бросает [DocumentOpenException] с разобранной причиной; молча вернуть
   /// «пустой документ» нельзя — читателю нужно сказать, что случилось.
-  Future<ReaderDocument> open(String path, {String? password});
+  Future<ReaderDocument> open(BookSource source, {String? password});
 }
 
 /// Есть ли в документе текстовый слой.

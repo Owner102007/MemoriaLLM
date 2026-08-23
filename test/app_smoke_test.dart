@@ -4,6 +4,7 @@ import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
 import 'package:memoria/domain/theme/app_palette.dart';
+import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/ui/app.dart';
 
 import 'data/test_data.dart';
@@ -19,6 +20,7 @@ void main() {
       data: data,
       opener: FakeDocumentOpener(FakeReaderDocument(pages: <String>['текст'])),
       picker: FakeBookFilePicker(null),
+      storage: const LocalBookStorage(),
     );
   });
   tearDown(() async => data.close());

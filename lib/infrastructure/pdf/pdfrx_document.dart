@@ -1,9 +1,11 @@
-import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:pdfrx/pdfrx.dart';
 
+import '../../domain/library/book_source.dart';
+import '../../domain/library/book_storage.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/text_geometry.dart';
 
@@ -21,48 +23,102 @@ class PdfrxDocumentOpener implements DocumentOpener {
   /// headless-тесту — обычный временный каталог и путь к библиотеке
   /// PDFium из `PDFIUM_PATH`. Подменяемый инициализатор избавляет от
   /// проверок «а мы сейчас в тесте?» внутри рабочего кода.
-  PdfrxDocumentOpener({Future<void> Function()? initialize})
-    : _initialize = initialize ?? _flutterInitialize;
+  PdfrxDocumentOpener({
+    required BookStorage storage,
+    Future<void> Function()? initialize,
+    int? maxBytesInMemory,
+  }) : _storage = storage,
+       _initialize = initialize ?? _flutterInitialize,
+       _maxBytesInMemory = maxBytesInMemory;
 
+  final BookStorage _storage;
   final Future<void> Function() _initialize;
+
+  /// Сколько книги движку разрешено держать в памяти целиком.
+  ///
+  /// `null` — как решит pdfrx (сегодня это мегабайт). Ноль заставляет
+  /// его читать кусками всегда: так корпус-тесты гоняют настоящий путь
+  /// чтения по дескриптору, а не быстрый обход для маленьких файлов.
+  final int? _maxBytesInMemory;
 
   static Future<void> _flutterInitialize() => pdfrxFlutterInitialize();
 
   @override
-  Future<ReaderDocument> open(String path, {String? password}) async {
-    final File file = File(path);
-    if (!await file.exists()) {
-      throw DocumentOpenException(DocumentProblem.missing, path);
+  Future<ReaderDocument> open(BookSource source, {String? password}) async {
+    final BookHandle book;
+    try {
+      book = await _storage.open(source);
+    } on BookUnavailableException catch (error) {
+      throw DocumentOpenException(
+        DocumentProblem.missing,
+        source,
+        cause: error,
+      );
     }
-    if (await file.length() == 0) {
-      throw DocumentOpenException(DocumentProblem.empty, path);
+    if (book.length == 0) {
+      await book.close();
+      throw DocumentOpenException(DocumentProblem.empty, source);
     }
 
     await _initialize();
 
+    final String name = source.encode();
     try {
-      final PdfDocument document = await PdfDocument.openFile(
-        path,
-        passwordProvider: password == null
-            ? null
-            : createSimplePasswordProvider(password),
-        // Число страниц нужно сразу: без него не восстановить позицию и
-        // не показать «12 / 340». Прогрессивная загрузка отдаёт его позже.
-        useProgressiveLoading: false,
+      // Число страниц нужно сразу: без него не восстановить позицию и
+      // не показать «12 / 340». Прогрессивная загрузка отдаёт его позже.
+      final PdfPasswordProvider? provider = password == null
+          ? null
+          : createSimplePasswordProvider(password);
+      final String? path = book.path;
+      if (path != null) {
+        // Есть путь — движок откроет файл лучше нас, и посредник ему
+        // только мешал бы.
+        await book.close();
+        return PdfrxReaderDocument._(
+          name,
+          await PdfDocument.openFile(
+            path,
+            passwordProvider: provider,
+            useProgressiveLoading: false,
+          ),
+        );
+      }
+      return PdfrxReaderDocument._(
+        name,
+        await PdfDocument.openCustom(
+          read: book.read,
+          fileSize: book.length,
+          sourceName: name,
+          passwordProvider: provider,
+          useProgressiveLoading: false,
+          maxSizeToCacheOnMemory: _maxBytesInMemory,
+          // Дескриптор живёт ровно столько, сколько открыт документ.
+          onDispose: () => unawaited(book.close()),
+        ),
       );
-      return PdfrxReaderDocument._(path, document);
     } on PdfPasswordException catch (error) {
+      await book.close();
       throw DocumentOpenException(
         password == null
             ? DocumentProblem.passwordRequired
             : DocumentProblem.wrongPassword,
-        path,
+        source,
         cause: error,
       );
     } on PdfException catch (error) {
-      throw DocumentOpenException(DocumentProblem.damaged, path, cause: error);
+      await book.close();
+      throw DocumentOpenException(
+        DocumentProblem.damaged,
+        source,
+        cause: error,
+      );
     } on Exception catch (error) {
-      throw DocumentOpenException(DocumentProblem.unknown, path, cause: error);
+      await book.close();
+      throw DocumentOpenException(
+        DocumentProblem.unknown,
+        source,
+        cause: error,
+      );
     }
   }
 }

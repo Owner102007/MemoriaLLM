@@ -4,23 +4,34 @@ description: >-
   бумажной: страница во весь экран, неизменная вёрстка, объяснение слова
   и перевод по выделению.
 publish_to: none
-version: 0.4.7+11
+version: 0.5.1+12
 
 # pdfrx 2.4 требует Dart 3.10 и Flutter 3.41: движок PDFium приезжает
 # нативным ассетом через хуки сборки, а они появились именно там.
+# Нижняя граница поднята до Flutter 3.44 пакетами приёма файла
+# (fast_file_picker и saf_util собраны под AGP 9).
 environment:
-  flutter: '>=3.41.0'
-  sdk: ^3.10.0
+  flutter: '>=3.44.0'
+  sdk: ^3.12.0
 
 dependencies:
   crypto: ^3.0.6
   drift: ^2.20.0
+  # Выбор файла, который сам файл не читает: прежний `file_selector` на
+  # Android вычитывал книгу целиком в память и падал на 73 МБ.
+  fast_file_picker: ^1.0.2
+  # `pread` и `read` из libc: книга по ссылке `content://` читается прямо
+  # по файловому дескриптору, без копии и без канала на каждое чтение.
+  ffi: ^2.1.3
+  # Только ради XTypeGroup: сам диалог открывает fast_file_picker.
   file_selector: ^1.1.0
   flutter:
     sdk: flutter
   path: ^1.9.0
   path_provider: ^2.1.4
   pdfrx: ^2.4.7
+  # Storage Access Framework: сведения о документе и файловый дескриптор.
+  saf_util: ^3.1.0
   sqlite3_flutter_libs: ^0.5.24
 
 dev_dependencies:
@@ -46,6 +57,6 @@ msix_config:
   publisher_display_name: HohloBaron
   identity_name: Owner102007.MemoriaLLMHB
   publisher: CN=Owner102007
-  msix_version: 0.4.7.0
+  msix_version: 0.5.1.0
   capabilities: internetClient
   store: true

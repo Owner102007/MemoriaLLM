@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
+import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -125,12 +126,12 @@ class FakeDocumentOpener implements DocumentOpener {
   /// Чем падать, если открытие должно провалиться.
   final DocumentOpenException? failure;
 
-  /// Пути, которые просили открыть.
-  final List<String> openedPaths = <String>[];
+  /// Источники, которые просили открыть.
+  final List<BookSource> opened = <BookSource>[];
 
   @override
-  Future<ReaderDocument> open(String path, {String? password}) async {
-    openedPaths.add(path);
+  Future<ReaderDocument> open(BookSource source, {String? password}) async {
+    opened.add(source);
     final DocumentOpenException? error = failure;
     if (error != null) {
       throw error;
@@ -235,7 +236,7 @@ Book fakeBook({
   return Book(
     id: id,
     title: title,
-    filePath: path,
+    source: FilePathSource(path),
     fileSize: 4096,
     fileHash: 'hash-read',
     addedAt: DateTime.utc(2026, 8, 7, 12),

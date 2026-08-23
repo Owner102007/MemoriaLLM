@@ -42,6 +42,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       }
       final BookImporter importer = BookImporter(
         library: widget.services.data.library,
+        storage: widget.services.storage,
         opener: widget.services.opener,
       );
       final Book book = await importer.register(file);
@@ -61,6 +62,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
         setState(() => _busy = false);
       }
     }
+  }
+
+  /// Убирает книгу с полки.
+  ///
+  /// Вместе со строкой отпускается и источник: своя копия удаляется —
+  /// её больше некому убрать, — а закреплённое разрешение освобождается,
+  /// потому что Android держит их ограниченное число на приложение.
+  /// Чужой файл при этом не трогается: книгу сняли с полки, а не
+  /// выбросили с диска.
+  Future<void> _removeBook(Book book) async {
+    await widget.services.storage.release(book.source);
+    await widget.services.data.library.delete(book.id);
   }
 
   Future<void> _openBook(Book book) async {
@@ -104,7 +117,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 book: book,
                 reading: widget.services.data.reading,
                 onTap: () => unawaited(_openBook(book)),
-                onRemove: () => widget.services.data.library.delete(book.id),
+                onRemove: () => _removeBook(book),
               );
             },
           );

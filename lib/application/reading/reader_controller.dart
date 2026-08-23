@@ -53,7 +53,7 @@ class ReaderController extends ChangeNotifier {
     Duration saveDelay = const Duration(seconds: 2),
   }) async {
     final ReaderDocument document = await opener.open(
-      book.filePath,
+      book.source,
       password: password,
     );
     try {

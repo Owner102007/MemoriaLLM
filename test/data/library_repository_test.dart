@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/sync/hlc.dart';
+import 'package:memoria/infrastructure/database/app_database.dart';
 
 import 'test_data.dart';
 
@@ -79,6 +81,37 @@ void main() {
 
     await data.library.save(testBook());
     expect(await stream.first, hasLength(1));
+  });
+
+  test('источник книги переживает запись и чтение', () async {
+    const BookSource uri = DocumentUriSource('content://doc/17');
+    await data.library.save(testBook().copyWith(source: uri));
+    expect((await data.library.bookById('book-1'))!.source, uri);
+
+    const BookSource copy = FilePathSource('/data/books/x.pdf', owned: true);
+    await data.library.save(testBook().copyWith(source: copy));
+    expect((await data.library.bookById('book-1'))!.source, copy);
+  });
+
+  test('книга из базы прошлой версии читается без миграции', () async {
+    // До S5.1 в колонке лежал голый путь. Строку читателя, обновившего
+    // приложение, никто не переписывает — она обязана прочитаться как
+    // обычный файл.
+    await data.database
+        .into(data.database.books)
+        .insert(
+          BooksCompanion.insert(
+            id: 'старая',
+            title: 'Онегин',
+            filePath: r'C:\books\Онегин.pdf',
+            fileSize: 4096,
+            fileHash: 'hash-старый',
+            addedAt: DateTime.utc(2026, 8, 1, 12),
+          ),
+        );
+
+    final Book? loaded = await data.library.bookById('старая');
+    expect(loaded!.source, const FilePathSource(r'C:\books\Онегин.pdf'));
   });
 
   test('каждая запись получает растущую метку HLC', () async {

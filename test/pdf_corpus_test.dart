@@ -4,13 +4,17 @@ import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/page_frames.dart';
+import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
 import 'package:memoria/domain/reading/text_search.dart';
+import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
 import 'package:pdfrx/pdfrx.dart' show PdfDocument, pdfrxInitialize;
+
+import 'support/descriptors.dart';
 
 /// Прогон корпуса проблемных PDF через настоящий PDFium.
 ///
@@ -30,6 +34,8 @@ import 'package:pdfrx/pdfrx.dart' show PdfDocument, pdfrxInitialize;
 const String _fixtures = 'test/fixtures';
 
 String _file(String name) => '$_fixtures/$name';
+
+BookSource _source(String name) => FilePathSource(_file(name));
 
 /// Файлы, которые обязаны открываться.
 const Map<String, int> _readable = <String, int>{
@@ -72,12 +78,13 @@ void main() {
     '${Directory.systemTemp.path}/memoria-pdfrx-tests',
   );
   final PdfrxDocumentOpener opener = PdfrxDocumentOpener(
+    storage: const LocalBookStorage(),
     initialize: () => pdfrxInitialize(tmpPath: tmp.path),
   );
 
   Future<ReaderDocument> open(String name, {String? password}) async {
     final ReaderDocument document = await opener.open(
-      _file(name),
+      _source(name),
       password: password,
     );
     addTearDown(document.close);
@@ -101,7 +108,7 @@ void main() {
         final ReaderDocument document = await open(name);
 
         expect(document.pageCount, pages, reason: 'число страниц');
-        expect(document.sourceName, _file(name));
+        expect(document.sourceName, _source(name).encode());
 
         // Текст читается без исключения: у книги он есть, у скана пуст.
         await document.pageText(1);
@@ -132,7 +139,7 @@ void main() {
     _unreadable.forEach((String name, DocumentProblem problem) {
       test('$name: понятная ошибка вместо падения', () async {
         await expectLater(
-          opener.open(_file(name)),
+          opener.open(_source(name)),
           throwsA(
             isA<DocumentOpenException>().having(
               (DocumentOpenException e) => e.problem,
@@ -146,7 +153,7 @@ void main() {
 
     test('файла нет — так и сказано', () async {
       await expectLater(
-        opener.open(_file('нет-такого-файла.pdf')),
+        opener.open(_source('нет-такого-файла.pdf')),
         throwsA(
           isA<DocumentOpenException>().having(
             (DocumentOpenException e) => e.problem,
@@ -301,7 +308,7 @@ void main() {
   group('шифрование', () {
     test('без пароля — просьба ввести пароль', () async {
       await expectLater(
-        opener.open(_file('encrypted.pdf')),
+        opener.open(_source('encrypted.pdf')),
         throwsA(
           isA<DocumentOpenException>().having(
             (DocumentOpenException e) => e.problem,
@@ -314,7 +321,7 @@ void main() {
 
     test('неверный пароль отличается от отсутствующего', () async {
       await expectLater(
-        opener.open(_file('encrypted.pdf'), password: 'не тот'),
+        opener.open(_source('encrypted.pdf'), password: 'не тот'),
         throwsA(
           isA<DocumentOpenException>().having(
             (DocumentOpenException e) => e.problem,
@@ -578,6 +585,87 @@ void main() {
           expect(box.bottom, lessThanOrEqualTo(1));
         }
       }
+    });
+  });
+
+  group('чтение по файловому дескриптору', () {
+    // Главная проверка S5.1. На Android книга открывается не по пути —
+    // пути у документа нет вовсе, — а по дескриптору, который читается
+    // `pread`'ом кусками. Здесь дескриптор даёт та же libc, что и на
+    // телефоне, поэтому в CI гоняется ровно тот код, который поедет на
+    // устройство: движок, колбэк чтения, системный вызов.
+    late DescriptorFileStorage descriptors;
+    late PdfrxDocumentOpener byDescriptor;
+
+    setUp(() {
+      descriptors = DescriptorFileStorage();
+      byDescriptor = PdfrxDocumentOpener(
+        storage: descriptors,
+        initialize: () => pdfrxInitialize(tmpPath: tmp.path),
+        // Ноль запрещает движку затянуть маленький файл в память
+        // целиком: иначе корпус из файлов по паре килобайт проверял бы
+        // не чтение кусками, а обход для мелочи.
+        maxBytesInMemory: 0,
+      );
+    });
+
+    _readable.forEach((String name, int pages) {
+      test('$name читается так же, как по пути', () async {
+        final ReaderDocument viaPath = await open(name);
+        final ReaderDocument viaFd = await byDescriptor.open(_source(name));
+        addTearDown(viaFd.close);
+
+        expect(viaFd.pageCount, pages);
+        expect(viaFd.pageCount, viaPath.pageCount);
+        expect(await viaFd.pageText(1), await viaPath.pageText(1));
+        expect(
+          viaFd.geometry(1).width,
+          closeTo(viaPath.geometry(1).width, 1e-6),
+        );
+        final PageGeometry geometry = viaFd.geometry(1);
+        final PageRaster? raster = await viaFd.renderPage(
+          1,
+          width: 120,
+          height: (120 * geometry.height / geometry.width).round(),
+        );
+        expect(raster?.isConsistent, isTrue);
+      }, timeout: const Timeout(Duration(minutes: 3)));
+    });
+
+    test('дескриптор закрывается вместе с книгой', () async {
+      final ReaderDocument document = await byDescriptor.open(
+        _source('basic_text.pdf'),
+      );
+      expect(descriptors.openCount, 1);
+      await document.close();
+      // Закрытие дескриптора движок делает через `onDispose`, а тот
+      // асинхронный: даём событию доехать.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(
+        descriptors.openCount,
+        0,
+        reason: 'дескрипторы текут — на полке в сотню книг это потолок',
+      );
+    });
+
+    test('битый файл по дескриптору тоже не роняет приложение', () async {
+      await expectLater(
+        byDescriptor.open(_source('truncated.pdf')),
+        throwsA(isA<DocumentOpenException>()),
+      );
+    });
+
+    test('пустой файл по дескриптору — понятная причина', () async {
+      await expectLater(
+        byDescriptor.open(_source('empty_file.pdf')),
+        throwsA(
+          isA<DocumentOpenException>().having(
+            (DocumentOpenException e) => e.problem,
+            'причина',
+            DocumentProblem.empty,
+          ),
+        ),
+      );
     });
   });
 }
