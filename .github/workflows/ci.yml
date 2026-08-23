@@ -113,7 +113,7 @@ jobs:
           # «-2» и не видит, что именно упало: логи прогона закрыты для
           # неавторизованных, а аннотации — единственное, что видно всем.
           if [ -s /tmp/tests.txt ]; then
-            { grep -B 2 -A 15 '\[E\]' /tmp/tests.txt || true; } \
+            { grep -B 100 -A 30 '\[E\]' /tmp/tests.txt || true; } \
               | head -n 200 > /tmp/failures.txt
           fi
           for pair in 'Форматирование:/tmp/fmt.txt' \
@@ -153,8 +153,12 @@ jobs:
             file="${pair#*:}"
             [ -s "$file" ] && cp "$file" "/tmp/report/${pair%%:*}.txt"
           done
+          # Окно большое намеренно: у widget-теста разбор падения
+          # («EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK» со стеком)
+          # печатается **до** строки с меткой [E], и на двух строках
+          # контекста от него не остаётся ничего.
           if [ -s /tmp/tests.txt ]; then
-            { grep -B 2 -A 15 '\[E\]' /tmp/tests.txt || true; } \
+            { grep -B 100 -A 30 '\[E\]' /tmp/tests.txt || true; } \
               > /tmp/report/failures.txt
           fi
           echo "${{ job.status }}" > /tmp/report/status.txt

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
+import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -191,6 +192,69 @@ class FakeBookFilePicker implements BookFilePicker {
 
   @override
   Future<PickedFile?> pickPdf() async => result;
+}
+
+/// Хранилище книг в памяти: ни одного обращения к диску.
+///
+/// Widget-тесты живут в подменённом времени, и настоящий файловый
+/// ввод-вывод в них не завершается вовсе — `pumpAndSettle` просто ждёт до
+/// таймаута и валит тест. Поэтому там, где проверяется поведение экрана,
+/// а не работа с файлами, книга берётся из памяти.
+class MemoryBookStorage implements BookStorage {
+  /// Создаёт хранилище.
+  MemoryBookStorage([this.bytes = const <int>[37, 80, 68, 70]]);
+
+  /// Содержимое любой книги в этом хранилище.
+  final List<int> bytes;
+
+  /// Источники, переданные в [release].
+  final List<BookSource> released = <BookSource>[];
+
+  @override
+  Future<BookSource> adopt(PickedFile file) async {
+    final String? path = file.path;
+    return path != null ? FilePathSource(path) : DocumentUriSource(file.uri!);
+  }
+
+  @override
+  Future<BookHandle> open(BookSource source) async => MemoryBookHandle(bytes);
+
+  @override
+  Future<bool> available(BookSource source) async => true;
+
+  @override
+  Future<void> release(BookSource source) async => released.add(source);
+}
+
+/// Книга, которая целиком лежит в памяти.
+class MemoryBookHandle implements BookHandle {
+  /// Создаёт книгу из байтов.
+  MemoryBookHandle(this.bytes);
+
+  /// Содержимое книги.
+  final List<int> bytes;
+
+  @override
+  int get length => bytes.length;
+
+  /// Пути нет намеренно: так ведёт себя документ Android.
+  @override
+  String? get path => null;
+
+  @override
+  int read(Uint8List buffer, int position, int size) {
+    if (position >= bytes.length) {
+      return 0;
+    }
+    final int end = position + size > bytes.length
+        ? bytes.length
+        : position + size;
+    buffer.setRange(0, end - position, bytes.sublist(position, end));
+    return end - position;
+  }
+
+  @override
+  Future<void> close() async {}
 }
 
 /// Прямоугольники символов ровного текстового блока.

@@ -6,7 +6,6 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
-import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/ui/reader/reader_screen.dart';
 
 import '../data/test_data.dart';
@@ -16,7 +15,7 @@ import '../support/fake_reading.dart';
 const BookSource _gone = FilePathSource('/нет/такой/книги.pdf');
 
 /// Файл, который читатель показывает заново.
-const String _foundPath = 'test/fixtures/basic_text.pdf';
+const String _foundPath = '/книги/Онегин.pdf';
 const PickedFile _found = PickedFile(name: 'Онегин.pdf', path: _foundPath);
 
 void main() {
@@ -48,7 +47,7 @@ void main() {
             data: data,
             opener: opener,
             picker: FakeBookFilePicker(_found),
-            storage: const LocalBookStorage(),
+            storage: MemoryBookStorage(),
           ),
         ),
       ),
@@ -94,7 +93,7 @@ void main() {
               ),
             ),
             picker: FakeBookFilePicker(_found),
-            storage: const LocalBookStorage(),
+            storage: MemoryBookStorage(),
           ),
         ),
       ),
