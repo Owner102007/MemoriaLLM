@@ -54,21 +54,16 @@ class DescriptorBookHandle implements BookHandle {
     // движок, получивший короткое чтение, объявит книгу повреждённой.
     int done = 0;
     while (done < want) {
-      final int got = positionalRead(
-        _fd,
-        target + done,
-        want - done,
-        position + done,
-      );
+      final int got = positionalRead(_fd, target, want - done, position + done);
       if (got < 0) {
         return -1;
       }
       if (got == 0) {
         break;
       }
+      buffer.setRange(done, done + got, target.asTypedList(got));
       done += got;
     }
-    buffer.setRange(0, done, target.asTypedList(done));
     return done;
   }
 

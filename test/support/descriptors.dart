@@ -51,10 +51,11 @@ void closeDescriptor(int descriptor) => _close(descriptor);
 void writeDescriptor(int descriptor, List<int> bytes) {
   final Pointer<Uint8> buffer = malloc<Uint8>(bytes.length);
   try {
-    buffer.asTypedList(bytes.length).setAll(0, bytes);
     int done = 0;
     while (done < bytes.length) {
-      final int got = _write(descriptor, buffer + done, bytes.length - done);
+      final int left = bytes.length - done;
+      buffer.asTypedList(left).setAll(0, bytes.sublist(done));
+      final int got = _write(descriptor, buffer, left);
       if (got <= 0) {
         throw StateError('запись в дескриптор не удалась');
       }
