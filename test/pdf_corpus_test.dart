@@ -695,9 +695,13 @@ void main() {
         expect(half.isWorthwhile, isTrue, reason: name);
         expect(half.gain, greaterThan(1.02), reason: name);
 
+        // Треть не бывает мельче половины, но бывает равна ей: если
+        // содержимое страницы низкое и широкое, масштаб упирается в
+        // ширину, и резать по высоте дальше уже нечего. Так и выходит на
+        // `basic_text.pdf`, где текст занимает узкую полосу вверху.
         final FragmentLayout third = layoutOf(PageDisplayMode.third);
         expect(third.orientation, ScreenOrientation.landscape, reason: name);
-        expect(third.gain, greaterThan(half.gain), reason: name);
+        expect(third.gain, greaterThanOrEqualTo(half.gain), reason: name);
 
         // Число полос одинаково в обеих книгах — ради этого всё и делалось.
         expect(
