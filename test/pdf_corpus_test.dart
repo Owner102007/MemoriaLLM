@@ -74,8 +74,16 @@ const List<_RefArea> _refAreas = <_RefArea>[
     DisplayArea(width: 1080, height: 2400),
     canTurn: true,
   ),
-  _RefArea('окно 1600×900', DisplayArea(width: 1600, height: 900), canTurn: false),
-  _RefArea('окно 900×1600', DisplayArea(width: 900, height: 1600), canTurn: false),
+  _RefArea(
+    'окно 1600×900',
+    DisplayArea(width: 1600, height: 900),
+    canTurn: false,
+  ),
+  _RefArea(
+    'окно 900×1600',
+    DisplayArea(width: 900, height: 1600),
+    canTurn: false,
+  ),
   _RefArea(
     'окно 3840×1080',
     DisplayArea(width: 3840, height: 1080),
@@ -501,7 +509,11 @@ void main() {
         final PageFrameSource frames = PageFrameSource(document: document);
         final int limit = math.min(document.pageCount, 6);
 
-        double worstScale(List<CropBox> parts, PageGeometry page, DisplayArea a) {
+        double worstScale(
+          List<CropBox> parts,
+          PageGeometry page,
+          DisplayArea a,
+        ) {
           double worst = double.infinity;
           for (final CropBox part in parts) {
             final double scale = fragmentScale(

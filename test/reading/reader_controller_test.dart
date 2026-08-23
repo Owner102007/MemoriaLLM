@@ -488,13 +488,30 @@ void main() {
     });
 
     test('разворот не гасится за отсутствие выигрыша в кегле', () async {
+      // Развороты показывают больше книги сразу, а не крупнее: мерить их
+      // кеглем бессмысленно, и гасить по этой мерке нечего.
       final ReaderController controller = await openFramed();
       controller.setDisplayArea(_phone);
+      // Со второй страницы: первая стоит одна — она обложка, и «разворот»
+      // на ней это одна страница, которой альбом ни к чему.
+      await controller.goToPage(2);
       expect(
         await controller.setDisplayMode(PageDisplayMode.spread),
         DisplayModeOutcome.applied,
       );
       expect(controller.preferredOrientation, ScreenOrientation.landscape);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('разворот на обложке остаётся одной страницей', () async {
+      // Лист из одной страницы — и форма области показа у него та же,
+      // что у целой страницы: поворачивать экран не за чем.
+      final ReaderController controller = await openFramed();
+      controller.setDisplayArea(_phone);
+      await controller.setDisplayMode(PageDisplayMode.spread);
+      expect(controller.page, 1);
+      expect(controller.preferredOrientation, ScreenOrientation.portrait);
       await controller.close();
       controller.dispose();
     });
