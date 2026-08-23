@@ -2,6 +2,10 @@ name: CI
 
 on:
   push:
+    # `ci-report` — служебная ветка с отчётом самого прогона (см. job
+    # `report`). Без этого исключения запись отчёта запускала бы новый
+    # прогон, который писал бы отчёт, и так до бесконечности.
+    branches-ignore: [ci-report]
   pull_request:
   workflow_dispatch:
 
@@ -133,6 +137,36 @@ jobs:
               | awk '{printf "%s%%0A", $0}')
             echo "::error title=$title::$body"
           done
+
+      # Логи прогона GitHub отдаёт только авторизованным, а у сессии
+      # разработки нет ни входа в аккаунт, ни доступа к API. Поэтому
+      # вывод складывается в артефакт, а job `report` кладёт его в ветку
+      # `ci-report`: git из сессии работает всегда и ничего не кэширует.
+      - name: Собрать вывод для отчёта
+        if: always()
+        run: |
+          mkdir -p /tmp/report
+          for pair in 'format:/tmp/fmt.txt' \
+                      'codegen:/tmp/codegen.txt' \
+                      'analyze:/tmp/analyze.txt' \
+                      'tests:/tmp/tests.txt'; do
+            file="${pair#*:}"
+            [ -s "$file" ] && cp "$file" "/tmp/report/${pair%%:*}.txt"
+          done
+          if [ -s /tmp/tests.txt ]; then
+            { grep -B 2 -A 15 '\[E\]' /tmp/tests.txt || true; } \
+              > /tmp/report/failures.txt
+          fi
+          echo "${{ job.status }}" > /tmp/report/status.txt
+          ls -l /tmp/report
+
+      - name: Выложить вывод
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-logs
+          path: /tmp/report
+          if-no-files-found: ignore
 
       - name: Сводка прогона
         if: always()
@@ -275,6 +309,66 @@ jobs:
             memoria-windows-portable.zip
             build/windows/x64/runner/Release/*.msix
           if-no-files-found: error
+
+  report:
+    name: Отчёт для сессии разработки
+    needs: [analyze, android, windows]
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Забрать вывод анализа
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-logs
+          path: logs
+        continue-on-error: true
+
+      # Ветка `ci-report` — сиротская и переписывается каждым прогоном:
+      # это не история, а последнее состояние. Сессия разработки читает
+      # её обычным `git fetch`, потому что логи прогона закрыты для
+      # неавторизованных, страницы GitHub без входа закэшированы на
+      # недели, а `api.github.com` закрыт прокси контейнера.
+      - name: Отчёт в ветку ci-report
+        env:
+          ANALYZE: ${{ needs.analyze.result }}
+          ANDROID: ${{ needs.android.result }}
+          WINDOWS: ${{ needs.windows.result }}
+        run: |
+          set -eu
+          mkdir -p out
+          {
+            echo "# Прогон CI №$GITHUB_RUN_NUMBER"
+            echo
+            echo "- коммит: \`$GITHUB_SHA\`"
+            echo "- ветка: \`$GITHUB_REF_NAME\`"
+            echo "- анализ и тесты: **$ANALYZE**"
+            echo "- сборка APK: **$ANDROID**"
+            echo "- сборка Windows: **$WINDOWS**"
+            echo "- страница прогона:"
+            echo "  $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > out/report.md
+          for name in failures analyze format codegen tests; do
+            file="logs/$name.txt"
+            [ -s "$file" ] || continue
+            {
+              echo
+              echo "## $name"
+              echo '```'
+              tail -c 60000 "$file"
+              echo '```'
+            } >> out/report.md
+          done
+          cd out
+          git init -q
+          git checkout -q -b ci-report
+          git add report.md
+          git -c user.name='Memoria CI' -c user.email='ci@memoria.local' \
+            commit -q -m "отчёт прогона №$GITHUB_RUN_NUMBER ($GITHUB_SHA)"
+          git push -q -f \
+            "https://x-access-token:${{ github.token }}@github.com/$GITHUB_REPOSITORY.git" \
+            ci-report
 
   latest:
     name: Свежая сборка из main
