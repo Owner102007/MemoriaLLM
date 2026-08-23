@@ -705,14 +705,18 @@ void main() {
 
         // Число полос одинаково в обеих книгах — ради этого всё и делалось.
         expect(
-          fragmentsFor(content: frame.content, mode: PageDisplayMode.half)
-              .length,
+          fragmentsFor(
+            content: frame.content,
+            mode: PageDisplayMode.half,
+          ).length,
           2,
           reason: name,
         );
         expect(
-          fragmentsFor(content: frame.content, mode: PageDisplayMode.third)
-              .length,
+          fragmentsFor(
+            content: frame.content,
+            mode: PageDisplayMode.third,
+          ).length,
           3,
           reason: name,
         );
