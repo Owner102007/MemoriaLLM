@@ -423,10 +423,14 @@ void main() {
       reopened.dispose();
     });
 
-    test('половина просит альбом в любой книге', () async {
-      // Ровно то, чего ждёт читатель: дробь делит страницу поперёк и
-      // увеличивает текст — одинаково в одноколоночной и двухколоночной.
-      for (final bool twoColumns in <bool>[false, true]) {
+    // Ровно то, чего ждёт читатель: дробь делит страницу поперёк и
+    // увеличивает текст — одинаково в одноколоночной и двухколоночной.
+    // Две книги проверяются двумя тестами, а не циклом: настройки книги
+    // лежат в базе под её идентификатором, и второй заход в одном тесте
+    // открыл бы книгу уже с включённой половиной.
+    for (final bool twoColumns in <bool>[false, true]) {
+      final String about = twoColumns ? 'двухколоночной' : 'одноколоночной';
+      test('половина просит альбом в $about книге', () async {
         final ReaderController controller = await openFramed(
           twoColumns: twoColumns,
         );
@@ -436,22 +440,17 @@ void main() {
         expect(
           await controller.setDisplayMode(PageDisplayMode.half),
           DisplayModeOutcome.applied,
-          reason: 'колонок ${twoColumns ? 2 : 1}',
         );
-        expect(
-          controller.preferredOrientation,
-          ScreenOrientation.landscape,
-          reason: 'колонок ${twoColumns ? 2 : 1}',
-        );
+        expect(controller.preferredOrientation, ScreenOrientation.landscape);
         expect(
           controller.layout.gain,
           greaterThan(1.3),
-          reason: 'текст обязан вырасти, колонок ${twoColumns ? 2 : 1}',
+          reason: 'текст обязан вырасти',
         );
         await controller.close();
         controller.dispose();
-      }
-    });
+      });
+    }
 
     test('режим без выигрыша не включается и не молчит', () async {
       // Узкое высокое окно на ПК: повернуть его нельзя, а полоса той же

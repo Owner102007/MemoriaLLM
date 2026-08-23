@@ -234,10 +234,7 @@ void main() {
   group('число фрагментов', () {
     test('совпадает с тем, что вернуло деление', () {
       for (final PageDisplayMode mode in PageDisplayMode.values) {
-        final List<CropBox> parts = fragmentsFor(
-          content: _content,
-          mode: mode,
-        );
+        final List<CropBox> parts = fragmentsFor(content: _content, mode: mode);
         expect(
           parts.length,
           fragmentCountFor(mode: mode),

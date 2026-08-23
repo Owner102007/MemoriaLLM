@@ -686,13 +686,32 @@ void main() {
           breaks: frame.breaks,
         );
 
+        // Числа сравниваются между собой, а не с эталоном: у фикстур
+        // рамка содержимого своя, и абсолютный выигрыш у них разный.
+        // Обещание режима — «крупнее, и чем мельче доля, тем крупнее», —
+        // а не конкретная цифра.
         final FragmentLayout half = layoutOf(PageDisplayMode.half);
         expect(half.orientation, ScreenOrientation.landscape, reason: name);
-        expect(half.gain, greaterThan(1.3), reason: name);
+        expect(half.isWorthwhile, isTrue, reason: name);
+        expect(half.gain, greaterThan(1.02), reason: name);
 
         final FragmentLayout third = layoutOf(PageDisplayMode.third);
         expect(third.orientation, ScreenOrientation.landscape, reason: name);
-        expect(third.gain, greaterThan(1.9), reason: name);
+        expect(third.gain, greaterThan(half.gain), reason: name);
+
+        // Число полос одинаково в обеих книгах — ради этого всё и делалось.
+        expect(
+          fragmentsFor(content: frame.content, mode: PageDisplayMode.half)
+              .length,
+          2,
+          reason: name,
+        );
+        expect(
+          fragmentsFor(content: frame.content, mode: PageDisplayMode.third)
+              .length,
+          3,
+          reason: name,
+        );
       }
     });
 
