@@ -20,12 +20,13 @@
 /// трети даёт там половину колонки — следующий шаг увеличения. Делить
 /// колонку на три было бы уже не чтение, а разглядывание.
 ///
-/// **Половина без поворота экрана ничего не даёт.** Полоса вдвое ниже
-/// страницы, но той же ширины, а в вертикальный экран телефона страница
-/// вписывается именно по ширине — увеличение выходит ровно единица.
-/// Кегль растёт только тогда, когда широкую и низкую полосу показывают на
-/// широком и низком экране, поэтому режимы деления неразрывно связаны с
-/// [preferredOrientationFor].
+/// **Деление и форма области показа — одно решение, а не два.** Полоса
+/// вдвое ниже страницы, но той же ширины, а в вертикальный экран телефона
+/// страница вписывается именно по ширине: увеличение выходит ровно
+/// единица. Колонка, наоборот, узкая и высокая, и на широком экране она
+/// вписывается по высоте — текст становится **мельче**, чем на целой
+/// странице. Поэтому положение экрана не назначается по режиму, а
+/// выбирается счётом: см. [chooseFragmentLayout].
 library;
 
 import 'columns.dart';
@@ -56,6 +57,49 @@ const double kBlindOverlap = 0.03;
 /// скупой не спас бы строку, которая стоит чуть в стороне от середины.
 const double kBreakSearch = 0.18;
 
+/// Как режим режет содержимое страницы.
+///
+/// Направление деления определяется вёрсткой, а не вкусом: двухколоночную
+/// страницу нельзя резать поперёк — полоса накроет верх **обеих** колонок
+/// сразу, и порядок чтения станет «левый верх, левый низ, правый верх,
+/// правый низ», то есть читателю придётся возвращаться назад через экран.
+/// Поэтому кандидат на деление у каждой вёрстки один, а выбор, который
+/// действительно есть, — это форма области показа (см.
+/// [chooseFragmentLayout]).
+enum FragmentSplit {
+  /// Не режется вовсе.
+  whole,
+
+  /// Полосами сверху вниз.
+  rows,
+
+  /// По колонкам.
+  columns,
+
+  /// По колонкам, каждая — полосами.
+  columnRows,
+}
+
+/// Каким делением обслуживается режим на такой вёрстке.
+FragmentSplit splitFor({
+  required PageDisplayMode mode,
+  required bool twoColumns,
+}) {
+  switch (mode) {
+    case PageDisplayMode.full:
+    case PageDisplayMode.spread:
+      return FragmentSplit.whole;
+    case PageDisplayMode.spreadHalf:
+      // Разворот делится только по горизонтали: колонки внутри страниц
+      // тут ни при чём, строка идёт через обе страницы сразу.
+      return FragmentSplit.rows;
+    case PageDisplayMode.half:
+      return twoColumns ? FragmentSplit.columns : FragmentSplit.rows;
+    case PageDisplayMode.third:
+      return twoColumns ? FragmentSplit.columnRows : FragmentSplit.rows;
+  }
+}
+
 /// Фрагменты страницы в порядке чтения.
 ///
 /// Всегда возвращает хотя бы один прямоугольник: пустой список означал бы
@@ -71,46 +115,31 @@ List<CropBox> fragmentsFor({
     return const <CropBox>[CropBox.full];
   }
   final bool twoColumns = columns.length >= 2;
-  switch (mode) {
-    case PageDisplayMode.full:
-    case PageDisplayMode.spread:
+  final int rows = mode == PageDisplayMode.third && !twoColumns ? 3 : 2;
+  switch (splitFor(mode: mode, twoColumns: twoColumns)) {
+    case FragmentSplit.whole:
       return <CropBox>[content];
-    case PageDisplayMode.spreadHalf:
-      // Разворот делится только по горизонтали: колонки внутри страниц
-      // тут ни при чём, полоса идёт через обе страницы сразу.
-      return _rows(content, 2, blindOverlap, breaks);
-    case PageDisplayMode.half:
-      if (twoColumns) {
-        return <CropBox>[
-          for (final ColumnBand band in columns)
-            CropBox(
-              left: band.left,
-              top: content.top,
-              right: band.right,
-              bottom: content.bottom,
-            ),
-        ];
-      }
-      return _rows(content, 2, blindOverlap, breaks);
-    case PageDisplayMode.third:
-      if (twoColumns) {
-        return <CropBox>[
-          for (final ColumnBand band in columns)
-            ..._rows(
-              CropBox(
-                left: band.left,
-                top: content.top,
-                right: band.right,
-                bottom: content.bottom,
-              ),
-              2,
-              blindOverlap,
-              breaks,
-            ),
-        ];
-      }
-      return _rows(content, 3, blindOverlap, breaks);
+    case FragmentSplit.rows:
+      return _rows(content, rows, blindOverlap, breaks);
+    case FragmentSplit.columns:
+      return <CropBox>[
+        for (final ColumnBand band in columns) _column(band, content),
+      ];
+    case FragmentSplit.columnRows:
+      return <CropBox>[
+        for (final ColumnBand band in columns)
+          ..._rows(_column(band, content), 2, blindOverlap, breaks),
+      ];
   }
+}
+
+CropBox _column(ColumnBand band, CropBox content) {
+  return CropBox(
+    left: band.left,
+    top: content.top,
+    right: band.right,
+    bottom: content.bottom,
+  );
 }
 
 /// Сколько фрагментов даёт режим при таком числе колонок.
@@ -135,22 +164,173 @@ int fragmentCountFor({
 bool isSpreadMode(PageDisplayMode mode) =>
     mode == PageDisplayMode.spread || mode == PageDisplayMode.spreadHalf;
 
-/// В каком положении экрана этот режим имеет смысл.
+/// Ниже какого выигрыша режим деления не имеет смысла включать.
 ///
-/// Деление страницы на полосы увеличивает текст только на широком и
-/// низком экране: см. пояснение в заголовке файла. Поэтому выбор режима
-/// сам поворачивает чтение, а не оставляет читателя гадать, почему
-/// «половина» выглядит как целая страница.
-ScreenOrientation preferredOrientationFor(PageDisplayMode mode) {
-  switch (mode) {
-    case PageDisplayMode.full:
-      return ScreenOrientation.portrait;
-    case PageDisplayMode.half:
-    case PageDisplayMode.third:
-    case PageDisplayMode.spread:
-    case PageDisplayMode.spreadHalf:
-      return ScreenOrientation.landscape;
+/// Ровно единица не годится порогом: доли процента выигрыша читатель не
+/// увидит, а решение «поворачивать экран или нет» будет скакать от
+/// страницы к странице из-за двоичной арифметики.
+const double kMinFragmentGain = 1.02;
+
+/// Выбранная раскладка: чем режем и в какой форме области показываем.
+///
+/// Главное здесь — [gain]: во сколько раз текст крупнее, чем при показе
+/// страницы целиком. Ради этого числа затевались режимы, и оно же служит
+/// приговором: выигрыша нет — режим не включается.
+class FragmentLayout {
+  /// Создаёт раскладку.
+  const FragmentLayout({
+    required this.mode,
+    required this.split,
+    required this.area,
+    required this.scale,
+    required this.wholeScale,
+  });
+
+  /// Режим отображения.
+  final PageDisplayMode mode;
+
+  /// Чем режется содержимое.
+  final FragmentSplit split;
+
+  /// Форма области показа, при которой режим выгоднее всего.
+  final DisplayArea area;
+
+  /// Масштаб **худшего** фрагмента страницы.
+  ///
+  /// Именно худшего: показывать разные фрагменты одной страницы разным
+  /// кеглем нельзя, а обещать выигрыш по лучшему из них — обманывать.
+  final double scale;
+
+  /// Масштаб страницы целиком в самой выгодной для неё форме области.
+  final double wholeScale;
+
+  /// Посчитана ли раскладка на настоящих числах.
+  bool get isKnown => area.isKnown && scale > 0 && wholeScale > 0;
+
+  /// В каком положении экрана эту раскладку показывать.
+  ScreenOrientation get orientation => area.orientation;
+
+  /// Во сколько раз текст крупнее, чем при показе страницы целиком.
+  double get gain => isKnown ? scale / wholeScale : 0;
+
+  /// Затевается ли режим ради увеличения кегля.
+  ///
+  /// Развороты — нет: они показывают **больше** книги сразу, и мерить их
+  /// выигрышем в кегле бессмысленно. Гасить их за «отрицательный
+  /// выигрыш» было бы отменой самой возможности.
+  bool get magnifies =>
+      mode == PageDisplayMode.half || mode == PageDisplayMode.third;
+
+  /// Стоит ли включать этот режим.
+  ///
+  /// Пока область показа не измерена, ответ «да»: запрещать по незнанию
+  /// хуже, чем разрешить и пересчитать через кадр.
+  bool get isWorthwhile => !isKnown || !magnifies || gain >= kMinFragmentGain;
+
+  @override
+  String toString() =>
+      'FragmentLayout($mode, $split, $area, выигрыш '
+      '${gain.toStringAsFixed(2)})';
+}
+
+/// Выбирает деление и форму области показа как **одно** решение.
+///
+/// Прежде решений было два, и принимались они порознь: `fragmentsFor`
+/// отдавала на двухколоночной странице колонку (узкую и высокую), а
+/// положение экрана назначалось по режиму и для половины всегда просило
+/// альбом. Вместе выходило худшее из двух — узкий высокий фрагмент
+/// вписывался в широкий низкий экран по высоте, и текст становился
+/// **мельче**, чем на целой странице. Читалка не имеет права уменьшить
+/// текст в ответ на просьбу его увеличить.
+///
+/// Теперь для режима считается его деление (одно — второе сломало бы
+/// порядок чтения, см. [FragmentSplit]), а форма области показа
+/// перебирается: на телефоне это два положения экрана, на ПК — одна
+/// фактическая форма окна, потому что ориентации там нет вовсе.
+/// Выигрывает форма с наибольшим масштабом **худшего** фрагмента.
+///
+/// [sheetWidth] и [sheetHeight] — размеры листа в любых одинаковых
+/// единицах: одна страница или две страницы разворота рядом.
+FragmentLayout chooseFragmentLayout({
+  required PageDisplayMode mode,
+  required CropBox content,
+  required double sheetWidth,
+  required double sheetHeight,
+  required DisplayArea area,
+  List<ColumnBand> columns = const <ColumnBand>[],
+  List<double> breaks = const <double>[],
+  bool canTurn = true,
+}) {
+  final FragmentSplit split = splitFor(
+    mode: mode,
+    twoColumns: columns.length >= 2,
+  );
+  if (!area.isKnown ||
+      !content.isValid ||
+      sheetWidth <= 0 ||
+      sheetHeight <= 0 ||
+      !sheetWidth.isFinite ||
+      !sheetHeight.isFinite) {
+    return FragmentLayout(
+      mode: mode,
+      split: split,
+      area: area,
+      scale: 0,
+      wholeScale: 0,
+    );
   }
+
+  final List<CropBox> parts = fragmentsFor(
+    content: content,
+    mode: mode,
+    columns: columns,
+    breaks: breaks,
+  );
+  final List<DisplayArea> candidates = canTurn
+      ? <DisplayArea>[
+          area.oriented(ScreenOrientation.portrait),
+          area.oriented(ScreenOrientation.landscape),
+        ]
+      : <DisplayArea>[area];
+
+  DisplayArea best = candidates.first;
+  double bestScale = -1;
+  double wholeScale = 0;
+  for (final DisplayArea candidate in candidates) {
+    final double whole = fragmentScale(
+      fragmentWidth: sheetWidth * content.width,
+      fragmentHeight: sheetHeight * content.height,
+      screenWidth: candidate.width,
+      screenHeight: candidate.height,
+    );
+    if (whole > wholeScale) {
+      wholeScale = whole;
+    }
+    double worst = double.infinity;
+    for (final CropBox part in parts) {
+      final double scale = fragmentScale(
+        fragmentWidth: sheetWidth * part.width,
+        fragmentHeight: sheetHeight * part.height,
+        screenWidth: candidate.width,
+        screenHeight: candidate.height,
+      );
+      if (scale < worst) {
+        worst = scale;
+      }
+    }
+    if (worst.isFinite && worst > bestScale) {
+      bestScale = worst;
+      best = candidate;
+    }
+  }
+
+  return FragmentLayout(
+    mode: mode,
+    split: split,
+    area: best,
+    scale: bestScale < 0 ? 0 : bestScale,
+    wholeScale: wholeScale,
+  );
 }
 
 /// Во сколько раз фрагмент крупнее на экране, чем страница целиком.

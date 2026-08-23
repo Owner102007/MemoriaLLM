@@ -19,6 +19,10 @@ const Duration _saveDelay = Duration(milliseconds: 150);
 Future<void> _settle() =>
     Future<void>.delayed(const Duration(milliseconds: 400));
 
+/// Область показа телефона. Положение экрана выбирает сама раскладка,
+/// поэтому здесь важны только длины сторон.
+const DisplayArea _phone = DisplayArea(width: 1080, height: 2400);
+
 void main() {
   late AppData data;
 
@@ -412,11 +416,84 @@ void main() {
       reopened.dispose();
     });
 
-    test('режим сам просит нужное положение экрана', () async {
+    test('полосы одноколоночной книги просят альбом', () async {
       final ReaderController controller = await openFramed();
+      controller.setDisplayArea(_phone);
       expect(controller.preferredOrientation, ScreenOrientation.portrait);
 
-      await controller.setDisplayMode(PageDisplayMode.half);
+      expect(
+        await controller.setDisplayMode(PageDisplayMode.half),
+        DisplayModeOutcome.applied,
+      );
+      expect(controller.preferredOrientation, ScreenOrientation.landscape);
+      expect(controller.layout.gain, greaterThan(1.3));
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('на двухколоночной книге половина не поворачивает экран', () async {
+      // Жалоба владельца: страница делилась вдоль, а экран поворачивался
+      // в альбом — узкая высокая колонка вписывалась в широкий низкий
+      // экран по высоте, и текст выходил мельче целой страницы.
+      final ReaderController controller = await openFramed(twoColumns: true);
+      controller.setDisplayArea(_phone);
+
+      expect(
+        await controller.setDisplayMode(PageDisplayMode.half),
+        DisplayModeOutcome.applied,
+      );
+      expect(controller.preferredOrientation, ScreenOrientation.portrait);
+      expect(
+        controller.layout.gain,
+        greaterThan(1.2),
+        reason: 'текст обязан вырасти, а не уменьшиться',
+      );
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('режим без выигрыша не включается и не молчит', () async {
+      // Широкое низкое окно на ПК: повернуть его нельзя, а колонка
+      // вписывается в него ровно так же, как целая страница.
+      final ReaderController controller = await openFramed(twoColumns: true);
+      controller.setDisplayArea(
+        const DisplayArea(width: 2560, height: 1080),
+        canTurn: false,
+      );
+
+      expect(
+        await controller.setDisplayMode(PageDisplayMode.half),
+        DisplayModeOutcome.noGain,
+      );
+      expect(
+        controller.settings.displayMode,
+        PageDisplayMode.full,
+        reason: 'страница осталась целой',
+      );
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('пока область показа не измерена, не запрещается ничего', () async {
+      // Запрет по незнанию хуже разрешения: экран сообщит форму области
+      // через кадр, и раскладка пересчитается сама.
+      final ReaderController controller = await openFramed(twoColumns: true);
+      expect(controller.displayArea.isKnown, isFalse);
+      expect(
+        await controller.setDisplayMode(PageDisplayMode.half),
+        DisplayModeOutcome.applied,
+      );
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('разворот не гасится за отсутствие выигрыша в кегле', () async {
+      final ReaderController controller = await openFramed();
+      controller.setDisplayArea(_phone);
+      expect(
+        await controller.setDisplayMode(PageDisplayMode.spread),
+        DisplayModeOutcome.applied,
+      );
       expect(controller.preferredOrientation, ScreenOrientation.landscape);
       await controller.close();
       controller.dispose();

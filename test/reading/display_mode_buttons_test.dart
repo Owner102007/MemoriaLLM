@@ -7,13 +7,18 @@ import 'package:memoria/ui/reader/display_mode_buttons.dart';
 void main() {
   late List<PageDisplayMode> picked;
 
-  Future<void> pump(WidgetTester tester, PageDisplayMode mode) async {
+  Future<void> pump(
+    WidgetTester tester,
+    PageDisplayMode mode, {
+    Set<PageDisplayMode> gainless = const <PageDisplayMode>{},
+  }) async {
     picked = <PageDisplayMode>[];
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: DisplayModeButtons(
             mode: mode,
+            gainless: gainless,
             onMode: (PageDisplayMode value) => picked.add(value),
           ),
         ),
@@ -77,6 +82,39 @@ void main() {
     WidgetTester tester,
   ) async {
     await pump(tester, PageDisplayMode.spread);
+    await tester.tap(find.byKey(const Key('reader-mode-half-button')));
+    expect(picked, <PageDisplayMode>[PageDisplayMode.half]);
+  });
+
+  testWidgets('дробь без выигрыша говорит об этом заранее', (
+    WidgetTester tester,
+  ) async {
+    await pump(
+      tester,
+      PageDisplayMode.full,
+      gainless: <PageDisplayMode>{PageDisplayMode.half},
+    );
+    final IconButton half = tester.widget<IconButton>(
+      find.byKey(const Key('reader-mode-half-button')),
+    );
+    final IconButton third = tester.widget<IconButton>(
+      find.byKey(const Key('reader-mode-third-button')),
+    );
+    expect(half.tooltip, contains('не увеличит текст'));
+    expect(third.tooltip, 'Треть страницы');
+  });
+
+  testWidgets('погасшая дробь всё-таки нажимается', (
+    WidgetTester tester,
+  ) async {
+    // Гасить кнопку насмерть значило бы спорить с человеком, который
+    // видит страницу своими глазами. Объяснение он получит от экрана
+    // чтения, а не от неработающей кнопки.
+    await pump(
+      tester,
+      PageDisplayMode.full,
+      gainless: <PageDisplayMode>{PageDisplayMode.half},
+    );
     await tester.tap(find.byKey(const Key('reader-mode-half-button')));
     expect(picked, <PageDisplayMode>[PageDisplayMode.half]);
   });

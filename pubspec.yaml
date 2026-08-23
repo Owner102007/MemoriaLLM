@@ -4,7 +4,7 @@ description: >-
   бумажной: страница во весь экран, неизменная вёрстка, объяснение слова
   и перевод по выделению.
 publish_to: none
-version: 0.5.1+12
+version: 0.5.1+13
 
 # pdfrx 2.4 требует Dart 3.10 и Flutter 3.41: движок PDFium приезжает
 # нативным ассетом через хуки сборки, а они появились именно там.
@@ -57,6 +57,6 @@ msix_config:
   publisher_display_name: HohloBaron
   identity_name: Owner102007.MemoriaLLMHB
   publisher: CN=Owner102007
-  msix_version: 0.5.1.0
+  msix_version: 0.5.1.1
   capabilities: internetClient
   store: true

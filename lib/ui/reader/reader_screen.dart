@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -64,6 +65,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
   AppLifecycleListener? _lifecycle;
   ScreenOrientation _rotation = ScreenOrientation.portrait;
   bool _zoomLocked = true;
+  DisplayArea _area = DisplayArea.unknown;
+
+  /// Можно ли попросить систему повернуть экран.
+  ///
+  /// На ПК — нельзя: `setPreferredOrientations` там не делает ничего, а
+  /// форму окна выбирает человек. Поэтому и кнопки поворота на ПК нет:
+  /// кнопка, которая заведомо ничего не сделает, хуже её отсутствия.
+  static final bool _canTurn =
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
 
   @override
   void initState() {
@@ -81,6 +92,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
     unawaited(_restoreDeviceSettings());
     unawaited(_open());
+  }
+
+  /// Форма области показа приходит из системы и меняется сама: поворот
+  /// телефона, изменение размера окна на ПК. Геометрия деления страницы
+  /// работает с этими числами, а не с признаком «портрет или альбом», —
+  /// иначе на ПК, где ориентации нет вовсе, ей нечего было бы сказать.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final Size size = MediaQuery.sizeOf(context);
+    _area = DisplayArea(width: size.width, height: size.height);
+    _controller?.setDisplayArea(_area, canTurn: _canTurn);
   }
 
   /// Положение экрана и способ листания — настройки устройства, а не
@@ -116,6 +139,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// целая страница. Принудительная ориентация сильнее пользовательской
   /// блокировки — именно так поступают видеоплееры.
   Future<void> _applyRotation() async {
+    if (!_canTurn) {
+      return;
+    }
     await SystemChrome.setPreferredOrientations(
       _rotation == ScreenOrientation.landscape
           ? const <DeviceOrientation>[
@@ -166,15 +192,45 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Смена режима отображения заодно поворачивает чтение.
   ///
-  /// Без поворота режимы бессмысленны, и объяснять это читателю текстом
-  /// вместо действия — плохой размен.
+  /// Положение экрана выбирает геометрия: на двухколоночной книге
+  /// половина — это колонка, и её экран **вертикальный**, а поворот в
+  /// альбом сделал бы текст мельче целой страницы. Режим, у которого
+  /// выигрыша нет вовсе, не включается — но и не молчит: читателю
+  /// говорится, почему страница осталась целой.
   Future<void> _setDisplayMode(PageDisplayMode mode) async {
     final ReaderController? controller = _controller;
     if (controller == null) {
       return;
     }
-    await controller.setDisplayMode(mode);
-    await _setRotation(controller.preferredOrientation);
+    final DisplayModeOutcome outcome = await controller.setDisplayMode(mode);
+    if (outcome == DisplayModeOutcome.noGain) {
+      _explainNoGain(mode);
+      return;
+    }
+    // Пока область показа не измерена, поворачивать экран не по чему:
+    // поворот вслепую — это ровно та ошибка, от которой уходим.
+    final FragmentLayout layout = controller.layout;
+    if (layout.isKnown) {
+      await _setRotation(layout.orientation);
+    }
+  }
+
+  /// Говорит, почему деление не включилось.
+  void _explainNoGain(PageDisplayMode mode) {
+    if (!mounted) {
+      return;
+    }
+    final String fraction = mode == PageDisplayMode.third ? '⅓' : '½';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        key: const Key('reader-mode-no-gain'),
+        duration: const Duration(seconds: 3),
+        content: Text(
+          'На этой странице $fraction не увеличит текст — страница '
+          'осталась целой.',
+        ),
+      ),
+    );
   }
 
   @override
@@ -211,6 +267,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return;
       }
       controller.addListener(_onControllerChanged);
+      controller.setDisplayArea(_area, canTurn: _canTurn);
       unawaited(controller.loadFrame());
       setState(() {
         _controller = controller;
@@ -383,6 +440,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
         DisplayModeButtons(
           mode: controller.settings.displayMode,
           onMode: (PageDisplayMode mode) => unawaited(_setDisplayMode(mode)),
+          // Дробь, которая на этой книге не увеличит текст, показана
+          // погасшей: обещать увеличение и не дать его — хуже, чем
+          // честно сказать заранее.
+          gainless: <PageDisplayMode>{
+            for (final PageDisplayMode mode in <PageDisplayMode>[
+              PageDisplayMode.half,
+              PageDisplayMode.third,
+            ])
+              if (!controller.layoutFor(mode).isWorthwhile) mode,
+          },
         ),
         IconButton(
           key: const Key('reader-zoom-lock-button'),
@@ -393,25 +460,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
           visualDensity: VisualDensity.compact,
           onPressed: () => unawaited(_setZoomLocked(!_zoomLocked)),
         ),
-        IconButton(
-          key: const Key('reader-rotation-button'),
-          icon: Icon(
-            _rotation == ScreenOrientation.landscape
-                ? Icons.stay_current_landscape
-                : Icons.stay_current_portrait,
-          ),
-          tooltip: _rotation == ScreenOrientation.landscape
-              ? 'Читать вертикально'
-              : 'Читать горизонтально',
-          visualDensity: VisualDensity.compact,
-          onPressed: () => unawaited(
-            _setRotation(
+        // Поворот есть только там, где он что-то делает. На ПК форму окна
+        // выбирает человек, а `setPreferredOrientations` не делает ничего:
+        // кнопка-обманка хуже её отсутствия.
+        if (_canTurn)
+          IconButton(
+            key: const Key('reader-rotation-button'),
+            icon: Icon(
               _rotation == ScreenOrientation.landscape
-                  ? ScreenOrientation.portrait
-                  : ScreenOrientation.landscape,
+                  ? Icons.stay_current_landscape
+                  : Icons.stay_current_portrait,
+            ),
+            tooltip: _rotation == ScreenOrientation.landscape
+                ? 'Читать вертикально'
+                : 'Читать горизонтально',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => unawaited(
+              _setRotation(
+                _rotation == ScreenOrientation.landscape
+                    ? ScreenOrientation.portrait
+                    : ScreenOrientation.landscape,
+              ),
             ),
           ),
-        ),
         IconButton(
           key: const Key('reader-settings-button'),
           icon: const Icon(Icons.tune),

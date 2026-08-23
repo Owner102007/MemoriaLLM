@@ -17,6 +17,7 @@ class DisplayModeButtons extends StatelessWidget {
   const DisplayModeButtons({
     required this.mode,
     required this.onMode,
+    this.gainless = const <PageDisplayMode>{},
     super.key,
   });
 
@@ -25,6 +26,14 @@ class DisplayModeButtons extends StatelessWidget {
 
   /// Читатель выбрал режим.
   final ValueChanged<PageDisplayMode> onMode;
+
+  /// Режимы, которые на этой странице не увеличат текст.
+  ///
+  /// Такая дробь показывается погасшей — читатель видит заранее, что
+  /// нажимать её незачем. Нажатие всё равно проходит: гасить кнопку
+  /// насмерть значило бы спорить с человеком, который видит страницу
+  /// своими глазами, а объяснение он получит от экрана чтения.
+  final Set<PageDisplayMode> gainless;
 
   @override
   Widget build(BuildContext context) {
@@ -35,22 +44,30 @@ class DisplayModeButtons extends StatelessWidget {
           buttonKey: const Key('reader-mode-half-button'),
           denominator: 2,
           selected: mode == PageDisplayMode.half,
+          gainless: gainless.contains(PageDisplayMode.half),
           onPressed: () => onMode(_toggle(PageDisplayMode.half)),
-          tooltip: mode == PageDisplayMode.half
-              ? 'Вернуть страницу целиком'
-              : 'Половина страницы',
+          tooltip: _tooltip(PageDisplayMode.half, 'Половина страницы'),
         ),
         _FractionButton(
           buttonKey: const Key('reader-mode-third-button'),
           denominator: 3,
           selected: mode == PageDisplayMode.third,
+          gainless: gainless.contains(PageDisplayMode.third),
           onPressed: () => onMode(_toggle(PageDisplayMode.third)),
-          tooltip: mode == PageDisplayMode.third
-              ? 'Вернуть страницу целиком'
-              : 'Треть страницы',
+          tooltip: _tooltip(PageDisplayMode.third, 'Треть страницы'),
         ),
       ],
     );
+  }
+
+  String _tooltip(PageDisplayMode wanted, String name) {
+    if (mode == wanted) {
+      return 'Вернуть страницу целиком';
+    }
+    if (gainless.contains(wanted)) {
+      return '$name: на этой странице не увеличит текст';
+    }
+    return name;
   }
 
   PageDisplayMode _toggle(PageDisplayMode wanted) {
@@ -63,6 +80,7 @@ class _FractionButton extends StatelessWidget {
     required this.buttonKey,
     required this.denominator,
     required this.selected,
+    required this.gainless,
     required this.onPressed,
     required this.tooltip,
   });
@@ -75,13 +93,21 @@ class _FractionButton extends StatelessWidget {
 
   final int denominator;
   final bool selected;
+  final bool gainless;
   final VoidCallback onPressed;
   final String tooltip;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color color = selected ? scheme.secondary : scheme.onSurface;
+    final Color color = selected
+        ? scheme.secondary
+        : (gainless
+              // Не «серая кнопка», а именно приглушённая: она работает,
+              // просто ничего не даст. Совсем выключенная кнопка не
+              // объясняет, почему она выключена.
+              ? scheme.onSurface.withValues(alpha: 0.38)
+              : scheme.onSurface);
     return IconButton(
       key: buttonKey,
       // Кнопок в панели чтения много, а ширина телефона в портрете одна:

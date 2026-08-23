@@ -50,17 +50,87 @@ enum ReadingFilter {
 
 /// Ориентация экрана.
 ///
-/// Осталась в схеме базы от прежнего решения хранить настройки отдельно
-/// для каждого положения экрана. От него отказались: читатель настроил
-/// книгу один раз и ждёт её такой же после поворота — и, когда появится
-/// синхронизация, на другом устройстве тоже. Настройки книги живут под
-/// [ScreenOrientation.portrait]; см. `kSettingsSlot`.
+/// **Не входные данные геометрии, а способ Android повернуть экран.**
+/// Раньше положение экрана подавалось в математику деления страницы, и
+/// на ПК, где ориентации нет вовсе, эта математика работала вслепую.
+/// Теперь геометрия получает форму области показа числом ([DisplayArea]),
+/// а ориентация — это только то, о чём просят систему.
+///
+/// В схеме базы поле осталось от прежнего решения хранить настройки
+/// отдельно для каждого положения экрана. От него отказались: читатель
+/// настроил книгу один раз и ждёт её такой же после поворота — и, когда
+/// появится синхронизация, на другом устройстве тоже. Настройки книги
+/// живут под [ScreenOrientation.portrait]; см. `kSettingsSlot`.
 enum ScreenOrientation {
   /// Портретная.
   portrait,
 
   /// Альбомная.
   landscape,
+}
+
+/// Область показа: прямоугольник, в который вписывается лист.
+///
+/// Единицы не важны — важна только форма, — поэтому одна и та же величина
+/// описывает и экран телефона, и окно на ПК. Именно этим она лучше
+/// [ScreenOrientation]: у окна ориентации нет, а форма есть всегда, и
+/// геометрия деления страницы обслуживает обе платформы одной функцией.
+class DisplayArea {
+  /// Создаёт область показа.
+  const DisplayArea({required this.width, required this.height});
+
+  /// Область неизвестна: экран ещё не разложен.
+  ///
+  /// Нужна не для красоты: пока область не измерена, выбирать раскладку не
+  /// из чего, и честнее сказать «не знаю», чем принять решение по
+  /// выдуманным числам.
+  static const DisplayArea unknown = DisplayArea(width: 0, height: 0);
+
+  /// Ширина.
+  final double width;
+
+  /// Высота.
+  final double height;
+
+  /// Есть ли что измерять.
+  bool get isKnown =>
+      width.isFinite && height.isFinite && width > 0 && height > 0;
+
+  /// Широкая и низкая.
+  bool get isLandscape => width > height;
+
+  /// Положение экрана, соответствующее этой форме.
+  ScreenOrientation get orientation =>
+      isLandscape ? ScreenOrientation.landscape : ScreenOrientation.portrait;
+
+  /// Та же область, повёрнутая на четверть оборота.
+  DisplayArea get turned => DisplayArea(width: height, height: width);
+
+  /// Та же область в заданном положении экрана.
+  ///
+  /// Стороны берутся по длине, а не переставляются как попало: повернув
+  /// телефон, читатель получает ту же пару чисел в другом порядке, и
+  /// выбор раскладки от этого не должен скакать.
+  DisplayArea oriented(ScreenOrientation orientation) {
+    final double short = width < height ? width : height;
+    final double long = width < height ? height : width;
+    return orientation == ScreenOrientation.landscape
+        ? DisplayArea(width: long, height: short)
+        : DisplayArea(width: short, height: long);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is DisplayArea &&
+        other.width == width &&
+        other.height == height;
+  }
+
+  @override
+  int get hashCode => Object.hash(width, height);
+
+  @override
+  String toString() => 'DisplayArea(${width}x$height)';
 }
 
 /// Рамка обрезки полей в долях страницы: `0` — левый верхний угол,

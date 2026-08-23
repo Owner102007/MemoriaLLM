@@ -51,6 +51,38 @@ const Map<String, int> _readable = <String, int>{
   'huge_1200_pages.pdf': 1200,
 };
 
+/// Опорная область показа для проверки деления страницы.
+class _RefArea {
+  const _RefArea(this.label, this.area, {required this.canTurn});
+
+  final String label;
+  final DisplayArea area;
+
+  /// Можно ли попросить систему повернуть экран. На ПК — нельзя.
+  final bool canTurn;
+}
+
+/// Области показа, на которых проверяется выбор деления.
+///
+/// Телефон в обоих положениях (переставит их сам выбор раскладки) и окно
+/// ПК в трёх пропорциях, включая узкое высокое и широкое низкое: на ПК
+/// ориентации нет вовсе, повернуть окно нельзя, и деление обязано
+/// считаться по фактической форме области.
+const List<_RefArea> _refAreas = <_RefArea>[
+  _RefArea(
+    'телефон 1080×2400',
+    DisplayArea(width: 1080, height: 2400),
+    canTurn: true,
+  ),
+  _RefArea('окно 1600×900', DisplayArea(width: 1600, height: 900), canTurn: false),
+  _RefArea('окно 900×1600', DisplayArea(width: 900, height: 1600), canTurn: false),
+  _RefArea(
+    'окно 3840×1080',
+    DisplayArea(width: 3840, height: 1080),
+    canTurn: false,
+  ),
+];
+
 /// Файлы, которые открыться не могут, и то, чем это должно кончиться.
 const Map<String, DocumentProblem> _unreadable = <String, DocumentProblem>{
   'empty_file.pdf': DocumentProblem.empty,
@@ -454,6 +486,112 @@ void main() {
       }, timeout: const Timeout(Duration(minutes: 3)));
     });
 
+    _readable.forEach((String name, int pages) {
+      test('$name: включённое деление не делает текст мельче', () async {
+        // Тот самый тест, которого не хватало. Прежняя проверка «ради чего
+        // всё затевалось» брала придуманную одноколоночную страницу и
+        // делила её полосами — двухколоночного случая в ней не было, и
+        // ошибку она не видела. Проверка миссии, поставленная на удобном
+        // примере, проверяет пример.
+        //
+        // Масштаб здесь считается заново, из прямоугольника фрагмента и
+        // той области показа, которую попросит приложение, — а не берётся
+        // из самой раскладки. Иначе тест сверял бы функцию с собой.
+        final ReaderDocument document = await open(name);
+        final PageFrameSource frames = PageFrameSource(document: document);
+        final int limit = math.min(document.pageCount, 6);
+
+        double worstScale(List<CropBox> parts, PageGeometry page, DisplayArea a) {
+          double worst = double.infinity;
+          for (final CropBox part in parts) {
+            final double scale = fragmentScale(
+              fragmentWidth: page.width * part.width,
+              fragmentHeight: page.height * part.height,
+              screenWidth: a.width,
+              screenHeight: a.height,
+            );
+            worst = scale < worst ? scale : worst;
+          }
+          return worst;
+        }
+
+        for (int page = 1; page <= limit; page++) {
+          final PageFrame frame = await frames.frameFor(page);
+          final PageGeometry geometry = document.geometry(page);
+
+          for (final _RefArea it in _refAreas) {
+            final String label = it.label;
+            final FragmentLayout whole = chooseFragmentLayout(
+              mode: PageDisplayMode.full,
+              content: frame.content,
+              sheetWidth: geometry.width,
+              sheetHeight: geometry.height,
+              area: it.area,
+              columns: frame.columns,
+              breaks: frame.breaks,
+              canTurn: it.canTurn,
+            );
+            final double wholeScale = worstScale(
+              <CropBox>[frame.content],
+              geometry,
+              whole.area,
+            );
+
+            for (final PageDisplayMode mode in <PageDisplayMode>[
+              PageDisplayMode.half,
+              PageDisplayMode.third,
+            ]) {
+              final String where = '$name, страница $page, $mode, $label';
+              final FragmentLayout layout = chooseFragmentLayout(
+                mode: mode,
+                content: frame.content,
+                sheetWidth: geometry.width,
+                sheetHeight: geometry.height,
+                area: it.area,
+                columns: frame.columns,
+                breaks: frame.breaks,
+                canTurn: it.canTurn,
+              );
+              final List<CropBox> parts = fragmentsFor(
+                content: frame.content,
+                mode: mode,
+                columns: frame.columns,
+                breaks: frame.breaks,
+              );
+
+              final double scale = worstScale(parts, geometry, layout.area);
+              expect(scale, greaterThan(0), reason: 'пустой фрагмент: $where');
+
+              if (layout.isWorthwhile) {
+                // Главное обещание режима: текст стал крупнее. Не «не
+                // хуже», а именно крупнее — иначе поворот экрана и
+                // разрезанная страница не окупаются ничем.
+                expect(
+                  scale,
+                  greaterThanOrEqualTo(wholeScale * kMinFragmentGain - 1e-6),
+                  reason: 'режим включился и уменьшил текст: $where',
+                );
+              }
+
+              // Положение экрана выбрано счётом, а не по названию режима.
+              final double turned = worstScale(
+                parts,
+                geometry,
+                layout.area.turned,
+              );
+              if (it.canTurn) {
+                expect(
+                  scale,
+                  greaterThanOrEqualTo(turned - 1e-6),
+                  reason: 'нашлось положение экрана лучше: $where',
+                );
+              }
+            }
+          }
+        }
+      }, timeout: const Timeout(Duration(minutes: 3)));
+    });
+
     test('движок отдаёт тот же документ, что читает текст', () async {
       // Рисовать страницу должен тот же открытый файл: второе открытие
       // стоит вдвое больше памяти, а на большой книге отдаёт страницы
@@ -515,6 +653,60 @@ void main() {
       // Половина двухколоночной страницы — колонка, а не верх страницы.
       expect(halves.first.height, closeTo(frame.content.height, 1e-9));
       expect(halves.first.width, lessThan(frame.content.width * 0.6));
+    });
+
+    test('на двухколоночной книге дроби не поворачивают экран', () async {
+      // Жалоба владельца целиком: и ½, и ⅓ обязаны увеличить текст, а
+      // экран при этом остаться вертикальным. Колонка — фрагмент высокий,
+      // и её естественный экран портретный; альбом делал текст мельче,
+      // чем на целой странице.
+      final ReaderDocument document = await open('two_columns.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final PageFrame frame = await frames.frameFor(1);
+      final PageGeometry geometry = document.geometry(1);
+      const DisplayArea phone = DisplayArea(width: 1080, height: 2400);
+
+      FragmentLayout layoutOf(PageDisplayMode mode) => chooseFragmentLayout(
+        mode: mode,
+        content: frame.content,
+        sheetWidth: geometry.width,
+        sheetHeight: geometry.height,
+        area: phone,
+        columns: frame.columns,
+        breaks: frame.breaks,
+      );
+
+      final FragmentLayout half = layoutOf(PageDisplayMode.half);
+      expect(half.split, FragmentSplit.columns);
+      expect(half.orientation, ScreenOrientation.portrait);
+      expect(half.gain, greaterThan(1.2), reason: 'текст обязан вырасти');
+
+      final FragmentLayout third = layoutOf(PageDisplayMode.third);
+      expect(third.split, FragmentSplit.columnRows);
+      expect(third.orientation, ScreenOrientation.portrait);
+      expect(third.gain, greaterThan(half.gain), reason: 'треть крупнее');
+    });
+
+    test('одноколоночная книга по-прежнему просит альбом', () async {
+      // Отношения S4.1 обязаны остаться на месте: там, где полоса
+      // действительно широкая и низкая, поворот экрана и был ответом.
+      final ReaderDocument document = await open('basic_text.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final PageFrame frame = await frames.frameFor(1);
+      final PageGeometry geometry = document.geometry(1);
+
+      final FragmentLayout half = chooseFragmentLayout(
+        mode: PageDisplayMode.half,
+        content: frame.content,
+        sheetWidth: geometry.width,
+        sheetHeight: geometry.height,
+        area: const DisplayArea(width: 1080, height: 2400),
+        columns: frame.columns,
+        breaks: frame.breaks,
+      );
+      expect(half.split, FragmentSplit.rows);
+      expect(half.orientation, ScreenOrientation.landscape);
+      expect(half.gain, greaterThan(1.3));
     });
 
     test('скан без текста разбирается по пикселям', () async {

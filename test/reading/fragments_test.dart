@@ -338,24 +338,176 @@ void main() {
     });
   });
 
-  group('положение экрана', () {
-    test('целая страница читается вертикально, деление — горизонтально', () {
-      expect(
-        preferredOrientationFor(PageDisplayMode.full),
-        ScreenOrientation.portrait,
+  group('деление и форма области показа — одно решение', () {
+    // Страница А4 и телефон 1080×2400. Область показа подаётся числами:
+    // ориентации у окна на ПК нет вовсе, а форма есть всегда.
+    const double sheetW = 595;
+    const double sheetH = 842;
+    const DisplayArea phone = DisplayArea(width: 1080, height: 2400);
+
+    FragmentLayout layout(
+      PageDisplayMode mode, {
+      List<ColumnBand> columns = const <ColumnBand>[],
+      DisplayArea area = phone,
+      bool canTurn = true,
+      double sheetWidth = sheetW,
+      double sheetHeight = sheetH,
+    }) {
+      return chooseFragmentLayout(
+        mode: mode,
+        content: CropBox.full,
+        sheetWidth: sheetWidth,
+        sheetHeight: sheetHeight,
+        area: area,
+        columns: columns,
+        canTurn: canTurn,
       );
-      for (final PageDisplayMode mode in <PageDisplayMode>[
+    }
+
+    test('целая страница читается вертикально', () {
+      final FragmentLayout full = layout(PageDisplayMode.full);
+      expect(full.orientation, ScreenOrientation.portrait);
+      expect(full.gain, closeTo(1, 1e-9));
+      expect(full.split, FragmentSplit.whole);
+    });
+
+    test('полосы одноколоночной страницы просят альбом', () {
+      final FragmentLayout half = layout(PageDisplayMode.half);
+      expect(half.split, FragmentSplit.rows);
+      expect(half.orientation, ScreenOrientation.landscape);
+      expect(half.gain, greaterThan(1.3));
+      expect(half.isWorthwhile, isTrue);
+    });
+
+    test('колонка просит портрет, а не альбом', () {
+      // Ровно та ошибка, на которую наткнулся владелец: колонка — узкий
+      // и высокий прямоугольник, и в широкий низкий экран она вписывается
+      // по высоте. Текст выходил мельче, чем на целой странице.
+      final FragmentLayout half = layout(
         PageDisplayMode.half,
+        columns: _twoColumns,
+      );
+      expect(half.split, FragmentSplit.columns);
+      expect(half.orientation, ScreenOrientation.portrait);
+      expect(half.gain, greaterThan(1.3));
+    });
+
+    test('половина колонки тоже просит портрет', () {
+      // План предполагал здесь альбом. Счёт говорит другое: колонка узкая,
+      // и даже её половина упирается в ширину экрана раньше, чем в высоту.
+      // Ради этого функция и считает, а не помнит правило наизусть.
+      final FragmentLayout third = layout(
         PageDisplayMode.third,
-        PageDisplayMode.spread,
-        PageDisplayMode.spreadHalf,
-      ]) {
-        expect(
-          preferredOrientationFor(mode),
-          ScreenOrientation.landscape,
-          reason: '$mode',
-        );
+        columns: _twoColumns,
+      );
+      expect(third.split, FragmentSplit.columnRows);
+      expect(third.orientation, ScreenOrientation.portrait);
+      expect(third.gain, greaterThan(2));
+    });
+
+    test('выбранное положение экрана — лучшее из двух', () {
+      for (final PageDisplayMode mode in PageDisplayMode.values) {
+        for (final List<ColumnBand> columns in <List<ColumnBand>>[
+          const <ColumnBand>[],
+          _twoColumns,
+        ]) {
+          final FragmentLayout best = layout(mode, columns: columns);
+          final FragmentLayout turned = chooseFragmentLayout(
+            mode: mode,
+            content: CropBox.full,
+            sheetWidth: sheetW,
+            sheetHeight: sheetH,
+            area: best.area.turned,
+            columns: columns,
+            canTurn: false,
+          );
+          expect(
+            best.scale,
+            greaterThanOrEqualTo(turned.scale - 1e-9),
+            reason: '$mode, колонок ${columns.length}',
+          );
+        }
       }
+    });
+
+    test('режим без выигрыша не включается', () {
+      // Широкое низкое окно на ПК: повернуть его нельзя, а колонка в него
+      // вписывается по высоте — ровно так же, как на целой странице.
+      final FragmentLayout half = layout(
+        PageDisplayMode.half,
+        columns: _twoColumns,
+        area: const DisplayArea(width: 2560, height: 1080),
+        canTurn: false,
+      );
+      expect(half.gain, closeTo(1, 0.01));
+      expect(half.isWorthwhile, isFalse);
+    });
+
+    test('узкое высокое окно не даёт выигрыша полосам', () {
+      final FragmentLayout half = layout(
+        PageDisplayMode.half,
+        area: const DisplayArea(width: 600, height: 2000),
+        canTurn: false,
+      );
+      expect(half.isWorthwhile, isFalse);
+    });
+
+    test('разворот не гасится за отсутствие выигрыша', () {
+      // Развороты показывают больше книги сразу, а не крупнее: мерить их
+      // кеглем бессмысленно, и запрещать по этой мерке нечего.
+      final FragmentLayout spread = chooseFragmentLayout(
+        mode: PageDisplayMode.spread,
+        content: CropBox.full,
+        sheetWidth: sheetW * 2,
+        sheetHeight: sheetH,
+        area: phone,
+      );
+      expect(spread.magnifies, isFalse);
+      expect(spread.isWorthwhile, isTrue);
+      expect(spread.orientation, ScreenOrientation.landscape);
+    });
+
+    test('неизмеренная область не запрещает ничего', () {
+      final FragmentLayout half = layout(
+        PageDisplayMode.half,
+        area: DisplayArea.unknown,
+      );
+      expect(half.isKnown, isFalse);
+      expect(half.isWorthwhile, isTrue, reason: 'запрет по незнанию — хуже');
+    });
+
+    test('бессмысленный лист не роняет выбор', () {
+      final FragmentLayout half = layout(
+        PageDisplayMode.half,
+        sheetWidth: 0,
+        sheetHeight: double.nan,
+      );
+      expect(half.isKnown, isFalse);
+      expect(half.gain, 0);
+    });
+  });
+
+  group('форма области показа', () {
+    test('стороны переставляются по длине, а не как попало', () {
+      const DisplayArea phone = DisplayArea(width: 1080, height: 2400);
+      expect(
+        phone.oriented(ScreenOrientation.landscape),
+        const DisplayArea(width: 2400, height: 1080),
+      );
+      // Уже альбомная область в альбоме не переворачивается: иначе выбор
+      // раскладки скакал бы при каждом повороте телефона.
+      expect(
+        phone.turned.oriented(ScreenOrientation.landscape),
+        const DisplayArea(width: 2400, height: 1080),
+      );
+      expect(phone.orientation, ScreenOrientation.portrait);
+      expect(phone.turned.orientation, ScreenOrientation.landscape);
+    });
+
+    test('неизмеренная область так и говорит', () {
+      expect(DisplayArea.unknown.isKnown, isFalse);
+      expect(const DisplayArea(width: 10, height: 0).isKnown, isFalse);
+      expect(const DisplayArea(width: 10, height: 10).isKnown, isTrue);
     });
   });
 

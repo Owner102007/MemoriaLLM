@@ -13,6 +13,26 @@ import '../../domain/reading/reading_filter.dart';
 import '../../domain/reading/sheet_placement.dart';
 import 'page_frames.dart';
 
+/// Чем кончилась попытка сменить режим отображения.
+enum DisplayModeOutcome {
+  /// Режим включён.
+  applied,
+
+  /// Он и так был включён.
+  unchanged,
+
+  /// Режим не включён: на этой странице он не увеличил бы текст.
+  noGain,
+}
+
+/// Размеры листа: одна страница или две страницы разворота рядом.
+class _SheetSize {
+  const _SheetSize(this.width, this.height);
+
+  final double width;
+  final double height;
+}
+
 /// Состояние открытой книги: где читатель сейчас и что об этом знает база.
 ///
 /// Контроллер не знает ни про виджеты, ни про PDFium: документ приходит
@@ -91,6 +111,8 @@ class ReaderController extends ChangeNotifier {
   late final int _initialPage;
   BookReadingSettings _settings;
   PageFrame? _frame;
+  DisplayArea _area = DisplayArea.unknown;
+  bool _canTurn = true;
   Timer? _saveTimer;
   bool _dirty = false;
   bool _closed = false;
@@ -159,9 +181,65 @@ class ReaderController extends ChangeNotifier {
   /// Сколько фрагментов на текущей странице.
   int get fragmentCount => fragments.length;
 
-  /// В каком положении экрана этот режим имеет смысл.
-  ScreenOrientation get preferredOrientation =>
-      preferredOrientationFor(_settings.displayMode);
+  /// Форма области показа, о которой сообщил экран.
+  DisplayArea get displayArea => _area;
+
+  /// Сообщает контроллеру, во что вписывается лист.
+  ///
+  /// Это не «размер экрана», а форма области показа: на телефоне она
+  /// меняется при повороте, на ПК — при каждом движении края окна.
+  /// Геометрия деления работает с числами и одинаково обслуживает обе
+  /// платформы; [canTurn] говорит лишь о том, можно ли попросить систему
+  /// повернуть экран (на ПК — нельзя, там форму окна выбирает человек).
+  ///
+  /// Слушатели намеренно **не** оповещаются: область сообщает сам экран, и
+  /// делает он это тогда, когда уже перестраивается сам (поворот, новый
+  /// размер окна). Оповещение отсюда означало бы `setState` посреди
+  /// построения дерева — то есть падение на ровном месте.
+  void setDisplayArea(DisplayArea area, {bool canTurn = true}) {
+    _area = area;
+    _canTurn = canTurn;
+  }
+
+  /// Раскладка текущего режима: чем режем, в какой форме показываем и
+  /// насколько от этого вырос кегль.
+  FragmentLayout get layout => layoutFor(_settings.displayMode);
+
+  /// Какой была бы раскладка, если включить [mode] на этой странице.
+  ///
+  /// Нужна кнопкам-дробям: они обязаны показывать, что режим даст **на
+  /// этой** книге, а не вообще.
+  FragmentLayout layoutFor(PageDisplayMode mode) {
+    final _SheetSize sheet = _sheetSize(mode);
+    return chooseFragmentLayout(
+      mode: mode,
+      content: contentBox,
+      sheetWidth: sheet.width,
+      sheetHeight: sheet.height,
+      area: _area,
+      columns: columns,
+      breaks: breaks,
+      canTurn: _canTurn,
+    );
+  }
+
+  /// В каком положении экрана текущий режим имеет смысл.
+  ScreenOrientation get preferredOrientation => layout.orientation;
+
+  /// Размеры листа: одна страница или две страницы разворота рядом.
+  _SheetSize _sheetSize(PageDisplayMode mode) {
+    final List<int> pages = isSpreadMode(mode)
+        ? spreadPages(_page, pageCount)
+        : <int>[_page];
+    double width = 0;
+    double height = 0;
+    for (final int number in pages) {
+      final PageGeometry geometry = _document.geometry(number);
+      width += geometry.width;
+      height = height < geometry.height ? geometry.height : height;
+    }
+    return _SheetSize(width, height);
+  }
 
   /// Область страницы, которую надо показать сейчас.
   CropBox get fragmentBox {
@@ -304,9 +382,17 @@ class ReaderController extends ChangeNotifier {
   }
 
   /// Меняет режим отображения, оставляя читателя примерно на месте.
-  Future<void> setDisplayMode(PageDisplayMode mode) async {
+  ///
+  /// Режим, который не увеличивает текст, **не включается** — и не молча:
+  /// возвращается [DisplayModeOutcome.noGain], а экран объясняет это
+  /// читателю. Читалка не имеет права уменьшить текст в ответ на просьбу
+  /// его увеличить.
+  Future<DisplayModeOutcome> setDisplayMode(PageDisplayMode mode) async {
     if (mode == _settings.displayMode) {
-      return;
+      return DisplayModeOutcome.unchanged;
+    }
+    if (!layoutFor(mode).isWorthwhile) {
+      return DisplayModeOutcome.noGain;
     }
     final int oldCount = fragmentCount;
     final int oldIndex = fragment;
@@ -318,6 +404,7 @@ class ReaderController extends ChangeNotifier {
       newCount: newCount,
     );
     await _saveSettings();
+    return DisplayModeOutcome.applied;
   }
 
   /// Включает или выключает автообрезку полей.
