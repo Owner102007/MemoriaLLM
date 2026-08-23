@@ -473,12 +473,11 @@ void main() {
             final List<CropBox> parts = fragmentsFor(
               content: frame.content,
               mode: mode,
-              columns: frame.columns,
             );
             expect(parts, isNotEmpty, reason: '$mode: $where');
             expect(
               parts.length,
-              fragmentCountFor(mode: mode, columnCount: frame.columns.length),
+              fragmentCountFor(mode: mode),
               reason: '$mode: $where',
             );
             for (final CropBox part in parts) {
@@ -539,7 +538,6 @@ void main() {
               sheetWidth: geometry.width,
               sheetHeight: geometry.height,
               area: it.area,
-              columns: frame.columns,
               breaks: frame.breaks,
               canTurn: it.canTurn,
             );
@@ -560,14 +558,12 @@ void main() {
                 sheetWidth: geometry.width,
                 sheetHeight: geometry.height,
                 area: it.area,
-                columns: frame.columns,
                 breaks: frame.breaks,
                 canTurn: it.canTurn,
               );
               final List<CropBox> parts = fragmentsFor(
                 content: frame.content,
                 mode: mode,
-                columns: frame.columns,
                 breaks: frame.breaks,
               );
 
@@ -644,7 +640,11 @@ void main() {
       }
     });
 
-    test('двухколоночная статья делится по колонкам', () async {
+    test('колонки находятся, но страницу не делят', () async {
+      // Колонки остаются фактом о странице — они понадобятся S6, чтобы
+      // вынуть абзац вокруг выделения в правильном порядке. Но деление
+      // от них не зависит: полосы идут поперёк в любой книге (решение
+      // владельца, 23.08.2026).
       final ReaderDocument document = await open('two_columns.pdf');
       final PageFrameSource frames = PageFrameSource(document: document);
       final PageFrame frame = await frames.frameFor(1);
@@ -660,65 +660,40 @@ void main() {
       final List<CropBox> halves = fragmentsFor(
         content: frame.content,
         mode: PageDisplayMode.half,
-        columns: frame.columns,
-      );
-      // Половина двухколоночной страницы — колонка, а не верх страницы.
-      expect(halves.first.height, closeTo(frame.content.height, 1e-9));
-      expect(halves.first.width, lessThan(frame.content.width * 0.6));
-    });
-
-    test('на двухколоночной книге дроби не поворачивают экран', () async {
-      // Жалоба владельца целиком: и ½, и ⅓ обязаны увеличить текст, а
-      // экран при этом остаться вертикальным. Колонка — фрагмент высокий,
-      // и её естественный экран портретный; альбом делал текст мельче,
-      // чем на целой странице.
-      final ReaderDocument document = await open('two_columns.pdf');
-      final PageFrameSource frames = PageFrameSource(document: document);
-      final PageFrame frame = await frames.frameFor(1);
-      final PageGeometry geometry = document.geometry(1);
-      const DisplayArea phone = DisplayArea(width: 1080, height: 2400);
-
-      FragmentLayout layoutOf(PageDisplayMode mode) => chooseFragmentLayout(
-        mode: mode,
-        content: frame.content,
-        sheetWidth: geometry.width,
-        sheetHeight: geometry.height,
-        area: phone,
-        columns: frame.columns,
         breaks: frame.breaks,
       );
-
-      final FragmentLayout half = layoutOf(PageDisplayMode.half);
-      expect(half.split, FragmentSplit.columns);
-      expect(half.orientation, ScreenOrientation.portrait);
-      expect(half.gain, greaterThan(1.2), reason: 'текст обязан вырасти');
-
-      final FragmentLayout third = layoutOf(PageDisplayMode.third);
-      expect(third.split, FragmentSplit.columnRows);
-      expect(third.orientation, ScreenOrientation.portrait);
-      expect(third.gain, greaterThan(half.gain), reason: 'треть крупнее');
+      expect(halves.length, 2);
+      // Половина — верх страницы во всю её ширину, а не колонка.
+      expect(halves.first.width, closeTo(frame.content.width, 1e-9));
+      expect(halves.first.height, lessThan(frame.content.height * 0.6));
     });
 
-    test('одноколоночная книга по-прежнему просит альбом', () async {
-      // Отношения S4.1 обязаны остаться на месте: там, где полоса
-      // действительно широкая и низкая, поворот экрана и был ответом.
-      final ReaderDocument document = await open('basic_text.pdf');
-      final PageFrameSource frames = PageFrameSource(document: document);
-      final PageFrame frame = await frames.frameFor(1);
-      final PageGeometry geometry = document.geometry(1);
+    test('в любой книге дроби делят одинаково и увеличивают текст', () async {
+      // Прежде на двухколоночной книге половина отдавала колонку, и
+      // читатель получал совсем не то, что нарисовано на кнопке.
+      for (final String name in <String>['two_columns.pdf', 'basic_text.pdf']) {
+        final ReaderDocument document = await open(name);
+        final PageFrameSource frames = PageFrameSource(document: document);
+        final PageFrame frame = await frames.frameFor(1);
+        final PageGeometry geometry = document.geometry(1);
 
-      final FragmentLayout half = chooseFragmentLayout(
-        mode: PageDisplayMode.half,
-        content: frame.content,
-        sheetWidth: geometry.width,
-        sheetHeight: geometry.height,
-        area: const DisplayArea(width: 1080, height: 2400),
-        columns: frame.columns,
-        breaks: frame.breaks,
-      );
-      expect(half.split, FragmentSplit.rows);
-      expect(half.orientation, ScreenOrientation.landscape);
-      expect(half.gain, greaterThan(1.3));
+        FragmentLayout layoutOf(PageDisplayMode mode) => chooseFragmentLayout(
+          mode: mode,
+          content: frame.content,
+          sheetWidth: geometry.width,
+          sheetHeight: geometry.height,
+          area: const DisplayArea(width: 1080, height: 2400),
+          breaks: frame.breaks,
+        );
+
+        final FragmentLayout half = layoutOf(PageDisplayMode.half);
+        expect(half.orientation, ScreenOrientation.landscape, reason: name);
+        expect(half.gain, greaterThan(1.3), reason: name);
+
+        final FragmentLayout third = layoutOf(PageDisplayMode.third);
+        expect(third.orientation, ScreenOrientation.landscape, reason: name);
+        expect(third.gain, greaterThan(1.9), reason: name);
+      }
     });
 
     test('скан без текста разбирается по пикселям', () async {
@@ -748,7 +723,6 @@ void main() {
       final List<CropBox> halves = fragmentsFor(
         content: frame.content,
         mode: PageDisplayMode.half,
-        columns: frame.columns,
         breaks: frame.breaks,
       );
       expect(

@@ -345,19 +345,26 @@ void main() {
       controller.dispose();
     });
 
-    test('на двухколоночной странице половина — это колонка', () async {
+    test('на двухколоночной странице половина — верх страницы', () async {
+      // Деление одинаково во всех книгах (решение владельца, 23.08.2026):
+      // дробь на кнопке значит ровно то, что нарисована, — страница
+      // пополам горизонтальной чертой.
       final ReaderController controller = await openFramed(twoColumns: true);
+      expect(controller.columns.length, 2, reason: 'колонки всё же найдены');
+
       await controller.setDisplayMode(PageDisplayMode.half);
       expect(controller.fragmentCount, 2);
-      // Колонка занимает всю высоту содержимого и половину ширины.
-      expect(
-        controller.fragmentBox.height,
-        closeTo(controller.contentBox.height, 1e-9),
-      );
       expect(
         controller.fragmentBox.width,
-        lessThan(controller.contentBox.width * 0.6),
+        closeTo(controller.contentBox.width, 1e-9),
       );
+      expect(
+        controller.fragmentBox.height,
+        lessThan(controller.contentBox.height * 0.6),
+      );
+
+      await controller.setDisplayMode(PageDisplayMode.third);
+      expect(controller.fragmentCount, 3, reason: 'три полосы, а не четыре');
       await controller.close();
       controller.dispose();
     });
@@ -416,48 +423,42 @@ void main() {
       reopened.dispose();
     });
 
-    test('полосы одноколоночной книги просят альбом', () async {
-      final ReaderController controller = await openFramed();
-      controller.setDisplayArea(_phone);
-      expect(controller.preferredOrientation, ScreenOrientation.portrait);
+    test('половина просит альбом в любой книге', () async {
+      // Ровно то, чего ждёт читатель: дробь делит страницу поперёк и
+      // увеличивает текст — одинаково в одноколоночной и двухколоночной.
+      for (final bool twoColumns in <bool>[false, true]) {
+        final ReaderController controller = await openFramed(
+          twoColumns: twoColumns,
+        );
+        controller.setDisplayArea(_phone);
+        expect(controller.preferredOrientation, ScreenOrientation.portrait);
 
-      expect(
-        await controller.setDisplayMode(PageDisplayMode.half),
-        DisplayModeOutcome.applied,
-      );
-      expect(controller.preferredOrientation, ScreenOrientation.landscape);
-      expect(controller.layout.gain, greaterThan(1.3));
-      await controller.close();
-      controller.dispose();
-    });
-
-    test('на двухколоночной книге половина не поворачивает экран', () async {
-      // Жалоба владельца: страница делилась вдоль, а экран поворачивался
-      // в альбом — узкая высокая колонка вписывалась в широкий низкий
-      // экран по высоте, и текст выходил мельче целой страницы.
-      final ReaderController controller = await openFramed(twoColumns: true);
-      controller.setDisplayArea(_phone);
-
-      expect(
-        await controller.setDisplayMode(PageDisplayMode.half),
-        DisplayModeOutcome.applied,
-      );
-      expect(controller.preferredOrientation, ScreenOrientation.portrait);
-      expect(
-        controller.layout.gain,
-        greaterThan(1.2),
-        reason: 'текст обязан вырасти, а не уменьшиться',
-      );
-      await controller.close();
-      controller.dispose();
+        expect(
+          await controller.setDisplayMode(PageDisplayMode.half),
+          DisplayModeOutcome.applied,
+          reason: 'колонок ${twoColumns ? 2 : 1}',
+        );
+        expect(
+          controller.preferredOrientation,
+          ScreenOrientation.landscape,
+          reason: 'колонок ${twoColumns ? 2 : 1}',
+        );
+        expect(
+          controller.layout.gain,
+          greaterThan(1.3),
+          reason: 'текст обязан вырасти, колонок ${twoColumns ? 2 : 1}',
+        );
+        await controller.close();
+        controller.dispose();
+      }
     });
 
     test('режим без выигрыша не включается и не молчит', () async {
-      // Широкое низкое окно на ПК: повернуть его нельзя, а колонка
-      // вписывается в него ровно так же, как целая страница.
-      final ReaderController controller = await openFramed(twoColumns: true);
+      // Узкое высокое окно на ПК: повернуть его нельзя, а полоса той же
+      // ширины вписывается в него ровно так же, как целая страница.
+      final ReaderController controller = await openFramed();
       controller.setDisplayArea(
-        const DisplayArea(width: 2560, height: 1080),
+        const DisplayArea(width: 600, height: 2000),
         canTurn: false,
       );
 
@@ -521,8 +522,7 @@ void main() {
       await controller.setDisplayMode(PageDisplayMode.spreadHalf);
 
       expect(controller.fragmentCount, 2);
-      // Колонки внутри страниц тут ни при чём: строка идёт через обе
-      // страницы разворота сразу.
+      // Строка идёт через обе страницы разворота сразу.
       expect(
         controller.fragmentBox.width,
         closeTo(controller.contentBox.width, 1e-9),

@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:memoria/domain/reading/columns.dart';
 import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -7,11 +6,6 @@ import 'package:memoria/domain/reading/text_geometry.dart';
 import '../support/fake_reading.dart';
 
 const CropBox _content = CropBox(left: 0.1, top: 0.1, right: 0.9, bottom: 0.9);
-
-const List<ColumnBand> _twoColumns = <ColumnBand>[
-  ColumnBand(left: 0.1, right: 0.45),
-  ColumnBand(left: 0.55, right: 0.9),
-];
 
 void main() {
   group('одна колонка', () {
@@ -76,44 +70,47 @@ void main() {
     });
   });
 
-  group('две колонки', () {
-    test('половина — это колонка, а не верх страницы', () {
+  group('вёрстка на деление не влияет (решение владельца, 23.08.2026)', () {
+    // Прежде двухколоночная страница делилась по колонкам, а треть была
+    // половиной колонки. Читатель на устройствах отверг это: дробь на
+    // кнопке обязана значить ровно то, что нарисована, — страница
+    // пополам горизонтальной чертой, в любой книге одинаково.
+    test('половина двухколоночной — верх страницы во всю ширину', () {
       final List<CropBox> parts = fragmentsFor(
         content: _content,
         mode: PageDisplayMode.half,
-        columns: _twoColumns,
       );
       expect(parts.length, 2);
-      expect(parts.first.left, 0.1);
-      expect(parts.first.right, 0.45);
+      expect(parts.first.left, _content.left);
+      expect(parts.first.right, _content.right);
       expect(parts.first.top, _content.top);
-      expect(parts.first.bottom, _content.bottom);
-      expect(parts.last.left, 0.55);
+      expect(parts.last.bottom, _content.bottom);
     });
 
-    test('треть — половина колонки, и порядок чтения сохранён', () {
+    test('треть — три полосы, а не половины колонок', () {
       final List<CropBox> parts = fragmentsFor(
         content: _content,
         mode: PageDisplayMode.third,
-        columns: _twoColumns,
       );
-      expect(parts.length, 4);
-      // Левая колонка сверху вниз, потом правая.
-      expect(parts[0].right, 0.45);
-      expect(parts[1].right, 0.45);
-      expect(parts[0].top, lessThan(parts[1].top));
-      expect(parts[2].left, 0.55);
-      expect(parts[3].left, 0.55);
-      expect(parts[2].top, lessThan(parts[3].top));
+      expect(parts.length, 3);
+      for (final CropBox part in parts) {
+        expect(part.left, _content.left);
+        expect(part.right, _content.right);
+      }
     });
 
-    test('разворот колонками не делится', () {
-      final List<CropBox> parts = fragmentsFor(
-        content: _content,
-        mode: PageDisplayMode.spread,
-        columns: _twoColumns,
+    test('разворот делится так же, как страница', () {
+      expect(
+        fragmentsFor(content: _content, mode: PageDisplayMode.spread),
+        <CropBox>[_content],
       );
-      expect(parts, <CropBox>[_content]);
+      expect(
+        fragmentsFor(
+          content: _content,
+          mode: PageDisplayMode.spreadHalf,
+        ).length,
+        2,
+      );
     });
   });
 
@@ -237,21 +234,22 @@ void main() {
   group('число фрагментов', () {
     test('совпадает с тем, что вернуло деление', () {
       for (final PageDisplayMode mode in PageDisplayMode.values) {
-        for (final int columns in <int>[1, 2]) {
-          final List<CropBox> parts = fragmentsFor(
-            content: _content,
-            mode: mode,
-            columns: columns == 2
-                ? _twoColumns
-                : const <ColumnBand>[ColumnBand(left: 0.1, right: 0.9)],
-          );
-          expect(
-            parts.length,
-            fragmentCountFor(mode: mode, columnCount: columns),
-            reason: 'режим $mode, колонок $columns',
-          );
-        }
+        final List<CropBox> parts = fragmentsFor(
+          content: _content,
+          mode: mode,
+        );
+        expect(
+          parts.length,
+          fragmentCountFor(mode: mode),
+          reason: 'режим $mode',
+        );
       }
+    });
+
+    test('дробь на кнопке равна числу полос', () {
+      expect(fragmentCountFor(mode: PageDisplayMode.half), 2);
+      expect(fragmentCountFor(mode: PageDisplayMode.third), 3);
+      expect(fragmentCountFor(mode: PageDisplayMode.full), 1);
     });
   });
 
@@ -317,12 +315,10 @@ void main() {
       final List<CropBox> parts = fragmentsFor(
         content: _content,
         mode: PageDisplayMode.spreadHalf,
-        columns: _twoColumns,
         breaks: const <double>[0.5],
       );
       expect(parts.length, 2);
-      // Строка идёт через обе страницы сразу, поэтому колонки внутри
-      // страниц разворот не делят.
+      // Строка идёт через обе страницы сразу.
       expect(parts.first.left, _content.left);
       expect(parts.first.right, _content.right);
       expect(parts.first.top, _content.top);
@@ -347,7 +343,6 @@ void main() {
 
     FragmentLayout layout(
       PageDisplayMode mode, {
-      List<ColumnBand> columns = const <ColumnBand>[],
       DisplayArea area = phone,
       bool canTurn = true,
       double sheetWidth = sheetW,
@@ -359,7 +354,6 @@ void main() {
         sheetWidth: sheetWidth,
         sheetHeight: sheetHeight,
         area: area,
-        columns: columns,
         canTurn: canTurn,
       );
     }
@@ -368,87 +362,62 @@ void main() {
       final FragmentLayout full = layout(PageDisplayMode.full);
       expect(full.orientation, ScreenOrientation.portrait);
       expect(full.gain, closeTo(1, 1e-9));
-      expect(full.split, FragmentSplit.whole);
     });
 
-    test('полосы одноколоночной страницы просят альбом', () {
+    test('половина просит альбом и увеличивает текст', () {
       final FragmentLayout half = layout(PageDisplayMode.half);
-      expect(half.split, FragmentSplit.rows);
       expect(half.orientation, ScreenOrientation.landscape);
       expect(half.gain, greaterThan(1.3));
       expect(half.isWorthwhile, isTrue);
     });
 
-    test('колонка просит портрет, а не альбом', () {
-      // Ровно та ошибка, на которую наткнулся владелец: колонка — узкий
-      // и высокий прямоугольник, и в широкий низкий экран она вписывается
-      // по высоте. Текст выходил мельче, чем на целой странице.
-      final FragmentLayout half = layout(
-        PageDisplayMode.half,
-        columns: _twoColumns,
-      );
-      expect(half.split, FragmentSplit.columns);
-      expect(half.orientation, ScreenOrientation.portrait);
-      expect(half.gain, greaterThan(1.3));
+    test('треть увеличивает вдвое', () {
+      final FragmentLayout third = layout(PageDisplayMode.third);
+      expect(third.orientation, ScreenOrientation.landscape);
+      expect(third.gain, greaterThan(1.9));
     });
 
-    test('половина колонки тоже просит портрет', () {
-      // План предполагал здесь альбом. Счёт говорит другое: колонка узкая,
-      // и даже её половина упирается в ширину экрана раньше, чем в высоту.
-      // Ради этого функция и считает, а не помнит правило наизусть.
-      final FragmentLayout third = layout(
-        PageDisplayMode.third,
-        columns: _twoColumns,
+    test('альбомная страница считается по своей форме', () {
+      // Правило «делишь — просись в альбом» знало только название режима.
+      // У альбомной страницы полоса выходит очень широкой и низкой, и
+      // выбор положения экрана обязан считаться, а не вспоминаться.
+      final FragmentLayout half = layout(
+        PageDisplayMode.half,
+        sheetWidth: sheetH,
+        sheetHeight: sheetW,
       );
-      expect(third.split, FragmentSplit.columnRows);
-      expect(third.orientation, ScreenOrientation.portrait);
-      expect(third.gain, greaterThan(2));
+      expect(half.orientation, ScreenOrientation.landscape);
+      expect(half.gain, greaterThan(1.02));
     });
 
     test('выбранное положение экрана — лучшее из двух', () {
       for (final PageDisplayMode mode in PageDisplayMode.values) {
-        for (final List<ColumnBand> columns in <List<ColumnBand>>[
-          const <ColumnBand>[],
-          _twoColumns,
-        ]) {
-          final FragmentLayout best = layout(mode, columns: columns);
-          final FragmentLayout turned = chooseFragmentLayout(
-            mode: mode,
-            content: CropBox.full,
-            sheetWidth: sheetW,
-            sheetHeight: sheetH,
-            area: best.area.turned,
-            columns: columns,
-            canTurn: false,
-          );
-          expect(
-            best.scale,
-            greaterThanOrEqualTo(turned.scale - 1e-9),
-            reason: '$mode, колонок ${columns.length}',
-          );
-        }
+        final FragmentLayout best = layout(mode);
+        final FragmentLayout turned = chooseFragmentLayout(
+          mode: mode,
+          content: CropBox.full,
+          sheetWidth: sheetW,
+          sheetHeight: sheetH,
+          area: best.area.turned,
+          canTurn: false,
+        );
+        expect(
+          best.scale,
+          greaterThanOrEqualTo(turned.scale - 1e-9),
+          reason: '$mode',
+        );
       }
     });
 
-    test('режим без выигрыша не включается', () {
-      // Широкое низкое окно на ПК: повернуть его нельзя, а колонка в него
-      // вписывается по высоте — ровно так же, как на целой странице.
-      final FragmentLayout half = layout(
-        PageDisplayMode.half,
-        columns: _twoColumns,
-        area: const DisplayArea(width: 2560, height: 1080),
-        canTurn: false,
-      );
-      expect(half.gain, closeTo(1, 0.01));
-      expect(half.isWorthwhile, isFalse);
-    });
-
     test('узкое высокое окно не даёт выигрыша полосам', () {
+      // На ПК повернуть окно нельзя, а полоса той же ширины вписывается
+      // в узкое окно ровно так же, как целая страница.
       final FragmentLayout half = layout(
         PageDisplayMode.half,
         area: const DisplayArea(width: 600, height: 2000),
         canTurn: false,
       );
+      expect(half.gain, closeTo(1, 0.01));
       expect(half.isWorthwhile, isFalse);
     });
 

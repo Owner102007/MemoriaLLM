@@ -163,6 +163,11 @@ class ReaderController extends ChangeNotifier {
   }
 
   /// Колонки текущей страницы.
+  ///
+  /// Деление страницы от них **не зависит** — полосы идут поперёк в любой
+  /// книге (решение владельца, 23.08.2026). Колонки остаются фактом о
+  /// странице: они понадобятся S6, чтобы вынуть абзац вокруг выделения в
+  /// правильном порядке.
   List<ColumnBand> get columns => _frame?.columns ?? const <ColumnBand>[];
 
   /// Просветы между строками текущей страницы.
@@ -173,7 +178,6 @@ class ReaderController extends ChangeNotifier {
     return fragmentsFor(
       content: contentBox,
       mode: _settings.displayMode,
-      columns: columns,
       breaks: breaks,
     );
   }
@@ -217,7 +221,6 @@ class ReaderController extends ChangeNotifier {
       sheetWidth: sheet.width,
       sheetHeight: sheet.height,
       area: _area,
-      columns: columns,
       breaks: breaks,
       canTurn: _canTurn,
     );

@@ -6,30 +6,37 @@
 /// странице. Здесь же меняется только то, какая часть страницы занимает
 /// экран.
 ///
-/// Правило деления:
+/// Правило деления — одно на все книги (решение владельца, 23.08.2026):
 ///
-/// | Режим | Одна колонка | Две колонки |
-/// |---|---|---|
-/// | `full` | вся рамка | вся рамка |
-/// | `half` | две полосы сверху вниз | две колонки |
-/// | `third` | три полосы | две колонки, каждая пополам |
-/// | `spread` | вся рамка (разворот собирается раскладкой) | вся рамка |
-/// | `spreadHalf` | две полосы сверху вниз | две полосы сверху вниз |
+/// | Режим | Что показывается |
+/// |---|---|
+/// | `full` | вся рамка |
+/// | `half` | две полосы сверху вниз |
+/// | `third` | три полосы сверху вниз |
+/// | `spread` | вся рамка (разворот собирается раскладкой) |
+/// | `spreadHalf` | две полосы сверху вниз |
 ///
-/// На двухколоночной странице колонка **и есть** половина, поэтому режим
-/// трети даёт там половину колонки — следующий шаг увеличения. Делить
-/// колонку на три было бы уже не чтение, а разглядывание.
+/// **Вёрстка на деление не влияет.** Прежде двухколоночная страница
+/// делилась по колонкам: колонка считалась «половиной», а треть была
+/// половиной колонки. Читатель на устройствах отверг это — деление
+/// должно быть одинаковым во всех книгах, чтобы дробь на кнопке значила
+/// ровно то, что нарисовано: страница пополам горизонтальной чертой.
+/// Предсказуемость дороже подгонки под макет.
+///
+/// Цена решения записана честно: на двухколоночной **прозе** полоса
+/// накрывает верх обеих колонок сразу, и продолжение левой колонки
+/// уезжает на следующий экран. Колонки при этом по-прежнему находятся
+/// ([detectColumns]) — они нужны извлечению контекста в S6, — но
+/// фрагменты страницы от них не зависят.
 ///
 /// **Деление и форма области показа — одно решение, а не два.** Полоса
 /// вдвое ниже страницы, но той же ширины, а в вертикальный экран телефона
 /// страница вписывается именно по ширине: увеличение выходит ровно
-/// единица. Колонка, наоборот, узкая и высокая, и на широком экране она
-/// вписывается по высоте — текст становится **мельче**, чем на целой
-/// странице. Поэтому положение экрана не назначается по режиму, а
-/// выбирается счётом: см. [chooseFragmentLayout].
+/// единица. Кегль растёт только тогда, когда широкую и низкую полосу
+/// показывают на широком и низком экране. Поэтому положение экрана не
+/// назначается по режиму, а выбирается счётом: см. [chooseFragmentLayout].
 library;
 
-import 'columns.dart';
 import 'reading.dart';
 
 /// Насколько соседние полосы налезают там, где просвет **нашёлся**.
@@ -57,97 +64,12 @@ const double kBlindOverlap = 0.03;
 /// скупой не спас бы строку, которая стоит чуть в стороне от середины.
 const double kBreakSearch = 0.18;
 
-/// Как режим режет содержимое страницы.
+/// На сколько полос режим делит страницу.
 ///
-/// Направление деления определяется вёрсткой, а не вкусом: двухколоночную
-/// страницу нельзя резать поперёк — полоса накроет верх **обеих** колонок
-/// сразу, и порядок чтения станет «левый верх, левый низ, правый верх,
-/// правый низ», то есть читателю придётся возвращаться назад через экран.
-/// Поэтому кандидат на деление у каждой вёрстки один, а выбор, который
-/// действительно есть, — это форма области показа (см.
-/// [chooseFragmentLayout]).
-enum FragmentSplit {
-  /// Не режется вовсе.
-  whole,
-
-  /// Полосами сверху вниз.
-  rows,
-
-  /// По колонкам.
-  columns,
-
-  /// По колонкам, каждая — полосами.
-  columnRows,
-}
-
-/// Каким делением обслуживается режим на такой вёрстке.
-FragmentSplit splitFor({
-  required PageDisplayMode mode,
-  required bool twoColumns,
-}) {
-  switch (mode) {
-    case PageDisplayMode.full:
-    case PageDisplayMode.spread:
-      return FragmentSplit.whole;
-    case PageDisplayMode.spreadHalf:
-      // Разворот делится только по горизонтали: колонки внутри страниц
-      // тут ни при чём, строка идёт через обе страницы сразу.
-      return FragmentSplit.rows;
-    case PageDisplayMode.half:
-      return twoColumns ? FragmentSplit.columns : FragmentSplit.rows;
-    case PageDisplayMode.third:
-      return twoColumns ? FragmentSplit.columnRows : FragmentSplit.rows;
-  }
-}
-
-/// Фрагменты страницы в порядке чтения.
-///
-/// Всегда возвращает хотя бы один прямоугольник: пустой список означал бы
-/// пустой экран.
-List<CropBox> fragmentsFor({
-  required CropBox content,
-  required PageDisplayMode mode,
-  List<ColumnBand> columns = const <ColumnBand>[],
-  List<double> breaks = const <double>[],
-  double blindOverlap = kBlindOverlap,
-}) {
-  if (!content.isValid) {
-    return const <CropBox>[CropBox.full];
-  }
-  final bool twoColumns = columns.length >= 2;
-  final int rows = mode == PageDisplayMode.third && !twoColumns ? 3 : 2;
-  switch (splitFor(mode: mode, twoColumns: twoColumns)) {
-    case FragmentSplit.whole:
-      return <CropBox>[content];
-    case FragmentSplit.rows:
-      return _rows(content, rows, blindOverlap, breaks);
-    case FragmentSplit.columns:
-      return <CropBox>[
-        for (final ColumnBand band in columns) _column(band, content),
-      ];
-    case FragmentSplit.columnRows:
-      return <CropBox>[
-        for (final ColumnBand band in columns)
-          ..._rows(_column(band, content), 2, blindOverlap, breaks),
-      ];
-  }
-}
-
-CropBox _column(ColumnBand band, CropBox content) {
-  return CropBox(
-    left: band.left,
-    top: content.top,
-    right: band.right,
-    bottom: content.bottom,
-  );
-}
-
-/// Сколько фрагментов даёт режим при таком числе колонок.
-int fragmentCountFor({
-  required PageDisplayMode mode,
-  required int columnCount,
-}) {
-  final bool twoColumns = columnCount >= 2;
+/// Одно и то же число в любой книге: дробь на кнопке значит ровно то, что
+/// на ней нарисовано. Разворот делится пополам как целое — строка идёт
+/// через обе его страницы сразу.
+int fragmentCountFor({required PageDisplayMode mode}) {
   switch (mode) {
     case PageDisplayMode.full:
     case PageDisplayMode.spread:
@@ -156,8 +78,28 @@ int fragmentCountFor({
     case PageDisplayMode.spreadHalf:
       return 2;
     case PageDisplayMode.third:
-      return twoColumns ? 4 : 3;
+      return 3;
   }
+}
+
+/// Фрагменты страницы в порядке чтения — полосы сверху вниз.
+///
+/// Всегда возвращает хотя бы один прямоугольник: пустой список означал бы
+/// пустой экран.
+List<CropBox> fragmentsFor({
+  required CropBox content,
+  required PageDisplayMode mode,
+  List<double> breaks = const <double>[],
+  double blindOverlap = kBlindOverlap,
+}) {
+  if (!content.isValid) {
+    return const <CropBox>[CropBox.full];
+  }
+  final int count = fragmentCountFor(mode: mode);
+  if (count == 1) {
+    return <CropBox>[content];
+  }
+  return _rows(content, count, blindOverlap, breaks);
 }
 
 /// Показывает ли режим сразу две страницы.
@@ -171,7 +113,7 @@ bool isSpreadMode(PageDisplayMode mode) =>
 /// страницы к странице из-за двоичной арифметики.
 const double kMinFragmentGain = 1.02;
 
-/// Выбранная раскладка: чем режем и в какой форме области показываем.
+/// Выбранная раскладка: в какой форме области показывать полосы режима.
 ///
 /// Главное здесь — [gain]: во сколько раз текст крупнее, чем при показе
 /// страницы целиком. Ради этого числа затевались режимы, и оно же служит
@@ -180,7 +122,6 @@ class FragmentLayout {
   /// Создаёт раскладку.
   const FragmentLayout({
     required this.mode,
-    required this.split,
     required this.area,
     required this.scale,
     required this.wholeScale,
@@ -188,9 +129,6 @@ class FragmentLayout {
 
   /// Режим отображения.
   final PageDisplayMode mode;
-
-  /// Чем режется содержимое.
-  final FragmentSplit split;
 
   /// Форма области показа, при которой режим выгоднее всего.
   final DisplayArea area;
@@ -229,25 +167,21 @@ class FragmentLayout {
 
   @override
   String toString() =>
-      'FragmentLayout($mode, $split, $area, выигрыш '
-      '${gain.toStringAsFixed(2)})';
+      'FragmentLayout($mode, $area, выигрыш ${gain.toStringAsFixed(2)})';
 }
 
-/// Выбирает деление и форму области показа как **одно** решение.
+/// Выбирает форму области показа, в которой полосы режима крупнее всего.
 ///
-/// Прежде решений было два, и принимались они порознь: `fragmentsFor`
-/// отдавала на двухколоночной странице колонку (узкую и высокую), а
-/// положение экрана назначалось по режиму и для половины всегда просило
-/// альбом. Вместе выходило худшее из двух — узкий высокий фрагмент
-/// вписывался в широкий низкий экран по высоте, и текст становился
-/// **мельче**, чем на целой странице. Читалка не имеет права уменьшить
-/// текст в ответ на просьбу его увеличить.
+/// Прежде положение экрана назначалось по **названию** режима: делишь
+/// страницу — просись в альбом. Правило родилось на одноколоночной книге
+/// и там верно, но оно ничего не знает ни о форме самой страницы, ни о
+/// форме окна на ПК, где ориентации нет вовсе. Теперь форма области
+/// показа перебирается: на телефоне это два положения экрана, на ПК —
+/// одна фактическая форма окна. Выигрывает форма с наибольшим масштабом
+/// **худшего** фрагмента.
 ///
-/// Теперь для режима считается его деление (одно — второе сломало бы
-/// порядок чтения, см. [FragmentSplit]), а форма области показа
-/// перебирается: на телефоне это два положения экрана, на ПК — одна
-/// фактическая форма окна, потому что ориентации там нет вовсе.
-/// Выигрывает форма с наибольшим масштабом **худшего** фрагмента.
+/// Если выигрыша нет вовсе, режим не включается: читалка не имеет права
+/// уменьшить текст в ответ на просьбу его увеличить.
 ///
 /// [sheetWidth] и [sheetHeight] — размеры листа в любых одинаковых
 /// единицах: одна страница или две страницы разворота рядом.
@@ -257,33 +191,21 @@ FragmentLayout chooseFragmentLayout({
   required double sheetWidth,
   required double sheetHeight,
   required DisplayArea area,
-  List<ColumnBand> columns = const <ColumnBand>[],
   List<double> breaks = const <double>[],
   bool canTurn = true,
 }) {
-  final FragmentSplit split = splitFor(
-    mode: mode,
-    twoColumns: columns.length >= 2,
-  );
   if (!area.isKnown ||
       !content.isValid ||
       sheetWidth <= 0 ||
       sheetHeight <= 0 ||
       !sheetWidth.isFinite ||
       !sheetHeight.isFinite) {
-    return FragmentLayout(
-      mode: mode,
-      split: split,
-      area: area,
-      scale: 0,
-      wholeScale: 0,
-    );
+    return FragmentLayout(mode: mode, area: area, scale: 0, wholeScale: 0);
   }
 
   final List<CropBox> parts = fragmentsFor(
     content: content,
     mode: mode,
-    columns: columns,
     breaks: breaks,
   );
   final List<DisplayArea> candidates = canTurn
@@ -326,7 +248,6 @@ FragmentLayout chooseFragmentLayout({
 
   return FragmentLayout(
     mode: mode,
-    split: split,
     area: best,
     scale: bestScale < 0 ? 0 : bestScale,
     wholeScale: wholeScale,
