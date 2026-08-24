@@ -49,7 +49,9 @@ class FastBookPicker implements BookFilePicker {
     if (files == null) {
       return const <PickedFile>[];
     }
-    return <PickedFile>[for (final FastFilePickerPath file in files) _toPicked(file)];
+    return <PickedFile>[
+      for (final FastFilePickerPath file in files) _toPicked(file),
+    ];
   }
 
   PickedFile _toPicked(FastFilePickerPath file) =>

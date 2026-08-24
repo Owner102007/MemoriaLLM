@@ -20,6 +20,10 @@ import 'dart:typed_data';
 /// Подпись, с которой начинается любой файл PNG.
 const List<int> kPngSignature = <int>[137, 80, 78, 71, 13, 10, 26, 10];
 
+/// Сжатие для блока `IDAT`. Шестой уровень — обычный размен веса и
+/// времени; обложка книги жмётся в разы на любом.
+final ZLibCodec _zlib = ZLibCodec(level: 6);
+
 /// Кодирует растр BGRA в PNG без прозрачности.
 ///
 /// [pixels] — по четыре байта на пиксель в порядке B, G, R, A, ровно как
@@ -57,7 +61,7 @@ Uint8List encodeBgraToPng(Uint8List pixels, int width, int height) {
     }
   }
 
-  final List<int> deflated = const ZLibCodec(level: 6).encode(raw);
+  final List<int> deflated = _zlib.encode(raw);
 
   final BytesBuilder file = BytesBuilder();
   file.add(kPngSignature);

@@ -184,10 +184,7 @@ void main() {
 
     List<PickedFile> files(int count) => <PickedFile>[
       for (int i = 0; i < count; i++)
-        PickedFile(
-          path: 'test/fixtures/basic_text.pdf',
-          name: 'книга_$i.pdf',
-        ),
+        PickedFile(path: 'test/fixtures/basic_text.pdf', name: 'книга_$i.pdf'),
     ];
 
     test('все выбранные книги встают на полку', () async {

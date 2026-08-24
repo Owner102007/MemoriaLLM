@@ -58,8 +58,7 @@ void main() {
       final Map<String, Object?> file =
           jsonDecode(File(_goldenPath).readAsStringSync())
               as Map<String, Object?>;
-      golden = (file['styles']! as List<Object?>)
-          .cast<Map<String, Object?>>();
+      golden = (file['styles']! as List<Object?>).cast<Map<String, Object?>>();
     });
 
     test('таблица непустая и покрывает все узоры', () {
@@ -129,9 +128,7 @@ void main() {
       for (final AppThemeId id in AppThemeId.values) {
         final AppPalette palette = appPalettes[id]!;
         for (final String title in titles()) {
-          final int background = categoryStyleFor(
-            title,
-          ).backgroundOn(palette);
+          final int background = categoryStyleFor(title).backgroundOn(palette);
           expect(
             contrastRatio(palette.text, background),
             greaterThanOrEqualTo(wcagAaNormalText),

@@ -221,4 +221,3 @@ class BookImporter {
     return book;
   }
 }
-

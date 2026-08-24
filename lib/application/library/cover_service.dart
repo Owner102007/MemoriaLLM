@@ -82,7 +82,10 @@ class CoverService {
   /// Убирает обложку книги, снятой с полки.
   Future<void> forget(Book book) async {
     final String key = coverKeyFor(book, width: _width);
-    _known.remove(key);
+    // Забытая работа могла быть ещё в ходу; её ответ теперь никому не
+    // нужен, и ждать его незачем — но и уронить необработанной ошибкой
+    // он не должен.
+    _known.remove(key)?.ignore();
     await _store.remove(key);
   }
 
@@ -111,16 +114,18 @@ class CoverService {
       final _CoverJob job = _queue.removeAt(0);
       _running++;
       unawaited(
-        _render(job).then((String? path) {
-          if (!job.completer.isCompleted) {
-            job.completer.complete(path);
-          }
-        }).whenComplete(() {
-          _running--;
-          if (!_disposed) {
-            _pump();
-          }
-        }),
+        _render(job)
+            .then((String? path) {
+              if (!job.completer.isCompleted) {
+                job.completer.complete(path);
+              }
+            })
+            .whenComplete(() {
+              _running--;
+              if (!_disposed) {
+                _pump();
+              }
+            }),
       );
     }
   }

@@ -43,7 +43,11 @@ Future<BookAction?> askBookAction(BuildContext context, Book book) {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           ListTile(
-            title: Text(book.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+            title: Text(
+              book.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             subtitle: Text(_describeBook(book)),
           ),
           const Divider(height: 1),
@@ -111,9 +115,8 @@ Future<MoveTarget?> askWhereToMove(
               categoryStyleFor(category.title).backgroundOn(palette),
             ),
             selected: current == category.id,
-            onTap: () => Navigator.of(
-              context,
-            ).pop(MoveTarget(categoryId: category.id)),
+            onTap: () =>
+                Navigator.of(context).pop(MoveTarget(categoryId: category.id)),
           ),
         const Divider(height: 1),
         SimpleDialogOption(

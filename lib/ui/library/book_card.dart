@@ -113,8 +113,7 @@ class _CoverFrame extends StatelessWidget {
                 // итерацию проверки в S4.3.
                 return _CoverPlaceholder(
                   book: book,
-                  waiting:
-                      snapshot.connectionState == ConnectionState.waiting,
+                  waiting: snapshot.connectionState == ConnectionState.waiting,
                 );
               }
               return Image.file(
@@ -186,11 +185,7 @@ class _CoverPlaceholder extends StatelessWidget {
           // тридцати карточек не даёт кадру успокоиться никогда — ни
           // на устройстве, ни в widget-тесте.
           if (waiting)
-            Container(
-              height: 2,
-              width: 28,
-              color: theme.colorScheme.secondary,
-            ),
+            Container(height: 2, width: 28, color: theme.colorScheme.secondary),
         ],
       ),
     );

@@ -94,11 +94,7 @@ class CategoryStyle {
 
   /// Цвет подложки на заданной теме.
   int backgroundOn(AppPalette palette) {
-    final int tint = _hslToArgb(
-      hue,
-      0.5,
-      palette.isDark ? 0.34 : 0.62,
-    );
+    final int tint = _hslToArgb(hue, 0.5, palette.isDark ? 0.34 : 0.62);
     return _mix(palette.surface, tint, kCategoryTint);
   }
 
@@ -158,10 +154,7 @@ int _mix(int a, int b, double amount) {
     return (from + (to - from) * t).round().clamp(0, 255);
   }
 
-  return 0xFF000000 |
-      (channel(16) << 16) |
-      (channel(8) << 8) |
-      channel(0);
+  return 0xFF000000 | (channel(16) << 16) | (channel(8) << 8) | channel(0);
 }
 
 /// Цвет из тона, насыщенности и светлоты.
@@ -199,12 +192,8 @@ int _hslToArgb(double hue, double saturation, double lightness) {
       g = 0;
       b = x;
   }
-  int channel(double value) =>
-      ((value + m) * 255).round().clamp(0, 255);
-  return 0xFF000000 |
-      (channel(r) << 16) |
-      (channel(g) << 8) |
-      channel(b);
+  int channel(double value) => ((value + m) * 255).round().clamp(0, 255);
+  return 0xFF000000 | (channel(r) << 16) | (channel(g) << 8) | channel(b);
 }
 
 /// Шаг узора в точках при заданной ширине блока.

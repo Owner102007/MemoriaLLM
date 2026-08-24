@@ -29,11 +29,7 @@ List<MapEntry<String, Uint8List>> _chunks(Uint8List png) {
   while (at + 8 <= png.length) {
     final int length = view.getUint32(at);
     final String name = String.fromCharCodes(png, at + 4, at + 8);
-    final Uint8List data = Uint8List.sublistView(
-      png,
-      at + 8,
-      at + 8 + length,
-    );
+    final Uint8List data = Uint8List.sublistView(png, at + 8, at + 8 + length);
     result.add(MapEntry<String, Uint8List>(name, data));
     at += 12 + length;
   }
@@ -82,7 +78,7 @@ void main() {
       final Uint8List idat = _chunks(
         png,
       ).firstWhere((MapEntry<String, Uint8List> e) => e.key == 'IDAT').value;
-      final List<int> raw = const ZLibCodec().decode(idat);
+      final List<int> raw = ZLibCodec().decode(idat);
 
       expect(raw.length, height * (1 + width * 3));
       for (int y = 0; y < height; y++) {
@@ -121,8 +117,11 @@ void main() {
       // Flutter показывает обложку на полке.
       const int width = 12;
       const int height = 8;
-      final Uint8List png = encodeBgraToPng(_raster(width, height), width,
-          height);
+      final Uint8List png = encodeBgraToPng(
+        _raster(width, height),
+        width,
+        height,
+      );
       final ui.Codec codec = await ui.instantiateImageCodec(png);
       final ui.FrameInfo frame = await codec.getNextFrame();
       final ui.Image image = frame.image;
@@ -146,10 +145,7 @@ void main() {
     });
 
     test('несходящийся размер — ошибка, а не испорченная картинка', () {
-      expect(
-        () => encodeBgraToPng(Uint8List(10), 4, 3),
-        throwsArgumentError,
-      );
+      expect(() => encodeBgraToPng(Uint8List(10), 4, 3), throwsArgumentError);
       expect(() => encodeBgraToPng(Uint8List(4), 0, 1), throwsArgumentError);
       expect(() => encodeBgraToPng(Uint8List(4), 1, 0), throwsArgumentError);
     });

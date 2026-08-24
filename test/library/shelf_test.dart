@@ -201,11 +201,7 @@ void main() {
       final List<Book> sorted = sortBooks(
         <Book>[done, untouched, started],
         ShelfSort.progress,
-        progress: <String, double>{
-          'started': 0.4,
-          'done': 1.0,
-          'untouched': 0,
-        },
+        progress: <String, double>{'started': 0.4, 'done': 1.0, 'untouched': 0},
       );
       expect(sorted.first.id, 'started');
       // Дочитанная и нетронутая равноправны — обе «сейчас не читаю», и
@@ -228,12 +224,11 @@ void main() {
         _book(id: 'a', title: 'Одинаково'),
       ];
       final List<Book> first = sortBooks(books, ShelfSort.recent);
-      final List<Book> second = sortBooks(books.reversed.toList(),
-          ShelfSort.recent);
-      expect(
-        first.map((Book b) => b.id),
-        second.map((Book b) => b.id),
+      final List<Book> second = sortBooks(
+        books.reversed.toList(),
+        ShelfSort.recent,
       );
+      expect(first.map((Book b) => b.id), second.map((Book b) => b.id));
     });
 
     test('неизвестное имя сортировки откатывается к порядку по умолчанию', () {
@@ -315,12 +310,8 @@ void main() {
     });
 
     test('без числа страниц считается по размеру файла', () {
-      final double small = spineThickness(
-        _book(id: 'a', size: 400 * 1024),
-      );
-      final double big = spineThickness(
-        _book(id: 'b', size: 60 * 1024 * 1024),
-      );
+      final double small = spineThickness(_book(id: 'a', size: 400 * 1024));
+      final double big = spineThickness(_book(id: 'b', size: 60 * 1024 * 1024));
       expect(small, lessThan(big));
     });
 

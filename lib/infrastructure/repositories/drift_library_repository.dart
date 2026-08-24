@@ -100,7 +100,10 @@ class DriftLibraryRepository implements LibraryRepository {
 
   @override
   Future<void> moveToCategory(String bookId, String? categoryId) async {
-    await _touch(bookId, BooksCompanion(categoryId: Value<String?>(categoryId)));
+    await _touch(
+      bookId,
+      BooksCompanion(categoryId: Value<String?>(categoryId)),
+    );
   }
 
   @override

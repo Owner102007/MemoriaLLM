@@ -850,10 +850,7 @@ void main() {
         pageWidth: page.width,
         pageHeight: page.height,
       )!;
-      expect(
-        size.height / size.width,
-        closeTo(page.height / page.width, 0.02),
-      );
+      expect(size.height / size.width, closeTo(page.height / page.width, 0.02));
     });
 
     test('обложка альбомной страницы не выше положенного', () async {

@@ -101,13 +101,12 @@ class CategoryShelf extends StatelessWidget {
                       shrinkWrap: true,
                       padding: EdgeInsets.zero,
                       physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: columns,
-                            crossAxisSpacing: gap,
-                            mainAxisSpacing: gap,
-                            childAspectRatio: 1 / kShelfBlockAspect,
-                          ),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        crossAxisSpacing: gap,
+                        mainAxisSpacing: gap,
+                        childAspectRatio: 1 / kShelfBlockAspect,
+                      ),
                       itemCount: section.blockCount,
                       itemBuilder: (BuildContext context, int index) {
                         // Кнопка «+» — последний блок, ровно на месте

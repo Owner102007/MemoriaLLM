@@ -203,7 +203,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _renameCategory(BookCategory category) async {
-    final String? name = await askCategoryName(context, initial: category.title);
+    final String? name = await askCategoryName(
+      context,
+      initial: category.title,
+    );
     if (name == null) {
       return;
     }
@@ -254,14 +257,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
             tooltip: 'Порядок книг',
             initialValue: _sort,
             onSelected: (ShelfSort sort) => unawaited(_chooseSort(sort)),
-            itemBuilder: (BuildContext context) =>
-                <PopupMenuEntry<ShelfSort>>[
-                  for (final ShelfSort sort in ShelfSort.values)
-                    PopupMenuItem<ShelfSort>(
-                      value: sort,
-                      child: Text(shelfSortTitle(sort)),
-                    ),
-                ],
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<ShelfSort>>[
+              for (final ShelfSort sort in ShelfSort.values)
+                PopupMenuItem<ShelfSort>(
+                  value: sort,
+                  child: Text(shelfSortTitle(sort)),
+                ),
+            ],
           ),
           IconButton(
             key: const Key('library-new-category'),
@@ -297,8 +299,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               positions,
                             ) {
                               return _buildShelf(
-                                categories: categories.data ??
-                                    const <BookCategory>[],
+                                categories:
+                                    categories.data ?? const <BookCategory>[],
                                 books: books.data ?? const <Book>[],
                                 positions:
                                     positions.data ??

@@ -717,4 +717,3 @@ class _FailureScreenState extends State<_FailureScreen> {
     );
   }
 }
-

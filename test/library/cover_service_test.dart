@@ -327,10 +327,7 @@ void main() {
       expect(coverSizeFor(pageWidth: 0, pageHeight: 100), isNull);
       expect(coverSizeFor(pageWidth: 100, pageHeight: 0), isNull);
       expect(coverSizeFor(pageWidth: double.nan, pageHeight: 100), isNull);
-      expect(
-        coverSizeFor(pageWidth: 100, pageHeight: double.infinity),
-        isNull,
-      );
+      expect(coverSizeFor(pageWidth: 100, pageHeight: double.infinity), isNull);
     });
   });
 
@@ -340,11 +337,7 @@ void main() {
       for (int i = 0; i < pixels.length; i++) {
         pixels[i] = (i * 13) & 0xFF;
       }
-      final PageRaster raster = PageRaster(
-        width: 8,
-        height: 6,
-        pixels: pixels,
-      );
+      final PageRaster raster = PageRaster(width: 8, height: 6, pixels: pixels);
       final Uint8List viaIsolate = await encodeCoverInIsolate(raster);
       expect(viaIsolate, encodeBgraToPng(pixels, 8, 6));
     });

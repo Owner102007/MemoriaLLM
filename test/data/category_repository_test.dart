@@ -1,4 +1,6 @@
-import 'package:drift/drift.dart';
+// `isNull` и `isNotNull` есть и у drift (условия запроса), и у matcher
+// (проверки теста). Здесь нужны вторые.
+import 'package:drift/drift.dart' hide isNotNull, isNull;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';

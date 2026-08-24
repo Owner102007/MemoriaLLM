@@ -75,7 +75,11 @@ class ShelfPatternPainter extends CustomPainter {
   void _diagonal(Canvas canvas, Size size, double shift, Paint paint) {
     final double span = size.width + size.height;
     for (double x = shift - span; x < span; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x + size.height, size.height), paint);
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x + size.height, size.height),
+        paint,
+      );
     }
   }
 
