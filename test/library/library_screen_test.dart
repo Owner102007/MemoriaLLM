@@ -274,7 +274,11 @@ void main() {
       int place = 0;
       for (final MapEntry<String, String> entry in titles.entries) {
         await data.library.save(
-          testBook(id: entry.key, title: entry.value, hash: 'hash-${entry.key}'),
+          testBook(
+            id: entry.key,
+            title: entry.value,
+            hash: 'hash-${entry.key}',
+          ),
         );
         await placeBook(data, entry.key, categoryId, position: place++);
       }

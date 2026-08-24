@@ -379,7 +379,10 @@ class _Header extends StatelessWidget {
             style: theme.textTheme.titleMedium,
           ),
         ),
-        Text(_booksWord(section.books.length), style: theme.textTheme.bodySmall),
+        Text(
+          _booksWord(section.books.length),
+          style: theme.textTheme.bodySmall,
+        ),
         if (onRename != null || onDelete != null)
           PopupMenuButton<String>(
             key: Key('shelf-menu-${section.id}'),

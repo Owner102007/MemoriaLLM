@@ -283,8 +283,9 @@ void main() {
       _book(id: 'c', place: 2),
     ];
 
-    List<String> orderOf(List<BookPlacement> placements) =>
-        <String>[for (final BookPlacement p in placements) p.bookId];
+    List<String> orderOf(List<BookPlacement> placements) => <String>[
+      for (final BookPlacement p in placements) p.bookId,
+    ];
 
     test('места перенумеровываются подряд с нуля', () {
       final List<BookPlacement> next = placeBefore(

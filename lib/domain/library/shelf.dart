@@ -248,21 +248,27 @@ List<BookPlacement> placeBefore({
     for (final Book book in target)
       if (book.id != moved.id) book,
   ];
-  int at = rest.length;
-  if (before != null && before.id != moved.id) {
+  final int at;
+  if (before == null) {
+    at = rest.length;
+  } else if (before.id == moved.id) {
+    // Книгу положили на неё же — она остаётся там, где стояла. Экран
+    // такой промах не пропускает вовсе, но функция обязана вести себя
+    // разумно и без него: «никуда не двигать» здесь очевиднее, чем
+    // «отправить в конец».
+    final int here = target.indexWhere((Book book) => book.id == moved.id);
+    at = here < 0 ? rest.length : here.clamp(0, rest.length);
+  } else {
+    // Ориентира больше нет: полка перестроилась, пока книгу несли, —
+    // цель уехала в другую категорию или её сняли. Это повод положить
+    // книгу в конец, а не уронить приложение.
     final int found = rest.indexWhere((Book book) => book.id == before.id);
-    if (found >= 0) {
-      at = found;
-    }
+    at = found >= 0 ? found : rest.length;
   }
   rest.insert(at, moved);
   return <BookPlacement>[
     for (int i = 0; i < rest.length; i++)
-      BookPlacement(
-        bookId: rest[i].id,
-        categoryId: categoryId,
-        position: i,
-      ),
+      BookPlacement(bookId: rest[i].id, categoryId: categoryId, position: i),
   ];
 }
 

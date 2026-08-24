@@ -505,9 +505,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
           onMenu: (Book book) =>
               unawaited(_showBookMenu(book, categories, sections)),
           onAdd: () => unawaited(_addBooks(category?.id)),
-          onDropBook:
-              (DraggedBook dragged, ShelfSection into, Book? before) =>
-                  unawaited(_dropBook(dragged, into, before)),
+          onDropBook: (DraggedBook dragged, ShelfSection into, Book? before) =>
+              unawaited(_dropBook(dragged, into, before)),
           onDragStarted: _dragStarted,
           onDragEnded: _dragEnded,
           onDragOver: _dragOver,

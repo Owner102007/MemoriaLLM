@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — четвёртая: категории полки', () {
+  test('версия схемы — пятая: места книг на полке', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 4);
+    expect(appSchemaVersion, 5);
   });
 
   test('созданы все таблицы слоя данных', () async {
