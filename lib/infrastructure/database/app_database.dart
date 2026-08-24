@@ -8,8 +8,9 @@ part 'app_database.g.dart';
 ///
 /// 1 — исходная схема (S2). 2 — запас по краям полосы в настройках книги
 /// (S4.6). 3 — сила затемнения нечитаемой части страницы (S4.7): страница
-/// в режимах половины и трети больше не обрезается, а гаснет.
-const int appSchemaVersion = 3;
+/// в режимах половины и трети больше не обрезается, а гаснет. 4 —
+/// категории полки (S5.2): своя таблица и ссылка на неё у книги.
+const int appSchemaVersion = 4;
 
 /// База данных приложения.
 ///
@@ -19,6 +20,7 @@ const int appSchemaVersion = 3;
 /// появится в S10 и не должен трогать структуру таблиц.
 @DriftDatabase(
   tables: <Type>[
+    BookCategories,
     Books,
     ReadingProgress,
     BookSettings,
@@ -51,6 +53,15 @@ class AppDatabase extends _$AppDatabase {
         }
         if (from < 3) {
           await m.addColumn(bookSettings, bookSettings.dimOutside);
+        }
+        if (from < 4) {
+          await m.createTable(bookCategories);
+          // Колонка добавляется пустой, и все книги читателя оказываются
+          // в разделе «Без категории». Раскладывать их по категориям
+          // автоматически — по папке, по автору, по чему угодно — нельзя:
+          // приложение не знает, как читатель мыслит свою библиотеку, а
+          // разобрать чужую раскладку дороже, чем сделать её самому.
+          await m.addColumn(books, books.categoryId);
         }
       },
       beforeOpen: (OpeningDetails details) async {

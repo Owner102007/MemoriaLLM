@@ -5,6 +5,7 @@ import '../application/theme/theme_controller.dart';
 import '../domain/theme/app_palette.dart';
 import 'library/library_screen.dart';
 import 'settings/settings_screen.dart';
+import 'theme/palette_scope.dart';
 import 'theme/theme_builder.dart';
 
 /// Корневой виджет приложения.
@@ -27,10 +28,17 @@ class MemoriaApp extends StatelessWidget {
     return ValueListenableBuilder<AppThemeId>(
       valueListenable: themeController,
       builder: (BuildContext context, AppThemeId themeId, Widget? child) {
+        final AppPalette palette = appPalettes[themeId]!;
         return MaterialApp(
           title: 'Memoria LLM HB',
           debugShowCheckedModeBanner: false,
-          theme: buildTheme(appPalettes[themeId]!),
+          theme: buildTheme(palette),
+          // Палитра нужна полке целыми числами, а не через `ColorScheme`:
+          // по ним считается цвет категории и проверяется его контраст.
+          builder: (BuildContext context, Widget? page) => AppPaletteScope(
+            palette: palette,
+            child: page ?? const SizedBox.shrink(),
+          ),
           home: HomeShell(themeController: themeController, services: services),
         );
       },

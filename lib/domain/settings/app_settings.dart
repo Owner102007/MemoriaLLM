@@ -24,6 +24,12 @@ abstract final class SettingsKeys {
   /// как в обычном просмотрщике и остаётся в этом состоянии.
   static const String zoomLock = 'ui.zoom_lock';
 
+  /// Порядок книг на полке: имя значения [ShelfSort].
+  ///
+  /// Настройка устройства, а не библиотеки: на телефоне удобно видеть
+  /// сначала недавние, на ПК — разложенное по названиям.
+  static const String shelfSort = 'ui.shelf_sort';
+
   /// Идентификатор этого устройства для меток HLC.
   static const String nodeId = 'sync.node_id';
 

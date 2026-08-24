@@ -33,6 +33,17 @@ class DriftReadingRepository implements ReadingRepository {
   }
 
   @override
+  Stream<Map<String, ReadingPosition>> watchPositions() {
+    final query = _db.select(_db.readingProgress);
+    query.where((tbl) => tbl.isDeleted.equals(false));
+    return query.watch().map((List<ReadingProgressRow> rows) {
+      return <String, ReadingPosition>{
+        for (final ReadingProgressRow row in rows) row.bookId: _toPosition(row),
+      };
+    });
+  }
+
+  @override
   Future<void> savePosition(ReadingPosition position) async {
     final Hlc stamp = _clock.issue();
     final String mark = stamp.toString();

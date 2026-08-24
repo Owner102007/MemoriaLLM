@@ -36,3 +36,7 @@ android/app/release/
 
 # Windows
 windows/flutter/ephemeral/
+
+# Кэш интерпретатора Python: скрипты в tool/ запускаются на месте.
+__pycache__/
+*.pyc

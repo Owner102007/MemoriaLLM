@@ -2,12 +2,15 @@ import 'dart:io';
 
 import '../domain/library/book_file_picker.dart';
 import '../domain/library/book_storage.dart';
+import '../domain/library/cover.dart';
 import '../domain/reading/reader_document.dart';
 import '../infrastructure/files/android_book_storage.dart';
+import '../infrastructure/files/cover_cache.dart';
 import '../infrastructure/files/fast_book_picker.dart';
 import '../infrastructure/files/local_book_storage.dart';
 import '../infrastructure/pdf/pdfrx_document.dart';
 import 'data/app_data.dart';
+import 'library/cover_service.dart';
 
 /// Всё, чем приложение пользуется извне, собранное в одном месте.
 ///
@@ -17,12 +20,20 @@ import 'data/app_data.dart';
 /// PDF-движка, ни платформенных плагинов.
 class AppServices {
   /// Создаёт набор служб.
-  const AppServices({
+  AppServices({
     required this.data,
     required this.opener,
     required this.picker,
     required this.storage,
-  });
+    required this.coverStore,
+    CoverService? covers,
+  }) : covers =
+           covers ??
+           CoverService(
+             opener: opener,
+             store: coverStore,
+             library: data.library,
+           );
 
   /// Настоящие службы для запущенного приложения.
   factory AppServices.production(AppData data) {
@@ -37,6 +48,7 @@ class AppServices {
       storage: storage,
       opener: PdfrxDocumentOpener(storage: storage),
       picker: const FastBookPicker(),
+      coverStore: FileCoverStore(),
     );
   }
 
@@ -51,4 +63,10 @@ class AppServices {
 
   /// Хранилище книг: приём файла и доступ к его байтам.
   final BookStorage storage;
+
+  /// Кэш обложек на диске.
+  final CoverStore coverStore;
+
+  /// Рисование обложек: очередь, кэш и упаковка в PNG.
+  final CoverService covers;
 }

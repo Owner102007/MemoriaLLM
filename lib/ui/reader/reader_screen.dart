@@ -718,23 +718,3 @@ class _FailureScreenState extends State<_FailureScreen> {
   }
 }
 
-/// Человеческое объяснение того, почему книга не открылась.
-String describeDocumentProblem(DocumentProblem problem) {
-  switch (problem) {
-    case DocumentProblem.missing:
-      return 'До файла не добраться. Возможно, его переименовали, '
-          'перенесли или отозвали разрешение на доступ.';
-    case DocumentProblem.empty:
-      return 'Файл пустой: в нём ноль байт. Скорее всего, он не докачался.';
-    case DocumentProblem.damaged:
-      return 'Файл повреждён и не читается. Это не всегда видно по имени: '
-          'бывает, что скачивание оборвалось на середине.';
-    case DocumentProblem.passwordRequired:
-      return 'Книга защищена паролем. Введите его, чтобы открыть.';
-    case DocumentProblem.wrongPassword:
-      return 'Пароль не подошёл. Попробуйте ещё раз.';
-    case DocumentProblem.unknown:
-      return 'Книгу не удалось открыть. Если файл открывается в других '
-          'программах, расскажите об этом в issue — так ошибка починится.';
-  }
-}

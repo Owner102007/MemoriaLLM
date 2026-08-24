@@ -398,6 +398,14 @@ abstract interface class ReadingRepository {
   /// Живая позиция: пригодится индикатору прогресса в библиотеке.
   Stream<ReadingPosition?> watchPosition(String bookId);
 
+  /// Живые позиции всех книг разом, ключ — идентификатор книги.
+  ///
+  /// Полка показывает прогресс на каждой карточке. Отдельный запрос на
+  /// книгу означал бы на библиотеке в триста книг триста живых запросов
+  /// к базе одновременно — тот случай, когда правильная по виду мелочь
+  /// складывается в неработающий экран.
+  Stream<Map<String, ReadingPosition>> watchPositions();
+
   /// Сохраняет позицию.
   Future<void> savePosition(ReadingPosition position);
 

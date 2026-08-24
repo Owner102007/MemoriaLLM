@@ -1,16 +1,20 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/page_frames.dart';
 import 'package:memoria/domain/library/book_source.dart';
+import 'package:memoria/domain/library/cover.dart';
 import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
 import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
+import 'package:memoria/infrastructure/images/png.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
 import 'package:pdfrx/pdfrx.dart' show PdfDocument, pdfrxInitialize;
 
@@ -114,6 +118,10 @@ int _darkPixels(PageRaster raster) {
 }
 
 void main() {
+  // Обложки проверяются чужим декодером картинок, а он живёт в движке:
+  // без поднятого окружения `instantiateImageCodec` не с чем работать.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   final Directory tmp = Directory(
     '${Directory.systemTemp.path}/memoria-pdfrx-tests',
   );
@@ -790,6 +798,99 @@ void main() {
           expect(box.bottom, lessThanOrEqualTo(1));
         }
       }
+    });
+  });
+
+  group('обложки на корпусе', () {
+    // Полка рисует обложку первой страницы каждой книги. Проверка
+    // важна не тем, что PDFium умеет рисовать — это его работа, — а тем,
+    // что **весь путь** до файла на диске проходит на настоящих книгах:
+    // геометрия страницы, размер обложки, растр, наша упаковка в PNG.
+    // Испорченная картинка на полке выглядит как сломанное приложение.
+    _readable.forEach((String name, int pages) {
+      test('$name даёт настоящий PNG', () async {
+        final ReaderDocument document = await open(name);
+        final PageGeometry page = document.geometry(1);
+        final CoverSize? size = coverSizeFor(
+          pageWidth: page.width,
+          pageHeight: page.height,
+        );
+        expect(size, isNotNull, reason: 'у книги есть первая страница');
+
+        final PageRaster? raster = await document.renderPage(
+          1,
+          width: size!.width,
+          height: size.height,
+        );
+        expect(raster, isNotNull, reason: 'первая страница нарисовалась');
+        expect(raster!.isConsistent, isTrue);
+
+        final Uint8List png = encodeBgraToPng(
+          raster.pixels,
+          raster.width,
+          raster.height,
+        );
+        // Читает чужой декодер — тот самый, которым Flutter покажет
+        // обложку на полке.
+        final ui.Codec codec = await ui.instantiateImageCodec(png);
+        final ui.FrameInfo frame = await codec.getNextFrame();
+        addTearDown(frame.image.dispose);
+        addTearDown(codec.dispose);
+        expect(frame.image.width, size.width);
+        expect(frame.image.height, size.height);
+      });
+    });
+
+    test('пропорции обложки повторяют пропорции страницы', () async {
+      // Книга с четырьмя разными размерами страниц — тот случай, когда
+      // обложка легко выходит сплющенной.
+      final ReaderDocument document = await open('mixed_page_sizes.pdf');
+      final PageGeometry page = document.geometry(1);
+      final CoverSize size = coverSizeFor(
+        pageWidth: page.width,
+        pageHeight: page.height,
+      )!;
+      expect(
+        size.height / size.width,
+        closeTo(page.height / page.width, 0.02),
+      );
+    });
+
+    test('обложка альбомной страницы не выше положенного', () async {
+      final ReaderDocument document = await open('rotated_pages.pdf');
+      for (int p = 1; p <= document.pageCount; p++) {
+        final PageGeometry page = document.geometry(p);
+        final CoverSize size = coverSizeFor(
+          pageWidth: page.width,
+          pageHeight: page.height,
+        )!;
+        expect(size.width, lessThanOrEqualTo(kCoverWidth));
+        expect(size.height, lessThanOrEqualTo(kCoverMaxHeight));
+        expect(size.width, greaterThan(0));
+        expect(size.height, greaterThan(0));
+      }
+    });
+
+    test('скан без текстового слоя всё равно получает обложку', () async {
+      // Обложка — это картинка, и текстовый слой ей не нужен вовсе.
+      // Читатель со сканами не обязан смотреть на полку из заглушек.
+      final ReaderDocument document = await open('scan_no_text.pdf');
+      final PageGeometry page = document.geometry(1);
+      final CoverSize size = coverSizeFor(
+        pageWidth: page.width,
+        pageHeight: page.height,
+      )!;
+      final PageRaster? raster = await document.renderPage(
+        1,
+        width: size.width,
+        height: size.height,
+      );
+      expect(raster, isNotNull);
+      expect(
+        _darkPixels(raster!),
+        greaterThan(0),
+        reason: 'на обложке скана должно быть хоть что-то, кроме белого',
+      );
     });
   });
 

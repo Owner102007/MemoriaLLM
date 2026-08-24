@@ -4,6 +4,7 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
+import 'package:memoria/domain/library/cover.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -162,6 +163,12 @@ class FakeReadingRepository implements ReadingRepository {
       Stream<ReadingPosition?>.value(_positions[bookId]);
 
   @override
+  Stream<Map<String, ReadingPosition>> watchPositions() =>
+      Stream<Map<String, ReadingPosition>>.value(
+        Map<String, ReadingPosition>.from(_positions),
+      );
+
+  @override
   Future<void> savePosition(ReadingPosition position) async {
     saveCount++;
     _positions[position.bookId] = position;
@@ -182,16 +189,74 @@ class FakeReadingRepository implements ReadingRepository {
   }
 }
 
-/// Пикер-заглушка: «человек» всегда выбирает один и тот же файл.
+/// Пикер-заглушка: «человек» всегда выбирает одно и то же.
 class FakeBookFilePicker implements BookFilePicker {
   /// Создаёт пикер.
-  FakeBookFilePicker(this.result);
+  ///
+  /// [batch] — что вернуть на выбор нескольких файлов. Если не задан,
+  /// пачка состоит из того же одного файла: так ведёт себя человек,
+  /// отметивший в диалоге ровно одну книгу.
+  FakeBookFilePicker(this.result, {List<PickedFile>? batch}) : _batch = batch;
 
   /// Что вернуть; `null` — человек закрыл диалог.
   final PickedFile? result;
 
+  final List<PickedFile>? _batch;
+
+  /// Сколько раз открывали диалог множественного выбора.
+  int batchCalls = 0;
+
   @override
   Future<PickedFile?> pickPdf() async => result;
+
+  @override
+  Future<List<PickedFile>> pickPdfs() async {
+    batchCalls++;
+    final List<PickedFile>? batch = _batch;
+    if (batch != null) {
+      return batch;
+    }
+    final PickedFile? single = result;
+    return single == null ? const <PickedFile>[] : <PickedFile>[single];
+  }
+}
+
+/// Кэш обложек в памяти: ни одного обращения к диску.
+///
+/// Widget-тесты живут в подменённом времени, и настоящий файловый
+/// ввод-вывод в них не завершается вовсе. Правило из S5.1 — «в
+/// widget-тесте `dart:io` не появляется» — держится и здесь.
+class MemoryCoverStore implements CoverStore {
+  /// Готовые обложки: ключ — путь.
+  final Map<String, String> saved = <String, String>{};
+
+  /// Сколько раз спрашивали готовую обложку.
+  int reads = 0;
+
+  @override
+  Future<String?> read(String key) async {
+    reads++;
+    return saved[key];
+  }
+
+  @override
+  Future<String> write(String key, Uint8List png) async {
+    final String path = '/covers/$key.png';
+    saved[key] = path;
+    return path;
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    saved.remove(key);
+  }
+
+  @override
+  Future<int> clear() async {
+    final int count = saved.length;
+    saved.clear();
+    return count;
+  }
 }
 
 /// Хранилище книг в памяти: ни одного обращения к диску.

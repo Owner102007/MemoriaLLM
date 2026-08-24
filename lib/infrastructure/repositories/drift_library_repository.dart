@@ -65,6 +65,7 @@ class DriftLibraryRepository implements LibraryRepository {
       coverPath: Value<String?>(book.coverPath),
       addedAt: Value<DateTime>(book.addedAt),
       openedAt: Value<DateTime?>(book.openedAt),
+      categoryId: Value<String?>(book.categoryId),
       hlc: Value<String>(mark),
       nodeId: Value<String>(stamp.nodeId),
       modified: Value<String>(mark),
@@ -75,13 +76,51 @@ class DriftLibraryRepository implements LibraryRepository {
 
   @override
   Future<void> markOpened(String id, DateTime when) async {
+    await _touch(id, BooksCompanion(openedAt: Value<DateTime?>(when)));
+  }
+
+  /// Правит у книги одно-два поля, проставляя метку изменения.
+  ///
+  /// Полная перезапись книги ради одного поля затирала бы то, что
+  /// параллельно записал другой экран: полка и чтение работают с одной и
+  /// той же строкой одновременно.
+  Future<void> _touch(String id, BooksCompanion changes) async {
     final Hlc stamp = _clock.issue();
     final String mark = stamp.toString();
     final update = _db.update(_db.books);
     update.where((tbl) => tbl.id.equals(id));
     await update.write(
+      changes.copyWith(
+        hlc: Value<String>(mark),
+        nodeId: Value<String>(stamp.nodeId),
+        modified: Value<String>(mark),
+      ),
+    );
+  }
+
+  @override
+  Future<void> moveToCategory(String bookId, String? categoryId) async {
+    await _touch(bookId, BooksCompanion(categoryId: Value<String?>(categoryId)));
+  }
+
+  @override
+  Future<void> setCoverPath(String bookId, String? coverPath) async {
+    // Обложка — местный кэш, а не данные читателя, и метку изменения ей
+    // ставят наравне со всем остальным только потому, что она лежит в той
+    // же строке. В облако у книги уедут заголовок и источник, а не путь
+    // к картинке на этом устройстве.
+    await _touch(bookId, BooksCompanion(coverPath: Value<String?>(coverPath)));
+  }
+
+  @override
+  Future<void> clearCategory(String categoryId) async {
+    final Hlc stamp = _clock.issue();
+    final String mark = stamp.toString();
+    final update = _db.update(_db.books);
+    update.where((tbl) => tbl.categoryId.equals(categoryId));
+    await update.write(
       BooksCompanion(
-        openedAt: Value<DateTime?>(when),
+        categoryId: const Value<String?>(null),
         hlc: Value<String>(mark),
         nodeId: Value<String>(stamp.nodeId),
         modified: Value<String>(mark),
@@ -130,6 +169,7 @@ class DriftLibraryRepository implements LibraryRepository {
       hasTextLayer: row.hasTextLayer,
       coverPath: row.coverPath,
       openedAt: row.openedAt,
+      categoryId: row.categoryId,
     );
   }
 }

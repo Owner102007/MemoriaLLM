@@ -4,11 +4,10 @@ import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
 import 'package:memoria/domain/theme/app_palette.dart';
-import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/ui/app.dart';
 
 import 'data/test_data.dart';
-import 'support/fake_reading.dart';
+import 'support/test_services.dart';
 
 void main() {
   late AppData data;
@@ -16,12 +15,7 @@ void main() {
 
   setUp(() async {
     data = await openTestData();
-    services = AppServices(
-      data: data,
-      opener: FakeDocumentOpener(FakeReaderDocument(pages: <String>['текст'])),
-      picker: FakeBookFilePicker(null),
-      storage: const LocalBookStorage(),
-    );
+    services = testServices(data: data);
   });
   tearDown(() async => data.close());
 
@@ -93,19 +87,19 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('на пустой полке предложено открыть файл', (
+  testWidgets('на пустой полке предложено добавить книги', (
     WidgetTester tester,
   ) async {
     await pumpApp(tester, ThemeController());
 
     expect(find.byKey(const Key('library-open-file-empty')), findsOneWidget);
-    expect(find.byKey(const Key('library-list')), findsNothing);
+    expect(find.byKey(const Key('library-shelf')), findsNothing);
 
     // Человек закрыл диалог, ничего не выбрав: приложение не должно
     // ни падать, ни заводить пустую книгу.
     await tester.tap(find.byKey(const Key('library-open-file-empty')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('library-list')), findsNothing);
+    expect(find.byKey(const Key('library-shelf')), findsNothing);
 
     await unmount(tester);
   });

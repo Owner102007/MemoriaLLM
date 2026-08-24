@@ -21,22 +21,37 @@ class FastBookPicker implements BookFilePicker {
   /// Создаёт пикер.
   const FastBookPicker();
 
+  /// Фильтр диалога.
+  ///
+  /// Расширение понимают Windows и Linux, MIME-тип — Android. Указаны
+  /// оба: на платформе, которая не понимает свой вариант фильтра, диалог
+  /// бросает `ArgumentError`.
+  static const XTypeGroup _pdf = XTypeGroup(
+    label: 'PDF',
+    extensions: <String>['pdf'],
+    mimeTypes: <String>['application/pdf'],
+  );
+
   @override
   Future<PickedFile?> pickPdf() async {
-    // Расширение понимают Windows и Linux, MIME-тип — Android. Указаны
-    // оба: на платформе, которая не понимает свой вариант фильтра,
-    // диалог бросает ArgumentError.
-    const XTypeGroup pdf = XTypeGroup(
-      label: 'PDF',
-      extensions: <String>['pdf'],
-      mimeTypes: <String>['application/pdf'],
-    );
     final FastFilePickerPath? file = await FastFilePicker.pickFile(
-      acceptedTypeGroups: const <XTypeGroup>[pdf],
+      acceptedTypeGroups: const <XTypeGroup>[_pdf],
     );
-    if (file == null) {
-      return null;
-    }
-    return PickedFile(name: file.name, path: file.path, uri: file.uri);
+    return file == null ? null : _toPicked(file);
   }
+
+  @override
+  Future<List<PickedFile>> pickPdfs() async {
+    final List<FastFilePickerPath>? files =
+        await FastFilePicker.pickMultipleFiles(
+          acceptedTypeGroups: const <XTypeGroup>[_pdf],
+        );
+    if (files == null) {
+      return const <PickedFile>[];
+    }
+    return <PickedFile>[for (final FastFilePickerPath file in files) _toPicked(file)];
+  }
+
+  PickedFile _toPicked(FastFilePickerPath file) =>
+      PickedFile(name: file.name, path: file.path, uri: file.uri);
 }

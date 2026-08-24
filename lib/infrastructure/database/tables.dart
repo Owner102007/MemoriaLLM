@@ -23,6 +23,30 @@ mixin SyncedRow on Table {
       boolean().withDefault(const Constant<bool>(false))();
 }
 
+/// Категории полки.
+///
+/// Объявлена раньше книг намеренно: колонка `category_id` в `books`
+/// ссылается на эту таблицу, а drift разрешает ссылки по порядку
+/// объявления.
+@DataClassName('BookCategoryRow')
+class BookCategories extends Table with SyncedRow {
+  /// Идентификатор категории.
+  TextColumn get id => text()();
+
+  /// Название. Из него же выводятся узор и цвет подложки — см.
+  /// `domain/library/category_style.dart`.
+  TextColumn get title => text()();
+
+  /// Порядок на полке. Меньше — выше.
+  IntColumn get position => integer().withDefault(const Constant<int>(0))();
+
+  /// Когда заведена.
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
 /// Книги библиотеки.
 @DataClassName('BookRow')
 class Books extends Table with SyncedRow {
@@ -68,6 +92,21 @@ class Books extends Table with SyncedRow {
 
   /// Когда открывали в последний раз.
   DateTimeColumn get openedAt => dateTime().nullable()();
+
+  /// Категория полки. `null` — постоянный раздел «Без категории».
+  ///
+  /// **Внешнего ключа здесь намеренно нет.** Он не смог бы делать свою
+  /// работу: категорию мы удаляем надгробием, а не `DELETE`, и каскад при
+  /// нём не срабатывает вовсе — книги возвращает в «Без категории»
+  /// репозиторий, руками и в одной транзакции. Единственный случай, когда
+  /// ключ пригодился бы, — физическая чистка, но и там ссылка в никуда
+  /// безопасна: раскладка полки считает неизвестную категорию
+  /// отсутствующей и книгу не теряет.
+  ///
+  /// Побочная выгода честная: колонку с внешним ключом SQLite не даёт
+  /// удалить, а значит, миграцию нельзя было бы проверить на настоящем
+  /// файле базы — тем самым способом, которым проверяются все прошлые.
+  TextColumn get categoryId => text().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{id};

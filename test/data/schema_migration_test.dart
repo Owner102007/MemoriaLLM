@@ -4,6 +4,8 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
+import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/infrastructure/database/app_database.dart';
 import 'package:path/path.dart' as p;
@@ -48,6 +50,14 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 3: категорий тогда не было.
+  Future<void> undoCategories(AppData data) async {
+    await data.database.customStatement('DROP TABLE book_categories');
+    await data.database.customStatement(
+      'ALTER TABLE books DROP COLUMN category_id',
+    );
+  }
+
   test('новая база создаётся сразу текущей версией', () async {
     final AppData data = await launch();
     expect(await versionOf(data), appSchemaVersion);
@@ -55,7 +65,41 @@ void main() {
       await columnsOf(data, 'book_settings'),
       containsAll(<String>['strip_fit', 'dim_outside']),
     );
+    expect(await columnsOf(data, 'books'), contains('category_id'));
     await data.close();
+  });
+
+  test('база версии 3 доезжает до 4 и получает категории', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await undoCategories(first);
+    await first.database.customStatement('PRAGMA user_version = 3');
+    expect(await columnsOf(first, 'books'), isNot(contains('category_id')));
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(await columnsOf(second, 'books'), contains('category_id'));
+
+    // Книга читателя, обновившего приложение, обязана оказаться на полке
+    // в разделе «Без категории» — и никуда не пропасть по дороге.
+    final Book? book = await second.library.bookById('book-1');
+    expect(book, isNotNull);
+    expect(book!.categoryId, isNull);
+    expect(book.title, 'Пиковая дама');
+
+    // И категории после миграции сразу работают.
+    await second.categories.save(
+      BookCategory(
+        id: 'study',
+        title: 'Учёба',
+        position: 0,
+        createdAt: DateTime.utc(2026, 8, 24),
+      ),
+    );
+    await second.library.moveToCategory('book-1', 'study');
+    expect((await second.library.bookById('book-1'))!.categoryId, 'study');
+    await second.close();
   });
 
   test('база версии 1 доезжает до конца и не теряет настройки книги', () async {
@@ -81,6 +125,7 @@ void main() {
     await first.database.customStatement(
       'ALTER TABLE book_settings DROP COLUMN dim_outside',
     );
+    await undoCategories(first);
     await first.database.customStatement('PRAGMA user_version = 1');
     expect(
       await columnsOf(first, 'book_settings'),
@@ -94,6 +139,7 @@ void main() {
       await columnsOf(second, 'book_settings'),
       containsAll(<String>['strip_fit', 'dim_outside']),
     );
+    expect(await columnsOf(second, 'books'), contains('category_id'));
 
     final BookReadingSettings loaded = await second.reading.settings(
       'book-1',
@@ -126,6 +172,7 @@ void main() {
     await first.database.customStatement(
       'ALTER TABLE book_settings DROP COLUMN dim_outside',
     );
+    await undoCategories(first);
     await first.database.customStatement('PRAGMA user_version = 2');
     await first.close();
 
@@ -150,6 +197,7 @@ void main() {
     await first.database.customStatement(
       'ALTER TABLE book_settings DROP COLUMN dim_outside',
     );
+    await undoCategories(first);
     await first.database.customStatement('PRAGMA user_version = 1');
     await first.close();
 

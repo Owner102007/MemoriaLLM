@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — третья: затемнение вне читаемой полосы', () {
+  test('версия схемы — четвёртая: категории полки', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 3);
+    expect(appSchemaVersion, 4);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -50,6 +50,7 @@ void main() {
     expect(
       names,
       containsAll(<String>[
+        'book_categories',
         'books',
         'reading_progress',
         'book_settings',
@@ -64,6 +65,7 @@ void main() {
 
   test('синхронизируемые таблицы несут поля CRDT', () async {
     const List<String> synced = <String>[
+      'book_categories',
       'books',
       'reading_progress',
       'book_settings',

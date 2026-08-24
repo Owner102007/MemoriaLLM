@@ -20,6 +20,7 @@ class Book {
     this.hasTextLayer,
     this.coverPath,
     this.openedAt,
+    this.categoryId,
   });
 
   /// Идентификатор книги (UUID). Одинаков на всех устройствах.
@@ -59,8 +60,18 @@ class Book {
   /// Когда книгу открывали в последний раз.
   final DateTime? openedAt;
 
+  /// Категория полки, в которой лежит книга.
+  ///
+  /// `null` — «Без категории»: постоянный раздел наверху полки. Он не
+  /// строка в базе, а именно отсутствие категории, поэтому книги, которые
+  /// завели до появления категорий, попадают туда сами и без миграции
+  /// данных.
+  final String? categoryId;
+
   /// Копия с изменёнными полями. Обнулить поле копией нельзя — это
   /// осознанное упрощение: сбрасывать значения приходится редко.
+  /// Исключение — [categoryId]: книга возвращается в «Без категории»
+  /// достаточно часто, чтобы для этого был явный [withoutCategory].
   Book copyWith({
     String? title,
     String? author,
@@ -73,6 +84,7 @@ class Book {
     String? coverPath,
     DateTime? addedAt,
     DateTime? openedAt,
+    String? categoryId,
   }) {
     return Book(
       id: id,
@@ -87,8 +99,25 @@ class Book {
       hasTextLayer: hasTextLayer ?? this.hasTextLayer,
       coverPath: coverPath ?? this.coverPath,
       openedAt: openedAt ?? this.openedAt,
+      categoryId: categoryId ?? this.categoryId,
     );
   }
+
+  /// Та же книга, вернувшаяся в «Без категории».
+  Book get withoutCategory => Book(
+    id: id,
+    title: title,
+    source: source,
+    fileSize: fileSize,
+    fileHash: fileHash,
+    addedAt: addedAt,
+    author: author,
+    pageCount: pageCount,
+    language: language,
+    hasTextLayer: hasTextLayer,
+    coverPath: coverPath,
+    openedAt: openedAt,
+  );
 }
 
 /// Заголовок книги по имени файла.
@@ -130,6 +159,22 @@ abstract interface class LibraryRepository {
 
   /// Отмечает открытие книги.
   Future<void> markOpened(String id, DateTime when);
+
+  /// Переносит книгу в другую категорию; `null` — «Без категории».
+  ///
+  /// Отдельный метод, а не `save` целой книги: перенос случается на полке,
+  /// где под рукой только карточка, и перезаписывать из неё все поля книги
+  /// значило бы затереть то, что параллельно записало чтение.
+  Future<void> moveToCategory(String bookId, String? categoryId);
+
+  /// Ставит обложку книге. Путь местный и между устройствами не ездит.
+  Future<void> setCoverPath(String bookId, String? coverPath);
+
+  /// Возвращает книги категории в «Без категории».
+  ///
+  /// Нужно при удалении категории: удаление у нас надгробие, а не
+  /// `DELETE`, и внешний ключ с каскадом при нём не срабатывает.
+  Future<void> clearCategory(String categoryId);
 
   /// Помечает книгу удалённой (tombstone), не стирая строку: иначе
   /// удаление не доедет до второго устройства.

@@ -19,6 +19,23 @@ const PickedFile _picked = PickedFile(
   name: 'voyna_i_mir.pdf',
 );
 
+/// Открыватель, у которого каждая третья книга оказывается битой.
+///
+/// Ровно то, что бывает в настоящей папке: часть файлов оборвалась при
+/// скачивании, а по имени этого не видно.
+class _EveryThirdBroken implements DocumentOpener {
+  int _seen = 0;
+
+  @override
+  Future<ReaderDocument> open(BookSource source, {String? password}) async {
+    _seen++;
+    if (_seen % 3 == 0) {
+      throw DocumentOpenException(DocumentProblem.damaged, source);
+    }
+    return FakeReaderDocument(pages: <String>['раз', 'два']);
+  }
+}
+
 void main() {
   late AppData data;
 
@@ -144,6 +161,125 @@ void main() {
       // Иначе в папке приложения копились бы копии нечитаемых книг, а на
       // Android — ещё и закреплённые ссылки в никуда.
       expect(storage.released, <BookSource>[FilePathSource(_picked.path!)]);
+    });
+  });
+
+  group('импорт пачкой', () {
+    /// Импортёр, у которого каждый файл получает свой отпечаток и свой
+    /// идентификатор: иначе пачка схлопнется в одну книгу.
+    BookImporter batchImporter(
+      FakeReaderDocument document, {
+      DocumentOpenException? failure,
+    }) {
+      int seen = 0;
+      return BookImporter(
+        library: data.library,
+        storage: const LocalBookStorage(),
+        opener: FakeDocumentOpener(document, failure: failure),
+        fingerprint: (BookHandle book) async => 'hash-${seen++}',
+        newId: () => 'id-$seen',
+        now: () => DateTime.utc(2026, 8, 24, 12),
+      );
+    }
+
+    List<PickedFile> files(int count) => <PickedFile>[
+      for (int i = 0; i < count; i++)
+        PickedFile(
+          path: 'test/fixtures/basic_text.pdf',
+          name: 'книга_$i.pdf',
+        ),
+    ];
+
+    test('все выбранные книги встают на полку', () async {
+      final ImportReport report = await batchImporter(
+        FakeReaderDocument(pages: <String>['раз', 'два']),
+      ).registerAll(files(4));
+
+      expect(report.added.length, 4);
+      expect(report.failed, isEmpty);
+      expect(report.isClean, isTrue);
+      expect(report.total, 4);
+      expect((await data.library.books()).length, 4);
+    });
+
+    test('книги ложатся в ту категорию, из которой нажали «+»', () async {
+      final ImportReport report = await batchImporter(
+        FakeReaderDocument(pages: <String>['раз']),
+      ).registerAll(files(3), categoryId: 'study');
+
+      for (final Book book in report.added) {
+        expect(book.categoryId, 'study');
+      }
+      for (final Book book in await data.library.books()) {
+        expect(book.categoryId, 'study');
+      }
+    });
+
+    test('без категории книги остаются в «Без категории»', () async {
+      final ImportReport report = await batchImporter(
+        FakeReaderDocument(pages: <String>['раз']),
+      ).registerAll(files(2));
+      for (final Book book in report.added) {
+        expect(book.categoryId, isNull);
+      }
+    });
+
+    test('одна битая книга не отменяет остальные двадцать девять', () async {
+      // В папке с учебниками обязательно попадётся оборванный файл.
+      // Читателю важнее, чтобы встали остальные, чем чтобы импорт
+      // провалился целиком.
+      int seen = 0;
+      final BookImporter mixed = BookImporter(
+        library: data.library,
+        storage: const LocalBookStorage(),
+        opener: _EveryThirdBroken(),
+        fingerprint: (BookHandle book) async => 'hash-${seen++}',
+        newId: () => 'id-$seen',
+        now: () => DateTime.utc(2026, 8, 24, 12),
+      );
+      final ImportReport report = await mixed.registerAll(files(6));
+
+      expect(report.added.length, 4);
+      expect(report.failed.length, 2);
+      expect(report.isClean, isFalse);
+      // Причина названа человеческими словами и привязана к имени файла.
+      expect(report.failed.first.name, 'книга_2.pdf');
+      expect(report.failed.first.reason, contains('повреждён'));
+    });
+
+    test('о ходе импорта сообщается по файлу за раз', () async {
+      final List<String> steps = <String>[];
+      await batchImporter(
+        FakeReaderDocument(pages: <String>['раз']),
+      ).registerAll(
+        files(3),
+        onProgress: (int done, int total) => steps.add('$done/$total'),
+      );
+      expect(steps, <String>['1/3', '2/3', '3/3']);
+    });
+
+    test('пустой выбор — пустой отчёт, а не ошибка', () async {
+      final ImportReport report = await batchImporter(
+        FakeReaderDocument(pages: <String>['раз']),
+      ).registerAll(const <PickedFile>[]);
+      expect(report.total, 0);
+      expect(report.isClean, isTrue);
+    });
+
+    test('повторный выбор книги не переставляет её с полки', () async {
+      // Читатель мог унести книгу в другую категорию руками; повторный
+      // импорт того же файла — не повод отменять это решение.
+      final BookImporter same = importer(
+        FakeReaderDocument(pages: <String>['раз']),
+      );
+      final Book first = await same.register(_picked, categoryId: 'study');
+      expect(first.categoryId, 'study');
+      await data.library.moveToCategory(first.id, 'fiction');
+
+      await same.register(_picked, categoryId: 'study');
+      final Book? again = await data.library.bookById(first.id);
+      expect(again!.categoryId, 'fiction');
+      expect((await data.library.books()).length, 1);
     });
   });
 

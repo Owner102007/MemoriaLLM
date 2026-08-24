@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 
 import '../../domain/annotations/annotations.dart';
 import '../../domain/library/book.dart';
+import '../../domain/library/book_category.dart';
 import '../../domain/llm/llm_query.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
@@ -12,6 +13,7 @@ import '../../infrastructure/database/app_database.dart';
 import '../../infrastructure/database/connection.dart';
 import '../../infrastructure/repositories/drift_annotation_repository.dart';
 import '../../infrastructure/repositories/drift_app_settings_repository.dart';
+import '../../infrastructure/repositories/drift_category_repository.dart';
 import '../../infrastructure/repositories/drift_library_repository.dart';
 import '../../infrastructure/repositories/drift_llm_history_repository.dart';
 import '../../infrastructure/repositories/drift_reading_repository.dart';
@@ -27,6 +29,7 @@ class AppData {
     required this.clock,
     required this.settings,
     required this.library,
+    required this.categories,
     required this.reading,
     required this.annotations,
     required this.llmHistory,
@@ -39,11 +42,13 @@ class AppData {
     final AppDatabase database = AppDatabase(executor ?? openDatabaseFile());
     final AppSettingsRepository settings = DriftAppSettingsRepository(database);
     final HlcClock clock = await restoreClock(settings);
+    final LibraryRepository library = DriftLibraryRepository(database, clock);
     return AppData._(
       database: database,
       clock: clock,
       settings: settings,
-      library: DriftLibraryRepository(database, clock),
+      library: library,
+      categories: DriftCategoryRepository(database, clock, library),
       reading: DriftReadingRepository(database, clock),
       annotations: DriftAnnotationRepository(database, clock),
       llmHistory: DriftLlmHistoryRepository(database, clock),
@@ -61,6 +66,9 @@ class AppData {
 
   /// Библиотека книг.
   final LibraryRepository library;
+
+  /// Категории полки.
+  final CategoryRepository categories;
 
   /// Прогресс и настройки чтения.
   final ReadingRepository reading;
