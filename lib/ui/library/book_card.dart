@@ -37,6 +37,9 @@ class BookCard extends StatelessWidget {
   final VoidCallback onOpen;
 
   /// Показать меню книги: перенести, убрать с полки.
+  ///
+  /// Открывается кнопкой «…» в углу обложки и правой кнопкой мыши.
+  /// Долгое нажатие меню не открывает — оно поднимает книгу.
   final VoidCallback onMenu;
 
   @override
@@ -48,7 +51,12 @@ class BookCard extends StatelessWidget {
       child: InkWell(
         key: Key('library-book-${book.id}'),
         onTap: onOpen,
-        onLongPress: onMenu,
+        // Долгое нажатие целиком отдано перетаскиванию (решение
+        // владельца, 24.08.2026): меню живёт на кнопке «…» в углу
+        // обложки — она видна всегда, и угадывать длительность
+        // удержания читателю не приходится. Правая кнопка мыши меню
+        // по-прежнему открывает: на ПК это привычно и перетаскиванию
+        // не мешает.
         onSecondaryTap: onMenu,
         borderRadius: BorderRadius.circular(8),
         child: Column(

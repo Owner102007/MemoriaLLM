@@ -24,6 +24,13 @@ enum ShelfSort {
 
   /// Сначала начатые и не дочитанные.
   progress,
+
+  /// Как расставил читатель.
+  ///
+  /// Появляется сам при первом же перетаскивании книги: иначе
+  /// перетаскивание было бы обманом — при сортировке «по названию» книга
+  /// вернулась бы на место в тот же миг (решение владельца, 24.08.2026).
+  manual,
 }
 
 /// Подпись сортировки для меню.
@@ -37,6 +44,8 @@ String shelfSortTitle(ShelfSort sort) {
       return 'Сначала добавленные';
     case ShelfSort.progress:
       return 'Сначала начатые';
+    case ShelfSort.manual:
+      return 'Как расставил';
   }
 }
 
@@ -184,6 +193,14 @@ List<Book> sortBooks(
         final int byTime = b.addedAt.compareTo(a.addedAt);
         return byTime != 0 ? byTime : byTitle(a, b);
       });
+    case ShelfSort.manual:
+      result.sort((Book a, Book b) {
+        final int byPlace = a.shelfPosition.compareTo(b.shelfPosition);
+        // Книги, которых читатель ещё не касался, стоят с одним и тем же
+        // нулевым местом. Разводить их названием, а не случаем: полка,
+        // выглядящая по-разному при каждом открытии, — поломка.
+        return byPlace != 0 ? byPlace : byTitle(a, b);
+      });
     case ShelfSort.progress:
       result.sort((Book a, Book b) {
         // Начатая и не дочитанная — впереди; дочитанная и не начатая
@@ -202,6 +219,72 @@ double _readingWeight(double progress) {
     return 0;
   }
   return progress;
+}
+
+/// Куда встанут книги, если [moved] положить перед книгой [before].
+///
+/// Одна функция на оба случая — и перестановку внутри категории, и
+/// перенос в чужую, — потому что разницы между ними по существу нет:
+/// книга вынимается оттуда, где лежала, и вставляется туда, куда её
+/// положили. [before] — книга, **перед** которой встаёт перетаскиваемая;
+/// `null` означает «в конец». Место названо книгой, а не числом, нарочно:
+/// номер пришлось бы поправлять на единицу при переносе вперёд внутри
+/// одной категории, и это ровно та арифметика, в которой ошибаются.
+///
+/// [target] — книги категории назначения **в том порядке, в каком их
+/// видит читатель**. Если [moved] среди них, она сначала вынимается.
+///
+/// Возвращает расстановку для всей категории целиком: места
+/// перенумеровываются подряд с нуля. Половинчатая запись — «этой книге
+/// новое место, остальным как было» — рано или поздно даёт две книги на
+/// одном месте, и полка начинает переставляться сама собой.
+List<BookPlacement> placeBefore({
+  required List<Book> target,
+  required Book moved,
+  required Book? before,
+  required String? categoryId,
+}) {
+  final List<Book> rest = <Book>[
+    for (final Book book in target)
+      if (book.id != moved.id) book,
+  ];
+  int at = rest.length;
+  if (before != null && before.id != moved.id) {
+    final int found = rest.indexWhere((Book book) => book.id == before.id);
+    if (found >= 0) {
+      at = found;
+    }
+  }
+  rest.insert(at, moved);
+  return <BookPlacement>[
+    for (int i = 0; i < rest.length; i++)
+      BookPlacement(
+        bookId: rest[i].id,
+        categoryId: categoryId,
+        position: i,
+      ),
+  ];
+}
+
+/// Ничего не меняется, если книгу положили туда же, где она лежала.
+///
+/// Экран спрашивает об этом до записи: перетаскивание, кончившееся
+/// ничем, не должно ни трогать базу, ни включать ручной порядок, ни
+/// показывать читателю сообщение о том, чего не случилось.
+bool placementChangesNothing(List<Book> target, List<BookPlacement> next) {
+  if (next.length != target.length) {
+    return false;
+  }
+  for (int i = 0; i < target.length; i++) {
+    final Book book = target[i];
+    final BookPlacement placement = next[i];
+    if (book.id != placement.bookId ||
+        book.categoryId != placement.categoryId ||
+        book.shelfPosition != placement.position) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /// Ширина блока, к которой стремится полка, в логических точках.

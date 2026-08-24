@@ -21,6 +21,7 @@ class Book {
     this.coverPath,
     this.openedAt,
     this.categoryId,
+    this.shelfPosition = 0,
   });
 
   /// Идентификатор книги (UUID). Одинаков на всех устройствах.
@@ -68,6 +69,13 @@ class Book {
   /// данных.
   final String? categoryId;
 
+  /// Место книги на полке внутри своей категории.
+  ///
+  /// Читается только ручным порядком («Как расставил»). Остальные
+  /// сортировки его не трогают: расстановка ждёт возврата к ручному
+  /// порядку, а не пропадает при первом же переключении.
+  final int shelfPosition;
+
   /// Копия с изменёнными полями. Обнулить поле копией нельзя — это
   /// осознанное упрощение: сбрасывать значения приходится редко.
   /// Исключение — [categoryId]: книга возвращается в «Без категории»
@@ -85,6 +93,7 @@ class Book {
     DateTime? addedAt,
     DateTime? openedAt,
     String? categoryId,
+    int? shelfPosition,
   }) {
     return Book(
       id: id,
@@ -100,6 +109,7 @@ class Book {
       coverPath: coverPath ?? this.coverPath,
       openedAt: openedAt ?? this.openedAt,
       categoryId: categoryId ?? this.categoryId,
+      shelfPosition: shelfPosition ?? this.shelfPosition,
     );
   }
 
@@ -117,6 +127,7 @@ class Book {
     hasTextLayer: hasTextLayer,
     coverPath: coverPath,
     openedAt: openedAt,
+    shelfPosition: shelfPosition,
   );
 }
 
@@ -140,6 +151,38 @@ String titleFromFileName(String fileName) {
   return name.isEmpty ? 'Без названия' : name;
 }
 
+/// Куда встаёт книга: в какую категорию и на какое место.
+class BookPlacement {
+  /// Создаёт расстановку.
+  const BookPlacement({
+    required this.bookId,
+    required this.categoryId,
+    required this.position,
+  });
+
+  /// Книга.
+  final String bookId;
+
+  /// Категория; `null` — «Без категории».
+  final String? categoryId;
+
+  /// Место внутри категории, начиная с нуля.
+  final int position;
+
+  @override
+  bool operator ==(Object other) =>
+      other is BookPlacement &&
+      other.bookId == bookId &&
+      other.categoryId == categoryId &&
+      other.position == position;
+
+  @override
+  int get hashCode => Object.hash(bookId, categoryId, position);
+
+  @override
+  String toString() => 'BookPlacement($bookId → $categoryId, $position)';
+}
+
 /// Доступ к библиотеке. Реализация живёт в `infrastructure`.
 abstract interface class LibraryRepository {
   /// Живой список книг: обновляется сам при изменениях в базе.
@@ -160,12 +203,14 @@ abstract interface class LibraryRepository {
   /// Отмечает открытие книги.
   Future<void> markOpened(String id, DateTime when);
 
-  /// Переносит книгу в другую категорию; `null` — «Без категории».
+  /// Расставляет книги: у каждой меняются категория и место на полке.
   ///
-  /// Отдельный метод, а не `save` целой книги: перенос случается на полке,
-  /// где под рукой только карточка, и перезаписывать из неё все поля книги
-  /// значило бы затереть то, что параллельно записало чтение.
-  Future<void> moveToCategory(String bookId, String? categoryId);
+  /// Одной транзакцией и обязательно целым списком: половина
+  /// расставленной полки хуже, чем нерасставленная. Отдельный метод, а не
+  /// `save` целых книг — перенос случается на полке, где под рукой только
+  /// карточка, и перезаписывать из неё все поля книги значило бы затереть
+  /// то, что параллельно записало чтение.
+  Future<void> placeBooks(List<BookPlacement> placements);
 
   /// Ставит обложку книге. Путь местный и между устройствами не ездит.
   Future<void> setCoverPath(String bookId, String? coverPath);

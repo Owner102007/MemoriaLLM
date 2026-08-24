@@ -108,6 +108,15 @@ class Books extends Table with SyncedRow {
   /// файле базы — тем самым способом, которым проверяются все прошлые.
   TextColumn get categoryId => text().nullable()();
 
+  /// Место книги на полке внутри своей категории.
+  ///
+  /// Имеет смысл только в ручном порядке («Как расставил»); остальные
+  /// сортировки его не читают, но и не стирают — расстановка ждёт
+  /// возврата к ручному порядку, а не пропадает при первом же
+  /// переключении.
+  IntColumn get shelfPosition =>
+      integer().withDefault(const Constant<int>(0))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{id};
 }

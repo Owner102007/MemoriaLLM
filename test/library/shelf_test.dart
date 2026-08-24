@@ -12,6 +12,7 @@ Book _book({
   DateTime? opened,
   int? pages,
   int size = 1024,
+  int place = 0,
 }) {
   return Book(
     id: id,
@@ -23,6 +24,7 @@ Book _book({
     openedAt: opened,
     pageCount: pages,
     categoryId: categoryId,
+    shelfPosition: place,
   );
 }
 
@@ -236,6 +238,219 @@ void main() {
       expect(shelfSortFromName('title'), ShelfSort.title);
       expect(shelfSortFromName('невиданный'), ShelfSort.recent);
       expect(shelfSortFromName(null), ShelfSort.recent);
+    });
+  });
+
+  group('ручной порядок', () {
+    test('книги идут по своим местам', () {
+      final List<Book> sorted = sortBooks(<Book>[
+        _book(id: 'c', title: 'Аа', place: 2),
+        _book(id: 'a', title: 'Яя', place: 0),
+        _book(id: 'b', title: 'Мм', place: 1),
+      ], ShelfSort.manual);
+      expect(sorted.map((Book b) => b.id), <String>['a', 'b', 'c']);
+    });
+
+    test('книги с одним местом разводятся названием, а не случаем', () {
+      // Так выглядит полка сразу после обновления: у всех книг нулевое
+      // место. Полка, выглядящая по-разному при каждом открытии, —
+      // поломка, даже если формально порядок «любой».
+      final List<Book> books = <Book>[
+        _book(id: 'z', title: 'Яблоко'),
+        _book(id: 'a', title: 'Арбуз'),
+        _book(id: 'm', title: 'Малина'),
+      ];
+      final List<Book> first = sortBooks(books, ShelfSort.manual);
+      final List<Book> second = sortBooks(
+        books.reversed.toList(),
+        ShelfSort.manual,
+      );
+      expect(first.map((Book b) => b.id), <String>['a', 'm', 'z']);
+      expect(first.map((Book b) => b.id), second.map((Book b) => b.id));
+    });
+
+    test('«Как расставил» есть среди сортировок и читается из настроек', () {
+      expect(ShelfSort.values, contains(ShelfSort.manual));
+      expect(shelfSortFromName('manual'), ShelfSort.manual);
+      expect(shelfSortTitle(ShelfSort.manual), 'Как расставил');
+    });
+  });
+
+  group('перестановка книг', () {
+    List<Book> shelf() => <Book>[
+      _book(id: 'a', place: 0),
+      _book(id: 'b', place: 1),
+      _book(id: 'c', place: 2),
+    ];
+
+    List<String> orderOf(List<BookPlacement> placements) =>
+        <String>[for (final BookPlacement p in placements) p.bookId];
+
+    test('места перенумеровываются подряд с нуля', () {
+      final List<BookPlacement> next = placeBefore(
+        target: shelf(),
+        moved: _book(id: 'c', place: 2),
+        before: _book(id: 'a', place: 0),
+        categoryId: null,
+      );
+      expect(orderOf(next), <String>['c', 'a', 'b']);
+      expect(
+        <int>[for (final BookPlacement p in next) p.position],
+        <int>[0, 1, 2],
+      );
+    });
+
+    test('книга едет назад: встаёт перед указанной', () {
+      final List<BookPlacement> next = placeBefore(
+        target: shelf(),
+        moved: _book(id: 'a', place: 0),
+        before: _book(id: 'c', place: 2),
+        categoryId: null,
+      );
+      // Именно так и должно быть: «перед c» — значит между b и c.
+      expect(orderOf(next), <String>['b', 'a', 'c']);
+    });
+
+    test('пустая цель означает конец', () {
+      final List<BookPlacement> next = placeBefore(
+        target: shelf(),
+        moved: _book(id: 'a', place: 0),
+        before: null,
+        categoryId: null,
+      );
+      expect(orderOf(next), <String>['b', 'c', 'a']);
+    });
+
+    test('книга из чужой категории вставляется, а не заменяет', () {
+      final Book guest = _book(id: 'x', categoryId: 'other', place: 7);
+      final List<BookPlacement> next = placeBefore(
+        target: shelf(),
+        moved: guest,
+        before: _book(id: 'b', place: 1),
+        categoryId: 'study',
+      );
+      expect(orderOf(next), <String>['a', 'x', 'b', 'c']);
+      // Категория назначается всем: перенумеровывается вся полка целиком,
+      // и у гостя она обязана смениться.
+      for (final BookPlacement p in next) {
+        expect(p.categoryId, 'study');
+      }
+    });
+
+    test('книга, положенная на себя, ничего не двигает', () {
+      final Book self = _book(id: 'b', place: 1);
+      final List<BookPlacement> next = placeBefore(
+        target: shelf(),
+        moved: self,
+        before: self,
+        categoryId: null,
+      );
+      expect(orderOf(next), <String>['a', 'b', 'c']);
+    });
+
+    test('незнакомая книга-ориентир не роняет расстановку', () {
+      // Полка могла перестроиться, пока книгу несли: цель уехала в другую
+      // категорию или её сняли. Это повод положить книгу в конец, а не
+      // уронить приложение.
+      final List<BookPlacement> next = placeBefore(
+        target: shelf(),
+        moved: _book(id: 'a', place: 0),
+        before: _book(id: 'нет-такой'),
+        categoryId: null,
+      );
+      expect(orderOf(next), <String>['b', 'c', 'a']);
+    });
+
+    test('в пустую категорию книга кладётся первой', () {
+      final List<BookPlacement> next = placeBefore(
+        target: const <Book>[],
+        moved: _book(id: 'x'),
+        before: null,
+        categoryId: 'study',
+      );
+      expect(next.length, 1);
+      expect(next.single.position, 0);
+      expect(next.single.categoryId, 'study');
+    });
+
+    test('места не задваиваются ни при каком переносе', () {
+      // Две книги на одном месте — это полка, которая переставляется сама
+      // собой при каждом открытии. Проверяется перебором: каждую книгу
+      // кладём перед каждой и в конец.
+      final List<Book> books = shelf();
+      for (final Book moved in books) {
+        for (final Book? before in <Book?>[...books, null]) {
+          final List<BookPlacement> next = placeBefore(
+            target: books,
+            moved: moved,
+            before: before,
+            categoryId: 'study',
+          );
+          expect(next.length, books.length);
+          expect(
+            <int>[for (final BookPlacement p in next) p.position],
+            <int>[0, 1, 2],
+            reason: 'перенос ${moved.id} перед ${before?.id ?? 'конца'}',
+          );
+          expect(
+            <String>{for (final BookPlacement p in next) p.bookId}.length,
+            books.length,
+            reason: 'книга потерялась или задвоилась',
+          );
+        }
+      }
+    });
+  });
+
+  group('перетаскивание, кончившееся ничем', () {
+    test('тот же порядок и те же места — записывать нечего', () {
+      final List<Book> books = <Book>[
+        _book(id: 'a', place: 0),
+        _book(id: 'b', place: 1),
+      ];
+      final List<BookPlacement> next = placeBefore(
+        target: books,
+        moved: books.first,
+        before: books[1],
+        categoryId: null,
+      );
+      expect(placementChangesNothing(books, next), isTrue);
+    });
+
+    test('другой порядок — записывать надо', () {
+      final List<Book> books = <Book>[
+        _book(id: 'a', place: 0),
+        _book(id: 'b', place: 1),
+      ];
+      final List<BookPlacement> next = placeBefore(
+        target: books,
+        moved: books[1],
+        before: books.first,
+        categoryId: null,
+      );
+      expect(placementChangesNothing(books, next), isFalse);
+    });
+
+    test('смена категории при том же порядке — тоже изменение', () {
+      final List<Book> books = <Book>[_book(id: 'a', place: 0)];
+      final List<BookPlacement> next = placeBefore(
+        target: books,
+        moved: books.first,
+        before: null,
+        categoryId: 'study',
+      );
+      expect(placementChangesNothing(books, next), isFalse);
+    });
+
+    test('книга, пришедшая из чужой категории, — всегда изменение', () {
+      final List<Book> books = <Book>[_book(id: 'a', place: 0)];
+      final List<BookPlacement> next = placeBefore(
+        target: books,
+        moved: _book(id: 'x', categoryId: 'other'),
+        before: null,
+        categoryId: null,
+      );
+      expect(placementChangesNothing(books, next), isFalse);
     });
   });
 

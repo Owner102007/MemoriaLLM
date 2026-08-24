@@ -271,7 +271,7 @@ void main() {
       );
       final Book first = await same.register(_picked, categoryId: 'study');
       expect(first.categoryId, 'study');
-      await data.library.moveToCategory(first.id, 'fiction');
+      await placeBook(data, first.id, 'fiction');
 
       await same.register(_picked, categoryId: 'study');
       final Book? again = await data.library.bookById(first.id);

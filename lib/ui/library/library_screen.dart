@@ -11,6 +11,7 @@ import '../../domain/library/shelf.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
 import '../reader/reader_screen.dart';
+import 'book_drag.dart';
 import 'category_shelf.dart';
 import 'library_dialogs.dart';
 
@@ -41,9 +42,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// время, пока внизу висит «Вернуть».
   static const Duration _undoWindow = Duration(seconds: 5);
 
+  /// Насколько близко к краю экрана надо поднести книгу, чтобы полка
+  /// поехала сама, и как быстро она едет.
+  static const double _autoScrollZone = 90;
+  static const double _autoScrollStep = 14;
+
   ShelfSort _sort = ShelfSort.recent;
   bool _busy = false;
   final Map<String, Timer> _pending = <String, Timer>{};
+  final ScrollController _shelf = ScrollController();
+  Timer? _autoScroll;
+  double _scrollSpeed = 0;
 
   @override
   void initState() {
@@ -57,7 +66,60 @@ class _LibraryScreenState extends State<LibraryScreen> {
       timer.cancel();
     }
     _pending.clear();
+    _autoScroll?.cancel();
+    _shelf.dispose();
     super.dispose();
+  }
+
+  /// Книгу подняли: полка готовится ехать под пальцем.
+  void _dragStarted() {
+    _scrollSpeed = 0;
+    _autoScroll?.cancel();
+    // Один таймер на всё перетаскивание, а не по таймеру на движение:
+    // книгу ведут десятками событий в секунду, и заводить на каждое своё
+    // ожидание значило бы дёргать полку рывками.
+    _autoScroll = Timer.periodic(const Duration(milliseconds: 16), (Timer _) {
+      if (_scrollSpeed == 0 || !_shelf.hasClients) {
+        return;
+      }
+      final ScrollPosition position = _shelf.position;
+      final double next = (position.pixels + _scrollSpeed).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if (next != position.pixels) {
+        position.jumpTo(next);
+      }
+    });
+  }
+
+  /// Книгу отпустили — где угодно, в том числе мимо полки.
+  void _dragEnded() {
+    _scrollSpeed = 0;
+    _autoScroll?.cancel();
+    _autoScroll = null;
+  }
+
+  /// Книгу ведут над полкой: у краёв экрана список едет сам.
+  ///
+  /// Без этого книгу нельзя перенести в категорию, которой не видно, —
+  /// а на полке из десятка категорий это обычный случай.
+  void _dragOver(Offset globalPosition) {
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) {
+      return;
+    }
+    final double y = box.globalToLocal(globalPosition).dy;
+    final double height = box.size.height;
+    if (y < _autoScrollZone) {
+      _scrollSpeed = -_autoScrollStep * (1 - y / _autoScrollZone).clamp(0, 1);
+    } else if (y > height - _autoScrollZone) {
+      _scrollSpeed =
+          _autoScrollStep *
+          ((y - (height - _autoScrollZone)) / _autoScrollZone).clamp(0, 1);
+    } else {
+      _scrollSpeed = 0;
+    }
   }
 
   Future<void> _restoreSort() async {
@@ -167,7 +229,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await widget.services.data.library.save(book);
   }
 
-  Future<void> _moveBook(Book book, List<BookCategory> categories) async {
+  Future<void> _moveBook(
+    Book book,
+    List<BookCategory> categories,
+    List<ShelfSection> sections,
+  ) async {
     final MoveTarget? target = await askWhereToMove(
       context,
       categories: categories,
@@ -188,7 +254,74 @@ class _LibraryScreenState extends State<LibraryScreen> {
       }
       destination = created.id;
     }
-    await widget.services.data.library.moveToCategory(book.id, destination);
+    // Через меню книга встаёт в конец выбранной категории: места
+    // назначения читатель не выбирал, а совать её в середину чужого
+    // порядка — значит решать за него.
+    await _place(
+      target: _booksOf(sections, destination),
+      moved: book,
+      before: null,
+      categoryId: destination,
+    );
+  }
+
+  /// Книга легла в участок [into] перед книгой [before]; `null` — в конец.
+  Future<void> _dropBook(
+    DraggedBook dragged,
+    ShelfSection into,
+    Book? before,
+  ) async {
+    await _place(
+      target: into.books,
+      moved: dragged.book,
+      before: before,
+      categoryId: into.category?.id,
+    );
+  }
+
+  /// Записывает расстановку и, если надо, переводит полку в ручной порядок.
+  Future<void> _place({
+    required List<Book> target,
+    required Book moved,
+    required Book? before,
+    required String? categoryId,
+  }) async {
+    final List<BookPlacement> placements = placeBefore(
+      target: target,
+      moved: moved,
+      before: before,
+      categoryId: categoryId,
+    );
+    if (placementChangesNothing(target, placements)) {
+      return;
+    }
+    // Книга, ушедшая в другую категорию, оставляет в прежней дыру в
+    // нумерации — 0, 1, 3. Заделывать её незачем: порядок задают не сами
+    // числа, а то, как они идут, и от дыры он не меняется.
+    await widget.services.data.library.placeBooks(placements);
+    if (!mounted || _sort == ShelfSort.manual) {
+      return;
+    }
+    // Перетаскивание при включённой сортировке было бы обманом: книга
+    // вернулась бы на место в тот же миг. Поэтому первый же перенос
+    // переводит полку в ручной порядок — и говорит об этом.
+    await _chooseSort(ShelfSort.manual);
+    if (mounted) {
+      _say('Порядок теперь ручной — книги стоят так, как вы их расставили');
+    }
+  }
+
+  /// Книги категории в том порядке, в каком их видит читатель.
+  List<Book> _booksOf(List<ShelfSection> sections, String? categoryId) {
+    for (final ShelfSection section in sections) {
+      final String? id = section.category?.id;
+      if (id == categoryId) {
+        return section.books;
+      }
+    }
+    // Категория есть, но пуста и на полке её сейчас нет — например,
+    // «Без категории», из которой всё разложили.
+    return const <Book>[];
   }
 
   Future<BookCategory?> _createCategory(int position) async {
@@ -357,6 +490,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
     return ListView.builder(
       key: const Key('library-shelf'),
+      controller: _shelf,
       padding: const EdgeInsets.only(top: 8, bottom: 32),
       itemCount: sections.length,
       itemBuilder: (BuildContext context, int index) {
@@ -368,8 +502,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
           progress: progress,
           busy: _busy,
           onOpen: (Book book) => unawaited(_openBook(book)),
-          onMenu: (Book book) => unawaited(_showBookMenu(book, categories)),
+          onMenu: (Book book) =>
+              unawaited(_showBookMenu(book, categories, sections)),
           onAdd: () => unawaited(_addBooks(category?.id)),
+          onDropBook:
+              (DraggedBook dragged, ShelfSection into, Book? before) =>
+                  unawaited(_dropBook(dragged, into, before)),
+          onDragStarted: _dragStarted,
+          onDragEnded: _dragEnded,
+          onDragOver: _dragOver,
           onRename: category == null
               ? null
               : () => unawaited(_renameCategory(category)),
@@ -389,7 +530,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// виджетов.
   Future<void> _afterFrame() => WidgetsBinding.instance.endOfFrame;
 
-  Future<void> _showBookMenu(Book book, List<BookCategory> categories) async {
+  Future<void> _showBookMenu(
+    Book book,
+    List<BookCategory> categories,
+    List<ShelfSection> sections,
+  ) async {
     final BookAction? action = await askBookAction(context, book);
     if (action == null || !mounted) {
       return;
@@ -402,7 +547,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       case BookAction.open:
         await _openBook(book);
       case BookAction.move:
-        await _moveBook(book, categories);
+        await _moveBook(book, categories, sections);
       case BookAction.remove:
         await _removeBook(book);
     }

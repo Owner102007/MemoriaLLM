@@ -7,6 +7,21 @@ import 'package:memoria/domain/library/book_source.dart';
 Future<AppData> openTestData() =>
     AppData.open(executor: NativeDatabase.memory());
 
+/// Кладёт книгу в категорию на заданное место.
+///
+/// Короткая запись для тестов: расстановка в приложении всегда идёт
+/// целым списком, а проверкам обычно нужна ровно одна книга.
+Future<void> placeBook(
+  AppData data,
+  String bookId,
+  String? categoryId, {
+  int position = 0,
+}) {
+  return data.library.placeBooks(<BookPlacement>[
+    BookPlacement(bookId: bookId, categoryId: categoryId, position: position),
+  ]);
+}
+
 /// Книга-заготовка. Поля заполнены так, чтобы не мешать проверкам.
 Book testBook({
   String id = 'book-1',

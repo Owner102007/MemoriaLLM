@@ -52,8 +52,16 @@ void main() {
     return row.read<int>('user_version');
   }
 
-  /// Откатывает базу к версии 3: категорий тогда не было.
+  /// Откатывает базу к версии 4: мест на полке тогда не было.
+  Future<void> undoPositions(AppData data) async {
+    await data.database.customStatement(
+      'ALTER TABLE books DROP COLUMN shelf_position',
+    );
+  }
+
+  /// Откатывает базу к версии 3: не было ни категорий, ни мест.
   Future<void> undoCategories(AppData data) async {
+    await undoPositions(data);
     await data.database.customStatement('DROP TABLE book_categories');
     await data.database.customStatement(
       'ALTER TABLE books DROP COLUMN category_id',
@@ -69,6 +77,39 @@ void main() {
     );
     expect(await columnsOf(data, 'books'), contains('category_id'));
     await data.close();
+  });
+
+  test('база версии 4 доезжает до 5 и получает места на полке', () async {
+    final AppData first = await launch();
+    await first.categories.save(
+      BookCategory(
+        id: 'study',
+        title: 'Учёба',
+        position: 0,
+        createdAt: DateTime.utc(2026, 8, 24),
+      ),
+    );
+    await first.library.save(testBook());
+    await placeBook(first, 'book-1', 'study');
+    await undoPositions(first);
+    await first.database.customStatement('PRAGMA user_version = 4');
+    expect(await columnsOf(first, 'books'), isNot(contains('shelf_position')));
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(await columnsOf(second, 'books'), contains('shelf_position'));
+
+    // Книга и её категория на месте, а место на полке пришло нулевым:
+    // читатель ещё ничего не переставлял.
+    final Book? book = await second.library.bookById('book-1');
+    expect(book!.categoryId, 'study');
+    expect(book.shelfPosition, 0);
+
+    // И расстановка сразу работает.
+    await placeBook(second, 'book-1', 'study', position: 4);
+    expect((await second.library.bookById('book-1'))!.shelfPosition, 4);
+    await second.close();
   });
 
   test('база версии 3 доезжает до 4 и получает категории', () async {
@@ -99,7 +140,7 @@ void main() {
         createdAt: DateTime.utc(2026, 8, 24),
       ),
     );
-    await second.library.moveToCategory('book-1', 'study');
+    await placeBook(second, 'book-1', 'study');
     expect((await second.library.bookById('book-1'))!.categoryId, 'study');
     await second.close();
   });

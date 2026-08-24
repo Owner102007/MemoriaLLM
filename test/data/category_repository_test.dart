@@ -80,7 +80,7 @@ void main() {
     test('перенос меняет только категорию', () async {
       await data.categories.save(_category('study'));
       await data.library.save(testBook());
-      await data.library.moveToCategory('book-1', 'study');
+      await placeBook(data, 'book-1', 'study');
 
       final Book? moved = await data.library.bookById('book-1');
       expect(moved!.categoryId, 'study');
@@ -93,8 +93,8 @@ void main() {
     test('возврат в «Без категории» — это пустая ссылка', () async {
       await data.categories.save(_category('study'));
       await data.library.save(testBook());
-      await data.library.moveToCategory('book-1', 'study');
-      await data.library.moveToCategory('book-1', null);
+      await placeBook(data, 'book-1', 'study');
+      await placeBook(data, 'book-1', null);
       final Book? loaded = await data.library.bookById('book-1');
       expect(loaded!.categoryId, isNull);
     });
@@ -111,8 +111,8 @@ void main() {
       await data.categories.save(_category('study'));
       await data.library.save(testBook());
       await data.library.save(testBook(id: 'book-2', hash: 'hash-2'));
-      await data.library.moveToCategory('book-1', 'study');
-      await data.library.moveToCategory('book-2', 'study');
+      await placeBook(data, 'book-1', 'study');
+      await placeBook(data, 'book-2', 'study');
 
       await data.categories.delete('study');
 
@@ -151,11 +151,69 @@ void main() {
       await data.categories.save(_category('study'));
       await data.categories.save(_category('fiction', position: 1));
       await data.library.save(testBook());
-      await data.library.moveToCategory('book-1', 'fiction');
+      await placeBook(data, 'book-1', 'fiction');
 
       await data.categories.delete('study');
       final Book? loaded = await data.library.bookById('book-1');
       expect(loaded!.categoryId, 'fiction');
+    });
+  });
+
+  group('расстановка книг', () {
+    test('места пишутся всем сразу', () async {
+      await data.categories.save(_category('study'));
+      for (final String id in <String>['a', 'b', 'c']) {
+        await data.library.save(testBook(id: id, hash: 'hash-$id'));
+      }
+      await data.library.placeBooks(const <BookPlacement>[
+        BookPlacement(bookId: 'c', categoryId: 'study', position: 0),
+        BookPlacement(bookId: 'a', categoryId: 'study', position: 1),
+        BookPlacement(bookId: 'b', categoryId: 'study', position: 2),
+      ]);
+
+      final List<Book> books = await data.library.books();
+      final Map<String, int> places = <String, int>{
+        for (final Book book in books) book.id: book.shelfPosition,
+      };
+      expect(places, <String, int>{'c': 0, 'a': 1, 'b': 2});
+      for (final Book book in books) {
+        expect(book.categoryId, 'study');
+      }
+    });
+
+    test('расстановка не трогает прочие поля книги', () async {
+      await data.library.save(testBook());
+      await data.library.placeBooks(const <BookPlacement>[
+        BookPlacement(bookId: 'book-1', categoryId: null, position: 5),
+      ]);
+      final Book? book = await data.library.bookById('book-1');
+      expect(book!.shelfPosition, 5);
+      expect(book.title, 'Пиковая дама');
+      expect(book.fileHash, 'hash-1');
+      expect(book.author, 'Пушкин');
+    });
+
+    test('пустая расстановка ничего не делает', () async {
+      await data.library.save(testBook());
+      await data.library.placeBooks(const <BookPlacement>[]);
+      expect((await data.library.bookById('book-1'))!.shelfPosition, 0);
+    });
+
+    test('книга, заведённая до расстановки, стоит на нулевом месте', () async {
+      await data.library.save(testBook());
+      expect((await data.library.bookById('book-1'))!.shelfPosition, 0);
+    });
+
+    test('место переживает полную перезапись книги', () async {
+      await data.library.save(testBook());
+      await data.library.placeBooks(const <BookPlacement>[
+        BookPlacement(bookId: 'book-1', categoryId: 'study', position: 3),
+      ]);
+      final Book? placed = await data.library.bookById('book-1');
+      await data.library.save(placed!.copyWith(title: 'Новое название'));
+      final Book? again = await data.library.bookById('book-1');
+      expect(again!.shelfPosition, 3);
+      expect(again.categoryId, 'study');
     });
   });
 

@@ -66,6 +66,7 @@ class DriftLibraryRepository implements LibraryRepository {
       addedAt: Value<DateTime>(book.addedAt),
       openedAt: Value<DateTime?>(book.openedAt),
       categoryId: Value<String?>(book.categoryId),
+      shelfPosition: Value<int>(book.shelfPosition),
       hlc: Value<String>(mark),
       nodeId: Value<String>(stamp.nodeId),
       modified: Value<String>(mark),
@@ -99,11 +100,24 @@ class DriftLibraryRepository implements LibraryRepository {
   }
 
   @override
-  Future<void> moveToCategory(String bookId, String? categoryId) async {
-    await _touch(
-      bookId,
-      BooksCompanion(categoryId: Value<String?>(categoryId)),
-    );
+  Future<void> placeBooks(List<BookPlacement> placements) async {
+    if (placements.isEmpty) {
+      return;
+    }
+    // Одной транзакцией: полка, расставленная наполовину, хуже
+    // нерасставленной — две книги окажутся на одном месте, и порядок
+    // начнёт меняться сам собой при каждом открытии.
+    await _db.transaction(() async {
+      for (final BookPlacement placement in placements) {
+        await _touch(
+          placement.bookId,
+          BooksCompanion(
+            categoryId: Value<String?>(placement.categoryId),
+            shelfPosition: Value<int>(placement.position),
+          ),
+        );
+      }
+    });
   }
 
   @override
@@ -173,6 +187,7 @@ class DriftLibraryRepository implements LibraryRepository {
       coverPath: row.coverPath,
       openedAt: row.openedAt,
       categoryId: row.categoryId,
+      shelfPosition: row.shelfPosition,
     );
   }
 }
