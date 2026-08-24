@@ -178,16 +178,48 @@ class _MoveOption extends StatelessWidget {
 /// сохранения не доходит: [normalizeCategoryTitle] превратит его в
 /// «Новая категория», а безымянного прямоугольника на полке не будет.
 Future<String?> askCategoryName(BuildContext context, {String? initial}) {
-  final TextEditingController controller = TextEditingController(
-    text: initial ?? '',
-  );
   return showDialog<String>(
     context: context,
-    builder: (BuildContext context) => AlertDialog(
-      title: Text(initial == null ? 'Новая категория' : 'Название категории'),
+    builder: (BuildContext context) => _CategoryNameDialog(initial: initial),
+  );
+}
+
+/// Диалог с полем названия.
+///
+/// Отдельный виджет с состоянием, а не поле в замыкании: контроллер
+/// текста обязан жить ровно столько, сколько живёт поле. Прежний вариант
+/// освобождал его в `whenComplete`, то есть **до** того, как диалог
+/// доигрывал уход с экрана, — и поле оставалось с мёртвым контроллером.
+/// Разбиралось это по падению не самого диалога, а следующей перерисовки
+/// полки: сломанный `_FocusInheritedScope` роняет всё дерево целиком.
+class _CategoryNameDialog extends StatefulWidget {
+  const _CategoryNameDialog({this.initial});
+
+  final String? initial;
+
+  @override
+  State<_CategoryNameDialog> createState() => _CategoryNameDialogState();
+}
+
+class _CategoryNameDialogState extends State<_CategoryNameDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial ?? '',
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isNew = widget.initial == null;
+    return AlertDialog(
+      title: Text(isNew ? 'Новая категория' : 'Название категории'),
       content: TextField(
         key: const Key('category-name-field'),
-        controller: controller,
+        controller: _controller,
         autofocus: true,
         textCapitalization: TextCapitalization.sentences,
         decoration: const InputDecoration(
@@ -205,12 +237,12 @@ Future<String?> askCategoryName(BuildContext context, {String? initial}) {
         ),
         FilledButton(
           key: const Key('category-name-ok'),
-          onPressed: () => Navigator.of(context).pop(controller.text),
-          child: Text(initial == null ? 'Создать' : 'Сохранить'),
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: Text(isNew ? 'Создать' : 'Сохранить'),
         ),
       ],
-    ),
-  ).whenComplete(controller.dispose);
+    );
+  }
 }
 
 /// Подтверждение удаления категории.

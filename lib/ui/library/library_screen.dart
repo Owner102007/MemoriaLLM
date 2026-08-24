@@ -178,6 +178,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
     String? destination = target.categoryId;
     if (target.isNew) {
+      await _afterFrame();
+      if (!mounted) {
+        return;
+      }
       final BookCategory? created = await _createCategory(categories.length);
       if (created == null) {
         return;
@@ -203,6 +207,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _renameCategory(BookCategory category) async {
+    // Меню категории в этот момент ещё уходит с экрана — см. [_afterFrame].
+    await _afterFrame();
+    if (!mounted) {
+      return;
+    }
     final String? name = await askCategoryName(
       context,
       initial: category.title,
@@ -216,6 +225,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _deleteCategory(BookCategory category) async {
+    await _afterFrame();
+    if (!mounted) {
+      return;
+    }
     final bool confirmed = await confirmCategoryRemoval(context, category);
     if (!confirmed) {
       return;
@@ -368,9 +381,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
+  /// Ждёт, пока закроется то, что закрывается.
+  ///
+  /// Открывать диалог в тот же миг, когда предыдущая шторка ещё уходит с
+  /// экрана, нельзя: две области фокуса накладываются, и Flutter роняет
+  /// сборку кадра. Один кадр ожидания стоит меньше, чем сломанное дерево
+  /// виджетов.
+  Future<void> _afterFrame() => WidgetsBinding.instance.endOfFrame;
+
   Future<void> _showBookMenu(Book book, List<BookCategory> categories) async {
     final BookAction? action = await askBookAction(context, book);
     if (action == null || !mounted) {
+      return;
+    }
+    await _afterFrame();
+    if (!mounted) {
       return;
     }
     switch (action) {
