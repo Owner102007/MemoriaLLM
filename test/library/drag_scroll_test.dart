@@ -65,10 +65,7 @@ void main() {
 
     test('у самого края — полная скорость', () {
       expect(dragScrollSpeed(y: 0, height: _phone), -kDragScrollFastSpeed);
-      expect(
-        dragScrollSpeed(y: _phone, height: _phone),
-        kDragScrollFastSpeed,
-      );
+      expect(dragScrollSpeed(y: _phone, height: _phone), kDragScrollFastSpeed);
     });
 
     test('на границе зон скорость ровно медленная', () {
@@ -77,10 +74,7 @@ void main() {
         dragScrollSpeed(y: zones.fast, height: _phone),
         closeTo(-kDragScrollSlowSpeed, 1e-9),
       );
-      expect(
-        dragScrollSpeed(y: zones.slow, height: _phone),
-        closeTo(0, 1e-9),
-      );
+      expect(dragScrollSpeed(y: zones.slow, height: _phone), closeTo(0, 1e-9));
     });
 
     test('в медленной зоне медленно, в быстрой быстро', () {

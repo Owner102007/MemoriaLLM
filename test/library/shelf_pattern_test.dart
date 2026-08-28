@@ -127,9 +127,9 @@ void main() {
   group('художник перерисовывает только когда надо', () {
     test('тот же вид — не перерисовывать', () {
       expect(
-        painterFor(ShelfPattern.hexGrid).shouldRepaint(
-          painterFor(ShelfPattern.hexGrid),
-        ),
+        painterFor(
+          ShelfPattern.hexGrid,
+        ).shouldRepaint(painterFor(ShelfPattern.hexGrid)),
         isFalse,
       );
     });

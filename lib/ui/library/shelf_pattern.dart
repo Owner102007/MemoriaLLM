@@ -422,13 +422,7 @@ class ShelfPatternPainter extends CustomPainter {
   }
 
   /// Короткие сегменты, сложенные в лабиринт.
-  void _maze(
-    Canvas canvas,
-    Size size,
-    double shift,
-    Paint line,
-    _Noise noise,
-  ) {
+  void _maze(Canvas canvas, Size size, double shift, Paint line, _Noise noise) {
     final double cell = step * 0.8;
     for (double y = shift - cell; y < size.height + cell; y += cell) {
       for (double x = shift - cell; x < size.width + cell; x += cell) {

@@ -191,11 +191,7 @@ class CategoryStyle {
   /// Цвет узора на заданной теме.
   int inkOn(AppPalette palette) {
     if (acidOn(palette)) {
-      return _hslToArgb(
-        hue,
-        kCategoryAcidSaturation,
-        kCategoryAcidLightness,
-      );
+      return _hslToArgb(hue, kCategoryAcidSaturation, kCategoryAcidLightness);
     }
     return _mix(backgroundOn(palette), palette.text, kCategoryInk);
   }
