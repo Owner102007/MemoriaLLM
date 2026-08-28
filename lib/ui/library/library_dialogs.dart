@@ -102,7 +102,7 @@ Future<MoveTarget?> askWhereToMove(
           key: const Key('move-to-loose'),
           title: kUncategorizedTitle,
           colour: Color(
-            categoryStyleFor(kUncategorizedTitle).backgroundOn(palette),
+            categoryStyleFor(kUncategorizedTitle).weightOn(palette),
           ),
           selected: current == null,
           onTap: () => Navigator.of(context).pop(const MoveTarget()),

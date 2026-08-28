@@ -7,6 +7,7 @@ import '../../application/library/book_importer.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/library/book_file_picker.dart';
+import '../../domain/library/drag_scroll.dart';
 import '../../domain/library/shelf.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
@@ -42,10 +43,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// время, пока внизу висит «Вернуть».
   static const Duration _undoWindow = Duration(seconds: 5);
 
-  /// Насколько близко к краю экрана надо поднести книгу, чтобы полка
-  /// поехала сама, и как быстро она едет.
-  static const double _autoScrollZone = 90;
-  static const double _autoScrollStep = 14;
+  /// Как часто полка сдвигается, пока книгу держат у края.
+  ///
+  /// Шаг считается **из скорости и прошедшего времени**, а не задаётся
+  /// в точках за тик: сама скорость живёт в `domain/library/drag_scroll.dart`
+  /// и проверяется там же, а здесь остаётся только перевод в пиксели.
+  static const Duration _autoScrollTick = Duration(milliseconds: 16);
 
   ShelfSort _sort = ShelfSort.recent;
   bool _busy = false;
@@ -78,12 +81,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     // Один таймер на всё перетаскивание, а не по таймеру на движение:
     // книгу ведут десятками событий в секунду, и заводить на каждое своё
     // ожидание значило бы дёргать полку рывками.
-    _autoScroll = Timer.periodic(const Duration(milliseconds: 16), (Timer _) {
+    _autoScroll = Timer.periodic(_autoScrollTick, (Timer _) {
       if (_scrollSpeed == 0 || !_shelf.hasClients) {
         return;
       }
       final ScrollPosition position = _shelf.position;
-      final double next = (position.pixels + _scrollSpeed).clamp(
+      final double step =
+          _scrollSpeed * _autoScrollTick.inMicroseconds / 1000000;
+      final double next = (position.pixels + step).clamp(
         position.minScrollExtent,
         position.maxScrollExtent,
       );
@@ -103,23 +108,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// Книгу ведут над полкой: у краёв экрана список едет сам.
   ///
   /// Без этого книгу нельзя перенести в категорию, которой не видно, —
-  /// а на полке из десятка категорий это обычный случай.
+  /// а на полке из десятка категорий это обычный случай. Зон две:
+  /// у самого края полка едет быстро, чуть дальше от него — медленно.
+  /// Вся арифметика — в [dragScrollSpeed], и одна и та же на телефоне и
+  /// на ПК: мышь колесом полку прокрутит, но вести книгу и крутить колесо
+  /// одновременно — не то, чего стоит требовать от читателя.
   void _dragOver(Offset globalPosition) {
     final RenderBox? box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) {
       return;
     }
-    final double y = box.globalToLocal(globalPosition).dy;
-    final double height = box.size.height;
-    if (y < _autoScrollZone) {
-      _scrollSpeed = -_autoScrollStep * (1 - y / _autoScrollZone).clamp(0, 1);
-    } else if (y > height - _autoScrollZone) {
-      _scrollSpeed =
-          _autoScrollStep *
-          ((y - (height - _autoScrollZone)) / _autoScrollZone).clamp(0, 1);
-    } else {
-      _scrollSpeed = 0;
-    }
+    _scrollSpeed = dragScrollSpeed(
+      y: box.globalToLocal(globalPosition).dy,
+      height: box.size.height,
+    );
   }
 
   Future<void> _restoreSort() async {

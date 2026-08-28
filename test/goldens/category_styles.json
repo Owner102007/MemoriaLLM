@@ -3,464 +3,1280 @@
     {
       "title": "Учёба",
       "seed": 3985690643,
-      "pattern": "herringbone",
-      "hueIndex": 8,
+      "pattern": "dataStream",
+      "hueIndex": 2,
       "phase": 0.408,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279964454,
-          "ink": 4281148726
+          "background": 4281541654,
+          "ink": 4282594599,
+          "weight": 4282133791,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279307036,
-          "ink": 4280621353
+          "background": 4280949773,
+          "ink": 4282132763,
+          "weight": 4281606933,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279966511,
-          "ink": 4281150784
+          "background": 4281543454,
+          "ink": 4282596400,
+          "weight": 4282135592,
+          "acid": false
         },
         "sepia": {
-          "background": 4292136139,
-          "ink": 4291215035
+          "background": 4293252530,
+          "ink": 4292265636,
+          "weight": 4292726186,
+          "acid": false
         },
         "light": {
-          "background": 4292532975,
-          "ink": 4291414492
+          "background": 4293649363,
+          "ink": 4292399555,
+          "weight": 4292991434,
+          "acid": false
         }
       }
     },
     {
       "title": "учёба",
       "seed": 3985690643,
-      "pattern": "herringbone",
-      "hueIndex": 8,
+      "pattern": "dataStream",
+      "hueIndex": 2,
       "phase": 0.408,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279964454,
-          "ink": 4281148726
+          "background": 4281541654,
+          "ink": 4282594599,
+          "weight": 4282133791,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279307036,
-          "ink": 4280621353
+          "background": 4280949773,
+          "ink": 4282132763,
+          "weight": 4281606933,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279966511,
-          "ink": 4281150784
+          "background": 4281543454,
+          "ink": 4282596400,
+          "weight": 4282135592,
+          "acid": false
         },
         "sepia": {
-          "background": 4292136139,
-          "ink": 4291215035
+          "background": 4293252530,
+          "ink": 4292265636,
+          "weight": 4292726186,
+          "acid": false
         },
         "light": {
-          "background": 4292532975,
-          "ink": 4291414492
+          "background": 4293649363,
+          "ink": 4292399555,
+          "weight": 4292991434,
+          "acid": false
         }
       }
     },
     {
       "title": "  Учёба  ",
       "seed": 3985690643,
-      "pattern": "herringbone",
-      "hueIndex": 8,
+      "pattern": "dataStream",
+      "hueIndex": 2,
       "phase": 0.408,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279964454,
-          "ink": 4281148726
+          "background": 4281541654,
+          "ink": 4282594599,
+          "weight": 4282133791,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279307036,
-          "ink": 4280621353
+          "background": 4280949773,
+          "ink": 4282132763,
+          "weight": 4281606933,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279966511,
-          "ink": 4281150784
+          "background": 4281543454,
+          "ink": 4282596400,
+          "weight": 4282135592,
+          "acid": false
         },
         "sepia": {
-          "background": 4292136139,
-          "ink": 4291215035
+          "background": 4293252530,
+          "ink": 4292265636,
+          "weight": 4292726186,
+          "acid": false
         },
         "light": {
-          "background": 4292532975,
-          "ink": 4291414492
+          "background": 4293649363,
+          "ink": 4292399555,
+          "weight": 4292991434,
+          "acid": false
         }
       }
     },
     {
       "title": "Художественная литература",
       "seed": 3733733640,
-      "pattern": "dots",
+      "pattern": "hexGrid",
       "hueIndex": 0,
       "phase": 0.486,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4281078549,
-          "ink": 4282197287
+          "background": 4281537814,
+          "ink": 4282591015,
+          "weight": 4282130207,
+          "acid": false
         },
         "nightRed": {
-          "background": 4280486667,
-          "ink": 4281669913
+          "background": 4280945933,
+          "ink": 4282129179,
+          "weight": 4281603349,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4281080605,
-          "ink": 4282199343
+          "background": 4281539614,
+          "ink": 4282592816,
+          "weight": 4282132008,
+          "acid": false
         },
         "sepia": {
-          "background": 4293381304,
-          "ink": 4292329130
+          "background": 4293248434,
+          "ink": 4292262052,
+          "weight": 4292722346,
+          "acid": false
         },
         "light": {
-          "background": 4293778140,
-          "ink": 4292528587
+          "background": 4293645011,
+          "ink": 4292395459,
+          "weight": 4292987338,
+          "acid": false
         }
       }
     },
     {
       "title": "Справочники",
       "seed": 3441005601,
-      "pattern": "herringbone",
-      "hueIndex": 6,
+      "pattern": "glitchBlocks",
+      "hueIndex": 0,
       "phase": 0.252,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279968806,
-          "ink": 4281152822
+          "background": 4281537814,
+          "ink": 4282591015,
+          "weight": 4282130207,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279311388,
-          "ink": 4280625449
+          "background": 4280945933,
+          "ink": 4282129179,
+          "weight": 4281603349,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279970863,
-          "ink": 4281154880
+          "background": 4281539614,
+          "ink": 4282592816,
+          "weight": 4282132008,
+          "acid": false
         },
         "sepia": {
-          "background": 4292141003,
-          "ink": 4291219387
+          "background": 4293248434,
+          "ink": 4292262052,
+          "weight": 4292722346,
+          "acid": false
         },
         "light": {
-          "background": 4292537839,
-          "ink": 4291418844
+          "background": 4293645011,
+          "ink": 4292395459,
+          "weight": 4292987338,
+          "acid": false
         }
       }
     },
     {
       "title": "Фантастика",
       "seed": 3595522829,
-      "pattern": "dots",
-      "hueIndex": 9,
+      "pattern": "hexGrid",
+      "hueIndex": 3,
       "phase": 0.431,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4280554278,
-          "ink": 4281738550
+          "background": 4281543446,
+          "ink": 4282596135,
+          "weight": 4282135583,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279896860,
-          "ink": 4281145641
+          "background": 4280951821,
+          "ink": 4282134555,
+          "weight": 4281608981,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4280556335,
-          "ink": 4281675072
+          "background": 4281545502,
+          "ink": 4282598192,
+          "weight": 4282137640,
+          "acid": false
         },
         "sepia": {
-          "background": 4292725963,
-          "ink": 4291739323
+          "background": 4293254834,
+          "ink": 4292267684,
+          "weight": 4292728234,
+          "acid": false
         },
         "light": {
-          "background": 4293188335,
-          "ink": 4292004316
+          "background": 4293651411,
+          "ink": 4292401347,
+          "weight": 4292993482,
+          "acid": false
         }
       }
     },
     {
       "title": "История",
       "seed": 2515599783,
-      "pattern": "herringbone",
+      "pattern": "glitchBlocks",
       "hueIndex": 0,
       "phase": 0.192,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4281078549,
-          "ink": 4282197287
+          "background": 4281537814,
+          "ink": 4282591015,
+          "weight": 4282130207,
+          "acid": false
         },
         "nightRed": {
-          "background": 4280486667,
-          "ink": 4281669913
+          "background": 4280945933,
+          "ink": 4282129179,
+          "weight": 4281603349,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4281080605,
-          "ink": 4282199343
+          "background": 4281539614,
+          "ink": 4282592816,
+          "weight": 4282132008,
+          "acid": false
         },
         "sepia": {
-          "background": 4293381304,
-          "ink": 4292329130
+          "background": 4293248434,
+          "ink": 4292262052,
+          "weight": 4292722346,
+          "acid": false
         },
         "light": {
-          "background": 4293778140,
-          "ink": 4292528587
+          "background": 4293645011,
+          "ink": 4292395459,
+          "weight": 4292987338,
+          "acid": false
         }
       }
     },
     {
       "title": "Программирование",
       "seed": 2841112289,
-      "pattern": "checker",
+      "pattern": "maze",
       "hueIndex": 7,
       "phase": 0.675,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279966758,
-          "ink": 4281150774
+          "background": 4280036126,
+          "ink": 4281219887,
+          "weight": 4280693799,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279309340,
-          "ink": 4280623401
+          "background": 4279444501,
+          "ink": 4280758306,
+          "weight": 4280167196,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279968815,
-          "ink": 4281152832
+          "background": 4280038182,
+          "ink": 4281221944,
+          "weight": 4280695856,
+          "acid": false
         },
         "sepia": {
-          "background": 4292138443,
-          "ink": 4291217083
+          "background": 4291616442,
+          "ink": 4290760364,
+          "weight": 4291155378,
+          "acid": false
         },
         "light": {
-          "background": 4292535535,
-          "ink": 4291416796
+          "background": 4292013020,
+          "ink": 4290894027,
+          "weight": 4291420627,
+          "acid": false
         }
       }
     },
     {
       "title": "Дочитать",
       "seed": 3264795836,
-      "pattern": "weave",
-      "hueIndex": 6,
+      "pattern": "nodes",
+      "hueIndex": 0,
       "phase": 0.908,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279968806,
-          "ink": 4281152822
+          "background": 4281537814,
+          "ink": 4282591015,
+          "weight": 4282130207,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279311388,
-          "ink": 4280625449
+          "background": 4280945933,
+          "ink": 4282129179,
+          "weight": 4281603349,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279970863,
-          "ink": 4281154880
+          "background": 4281539614,
+          "ink": 4282592816,
+          "weight": 4282132008,
+          "acid": false
         },
         "sepia": {
-          "background": 4292141003,
-          "ink": 4291219387
+          "background": 4293248434,
+          "ink": 4292262052,
+          "weight": 4292722346,
+          "acid": false
         },
         "light": {
-          "background": 4292537839,
-          "ink": 4291418844
+          "background": 4293645011,
+          "ink": 4292395459,
+          "weight": 4292987338,
+          "acid": false
         }
       }
     },
     {
       "title": "Сейчас читаю",
       "seed": 3290164081,
-      "pattern": "planks",
-      "hueIndex": 5,
+      "pattern": "waveform",
+      "hueIndex": 11,
       "phase": 0.101,
+      "acid": true,
       "colours": {
         "darkRed": {
-          "background": 4279968797,
-          "ink": 4281152814
+          "background": 4280032301,
+          "ink": 4281234170,
+          "weight": 4280299870,
+          "acid": true
         },
         "nightRed": {
-          "background": 4279311380,
-          "ink": 4280625441
+          "background": 4279440676,
+          "ink": 4281234170,
+          "weight": 4279839575,
+          "acid": true
         },
         "neutralDark": {
-          "background": 4279970854,
-          "ink": 4281154872
+          "background": 4280034357,
+          "ink": 4281234170,
+          "weight": 4280301412,
+          "acid": true
         },
         "sepia": {
-          "background": 4292140993,
-          "ink": 4291219378
+          "background": 4291612107,
+          "ink": 4290756539,
+          "weight": 4291151298,
+          "acid": false
         },
         "light": {
-          "background": 4292537829,
-          "ink": 4291418835
+          "background": 4292008685,
+          "ink": 4290890202,
+          "weight": 4291416547,
+          "acid": false
         }
       }
     },
     {
       "title": "Ноты",
       "seed": 3061290929,
-      "pattern": "checker",
-      "hueIndex": 11,
+      "pattern": "isoGrid",
+      "hueIndex": 5,
       "phase": 0.355,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4281078557,
-          "ink": 4282197294
+          "background": 4280560406,
+          "ink": 4281744167,
+          "weight": 4281218079,
+          "acid": false
         },
         "nightRed": {
-          "background": 4280486676,
-          "ink": 4281669921
+          "background": 4279968781,
+          "ink": 4281217051,
+          "weight": 4280625941,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4281080614,
-          "ink": 4282199352
+          "background": 4280562462,
+          "ink": 4281680688,
+          "weight": 4281154600,
+          "acid": false
         },
         "sepia": {
-          "background": 4293381313,
-          "ink": 4292329138
+          "background": 4292140722,
+          "ink": 4291219108,
+          "weight": 4291614122,
+          "acid": false
         },
         "light": {
-          "background": 4293778149,
-          "ink": 4292528595
+          "background": 4292537299,
+          "ink": 4291418307,
+          "weight": 4291944906,
+          "acid": false
         }
       }
     },
     {
       "title": "Без категории",
       "seed": 1861066038,
-      "pattern": "planks",
+      "pattern": "isoGrid",
       "hueIndex": 10,
       "phase": 0.198,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4281078566,
-          "ink": 4282197302
+          "background": 4280034349,
+          "ink": 4281218364,
+          "weight": 4280692021,
+          "acid": false
         },
         "nightRed": {
-          "background": 4280486684,
-          "ink": 4281669929
+          "background": 4279442468,
+          "ink": 4280756528,
+          "weight": 4280165163,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4281080623,
-          "ink": 4282199360
+          "background": 4280036149,
+          "ink": 4281220165,
+          "weight": 4280693822,
+          "acid": false
         },
         "sepia": {
-          "background": 4293381323,
-          "ink": 4292329147
+          "background": 4291614155,
+          "ink": 4290758331,
+          "weight": 4291153346,
+          "acid": false
         },
         "light": {
-          "background": 4293778159,
-          "ink": 4292528604
+          "background": 4292010989,
+          "ink": 4290892250,
+          "weight": 4291418595,
+          "acid": false
         }
       }
     },
     {
       "title": "A",
       "seed": 3826002220,
-      "pattern": "dots",
-      "hueIndex": 8,
+      "pattern": "triangles",
+      "hueIndex": 14,
       "phase": 0.19,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279964454,
-          "ink": 4281148726
+          "background": 4281013549,
+          "ink": 4282132284,
+          "weight": 4281605941,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279307036,
-          "ink": 4280621353
+          "background": 4280421668,
+          "ink": 4281670448,
+          "weight": 4281079083,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279966511,
-          "ink": 4281150784
+          "background": 4281015349,
+          "ink": 4282134085,
+          "weight": 4281607742,
+          "acid": false
         },
         "sepia": {
-          "background": 4292136139,
-          "ink": 4291215035
+          "background": 4292724171,
+          "ink": 4291737787,
+          "weight": 4292198082,
+          "acid": false
         },
         "light": {
-          "background": 4292532975,
-          "ink": 4291414492
+          "background": 4293120749,
+          "ink": 4291936730,
+          "weight": 4292463075,
+          "acid": false
         }
       }
     },
     {
       "title": "Z",
       "seed": 4278997933,
-      "pattern": "diagonal",
-      "hueIndex": 5,
+      "pattern": "triangles",
+      "hueIndex": 17,
       "phase": 0.646,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4279968797,
-          "ink": 4281152814
+          "background": 4281537822,
+          "ink": 4282591023,
+          "weight": 4282130215,
+          "acid": false
         },
         "nightRed": {
-          "background": 4279311380,
-          "ink": 4280625441
+          "background": 4280945941,
+          "ink": 4282129186,
+          "weight": 4281603356,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4279970854,
-          "ink": 4281154872
+          "background": 4281539622,
+          "ink": 4282592824,
+          "weight": 4282132016,
+          "acid": false
         },
         "sepia": {
-          "background": 4292140993,
-          "ink": 4291219378
+          "background": 4293248442,
+          "ink": 4292262060,
+          "weight": 4292722354,
+          "acid": false
         },
         "light": {
-          "background": 4292537829,
-          "ink": 4291418835
+          "background": 4293645020,
+          "ink": 4292395467,
+          "weight": 4292987347,
+          "acid": false
         }
       }
     },
     {
       "title": "日本語",
       "seed": 1409693518,
-      "pattern": "weave",
-      "hueIndex": 3,
+      "pattern": "pulse",
+      "hueIndex": 9,
       "phase": 0.755,
+      "acid": true,
       "colours": {
         "darkRed": {
-          "background": 4280558613,
-          "ink": 4281742631
+          "background": 4280036141,
+          "ink": 4281268986,
+          "weight": 4280311134,
+          "acid": true
         },
         "nightRed": {
-          "background": 4279901195,
-          "ink": 4281149721
+          "background": 4279444516,
+          "ink": 4281268986,
+          "weight": 4279850839,
+          "acid": true
         },
         "neutralDark": {
-          "background": 4280560669,
-          "ink": 4281679151
+          "background": 4280038197,
+          "ink": 4281268986,
+          "weight": 4280312676,
+          "acid": true
         },
         "sepia": {
-          "background": 4292730808,
-          "ink": 4291743658
+          "background": 4291616459,
+          "ink": 4290760379,
+          "weight": 4291155394,
+          "acid": false
         },
         "light": {
-          "background": 4293193180,
-          "ink": 4292008651
+          "background": 4292013037,
+          "ink": 4290894042,
+          "weight": 4291420643,
+          "acid": false
         }
       }
     },
     {
       "title": "Мои книги 2026",
       "seed": 4135931677,
-      "pattern": "diagonal",
-      "hueIndex": 11,
+      "pattern": "scanlines",
+      "hueIndex": 5,
       "phase": 0.554,
+      "acid": false,
       "colours": {
         "darkRed": {
-          "background": 4281078557,
-          "ink": 4282197294
+          "background": 4280560406,
+          "ink": 4281744167,
+          "weight": 4281218079,
+          "acid": false
         },
         "nightRed": {
-          "background": 4280486676,
-          "ink": 4281669921
+          "background": 4279968781,
+          "ink": 4281217051,
+          "weight": 4280625941,
+          "acid": false
         },
         "neutralDark": {
-          "background": 4281080614,
-          "ink": 4282199352
+          "background": 4280562462,
+          "ink": 4281680688,
+          "weight": 4281154600,
+          "acid": false
         },
         "sepia": {
-          "background": 4293381313,
-          "ink": 4292329138
+          "background": 4292140722,
+          "ink": 4291219108,
+          "weight": 4291614122,
+          "acid": false
         },
         "light": {
-          "background": 4293778149,
-          "ink": 4292528595
+          "background": 4292537299,
+          "ink": 4291418307,
+          "weight": 4291944906,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Философия",
+      "seed": 68582756,
+      "pattern": "maze",
+      "hueIndex": 12,
+      "phase": 0.523,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4280030509,
+          "ink": 4281214780,
+          "weight": 4280688437,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4279438628,
+          "ink": 4280752944,
+          "weight": 4280161579,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4280032309,
+          "ink": 4281216581,
+          "weight": 4280690238,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4291610059,
+          "ink": 4290754747,
+          "weight": 4291149506,
+          "acid": false
+        },
+        "light": {
+          "background": 4292006637,
+          "ink": 4290888154,
+          "weight": 4291414499,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Биографии",
+      "seed": 1810198993,
+      "pattern": "crosshatch",
+      "hueIndex": 2,
+      "phase": 0.81,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281541654,
+          "ink": 4282594599,
+          "weight": 4282133791,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280949773,
+          "ink": 4282132763,
+          "weight": 4281606933,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281543454,
+          "ink": 4282596400,
+          "weight": 4282135592,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4293252530,
+          "ink": 4292265636,
+          "weight": 4292726186,
+          "acid": false
+        },
+        "light": {
+          "background": 4293649363,
+          "ink": 4292399555,
+          "weight": 4292991434,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Детективы",
+      "seed": 1186201634,
+      "pattern": "glitchBlocks",
+      "hueIndex": 2,
+      "phase": 0.05,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281541654,
+          "ink": 4282594599,
+          "weight": 4282133791,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280949773,
+          "ink": 4282132763,
+          "weight": 4281606933,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281543454,
+          "ink": 4282596400,
+          "weight": 4282135592,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4293252530,
+          "ink": 4292265636,
+          "weight": 4292726186,
+          "acid": false
+        },
+        "light": {
+          "background": 4293649363,
+          "ink": 4292399555,
+          "weight": 4292991434,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Поэзия",
+      "seed": 768062389,
+      "pattern": "isoGrid",
+      "hueIndex": 1,
+      "phase": 0.859,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281539606,
+          "ink": 4282592551,
+          "weight": 4282131743,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280947981,
+          "ink": 4282130971,
+          "weight": 4281605141,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281541662,
+          "ink": 4282594608,
+          "weight": 4282133800,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4293250482,
+          "ink": 4292263844,
+          "weight": 4292724138,
+          "acid": false
+        },
+        "light": {
+          "background": 4293647059,
+          "ink": 4292397507,
+          "weight": 4292989386,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Технические",
+      "seed": 2382792110,
+      "pattern": "triangles",
+      "hueIndex": 8,
+      "phase": 0.179,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4280036133,
+          "ink": 4281219893,
+          "weight": 4280693806,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4279444508,
+          "ink": 4280758313,
+          "weight": 4280167203,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4280038190,
+          "ink": 4281221951,
+          "weight": 4280695863,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4291616451,
+          "ink": 4290760372,
+          "weight": 4291155387,
+          "acid": false
+        },
+        "light": {
+          "background": 4292013028,
+          "ink": 4290894034,
+          "weight": 4291420634,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Медицина",
+      "seed": 1010372653,
+      "pattern": "triangles",
+      "hueIndex": 8,
+      "phase": 0.708,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4280036133,
+          "ink": 4281219893,
+          "weight": 4280693806,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4279444508,
+          "ink": 4280758313,
+          "weight": 4280167203,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4280038190,
+          "ink": 4281221951,
+          "weight": 4280695863,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4291616451,
+          "ink": 4290760372,
+          "weight": 4291155387,
+          "acid": false
+        },
+        "light": {
+          "background": 4292013028,
+          "ink": 4290894034,
+          "weight": 4291420634,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Право",
+      "seed": 1417494142,
+      "pattern": "chevron",
+      "hueIndex": 17,
+      "phase": 0.814,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281537822,
+          "ink": 4282591023,
+          "weight": 4282130215,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280945941,
+          "ink": 4282129186,
+          "weight": 4281603356,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281539622,
+          "ink": 4282592824,
+          "weight": 4282132016,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4293248442,
+          "ink": 4292262060,
+          "weight": 4292722354,
+          "acid": false
+        },
+        "light": {
+          "background": 4293645020,
+          "ink": 4292395467,
+          "weight": 4292987347,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Кулинария",
+      "seed": 1880386593,
+      "pattern": "glitchBlocks",
+      "hueIndex": 0,
+      "phase": 0.346,
+      "acid": true,
+      "colours": {
+        "darkRed": {
+          "background": 4281537814,
+          "ink": 4294585902,
+          "weight": 4284685084,
+          "acid": true
+        },
+        "nightRed": {
+          "background": 4280945933,
+          "ink": 4294585902,
+          "weight": 4284224789,
+          "acid": true
+        },
+        "neutralDark": {
+          "background": 4281539614,
+          "ink": 4294585902,
+          "weight": 4284686370,
+          "acid": true
+        },
+        "sepia": {
+          "background": 4293248434,
+          "ink": 4292262052,
+          "weight": 4292722346,
+          "acid": false
+        },
+        "light": {
+          "background": 4293645011,
+          "ink": 4292395459,
+          "weight": 4292987338,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Путешествия",
+      "seed": 856060429,
+      "pattern": "hexGrid",
+      "hueIndex": 9,
+      "phase": 0.531,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4280036141,
+          "ink": 4281219900,
+          "weight": 4280693813,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4279444516,
+          "ink": 4280758320,
+          "weight": 4280167211,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4280038197,
+          "ink": 4281221957,
+          "weight": 4280695870,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4291616459,
+          "ink": 4290760379,
+          "weight": 4291155394,
+          "acid": false
+        },
+        "light": {
+          "background": 4292013037,
+          "ink": 4290894042,
+          "weight": 4291420643,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Военная история",
+      "seed": 3881669827,
+      "pattern": "barcode",
+      "hueIndex": 2,
+      "phase": 0.614,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281541654,
+          "ink": 4282594599,
+          "weight": 4282133791,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280949773,
+          "ink": 4282132763,
+          "weight": 4281606933,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281543454,
+          "ink": 4282596400,
+          "weight": 4282135592,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4293252530,
+          "ink": 4292265636,
+          "weight": 4292726186,
+          "acid": false
+        },
+        "light": {
+          "background": 4293649363,
+          "ink": 4292399555,
+          "weight": 4292991434,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Психология",
+      "seed": 664853595,
+      "pattern": "contour",
+      "hueIndex": 4,
+      "phase": 0.072,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281019158,
+          "ink": 4282137383,
+          "weight": 4281611295,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280427533,
+          "ink": 4281675803,
+          "weight": 4281084693,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281021214,
+          "ink": 4282139440,
+          "weight": 4281613352,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4292730546,
+          "ink": 4291743396,
+          "weight": 4292203946,
+          "acid": false
+        },
+        "light": {
+          "background": 4293127123,
+          "ink": 4291942595,
+          "weight": 4292469194,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Экономика",
+      "seed": 135794989,
+      "pattern": "triangles",
+      "hueIndex": 12,
+      "phase": 0.036,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4280030509,
+          "ink": 4281214780,
+          "weight": 4280688437,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4279438628,
+          "ink": 4280752944,
+          "weight": 4280161579,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4280032309,
+          "ink": 4281216581,
+          "weight": 4280690238,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4291610059,
+          "ink": 4290754747,
+          "weight": 4291149506,
+          "acid": false
+        },
+        "light": {
+          "background": 4292006637,
+          "ink": 4290888154,
+          "weight": 4291414499,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Языки",
+      "seed": 1195539938,
+      "pattern": "maze",
+      "hueIndex": 6,
+      "phase": 0.121,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4280036118,
+          "ink": 4281219879,
+          "weight": 4280693791,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4279444493,
+          "ink": 4280758299,
+          "weight": 4280167189,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4280038174,
+          "ink": 4281221936,
+          "weight": 4280695848,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4291616434,
+          "ink": 4290760356,
+          "weight": 4291155370,
+          "acid": false
+        },
+        "light": {
+          "background": 4292013011,
+          "ink": 4290894019,
+          "weight": 4291420618,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Комиксы",
+      "seed": 3659806381,
+      "pattern": "triangles",
+      "hueIndex": 7,
+      "phase": 0.922,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4280036126,
+          "ink": 4281219887,
+          "weight": 4280693799,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4279444501,
+          "ink": 4280758306,
+          "weight": 4280167196,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4280038182,
+          "ink": 4281221944,
+          "weight": 4280695856,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4291616442,
+          "ink": 4290760364,
+          "weight": 4291155378,
+          "acid": false
+        },
+        "light": {
+          "background": 4292013020,
+          "ink": 4290894027,
+          "weight": 4291420627,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Архив",
+      "seed": 1947165926,
+      "pattern": "maze",
+      "hueIndex": 0,
+      "phase": 0.855,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281537814,
+          "ink": 4282591015,
+          "weight": 4282130207,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280945933,
+          "ink": 4282129179,
+          "weight": 4281603349,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281539614,
+          "ink": 4282592816,
+          "weight": 4282132008,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4293248434,
+          "ink": 4292262052,
+          "weight": 4292722346,
+          "acid": false
+        },
+        "light": {
+          "background": 4293645011,
+          "ink": 4292395459,
+          "weight": 4292987338,
+          "acid": false
+        }
+      }
+    },
+    {
+      "title": "Отложенное",
+      "seed": 2047342378,
+      "pattern": "triangles",
+      "hueIndex": 15,
+      "phase": 0.619,
+      "acid": false,
+      "colours": {
+        "darkRed": {
+          "background": 4281537837,
+          "ink": 4282591036,
+          "weight": 4282130229,
+          "acid": false
+        },
+        "nightRed": {
+          "background": 4280945956,
+          "ink": 4282129200,
+          "weight": 4281603371,
+          "acid": false
+        },
+        "neutralDark": {
+          "background": 4281539637,
+          "ink": 4282592837,
+          "weight": 4282132030,
+          "acid": false
+        },
+        "sepia": {
+          "background": 4293248459,
+          "ink": 4292262075,
+          "weight": 4292722370,
+          "acid": false
+        },
+        "light": {
+          "background": 4293645037,
+          "ink": 4292395482,
+          "weight": 4292987363,
+          "acid": false
         }
       }
     }

@@ -87,6 +87,10 @@ class CategoryShelf extends StatelessWidget {
     final CategoryStyle style = categoryStyleFor(section.title);
     final Color background = Color(style.backgroundOn(palette));
     final Color ink = Color(style.inkOn(palette));
+    // Кружок у заголовка красится **средним** цветом участка, а не
+    // подложкой: у кислотной категории вся приметность в узоре, и по
+    // одной подложке её было бы не отличить от спокойной соседки.
+    final Color marker = Color(style.weightOn(palette));
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
@@ -97,7 +101,7 @@ class CategoryShelf extends StatelessWidget {
             section: section,
             onRename: onRename,
             onDelete: onDelete,
-            marker: background,
+            marker: marker,
           ),
           const SizedBox(height: 8),
           LayoutBuilder(
@@ -108,6 +112,7 @@ class CategoryShelf extends StatelessWidget {
               const double gap = 10;
               final double block = (inner - gap * (columns - 1)) / columns;
               final Size blockSize = Size(block, block * kShelfBlockAspect);
+              final double patternStep = patternStepFor(block);
               return ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: CustomPaint(
@@ -115,7 +120,9 @@ class CategoryShelf extends StatelessWidget {
                     style: style,
                     background: background,
                     ink: ink,
-                    step: patternStepFor(block),
+                    step: patternStep,
+                    stroke: style.strokeOn(palette, patternStep),
+                    glow: style.acidOn(palette),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(inset),

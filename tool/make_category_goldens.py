@@ -27,10 +27,32 @@ PALETTES = {
     "light": {"surface": 0xF5F5F7, "text": 0x1A1A1C, "dark": False},
 }
 
-PATTERNS = ["planks", "diagonal", "checker", "dots", "herringbone", "weave"]
-HUES = 12
-TINT = 0.20
+PATTERNS = [
+    "circuit",
+    "hexGrid",
+    "dataStream",
+    "scanlines",
+    "glitchBlocks",
+    "triangles",
+    "isoGrid",
+    "nodes",
+    "barcode",
+    "pulse",
+    "crosshatch",
+    "contour",
+    "maze",
+    "pixelRain",
+    "waveform",
+    "chevron",
+]
+HUES = 18
+TINT = 0.26
 INK = 0.09
+ACID_EVERY = 7
+ACID_SATURATION = 0.95
+ACID_LIGHTNESS = 0.58
+ACID_COVERAGE = 0.24
+CALM_COVERAGE = 0.55
 
 TITLES = [
     "Учёба",
@@ -49,6 +71,22 @@ TITLES = [
     "Z",
     "日本語",
     "Мои книги 2026",
+    "Философия",
+    "Биографии",
+    "Детективы",
+    "Поэзия",
+    "Технические",
+    "Медицина",
+    "Право",
+    "Кулинария",
+    "Путешествия",
+    "Военная история",
+    "Психология",
+    "Экономика",
+    "Языки",
+    "Комиксы",
+    "Архив",
+    "Отложенное",
 ]
 
 
@@ -98,6 +136,31 @@ def style_for(title: str) -> dict:
         "pattern": PATTERNS[(seed >> 3) % len(PATTERNS)],
         "hueIndex": (seed >> 9) % HUES,
         "phase": ((seed >> 17) % 1000) / 1000.0,
+        "acid": ((seed >> 21) % ACID_EVERY) == 0,
+    }
+
+
+def colours_for(style: dict, palette: dict) -> dict:
+    """Подложка, узор и средний вес участка на одной теме."""
+    hue = style["hueIndex"] * 360.0 / HUES
+    tint = hsl_to_rgb(hue, 0.5, 0.34 if palette["dark"] else 0.62)
+    background = mix(palette["surface"], tint, TINT)
+    # Кислота живёт только на тёмных темах: неон на бумажном фоне читается
+    # как маркер, а не как свечение (решение владельца, 28.08.2026).
+    acid = style["acid"] and palette["dark"]
+    if acid:
+        ink = hsl_to_rgb(hue, ACID_SATURATION, ACID_LIGHTNESS)
+        ink_value = (ink[0] << 16) | (ink[1] << 8) | ink[2]
+        coverage = ACID_COVERAGE
+    else:
+        ink_value = mix(background, channels(palette["text"]), INK)
+        coverage = CALM_COVERAGE
+    weight = mix(background, channels(ink_value), coverage)
+    return {
+        "background": 0xFF000000 | background,
+        "ink": 0xFF000000 | ink_value,
+        "weight": 0xFF000000 | weight,
+        "acid": acid,
     }
 
 
@@ -105,25 +168,28 @@ def main() -> None:
     entries = []
     for title in TITLES:
         style = style_for(title)
-        hue = style["hueIndex"] * 360.0 / HUES
-        colours = {}
-        for name, palette in PALETTES.items():
-            tint = hsl_to_rgb(hue, 0.5, 0.34 if palette["dark"] else 0.62)
-            background = mix(palette["surface"], tint, TINT)
-            ink = mix(background, channels(palette["text"]), INK)
-            colours[name] = {
-                "background": 0xFF000000 | background,
-                "ink": 0xFF000000 | ink,
-            }
+        colours = {
+            name: colours_for(style, palette)
+            for name, palette in PALETTES.items()
+        }
         entries.append({"title": title, **style, "colours": colours})
 
-    out = pathlib.Path(__file__).resolve().parent.parent / "test/goldens/category_styles.json"
+    out = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "test/goldens/category_styles.json"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps({"styles": entries}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"записано {len(entries)} записей в {out}")
+    patterns = {e["pattern"] for e in entries}
+    acids = sum(1 for e in entries if e["acid"])
+    print(
+        f"записано {len(entries)} записей в {out}\n"
+        f"узоров задето: {len(patterns)} из {len(PATTERNS)}, "
+        f"кислотных категорий: {acids}"
+    )
 
 
 if __name__ == "__main__":
