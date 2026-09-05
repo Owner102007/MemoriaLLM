@@ -7,20 +7,32 @@ import 'package:pdfrx/pdfrx.dart';
 
 import '../../application/app_services.dart';
 import '../../application/library/book_importer.dart';
+import '../../application/reading/book_selection.dart';
 import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
+import '../../domain/annotations/annotations.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/book_file_picker.dart';
+import '../../domain/library/ids.dart';
+import '../../domain/prompts/selection_prompt.dart';
+import '../../domain/reading/context_paragraph.dart';
 import '../../domain/reading/fragments.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
+import '../../domain/reading/text_geometry.dart';
+import '../../domain/reading/text_search.dart';
 import '../../domain/settings/app_settings.dart';
+import '../annotations/annotations_screen.dart';
 import 'crop_editor_screen.dart';
 import 'display_mode_buttons.dart';
+import 'highlight_layer.dart';
+import 'note_dialog.dart';
+import 'prompt_preview_sheet.dart';
 import 'reader_scaffold.dart';
 import 'reader_settings_sheet.dart';
 import 'reader_sheet.dart';
 import 'reading_filter_layer.dart';
+import 'selection_panel.dart';
 
 /// Экран чтения.
 ///
@@ -67,6 +79,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _zoomLocked = true;
   DisplayArea _area = DisplayArea.unknown;
 
+  /// Точка, в которой читатель начал выделять. Пусто — слоя выделения нет.
+  Offset? _selectionStart;
+
+  /// Что выделено сейчас.
+  BookSelection? _selection;
+
+  /// Куда лёг лист: нужно, чтобы поставить панель и подсветку.
+  SheetView? _view;
+
+  /// Промпты читателя: набор книги, если он есть, иначе мастерский.
+  PromptSet _prompts = PromptSet.empty;
+  StreamSubscription<PromptSet>? _promptsWatch;
+
+  /// Найденное поиском, что подсвечено на странице.
+  SearchHit? _foundHit;
+  List<TextBox> _foundRects = const <TextBox>[];
+
+  /// Язык, на который читатель просит переводить. Подставляется в
+  /// `{{мой_язык}}`; настоящий выбор языка появится в S8 вместе с
+  /// редактором промптов.
+  String _myLanguage = 'русский';
+
   /// Можно ли попросить систему повернуть экран.
   ///
   /// На ПК — нельзя: `setPreferredOrientations` там не делает ничего, а
@@ -91,6 +125,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onDetach: () => unawaited(_controller?.flush()),
     );
     unawaited(_restoreDeviceSettings());
+    // Набор промптов слушается живьём: правка мастер-набора в настройках
+    // обязана менять подписи на кнопках, не закрывая книгу.
+    _promptsWatch = widget.services.data.prompts
+        .watchPromptsFor(widget.book.id)
+        .listen((PromptSet set) {
+          if (mounted) {
+            setState(() => _prompts = set);
+          }
+        });
     unawaited(_open());
   }
 
@@ -113,9 +156,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final String? rotation = await settings.read(SettingsKeys.readingRotation);
     final String? flow = await settings.read(SettingsKeys.pageFlow);
     final String? locked = await settings.read(SettingsKeys.zoomLock);
+    final String? language = await settings.read(SettingsKeys.targetLanguage);
     if (!mounted) {
       return;
     }
+    _myLanguage = language ?? _myLanguage;
     setState(() {
       _rotation = rotation == ScreenOrientation.landscape.name
           ? ScreenOrientation.landscape
@@ -238,6 +283,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     _lifecycle?.dispose();
+    unawaited(_promptsWatch?.cancel());
     _search?.dispose();
     final ReaderController? controller = _controller;
     _controller = null;
@@ -327,6 +373,254 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  /// Читатель начал выделять.
+  ///
+  /// Слой выделения поднимается по долгому нажатию и держится до тех пор,
+  /// пока выделение не снято. Точка нажатия запоминается: сам жест до
+  /// слоя не доходит — Flutter отдаёт события указателя тем, кто был на
+  /// месте в момент касания, — поэтому намерение повторяется программно,
+  /// выделением слова в этой самой точке.
+  void _startSelection(Offset at) {
+    if (_flow != PageFlow.paged) {
+      // В ленте выделение своё, просмотрщика: он там и рисует страницы.
+      return;
+    }
+    setState(() {
+      _selectionStart = at;
+      _selection = null;
+    });
+  }
+
+  void _dismissSelection() {
+    if (_selectionStart == null && _selection == null) {
+      return;
+    }
+    setState(() {
+      _selectionStart = null;
+      _selection = null;
+    });
+  }
+
+  Future<void> _onSelectionRanges(List<PdfPageTextRange> ranges) async {
+    final ReaderController? controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    if (ranges.isEmpty) {
+      if (mounted && _selection != null) {
+        setState(() => _selection = null);
+      }
+      return;
+    }
+    // Берётся первый кусок: на листе видна одна страница или разворот, и
+    // выделение через границу страниц — редкость, ради которой не стоит
+    // усложнять панель. Текст при этом склеивается весь.
+    final PdfPageTextRange range = ranges.first;
+    final String text = ranges
+        .map((PdfPageTextRange part) => part.text)
+        .join(' ')
+        .trim();
+    final List<TextBox> rects = await controller.highlightFor(
+      pageNumber: range.pageNumber,
+      start: range.start,
+      end: range.end,
+    );
+    if (!mounted) {
+      return;
+    }
+    final BookSelection selection = BookSelection(
+      pageNumber: range.pageNumber,
+      start: range.start,
+      end: range.end,
+      text: text,
+      rects: rects,
+    );
+    setState(() => _selection = selection.isEmpty ? null : selection);
+  }
+
+  /// Нажали на промпт читателя.
+  ///
+  /// Модели ещё нет — она появится в S8. Кнопка при этом не молчит:
+  /// показывается готовый запрос со всеми подстановками. Заодно это
+  /// единственный способ увидеть глазами, тот ли абзац достался
+  /// контекстом.
+  Future<void> _onPrompt(SelectionPrompt prompt) async {
+    final BookSelection? selection = _selection;
+    final ReaderController? controller = _controller;
+    if (selection == null || controller == null) {
+      return;
+    }
+    String? context;
+    if (prompt.check.needsContext) {
+      final ParagraphContext? paragraph = await controller.contextAround(
+        pageNumber: selection.pageNumber,
+        start: selection.start,
+        end: selection.end,
+      );
+      context = paragraph?.text;
+    }
+    final String request = fillPrompt(
+      prompt.body,
+      selection: selection.text,
+      context: context,
+      bookLanguage: _book.language,
+      myLanguage: _myLanguage,
+    );
+    if (!mounted) {
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: this.context,
+      isScrollControlled: true,
+      builder: (BuildContext context) =>
+          PromptPreviewSheet(prompt: prompt, request: request),
+    );
+  }
+
+  /// Сохраняет выделенное цитатой.
+  ///
+  /// Контекст сохраняется всегда, а не только когда его просит промпт: по
+  /// нему через месяц видно, откуда цитата и о чём там была речь.
+  Future<Quote?> _saveQuote() async {
+    final BookSelection? selection = _selection;
+    final ReaderController? controller = _controller;
+    if (selection == null || controller == null) {
+      return null;
+    }
+    final ParagraphContext? paragraph = await controller.contextAround(
+      pageNumber: selection.pageNumber,
+      start: selection.start,
+      end: selection.end,
+    );
+    final Quote quote = Quote(
+      id: newLibraryId(),
+      bookId: _book.id,
+      page: selection.pageNumber,
+      content: selection.text,
+      context: paragraph?.text,
+      createdAt: DateTime.now(),
+    );
+    await widget.services.data.annotations.saveQuote(quote);
+    return quote;
+  }
+
+  Future<void> _onQuote() async {
+    final Quote? quote = await _saveQuote();
+    if (!mounted) {
+      return;
+    }
+    _dismissSelection();
+    if (quote != null) {
+      _say('Цитата сохранена');
+    }
+  }
+
+  /// Заметка пишется к месту, а не в пустоту.
+  ///
+  /// Поэтому вместе с ней сохраняется и сама цитата: заметка «здесь автор
+  /// себе противоречит» без того, чему она противоречит, через месяц не
+  /// значит ничего. Цитата заводится **после** того, как читатель написал
+  /// заметку: отменённое окно не должно оставлять за собой следов.
+  Future<void> _onNote() async {
+    final BookSelection? selection = _selection;
+    if (selection == null) {
+      return;
+    }
+    final String? body = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => NoteDialog(quote: selection.text),
+    );
+    if (body == null || !mounted) {
+      return;
+    }
+    final Quote? quote = await _saveQuote();
+    if (quote == null || !mounted) {
+      return;
+    }
+    final DateTime now = DateTime.now();
+    await widget.services.data.annotations.saveNote(
+      Note(
+        id: newLibraryId(),
+        bookId: _book.id,
+        quoteId: quote.id,
+        page: quote.page,
+        body: body,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    _dismissSelection();
+    _say('Заметка сохранена');
+  }
+
+  Future<void> _onCopy() async {
+    final BookSelection? selection = _selection;
+    if (selection == null) {
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: selection.text));
+    if (!mounted) {
+      return;
+    }
+    _dismissSelection();
+    _say('Скопировано');
+  }
+
+  void _say(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+  }
+
+  /// Переход к найденному с подсветкой самого совпадения.
+  ///
+  /// Долг S3: список результатов был, а подсветки на странице не было —
+  /// координаты символов появились только в S4, а перевод «место в тексте
+  /// → прямоугольник» написан в этой сессии.
+  Future<void> _goToHit(SearchHit hit) async {
+    final ReaderController? controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    await _goToPage(hit.pageNumber);
+    final List<TextBox> rects = await controller.highlightFor(
+      pageNumber: hit.pageNumber,
+      start: hit.sourceStart,
+      end: hit.sourceEnd,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _foundHit = hit;
+      _foundRects = rects;
+    });
+  }
+
+  void _clearHighlight() {
+    if (_foundHit == null) {
+      return;
+    }
+    setState(() {
+      _foundHit = null;
+      _foundRects = const <TextBox>[];
+    });
+  }
+
+  Future<void> _openAnnotations() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => AnnotationsScreen(
+          book: _book,
+          annotations: widget.services.data.annotations,
+        ),
+      ),
+    );
+  }
+
   Future<void> _goToPage(int page) async {
     final ReaderController? controller = _controller;
     if (controller == null) {
@@ -346,6 +640,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// значит дальше» сильнее любой логики раскладки.
   void _onTap(Offset position, Size size, VoidCallback toggleChrome) {
     final ReaderController? controller = _controller;
+    // Подсветка найденного живёт до первого перехода: она отвечает на
+    // вопрос «где здесь то, что я искал», и, ответив, обязана уйти.
+    _clearHighlight();
     if (controller == null || _flow != PageFlow.paged) {
       toggleChrome();
       return;
@@ -434,7 +731,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
       controller: controller,
       search: _search!,
       onGoToPage: _goToPage,
+      onGoToHit: _goToHit,
       extraActions: <Widget>[
+        IconButton(
+          key: const Key('reader-annotations-button'),
+          icon: const Icon(Icons.format_quote),
+          tooltip: 'Цитаты и заметки',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => unawaited(_openAnnotations()),
+        ),
         // Деление страницы стоит там, где им пользуются, — на странице, а
         // не в панели настроек: это способ читать, а не настройка.
         DisplayModeButtons(
@@ -533,17 +838,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // читатель видел пустой экран.
         final Object? engine = controller.document.engineDocument;
         final PdfDocument? document = engine is PdfDocument ? engine : null;
+        final List<int> pages = isSpreadMode(controller.settings.displayMode)
+            ? spreadPages(controller.page, controller.pageCount)
+            : <int>[controller.page];
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (TapUpDetails details) =>
               _onTap(details.localPosition, size, onTap),
+          // Долгое нажатие — это выделение. На телефоне так начинают
+          // выделять везде, а на ПК то же самое делает удержание кнопки
+          // мыши: дальше работают настоящие ручки просмотрщика.
+          onLongPressStart: (LongPressStartDetails details) =>
+              _startSelection(details.localPosition),
           child: document == null
               ? ColoredBox(color: background, child: const SizedBox.expand())
               : ReaderSheet(
                   document: document,
-                  pages: isSpreadMode(controller.settings.displayMode)
-                      ? spreadPages(controller.page, controller.pageCount)
-                      : <int>[controller.page],
+                  pages: pages,
                   fragment: controller.fragmentBox,
                   background: background,
                   page: controller.page,
@@ -551,10 +862,110 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   locked: _zoomLocked,
                   stripFit: controller.settings.stripFit,
                   dim: controller.settings.dimOutside,
+                  selectionStart: _selectionStart,
+                  onSelection: (List<PdfPageTextRange> ranges) =>
+                      unawaited(_onSelectionRanges(ranges)),
+                  onDismissSelection: _dismissSelection,
+                  overlay: (BuildContext context, SheetView view) =>
+                      _buildOverlay(context, view, document, pages, size),
                 ),
         );
       },
     );
+  }
+
+  /// Что лежит поверх листа: подсветка найденного и панель действий.
+  ///
+  /// И то, и другое живёт в координатах страницы, а рисуется на экране,
+  /// поэтому обоим нужен [SheetView] — раскладка листа плюс щипок
+  /// читателя. Считать это в самом листе нельзя: он не знает ни про
+  /// поиск, ни про промпты.
+  Widget _buildOverlay(
+    BuildContext context,
+    SheetView view,
+    PdfDocument document,
+    List<int> pages,
+    Size size,
+  ) {
+    final ThemeData theme = Theme.of(context);
+    final BookSelection? selection = _selection;
+    final SearchHit? hit = _foundHit;
+    final List<Rect> found =
+        hit == null || !pages.contains(hit.pageNumber)
+        ? const <Rect>[]
+        : _screenRects(view, document, pages, hit.pageNumber, _foundRects);
+    final List<Rect> selected = selection == null
+        ? const <Rect>[]
+        : _screenRects(
+            view,
+            document,
+            pages,
+            selection.pageNumber,
+            selection.rects,
+          );
+    return Stack(
+      children: <Widget>[
+        if (found.isNotEmpty)
+          Positioned.fill(
+            child: HighlightLayer(
+              rects: found,
+              color: theme.colorScheme.tertiary.withValues(alpha: 0.35),
+            ),
+          ),
+        if (selection != null && selected.isNotEmpty)
+          SelectionPanel(
+            anchor: selected.reduce((Rect a, Rect b) => a.expandToInclude(b)),
+            area: size,
+            prompts: _prompts,
+            onPrompt: (SelectionPrompt prompt) => unawaited(_onPrompt(prompt)),
+            onQuote: () => unawaited(_onQuote()),
+            onNote: () => unawaited(_onNote()),
+            onCopy: () => unawaited(_onCopy()),
+          ),
+      ],
+    );
+  }
+
+  /// Переводит прямоугольники страницы в прямоугольники экрана.
+  ///
+  /// Страница лежит внутри листа: в развороте вторая страница начинается
+  /// там, где кончилась первая. Поэтому смещение считается по ширинам
+  /// страниц листа, а не по номеру страницы в книге.
+  List<Rect> _screenRects(
+    SheetView view,
+    PdfDocument document,
+    List<int> pages,
+    int pageNumber,
+    List<TextBox> boxes,
+  ) {
+    if (boxes.isEmpty) {
+      return const <Rect>[];
+    }
+    double left = 0;
+    PdfPage? target;
+    for (final int number in pages) {
+      if (number < 1 || number > document.pages.length) {
+        continue;
+      }
+      final PdfPage page = document.pages[number - 1];
+      if (number == pageNumber) {
+        target = page;
+        break;
+      }
+      left += page.width;
+    }
+    if (target == null) {
+      return const <Rect>[];
+    }
+    final double width = target.width;
+    final double height = target.height;
+    return <Rect>[
+      for (final TextBox box in boxes)
+        Rect.fromPoints(
+          view.toScreen(left + box.left * width, box.top * height),
+          view.toScreen(left + box.right * width, box.bottom * height),
+        ),
+    ];
   }
 
   /// Непрерывная лента: свободное чтение с зумом и прокруткой.

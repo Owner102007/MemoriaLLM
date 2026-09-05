@@ -6,10 +6,13 @@ import 'package:drift/drift.dart' hide isNotNull, isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
+import 'package:memoria/domain/annotations/annotations.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/device_files.dart';
+import 'package:memoria/domain/prompts/selection_prompt.dart';
 import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/infrastructure/database/app_database.dart';
 import 'package:path/path.dart' as p;
 
@@ -53,8 +56,20 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 6: промптов к выделению тогда не было.
+  ///
+  /// Вместе с таблицей снимается и отметка «промпты заведены»: у читателя,
+  /// который обновляется, её и не могло быть — она появилась в этой же
+  /// версии. Без этого проверка мерила бы не то: заведение промптов
+  /// случилось бы при первом открытии, а не после миграции.
+  Future<void> undoPrompts(AppData data) async {
+    await data.database.customStatement('DROP TABLE selection_prompts');
+    await data.settings.remove(SettingsKeys.promptsSeeded);
+  }
+
   /// Откатывает базу к версии 5: файлов устройства тогда не было.
   Future<void> undoDeviceFiles(AppData data) async {
+    await undoPrompts(data);
     await data.database.customStatement('DROP TABLE device_files');
     await data.database.customStatement('DROP TABLE IF EXISTS device_search');
   }
@@ -85,8 +100,46 @@ void main() {
     );
     expect(await columnsOf(data, 'books'), contains('category_id'));
     expect(await columnsOf(data, 'device_files'), contains('fingerprint'));
+    expect(
+      await columnsOf(data, 'selection_prompts'),
+      containsAll(<String>['book_id', 'is_primary', 'hlc', 'node_id']),
+    );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('база версии 6 доезжает до 7 и получает промпты', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await first.annotations.saveQuote(
+      Quote(
+        id: 'quote-1',
+        bookId: 'book-1',
+        page: 7,
+        content: 'Две неподвижные идеи',
+        createdAt: DateTime.utc(2026, 9, 6),
+      ),
+    );
+    await undoPrompts(first);
+    await first.database.customStatement('PRAGMA user_version = 6');
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(await columnsOf(second, 'selection_prompts'), contains('body'));
+
+    // Цитата читателя, обновившего приложение, обязана остаться на месте.
+    expect((await second.annotations.quotes('book-1')).single.id, 'quote-1');
+
+    // А промпты из коробки заводятся сразу: обновившийся читатель видит
+    // те же две кнопки, что и поставивший приложение впервые.
+    final List<SelectionPrompt> master = await second.prompts.masterPrompts();
+    expect(master.map((SelectionPrompt p) => p.id), <String>[
+      kMeaningPromptId,
+      kTranslatePromptId,
+    ]);
+    expect(master.first.check.isValid, isTrue);
+    await second.close();
   });
 
   test('база версии 5 доезжает до 6 и получает файлы устройства', () async {

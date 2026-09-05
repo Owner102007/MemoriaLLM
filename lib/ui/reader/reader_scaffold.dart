@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../application/reading/document_search.dart';
+import '../../domain/reading/text_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/reading/navigation.dart';
 import 'outline_panel.dart';
@@ -25,6 +26,7 @@ class ReaderScaffold extends StatefulWidget {
     required this.search,
     required this.viewerBuilder,
     required this.onGoToPage,
+    this.onGoToHit,
     this.extraActions = const <Widget>[],
     super.key,
   });
@@ -45,6 +47,11 @@ class ReaderScaffold extends StatefulWidget {
 
   /// Переход на страницу. Возвращает управление, когда переход выполнен.
   final Future<void> Function(int page) onGoToPage;
+
+  /// Переход к найденному. Отличается от [onGoToPage] тем, что несёт само
+  /// совпадение: подсветить его на странице по одному номеру страницы
+  /// нельзя — нужны координаты в тексте.
+  final Future<void> Function(SearchHit hit)? onGoToHit;
 
   @override
   State<ReaderScaffold> createState() => ReaderScaffoldState();
@@ -107,9 +114,14 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       ),
       endDrawer: SearchPanel(
         search: widget.search,
-        onSelect: (int page) async {
+        onSelect: (SearchHit hit) async {
           Navigator.of(context).pop();
-          await _goTo(page);
+          final Future<void> Function(SearchHit hit)? goToHit = widget.onGoToHit;
+          if (goToHit != null) {
+            await goToHit(hit);
+          } else {
+            await _goTo(hit.pageNumber);
+          }
           hideChrome();
         },
       ),

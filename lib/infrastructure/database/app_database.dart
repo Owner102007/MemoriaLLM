@@ -12,8 +12,9 @@ part 'app_database.g.dart';
 /// в режимах половины и трети больше не обрезается, а гаснет. 4 —
 /// категории полки (S5.2): своя таблица и ссылка на неё у книги. 5 —
 /// место книги на полке (S5.3): книги переставляются руками. 6 — файлы
-/// устройства и индекс поиска по ним (S5.5).
-const int appSchemaVersion = 6;
+/// устройства и индекс поиска по ним (S5.5). 7 — промпты к выделению
+/// (S6): своя синхронизируемая таблица на два уровня.
+const int appSchemaVersion = 7;
 
 /// База данных приложения.
 ///
@@ -33,6 +34,7 @@ const int appSchemaVersion = 6;
     LlmQueries,
     AppSettings,
     DeviceFiles,
+    SelectionPrompts,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -82,6 +84,16 @@ class AppDatabase extends _$AppDatabase {
           // «Книги на устройстве». Индекс поиска — тоже.
           await m.createTable(deviceFiles);
           await createSearchIndex(this);
+        }
+        if (from < 7) {
+          // Таблица заводится пустой. Meaning и Translate кладёт в неё не
+          // миграция, а первый запуск — теми же средствами, какими
+          // читатель заводит свои: иначе одни и те же две записи пришлось
+          // бы писать дважды, здесь и в `onCreate`, и держать их текст в
+          // инфраструктуре вместо домена. Заводятся они ровно один раз за
+          // жизнь базы, потому что удаление промпта из коробки обязано
+          // пережить перезапуск.
+          await m.createTable(selectionPrompts);
         }
       },
       beforeOpen: (OpeningDetails details) async {

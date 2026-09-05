@@ -344,6 +344,53 @@ class LlmQueries extends Table with SyncedRow {
   Set<Column<Object>> get primaryKey => <Column<Object>>{id};
 }
 
+/// Промпты к выделению (S6).
+///
+/// **Своя таблица, а не `app_settings`, и это решение владельца от
+/// 06.09.2026.** Настройки отображения между устройствами не ездят —
+/// удобное на телефоне не удобно на большом экране. Промпт не про экран:
+/// это текст, который читатель сочинил своей головой, ровно как заметка,
+/// и переписывать его на втором устройстве — работа, которой быть не
+/// должно. Значит, промптам нужны поля CRDT, а `app_settings` намеренно
+/// без них.
+///
+/// Два уровня живут в одной таблице и различаются [bookId]: пусто —
+/// мастер-набор, которым открывается любая книга; заполнено — набор этой
+/// книги. Набор книги главнее мастерского целиком, а не по строкам —
+/// см. `mergePromptLevels`.
+@DataClassName('SelectionPromptRow')
+class SelectionPrompts extends Table with SyncedRow {
+  /// Идентификатор.
+  TextColumn get id => text()();
+
+  /// Книга, за которой закреплён промпт. Пусто — мастер-набор.
+  TextColumn get bookId =>
+      text().nullable().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Имя. Оно же подпись на кнопке в панели над выделением.
+  TextColumn get name => text()();
+
+  /// Текст с местами подстановки: `{{выделение}}` обязательно,
+  /// `{{контекст}}`, `{{язык_книги}}` и `{{мой_язык}}` — по желанию.
+  TextColumn get body => text()();
+
+  /// Порядок кнопок. Меньше — левее.
+  IntColumn get position => integer().withDefault(const Constant<int>(0))();
+
+  /// Основной промпт набора.
+  BoolColumn get isPrimary =>
+      boolean().withDefault(const Constant<bool>(false))();
+
+  /// Когда заведён.
+  DateTimeColumn get createdAt => dateTime()();
+
+  /// Когда правился.
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
 /// Файлы устройства, найденные обходом (S5.5).
 ///
 /// **Полей CRDT здесь нет, и это решение, а не забывчивость.** Перечень

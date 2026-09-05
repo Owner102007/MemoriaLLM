@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — шестая: файлы устройства и индекс поиска', () {
+  test('версия схемы — седьмая: промпты к выделению', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 6);
+    expect(appSchemaVersion, 7);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -60,6 +60,7 @@ void main() {
         'llm_queries',
         'app_settings',
         'device_files',
+        'selection_prompts',
       ]),
     );
   });
@@ -74,6 +75,10 @@ void main() {
       'notes',
       'bookmarks',
       'llm_queries',
+      // Промпты синхронизируются наравне с цитатами: это текст, который
+      // читатель сочинил сам, и переписывать его на втором устройстве —
+      // работа, которой быть не должно (решение владельца, 06.09.2026).
+      'selection_prompts',
     ];
     for (final String table in synced) {
       final List<String> columns = await _columnNames(data.database, table);

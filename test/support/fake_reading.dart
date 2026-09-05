@@ -23,6 +23,7 @@ class FakeReaderDocument implements ReaderDocument {
     this.pageWidth = 595,
     this.pageHeight = 842,
     this.boxes = const <int, List<TextBox>>{},
+    this.layouts = const <int, PageTextLayout>{},
   });
 
   /// Документ из [count] пустых страниц.
@@ -38,6 +39,13 @@ class FakeReaderDocument implements ReaderDocument {
 
   /// Прямоугольники символов по страницам. Пустая страница — «нет текста».
   final Map<int, List<TextBox>> boxes;
+
+  /// Слои текста по страницам: текст вместе с местом каждого символа.
+  ///
+  /// Задаются только там, где проверяется выделение или контекст. Без них
+  /// документ отдаёт текст страницы без геометрии — ровно как настоящий
+  /// на скане, где мест у символов нет.
+  final Map<int, PageTextLayout> layouts;
 
   @override
   final String sourceName;
@@ -55,6 +63,9 @@ class FakeReaderDocument implements ReaderDocument {
   /// Сколько раз спрашивали прямоугольники символов: по нему видно, что
   /// рамка страницы считается один раз, а не в каждом кадре.
   final Map<int, int> boxReads = <int, int>{};
+
+  /// Сколько раз спрашивали слой текста страницы.
+  final Map<int, int> layoutReads = <int, int>{};
 
   /// Сколько раз рисовали страницу.
   final Map<int, int> renders = <int, int>{};
@@ -87,6 +98,13 @@ class FakeReaderDocument implements ReaderDocument {
   Future<List<TextBox>> pageTextBoxes(int pageNumber) async {
     boxReads[pageNumber] = (boxReads[pageNumber] ?? 0) + 1;
     return boxes[pageNumber] ?? const <TextBox>[];
+  }
+
+  @override
+  Future<PageTextLayout> pageTextLayout(int pageNumber) async {
+    layoutReads[pageNumber] = (layoutReads[pageNumber] ?? 0) + 1;
+    return layouts[pageNumber] ??
+        PageTextLayout(text: pages[pageNumber - 1], boxes: const <TextBox>[]);
   }
 
   @override

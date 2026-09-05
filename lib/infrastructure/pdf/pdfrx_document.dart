@@ -207,6 +207,56 @@ class PdfrxReaderDocument implements ReaderDocument {
   }
 
   @override
+  Future<PageTextLayout> pageTextLayout(int pageNumber) async {
+    final PdfPage page = _pageAt(pageNumber);
+    final PdfPageRawText? raw = await page.loadText();
+    if (raw == null || raw.fullText.isEmpty) {
+      return PageTextLayout.empty;
+    }
+    final String text = raw.fullText;
+    final List<PdfRect> rects = raw.charRects;
+    final double width = page.width;
+    final double height = page.height;
+    if (rects.isEmpty || width <= 0 || height <= 0) {
+      return PageTextLayout(text: text, boxes: const <TextBox>[]);
+    }
+
+    // Прямоугольники приходят по одному на символ, а «символ» у движка —
+    // это кодовая точка, тогда как индекс в строке Dart считает кодовые
+    // единицы. Пока в тексте нет ничего за пределами основной плоскости
+    // Юникода, это одно и то же; как только встретится эмодзи или редкий
+    // иероглиф, прямое обращение по индексу поедет — и выделение начнёт
+    // подсвечивать соседние буквы. Поэтому места раскладываются по
+    // кодовым единицам явно.
+    final List<TextBox> boxes = List<TextBox>.filled(
+      text.length,
+      _noBox,
+      growable: false,
+    );
+    if (text.length == rects.length) {
+      for (int i = 0; i < rects.length; i++) {
+        boxes[i] = _boxOf(rects[i], page, width, height);
+      }
+      return PageTextLayout(text: text, boxes: boxes);
+    }
+    final List<int> runes = text.runes.toList();
+    if (runes.length != rects.length) {
+      // Ни одна разбивка не сошлась — геометрии у этой страницы для нас
+      // нет. Текст при этом честно отдаётся: он нужен поиску и контексту.
+      return PageTextLayout(text: text, boxes: const <TextBox>[]);
+    }
+    int at = 0;
+    for (int i = 0; i < runes.length; i++) {
+      final TextBox box = _boxOf(rects[i], page, width, height);
+      final int units = runes[i] > 0xFFFF ? 2 : 1;
+      for (int u = 0; u < units && at < boxes.length; u++, at++) {
+        boxes[at] = box;
+      }
+    }
+    return PageTextLayout(text: text, boxes: boxes);
+  }
+
+  @override
   Future<List<OutlineEntry>> outline() async {
     // Оглавление читается один раз: панель открывают и закрывают часто,
     // а дерево от этого не меняется.
@@ -291,6 +341,25 @@ class PdfrxReaderDocument implements ReaderDocument {
     return const <int>[];
   }
 
+  /// Прямоугольник символа в долях отображаемой страницы.
+  ///
+  /// Пустой прямоугольник (пробел, перевод строки) остаётся пустым: место
+  /// в списке за ним сохраняется, чтобы индексы не поехали, а рисовать
+  /// там нечего.
+  TextBox _boxOf(PdfRect rect, PdfPage page, double width, double height) {
+    if (rect.isEmpty) {
+      return _noBox;
+    }
+    final Rect display = rect.toRect(page: page);
+    final TextBox box = TextBox(
+      left: (display.left / width).clamp(0.0, 1.0),
+      top: (display.top / height).clamp(0.0, 1.0),
+      right: (display.right / width).clamp(0.0, 1.0),
+      bottom: (display.bottom / height).clamp(0.0, 1.0),
+    );
+    return box.isValid ? box : _noBox;
+  }
+
   bool _isBlank(int code) {
     switch (code) {
       case 0x09:
@@ -330,3 +399,6 @@ class PdfrxReaderDocument implements ReaderDocument {
     return page;
   }
 }
+
+/// Пустое место: у символа нет своего прямоугольника на странице.
+const TextBox _noBox = TextBox(left: 0, top: 0, right: 0, bottom: 0);

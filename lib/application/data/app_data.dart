@@ -7,6 +7,7 @@ import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/library/device_files.dart';
 import '../../domain/llm/llm_query.dart';
+import '../../domain/prompts/selection_prompt.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
 import '../../domain/sync/hlc.dart';
@@ -19,6 +20,7 @@ import '../../infrastructure/repositories/drift_category_repository.dart';
 import '../../infrastructure/repositories/drift_device_file_repository.dart';
 import '../../infrastructure/repositories/drift_library_repository.dart';
 import '../../infrastructure/repositories/drift_llm_history_repository.dart';
+import '../../infrastructure/repositories/drift_prompt_repository.dart';
 import '../../infrastructure/repositories/drift_reading_repository.dart';
 
 /// Слой данных приложения, собранный целиком.
@@ -36,6 +38,7 @@ class AppData {
     required this.reading,
     required this.annotations,
     required this.llmHistory,
+    required this.prompts,
     required this.deviceFiles,
     required this.searchIndexed,
   });
@@ -51,6 +54,15 @@ class AppData {
     // FTS5 — необязательный модуль SQLite, и спрашивать о нём базу на
     // каждый запрос незачем: ответ на всю жизнь подключения один.
     final bool indexed = await hasSearchIndex(database);
+    final PromptRepository prompts = DriftPromptRepository(
+      database,
+      clock,
+      settings,
+    );
+    // Промпты из коробки заводятся здесь, а не миграцией: это обычные
+    // записи, и заводятся они теми же средствами, какими читатель заведёт
+    // свои. Ровно один раз за жизнь базы — отметка в настройках.
+    await prompts.seedDefaultsOnce();
     return AppData._(
       database: database,
       clock: clock,
@@ -60,6 +72,7 @@ class AppData {
       reading: DriftReadingRepository(database, clock),
       annotations: DriftAnnotationRepository(database, clock),
       llmHistory: DriftLlmHistoryRepository(database, clock),
+      prompts: prompts,
       deviceFiles: DriftDeviceFileRepository(database, indexed: indexed),
       searchIndexed: indexed,
     );
@@ -88,6 +101,9 @@ class AppData {
 
   /// История запросов к модели.
   final LlmHistoryRepository llmHistory;
+
+  /// Промпты к выделению. Синхронизируются наравне с цитатами.
+  final PromptRepository prompts;
 
   /// Файлы устройства и индекс поиска по ним. Не синхронизируется.
   final DeviceFileRepository deviceFiles;

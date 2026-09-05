@@ -4,6 +4,7 @@ import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/ui/reader/reader_scaffold.dart';
 
 import '../support/fake_reading.dart';
@@ -46,12 +47,14 @@ void main() {
     WidgetTester tester,
     ReaderController controller, {
     DocumentSearch? search,
+    Future<void> Function(SearchHit hit)? onGoToHit,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: ReaderScaffold(
           controller: controller,
           search: search ?? DocumentSearch(document: controller.document),
+          onGoToHit: onGoToHit,
           onGoToPage: (int page) async {
             jumps.add(page);
             controller.onPageChanged(page);
@@ -292,6 +295,48 @@ void main() {
       await tester.tap(find.byKey(const Key('search-hit-1')));
       await tester.pumpAndSettle();
       expect(jumps, <int>[4]);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('переход к найденному несёт само совпадение', (
+      WidgetTester tester,
+    ) async {
+      // Подсветить найденное по одному номеру страницы нельзя: нужны
+      // координаты в тексте. Поэтому экран чтения получает сам SearchHit,
+      // а не только страницу.
+      final Book book = fakeBook(pageCount: 2);
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>['вступление', 'здесь встречается тройка'],
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: book,
+        opener: FakeDocumentOpener(document),
+        reading: reading,
+      );
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start('тройка');
+
+      final List<SearchHit> hits = <SearchHit>[];
+      await pumpReader(
+        tester,
+        controller,
+        search: search,
+        onGoToHit: (SearchHit hit) async => hits.add(hit),
+      );
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('reader-search-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('search-hit-0')));
+      await tester.pumpAndSettle();
+
+      expect(hits, hasLength(1));
+      expect(hits.single.sourceEnd, greaterThan(hits.single.sourceStart));
+      // И старый путь при этом не зовётся: переход теперь один.
+      expect(jumps, isEmpty);
 
       search.dispose();
       await controller.close();

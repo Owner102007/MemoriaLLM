@@ -6,6 +6,40 @@ import '../../domain/reading/reading.dart';
 import '../../domain/reading/sheet_placement.dart';
 import 'dim_outside.dart';
 import 'reading_progress_book.dart';
+import 'selection_sheet.dart';
+
+/// Где сейчас лежит лист: раскладка плюс то, что читатель добавил щипком.
+///
+/// Экрану чтения это нужно затем, чтобы поставить панель действий над
+/// выделением: место выделения известно в долях страницы, а панель стоит
+/// на экране, и перевести одно в другое можно только зная раскладку.
+class SheetView {
+  /// Создаёт вид листа.
+  const SheetView({required this.placement, required this.transform});
+
+  /// Куда положен лист.
+  final SheetPlacement placement;
+
+  /// Щипок читателя; единичное преобразование, когда замок заперт.
+  final Matrix4 transform;
+
+  /// Переводит точку листа (в точках PDF) в точку экрана.
+  Offset toScreen(double x, double y) {
+    final double zoom = placement.scale;
+    final Offset base = Offset(
+      placement.left + x * zoom,
+      placement.top + y * zoom,
+    );
+    final double extra = transform.storage[0];
+    if (extra == 1 && transform.storage[12] == 0 && transform.storage[13] == 0) {
+      return base;
+    }
+    return Offset(
+      base.dx * extra + transform.storage[12],
+      base.dy * extra + transform.storage[13],
+    );
+  }
+}
 
 /// Лист книги на экране: жёсткая раскладка, страница целиком.
 ///
@@ -39,6 +73,12 @@ class ReaderSheet extends StatefulWidget {
     required this.locked,
     this.stripFit = 1,
     this.dim = kDefaultDimOutside,
+    this.selectionStart,
+    this.onSelection,
+    this.onSelectionReady,
+    this.onDismissSelection,
+    this.onView,
+    this.overlay,
     super.key,
   });
 
@@ -80,12 +120,38 @@ class ReaderSheet extends StatefulWidget {
   /// Сила затемнения нечитаемой части страницы.
   final double dim;
 
+  /// Точка на экране, с которой читатель начал выделять.
+  ///
+  /// Пусто — слоя выделения нет вовсе, и лист рисуется как всегда.
+  final Offset? selectionStart;
+
+  /// Выделение изменилось.
+  final void Function(List<PdfPageTextRange> ranges)? onSelection;
+
+  /// Слой выделения встал на место и нарисовал страницу.
+  final VoidCallback? onSelectionReady;
+
+  /// Читатель нажал мимо выделения.
+  final VoidCallback? onDismissSelection;
+
+  /// Куда положен лист. Сообщается после отрисовки, а не во время неё.
+  final ValueChanged<SheetView>? onView;
+
+  /// Что нарисовать поверх листа: подсветка найденного, панель действий.
+  ///
+  /// Строится по [SheetView], потому что всё, что кладётся поверх
+  /// страницы, живёт в её координатах, а не в координатах экрана.
+  final Widget Function(BuildContext context, SheetView view)? overlay;
+
   @override
   State<ReaderSheet> createState() => _ReaderSheetState();
 }
 
 class _ReaderSheetState extends State<ReaderSheet> {
   final TransformationController _zoom = TransformationController();
+
+  SheetPlacement? _reportedPlacement;
+  Matrix4? _reportedTransform;
 
   @override
   void didUpdateWidget(ReaderSheet oldWidget) {
@@ -102,9 +168,54 @@ class _ReaderSheetState extends State<ReaderSheet> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Пока замок заперт, преобразование не меняется вовсе, и слушать
+    // нечего. Отперев его, читатель двигает страницу — а вместе с ней
+    // обязаны ехать и подсветка, и панель над выделением.
+    _zoom.addListener(_onZoomChanged);
+  }
+
+  @override
   void dispose() {
+    _zoom.removeListener(_onZoomChanged);
     _zoom.dispose();
     super.dispose();
+  }
+
+  void _onZoomChanged() {
+    if (!mounted || widget.locked) {
+      return;
+    }
+    if (widget.overlay == null &&
+        widget.onView == null &&
+        widget.selectionStart == null) {
+      return;
+    }
+    setState(() {});
+  }
+
+  /// Сообщает наружу, куда лёг лист.
+  ///
+  /// Не во время построения дерева, а после кадра: обратный вызов почти
+  /// наверняка приведёт к `setState` у того, кто его слушает, а вызвать
+  /// его посреди построения значит уронить приложение на ровном месте.
+  void _reportView(SheetView view) {
+    final ValueChanged<SheetView>? report = widget.onView;
+    if (report == null) {
+      return;
+    }
+    final SheetPlacement? last = _reportedPlacement;
+    if (last == view.placement && _reportedTransform == view.transform) {
+      return;
+    }
+    _reportedPlacement = view.placement;
+    _reportedTransform = view.transform;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        report(view);
+      }
+    });
   }
 
   @override
@@ -156,6 +267,33 @@ class _ReaderSheetState extends State<ReaderSheet> {
             placement: placement,
             fragment: widget.fragment,
           );
+          final SheetView view = SheetView(
+            placement: placement,
+            transform: _zoom.value.clone(),
+          );
+          _reportView(view);
+          // Затемнение нечитаемой части листа рисуется дважды, и это не
+          // расточительность: слой выделения кладёт поверх листа свою
+          // страницу целиком, и без второго слоя погашенная часть
+          // страницы вспыхнула бы ровно в тот момент, когда читатель
+          // начал выделять.
+          final Widget dimLayer = DimOutside(
+            key: const Key('reader-dim-outside'),
+            sheet: Rect.fromLTWH(
+              placement.left,
+              placement.top,
+              placement.sheetWidth,
+              placement.sheetHeight,
+            ),
+            fragment: Rect.fromLTWH(
+              window.left,
+              window.top,
+              window.width,
+              window.height,
+            ),
+            dim: widget.dim,
+          );
+          final Offset? selectionStart = widget.selectionStart;
           return Stack(
             children: <Widget>[
               Positioned.fill(
@@ -207,28 +345,41 @@ class _ReaderSheetState extends State<ReaderSheet> {
                           ],
                         ),
                       ),
-                      Positioned.fill(
-                        child: DimOutside(
-                          key: const Key('reader-dim-outside'),
-                          sheet: Rect.fromLTWH(
-                            placement.left,
-                            placement.top,
-                            placement.sheetWidth,
-                            placement.sheetHeight,
-                          ),
-                          fragment: Rect.fromLTWH(
-                            window.left,
-                            window.top,
-                            window.width,
-                            window.height,
-                          ),
-                          dim: widget.dim,
-                        ),
-                      ),
+                      Positioned.fill(child: dimLayer),
                     ],
                   ),
                 ),
               ),
+              if (selectionStart != null) ...<Widget>[
+                Positioned.fill(
+                  child: SelectionSheet(
+                    key: const Key('reader-selection-sheet'),
+                    document: widget.document,
+                    pages: widget.pages,
+                    placement: placement,
+                    transform: _zoom.value,
+                    startAt: selectionStart,
+                    onSelection:
+                        widget.onSelection ??
+                        (List<PdfPageTextRange> ranges) {},
+                    onReady: widget.onSelectionReady,
+                    onDismiss: widget.onDismissSelection,
+                  ),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Transform(
+                      transform: _zoom.value,
+                      child: dimLayer,
+                    ),
+                  ),
+                ),
+              ],
+              // Без `IgnorePointer` намеренно: подсветка нажатий не ловит
+              // (у неё нет своей области), а панель действий обязана их
+              // ловить — она и есть то, ради чего выделяют.
+              if (widget.overlay != null)
+                Positioned.fill(child: widget.overlay!(context, view)),
               // Указатель места живёт поверх зума: увеличивать его вместе
               // со страницей незачем, а терять при листании — тем более.
               ReadingProgressBook(

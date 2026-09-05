@@ -18,7 +18,7 @@ class SearchPanel extends StatefulWidget {
   final DocumentSearch search;
 
   /// Переход к найденному.
-  final void Function(int page) onSelect;
+  final void Function(SearchHit hit) onSelect;
 
   @override
   State<SearchPanel> createState() => _SearchPanelState();
@@ -171,7 +171,7 @@ class _SearchPanelState extends State<SearchPanel> {
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall,
           ),
-          onTap: () => widget.onSelect(hit.pageNumber),
+          onTap: () => widget.onSelect(hit),
         );
       },
     );

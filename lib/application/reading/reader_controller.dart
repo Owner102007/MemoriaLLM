@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
 import '../../domain/library/book.dart';
 import '../../domain/reading/columns.dart';
+import '../../domain/reading/context_paragraph.dart';
 import '../../domain/reading/crop.dart';
 import '../../domain/reading/fragments.dart';
 import '../../domain/reading/navigation.dart';
@@ -11,6 +13,8 @@ import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/reading_filter.dart';
 import '../../domain/reading/sheet_placement.dart';
+import '../../domain/reading/text_geometry.dart';
+import '../../domain/reading/text_highlight.dart';
 import 'page_frames.dart';
 
 /// Чем кончилась попытка сменить режим отображения.
@@ -120,6 +124,18 @@ class ReaderController extends ChangeNotifier {
   bool _navigating = false;
   List<OutlineEntry>? _outline;
   bool _outlineLoading = false;
+
+  /// Сколько слоёв текста держать наготове.
+  ///
+  /// Четыре — это текущий лист (в развороте страниц две) и по соседу с
+  /// каждой стороны: ровно то, что может понадобиться выделению, не
+  /// уходя в разбор всей книги.
+  static const int _layoutCacheSize = 4;
+
+  final LinkedHashMap<int, PageTextLayout> _layouts =
+      LinkedHashMap<int, PageTextLayout>();
+  final Map<int, Future<PageTextLayout>> _layoutsInFlight =
+      <int, Future<PageTextLayout>>{};
 
   /// Документ. Нужен поиску и разбору страниц.
   ReaderDocument get document => _document;
@@ -279,6 +295,95 @@ class ReaderController extends ChangeNotifier {
       _outlineLoading = false;
       _notify();
     }
+  }
+
+  /// Текст страницы вместе с местом каждого символа.
+  ///
+  /// Держится небольшой кэш: выделение спрашивает слой при каждом
+  /// движении ручки, а разбор текста страницы стоит похода в движок.
+  /// Кэш маленький намеренно — на книге в тысячу страниц он иначе растёт
+  /// вместе с чтением, как это уже было с рамками.
+  Future<PageTextLayout> textLayout(int pageNumber) {
+    final PageTextLayout? ready = _layouts[pageNumber];
+    if (ready != null) {
+      return Future<PageTextLayout>.value(ready);
+    }
+    return _layoutsInFlight[pageNumber] ??= _loadLayout(pageNumber)
+        .whenComplete(() {
+          _layoutsInFlight.remove(pageNumber);
+        });
+  }
+
+  /// Уже разобранный слой текста страницы или `null`.
+  ///
+  /// Нужен отрисовке: подсветка обязана ответить за один кадр и ждать
+  /// разбора страницы не может.
+  PageTextLayout? cachedLayout(int pageNumber) => _layouts[pageNumber];
+
+  /// Абзац вокруг выделения на странице [pageNumber].
+  ///
+  /// Спрашивается **только тогда, когда он нужен**: промпт без
+  /// `{{контекст}}` абзаца не получает, и разбирать ради него страницу
+  /// незачем. Цитата, наоборот, сохраняет контекст всегда — по нему
+  /// потом видно, откуда она.
+  Future<ParagraphContext?> contextAround({
+    required int pageNumber,
+    required int start,
+    required int end,
+  }) async {
+    final PageTextLayout layout = await textLayout(pageNumber);
+    final PageFrame frame = await _frames.frameFor(pageNumber);
+    return paragraphAround(
+      layout: layout,
+      selectionStart: start,
+      selectionEnd: end,
+      columns: frame.columns,
+    );
+  }
+
+  /// Прямоугольники подсветки для куска текста на странице.
+  ///
+  /// Одна дорога и у выделения, и у найденного поиском: и то, и другое —
+  /// кусок текста, который надо показать на странице. Колонки берутся из
+  /// разобранной рамки, потому что без них подсветка на двухколоночной
+  /// странице растянулась бы через межколоночное поле в чужой текст.
+  Future<List<TextBox>> highlightFor({
+    required int pageNumber,
+    required int start,
+    required int end,
+  }) async {
+    final PageTextLayout layout = await textLayout(pageNumber);
+    if (!layout.hasGeometry) {
+      return const <TextBox>[];
+    }
+    final PageFrame frame = await _frames.frameFor(pageNumber);
+    return highlightRects(
+      layout: layout,
+      start: start,
+      end: end,
+      columns: frame.columns,
+    );
+  }
+
+  Future<PageTextLayout> _loadLayout(int pageNumber) async {
+    if (pageNumber < 1 || pageNumber > pageCount) {
+      return PageTextLayout.empty;
+    }
+    PageTextLayout layout;
+    try {
+      layout = await _document.pageTextLayout(pageNumber);
+    } on Object {
+      // Испорченный текстовый слой — не повод не показать страницу.
+      layout = PageTextLayout.empty;
+    }
+    if (_closed) {
+      return layout;
+    }
+    _layouts[pageNumber] = layout;
+    while (_layouts.length > _layoutCacheSize) {
+      _layouts.remove(_layouts.keys.first);
+    }
+    return layout;
   }
 
   /// Считает рамку текущей страницы, если её ещё нет.
