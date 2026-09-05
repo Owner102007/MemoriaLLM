@@ -54,8 +54,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool _busy = false;
   final Map<String, Timer> _pending = <String, Timer>{};
   final ScrollController _shelf = ScrollController();
+
+  /// Ключ на сам список категорий.
+  ///
+  /// Зона самопрокрутки отсчитывается от **полки**, а не от экрана:
+  /// сверху стоит панель приложения, и зона, отсчитанная от экрана,
+  /// уходила бы под неё.
+  final GlobalKey _shelfViewport = GlobalKey();
+
   Timer? _autoScroll;
   double _scrollSpeed = 0;
+  DragScrollGate _gate = DragScrollGate();
 
   @override
   void initState() {
@@ -77,6 +86,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// Книгу подняли: полка готовится ехать под пальцем.
   void _dragStarted() {
     _scrollSpeed = 0;
+    // Предохранитель заводится заново на каждое поднятие книги: книга,
+    // взятая из верхнего ряда, не имеет права увезти полку сама собой.
+    _gate = DragScrollGate();
     _autoScroll?.cancel();
     // Один таймер на всё перетаскивание, а не по таймеру на движение:
     // книгу ведут десятками событий в секунду, и заводить на каждое своё
@@ -105,22 +117,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _autoScroll = null;
   }
 
-  /// Книгу ведут над полкой: у краёв экрана список едет сам.
+  /// Книгу ведут над полкой: у её краёв список едет сам.
   ///
   /// Без этого книгу нельзя перенести в категорию, которой не видно, —
   /// а на полке из десятка категорий это обычный случай. Зон две:
   /// у самого края полка едет быстро, чуть дальше от него — медленно.
-  /// Вся арифметика — в [dragScrollSpeed], и одна и та же на телефоне и
+  /// Вся арифметика — в [DragScrollGate], и одна и та же на телефоне и
   /// на ПК: мышь колесом полку прокрутит, но вести книгу и крутить колесо
   /// одновременно — не то, чего стоит требовать от читателя.
+  ///
+  /// Мерить надо от **списка**, а не от экрана. Прежде здесь стоял
+  /// `context.findRenderObject()`, то есть коробка всего экрана вместе с
+  /// панелью приложения: зона в 22 % высоты начиналась выше самой полки,
+  /// и быстрая её половина целиком пряталась под панелью — вверх полка
+  /// умела ехать только медленно, а книга, поднятая из верхнего ряда,
+  /// сразу оказывалась в зоне и уезжала вместе с полкой.
   void _dragOver(Offset globalPosition) {
-    final RenderBox? box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) {
+    final RenderObject? object = _shelfViewport.currentContext
+        ?.findRenderObject();
+    if (object is! RenderBox || !object.hasSize) {
       return;
     }
-    _scrollSpeed = dragScrollSpeed(
-      y: box.globalToLocal(globalPosition).dy,
-      height: box.size.height,
+    _scrollSpeed = _gate.speedAt(
+      y: object.globalToLocal(globalPosition).dy,
+      height: object.size.height,
     );
   }
 
@@ -395,6 +415,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Палец, ведущий книгу, слушается здесь, а не в блоках полки.
+    // События указателя после нажатия идут по тому пути, который был
+    // определён в момент нажатия, поэтому этот слушатель получает их все —
+    // и над блоком, и над заголовком категории, и над пустотой под
+    // последней категорией, и над панелью приложения. Прежде положение
+    // пальца приходило из `DragTarget.onMove` самих блоков, а между
+    // блоками таких целей нет вовсе: стоило пальцу замереть в промежутке,
+    // и полка продолжала ехать с той скоростью, которая была в последний
+    // раз, — то есть не останавливалась там, где читатель её остановил.
+    return Listener(
+      onPointerMove: (PointerMoveEvent event) {
+        if (_autoScroll != null) {
+          _dragOver(event.position);
+        }
+      },
+      child: _scaffold(context),
+    );
+  }
+
+  Widget _scaffold(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Библиотека'),
@@ -490,6 +530,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
       sort: _sort,
       progress: progress,
     );
+    // `KeyedSubtree` не рисует ничего сам, поэтому его коробка — это
+    // коробка списка. Так у полки появляется ключ, не отнимая у неё
+    // прежний, по которому её находят тесты.
+    return KeyedSubtree(
+      key: _shelfViewport,
+      child: _shelfList(
+        sections: sections,
+        categories: categories,
+        progress: progress,
+      ),
+    );
+  }
+
+  Widget _shelfList({
+    required List<ShelfSection> sections,
+    required List<BookCategory> categories,
+    required Map<String, double> progress,
+  }) {
     return ListView.builder(
       key: const Key('library-shelf'),
       controller: _shelf,
@@ -511,7 +569,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
               unawaited(_dropBook(dragged, into, before)),
           onDragStarted: _dragStarted,
           onDragEnded: _dragEnded,
-          onDragOver: _dragOver,
           onRename: category == null
               ? null
               : () => unawaited(_renameCategory(category)),

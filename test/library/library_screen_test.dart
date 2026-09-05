@@ -6,6 +6,7 @@ import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
+import 'package:memoria/domain/library/drag_scroll.dart';
 import 'package:memoria/domain/library/shelf.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/ui/library/book_card.dart';
@@ -362,6 +363,69 @@ void main() {
       expect(neighbour!.categoryId, 'fiction');
       expect(neighbour.shelfPosition, 1);
 
+      await tester.pump(const Duration(seconds: 6));
+      await unmount(tester);
+    });
+
+    testWidgets('поднятая у края книга полку сама по себе не двигает', (
+      WidgetTester tester,
+    ) async {
+      // Замечание владельца (29.08.2026): полка уезжала вверх сама собой.
+      // Зона самопрокрутки занимает пятую часть полки, и книга, поднятая
+      // из верхнего ряда, попадает в неё в тот же миг, когда её подняли.
+      tester.view.physicalSize = const Size(1080, 1600);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+
+      for (int i = 0; i < 8; i++) {
+        await data.categories.save(_category('c$i', 'Полка $i', position: i));
+        await data.library.save(
+          testBook(id: 'b$i', title: 'Книга $i', hash: 'hash-b$i'),
+        );
+        await placeBook(data, 'b$i', 'c$i');
+      }
+      await pumpShelf(tester, testServices(data: data));
+
+      final ScrollController shelf = tester
+          .widget<ListView>(find.byKey(const Key('library-shelf')))
+          .controller!;
+      final Rect shelfBox = tester.getRect(
+        find.byKey(const Key('library-shelf')),
+      );
+
+      // Подводим книгу к верхнему краю полки — туда, где зона и лежит.
+      final Finder card = find.byKey(const Key('library-book-b2'));
+      shelf.jumpTo(shelf.offset + tester.getCenter(card).dy - shelfBox.top - 30);
+      await tester.pumpAndSettle();
+
+      final Offset grip = tester.getCenter(card);
+      // Без этого тест ничего не проверял бы: книгу надо брать из зоны.
+      expect(
+        grip.dy - shelfBox.top,
+        lessThan(dragScrollZones(shelfBox.height).slow),
+      );
+
+      final double before = shelf.offset;
+      final TestGesture gesture = await tester.startGesture(grip);
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await gesture.moveBy(const Offset(8, 0));
+      await tester.pump(const Duration(seconds: 1));
+      expect(
+        shelf.offset,
+        before,
+        reason: 'полка поехала, книгу ещё никуда не вели',
+      );
+
+      // А после спокойной середины зона включается — иначе книгу нельзя
+      // было бы отнести в категорию, которой не видно.
+      await gesture.moveTo(shelfBox.center);
+      await tester.pump();
+      await gesture.moveTo(Offset(shelfBox.center.dx, shelfBox.top + 2));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(shelf.offset, lessThan(before));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 6));
       await unmount(tester);
     });

@@ -137,6 +137,28 @@ void main() {
       expect(dragScrollSpeed(y: double.infinity, height: _phone), 0);
     });
 
+    test('высота — это полка, а не экран', () {
+      // Прежде зона отсчитывалась от коробки всего экрана вместе с
+      // панелью приложения. На телефоне панель съедала почти всю быструю
+      // половину верхней зоны: вверх полка умела ехать только медленно,
+      // а книга, поднятая из верхнего ряда, сразу оказывалась в зоне.
+      // Здесь это записано числом: если мерить от экрана, точка, которая
+      // на полке лежит в быстрой зоне, оказывается вне её вовсе.
+      const double screen = 873;
+      const double appBar = 88;
+      const double shelf = screen - appBar;
+      // Палец в двадцати точках ниже верхнего края полки.
+      expect(
+        dragScrollSpeed(y: 20, height: shelf).abs(),
+        greaterThan(kDragScrollSlowSpeed),
+      );
+      // Та же точка, отсчитанная от экрана, — это уже медленная зона.
+      expect(
+        dragScrollSpeed(y: appBar + 20, height: screen).abs(),
+        lessThanOrEqualTo(kDragScrollSlowSpeed),
+      );
+    });
+
     test('расчёт один и тот же на телефоне и на ПК', () {
       // Платформы здесь нет вовсе, и это решение: колесо мыши полку
       // прокрутит, но вести книгу и крутить колесо одновременно — не то,
@@ -146,6 +168,56 @@ void main() {
         dragScrollSpeed(y: 0, height: desktop),
         dragScrollSpeed(y: 0, height: _phone),
       );
+    });
+  });
+
+  group('предохранитель', () {
+    test('книга, поднятая у самого края, полку не двигает', () {
+      // Замечание владельца: полка уезжала вверх сама собой. Зона
+      // занимает пятую часть полки, и книга из верхнего ряда попадает в
+      // неё в тот же миг, когда её подняли, — читатель ещё ничего не
+      // попросил.
+      final DragScrollGate gate = DragScrollGate();
+      expect(gate.speedAt(y: 4, height: _phone), 0);
+      expect(gate.speedAt(y: 40, height: _phone), 0);
+      expect(gate.armed, isFalse);
+    });
+
+    test('после спокойной середины зона включается', () {
+      final DragScrollGate gate = DragScrollGate();
+      expect(gate.speedAt(y: 4, height: _phone), 0);
+      // Сходили к середине…
+      expect(gate.speedAt(y: _phone / 2, height: _phone), 0);
+      expect(gate.armed, isTrue);
+      // …и вернулись к краю: теперь полка едет.
+      expect(gate.speedAt(y: 4, height: _phone), -kDragScrollFastSpeed);
+    });
+
+    test('книга из середины включает зону сразу', () {
+      // Обычный случай: предохранителя как будто и нет вовсе.
+      final DragScrollGate gate = DragScrollGate();
+      expect(gate.speedAt(y: _phone / 2, height: _phone), 0);
+      expect(gate.speedAt(y: 4, height: _phone), -kDragScrollFastSpeed);
+      expect(
+        gate.speedAt(y: _phone - 4, height: _phone),
+        kDragScrollFastSpeed,
+      );
+    });
+
+    test('снятый предохранитель обратно не встаёт', () {
+      // Внутри одного переноса. Иначе полка останавливалась бы каждый
+      // раз, когда палец случайно прошёл через середину.
+      final DragScrollGate gate = DragScrollGate();
+      gate.speedAt(y: _phone / 2, height: _phone);
+      gate.speedAt(y: 4, height: _phone);
+      expect(gate.armed, isTrue);
+    });
+
+    test('на каждый перенос — свой замок', () {
+      final DragScrollGate first = DragScrollGate();
+      first.speedAt(y: _phone / 2, height: _phone);
+      expect(first.armed, isTrue);
+      expect(DragScrollGate().armed, isFalse);
     });
   });
 }

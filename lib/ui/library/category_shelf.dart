@@ -35,7 +35,6 @@ class CategoryShelf extends StatelessWidget {
     this.onDelete,
     this.onDragStarted,
     this.onDragEnded,
-    this.onDragOver,
     super.key,
   });
 
@@ -75,10 +74,12 @@ class CategoryShelf extends StatelessWidget {
   final VoidCallback? onDragStarted;
 
   /// Книгу отпустили.
+  ///
+  /// Положение пальца сюда не приходит вовсе: самопрокрутку у краёв полки
+  /// слушает экран целиком (`LibraryScreen`). Между блоками целей приёма
+  /// нет, и полка, ведомая ими, не останавливалась там, где палец замер
+  /// в промежутке.
   final VoidCallback? onDragEnded;
-
-  /// Книгу ведут над полкой: нужно для прокрутки у краёв экрана.
-  final void Function(Offset globalPosition)? onDragOver;
 
   @override
   Widget build(BuildContext context) {
@@ -147,7 +148,6 @@ class CategoryShelf extends StatelessWidget {
                           return _TailSlot(
                             section: section,
                             onDropBook: onDropBook,
-                            onDragOver: onDragOver,
                             child: AddBookCard(
                               sectionId: section.id.isEmpty
                                   ? 'loose'
@@ -162,7 +162,6 @@ class CategoryShelf extends StatelessWidget {
                           section: section,
                           index: index,
                           onDropBook: onDropBook,
-                          onDragOver: onDragOver,
                           child: BookDragHandle(
                             payload: DraggedBook(
                               book: book,
@@ -211,7 +210,6 @@ class _BookSlot extends StatefulWidget {
     required this.section,
     required this.index,
     required this.onDropBook,
-    required this.onDragOver,
     required this.child,
   });
 
@@ -219,7 +217,6 @@ class _BookSlot extends StatefulWidget {
   final int index;
   final void Function(DraggedBook dragged, ShelfSection into, Book? before)
   onDropBook;
-  final void Function(Offset globalPosition)? onDragOver;
   final Widget child;
 
   @override
@@ -245,7 +242,6 @@ class _BookSlotState extends State<_BookSlot> {
   }
 
   void _track(DragTargetDetails<DraggedBook> details) {
-    widget.onDragOver?.call(details.offset);
     final RenderBox? box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) {
       return;
@@ -298,14 +294,12 @@ class _TailSlot extends StatefulWidget {
   const _TailSlot({
     required this.section,
     required this.onDropBook,
-    required this.onDragOver,
     required this.child,
   });
 
   final ShelfSection section;
   final void Function(DraggedBook dragged, ShelfSection into, Book? before)
   onDropBook;
-  final void Function(Offset globalPosition)? onDragOver;
   final Widget child;
 
   @override
@@ -320,7 +314,6 @@ class _TailSlotState extends State<_TailSlot> {
     return DragTarget<DraggedBook>(
       onWillAcceptWithDetails: (DragTargetDetails<DraggedBook> details) => true,
       onMove: (DragTargetDetails<DraggedBook> details) {
-        widget.onDragOver?.call(details.offset);
         if (!_hovered) {
           setState(() => _hovered = true);
         }
