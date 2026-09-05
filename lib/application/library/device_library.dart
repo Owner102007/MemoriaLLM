@@ -305,7 +305,6 @@ class DeviceLibrary {
     _scan = events;
 
     await finished.future;
-    await events.cancel();
     _scan = null;
     _finished = null;
     await writes;
@@ -326,6 +325,13 @@ class DeviceLibrary {
     progress.add(
       ScanProgress(found: found, visitedDirectories: directories, done: true),
     );
+    // Отписка не ждётся, и это не небрежность. Поток к этому моменту уже
+    // кончился, отписка от него — формальность; а вот **ждать** её между
+    // концом обхода и записью найденного нельзя: в подменённом времени
+    // widget-теста ожидание, которому не нужен кадр, обрывает
+    // `pumpAndSettle` — и найденные книги не успевают попасть в базу.
+    // На это уже потрачен один прогон CI (№88).
+    unawaited(events.cancel());
     await progress.close();
   }
 
@@ -386,9 +392,7 @@ class DeviceLibrary {
         record.copyWith(stage: IndexStage.text, hasTextLayer: pages > 0),
         // Текст уходит живым: приводить его к виду индекса — дело
         // репозитория, и делается это в одном месте.
-        body: body.length > kTextBudget
-            ? body.substring(0, kTextBudget)
-            : body,
+        body: body.length > kTextBudget ? body.substring(0, kTextBudget) : body,
       );
     } on Object {
       // Книга не открылась движком. Она остаётся в списке и находится по

@@ -39,6 +39,12 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: DeviceBooksScreen(services: services)),
     );
+    // Двумя заходами намеренно. Обход и разборка идут своими шагами, и
+    // между двумя из них может не оказаться ни одного запланированного
+    // кадра — тогда `pumpAndSettle` считает, что всё улеглось, хотя книги
+    // ещё не дошли до базы. Явный шаг времени даёт цепочке доработать.
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
   }
 
