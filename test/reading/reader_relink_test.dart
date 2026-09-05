@@ -10,6 +10,7 @@ import 'package:memoria/ui/reader/reader_screen.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
+import '../support/test_services.dart';
 
 /// Файл, который переехал: книга ведёт на несуществующий путь.
 const BookSource _gone = FilePathSource('/нет/такой/книги.pdf');
@@ -49,6 +50,7 @@ void main() {
             picker: FakeBookFilePicker(_found),
             storage: MemoryBookStorage(),
             coverStore: MemoryCoverStore(),
+            access: FakeStorageAccess(),
           ),
         ),
       ),
@@ -96,6 +98,7 @@ void main() {
             picker: FakeBookFilePicker(_found),
             storage: MemoryBookStorage(),
             coverStore: MemoryCoverStore(),
+            access: FakeStorageAccess(),
           ),
         ),
       ),

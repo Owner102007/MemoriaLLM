@@ -27,10 +27,7 @@ void main() {
   Future<File> writePdf(String relative, {String body = 'книга'}) async {
     final File file = File(p.join(root.path, relative));
     await file.parent.create(recursive: true);
-    final List<int> bytes = <int>[
-      ...kPdfSignature,
-      ...'1.7\n$body'.codeUnits,
-    ];
+    final List<int> bytes = <int>[...kPdfSignature, ...'1.7\n$body'.codeUnits];
     await file.writeAsBytes(Uint8List.fromList(bytes));
     return file;
   }
@@ -46,10 +43,8 @@ void main() {
     final List<String> found = <String>[];
     await scanForPdfs(
       roots: <String>[root.path],
-      onFile: (ScannedFile file) => found.add(p.relative(
-        file.path,
-        from: root.path,
-      )),
+      onFile: (ScannedFile file) =>
+          found.add(p.relative(file.path, from: root.path)),
     );
     found.sort();
     return found;
@@ -86,8 +81,10 @@ void main() {
 
     test('кэши пропускаются по имени', () {
       expect(shouldSkipDirectory(path: '/a/Cache', name: 'Cache'), isTrue);
-      expect(shouldSkipDirectory(path: '/a/.thumbnails', name: '.thumbnails'),
-          isTrue);
+      expect(
+        shouldSkipDirectory(path: '/a/.thumbnails', name: '.thumbnails'),
+        isTrue,
+      );
     });
 
     test('сигнатура ищется в начале файла, но не строго с нуля', () {
@@ -123,10 +120,7 @@ void main() {
     test('размер и время берутся с диска', () async {
       final File file = await writePdf('Книги/Онегин.pdf', body: 'подлиннее');
       final List<ScannedFile> found = <ScannedFile>[];
-      await scanForPdfs(
-        roots: <String>[root.path],
-        onFile: found.add,
-      );
+      await scanForPdfs(roots: <String>[root.path], onFile: found.add);
       expect(found.single.size, await file.length());
       expect(found.single.name, 'Онегин.pdf');
       expect(found.single.folder, 'Книги');

@@ -128,9 +128,9 @@ class DriftDeviceFileRepository implements DeviceFileRepository {
             'FROM $kSearchIndexTable WHERE $kSearchIndexTable MATCH ? '
             'ORDER BY weight LIMIT ?',
             variables: <Variable<Object>>[
-              Variable<double>(kNameWeight),
-              Variable<double>(kMetaWeight),
-              Variable<double>(kBodyWeight),
+              const Variable<double>(kNameWeight),
+              const Variable<double>(kMetaWeight),
+              const Variable<double>(kBodyWeight),
               Variable<String>(match),
               Variable<int>(limit),
             ],
@@ -208,14 +208,22 @@ class DriftDeviceFileRepository implements DeviceFileRepository {
 
   /// Перекладывает запись в индекс.
   ///
-  /// [body] — текст первых страниц. `null` означает «не трогать то, что
-  /// уже лежит»: метаданные подъезжают раньше текста, и обновление
-  /// заголовка не должно стирать разобранные страницы.
+  /// [body] — текст первых страниц **как он есть**, живым текстом.
+  /// Нормализацию делает здесь сам репозиторий: формат индекса — его
+  /// дело, и оставлять её вызывающей стороне значит однажды положить в
+  /// индекс сырую строку, которая не найдётся ничем.
+  ///
+  /// `null` означает «не трогать то, что уже лежит»: метаданные
+  /// подъезжают раньше текста, и обновление заголовка не должно стирать
+  /// разобранные страницы. Уже лежащее нормализовано — второй раз его
+  /// прогонять нельзя: стеммер не идемпотентен и обкусал бы слова дважды.
   Future<void> _reindex(DeviceFileRecord record, {String? body}) async {
     if (!_indexed) {
       return;
     }
-    final String text = body ?? await _bodyOf(record.path);
+    final String text = body == null
+        ? await _bodyOf(record.path)
+        : indexableText(body);
     await _dropFromIndex(record.path);
     await _db.customStatement(
       'INSERT INTO $kSearchIndexTable (path, name, meta, body) '

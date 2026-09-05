@@ -10,16 +10,8 @@ void main() {
   final DateTime early = DateTime.utc(2026, 9, 1, 10);
   final DateTime later = DateTime.utc(2026, 9, 5, 10);
 
-  ScannedFile file(
-    String path, {
-    int size = 1000,
-    DateTime? modified,
-  }) {
-    return ScannedFile(
-      path: path,
-      size: size,
-      modifiedAt: modified ?? early,
-    );
+  ScannedFile file(String path, {int size = 1000, DateTime? modified}) {
+    return ScannedFile(path: path, size: size, modifiedAt: modified ?? early);
   }
 
   DeviceFileRecord known(
@@ -134,13 +126,11 @@ void main() {
 
   group('дубликаты', () {
     test('один отпечаток — одна карточка', () {
-      final List<DeviceBookEntry> entries = groupDeviceFiles(
-        <DeviceFileRecord>[
-          known('/storage/Downloads/telegram_photo/книга.pdf'),
-          known('/storage/Книги/книга.pdf'),
-          known('/storage/tmp/книга (1).pdf'),
-        ],
-      );
+      final List<DeviceBookEntry> entries = groupDeviceFiles(<DeviceFileRecord>[
+        known('/storage/Downloads/telegram_photo/книга.pdf'),
+        known('/storage/Книги/книга.pdf'),
+        known('/storage/tmp/книга (1).pdf'),
+      ]);
 
       expect(entries.length, 1);
       expect(entries.single.copies, 3);
@@ -151,28 +141,26 @@ void main() {
     });
 
     test('одна копия — без приписки', () {
-      final List<DeviceBookEntry> entries = groupDeviceFiles(
-        <DeviceFileRecord>[known('/a/книга.pdf')],
-      );
+      final List<DeviceBookEntry> entries = groupDeviceFiles(<DeviceFileRecord>[
+        known('/a/книга.pdf'),
+      ]);
       expect(entries.single.duplicatesLabel, '');
     });
 
     test('файлы без отпечатка стоят каждый сам по себе', () {
       // Показать файл сразу важнее, чем дождаться, пока станет ясно, что
       // это дубликат.
-      final List<DeviceBookEntry> entries = groupDeviceFiles(
-        <DeviceFileRecord>[
-          known('/a/книга.pdf', hash: null),
-          known('/b/книга.pdf', hash: null),
-        ],
-      );
+      final List<DeviceBookEntry> entries = groupDeviceFiles(<DeviceFileRecord>[
+        known('/a/книга.pdf', hash: null),
+        known('/b/книга.pdf', hash: null),
+      ]);
       expect(entries.length, 2);
     });
 
     test('пропавшие файлы в список не попадают', () {
-      final List<DeviceBookEntry> entries = groupDeviceFiles(
-        <DeviceFileRecord>[known('/sd/книга.pdf', missing: true)],
-      );
+      final List<DeviceBookEntry> entries = groupDeviceFiles(<DeviceFileRecord>[
+        known('/sd/книга.pdf', missing: true),
+      ]);
       expect(entries, isEmpty);
     });
   });

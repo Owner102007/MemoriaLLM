@@ -26,11 +26,7 @@ import 'storage_permission_view.dart';
 /// системным диалогом.
 class DeviceBooksScreen extends StatefulWidget {
   /// Создаёт экран.
-  const DeviceBooksScreen({
-    required this.services,
-    this.categoryId,
-    super.key,
-  });
+  const DeviceBooksScreen({required this.services, this.categoryId, super.key});
 
   /// Службы приложения.
   final AppServices services;
@@ -481,13 +477,16 @@ class _EmptyDevice extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final String message;
     if (searching) {
-      message = 'По этому запросу ничего не нашлось. Попробуйте другое слово '
+      message =
+          'По этому запросу ничего не нашлось. Попробуйте другое слово '
           'или часть названия — поиск понимает и опечатки.';
     } else if (scanning) {
-      message = 'Смотрим устройство. Книги появятся по мере того, '
+      message =
+          'Смотрим устройство. Книги появятся по мере того, '
           'как находятся.';
     } else {
-      message = 'PDF на устройстве не нашлось. Книгу всегда можно выбрать '
+      message =
+          'PDF на устройстве не нашлось. Книгу всегда можно выбрать '
           'вручную.';
     }
     return Center(

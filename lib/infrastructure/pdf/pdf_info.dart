@@ -35,13 +35,12 @@ class PdfInfo {
       (keywords ?? '').trim().isEmpty;
 
   /// Всё, что стоит положить в индекс, одной строкой.
-  String get searchable =>
-      <String>[
-        title ?? '',
-        author ?? '',
-        subject ?? '',
-        keywords ?? '',
-      ].where((String part) => part.trim().isNotEmpty).join(' ');
+  String get searchable => <String>[
+    title ?? '',
+    author ?? '',
+    subject ?? '',
+    keywords ?? '',
+  ].where((String part) => part.trim().isNotEmpty).join(' ');
 
   @override
   String toString() => 'PdfInfo(title: $title, author: $author)';

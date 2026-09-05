@@ -66,10 +66,7 @@ void main() {
       final FakeStorageAccess access = FakeStorageAccess(
         current: StorageAccessState.denied,
       );
-      await pumpScreen(
-        tester,
-        testServices(data: data, access: access),
-      );
+      await pumpScreen(tester, testServices(data: data, access: access));
 
       expect(find.text('Найти книги на устройстве'), findsOneWidget);
       expect(find.textContaining('Ищем:'), findsOneWidget);

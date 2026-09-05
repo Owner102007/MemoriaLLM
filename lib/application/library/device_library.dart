@@ -83,6 +83,7 @@ class DeviceLibrary {
   final DateTime Function() _now;
 
   StreamSubscription<ScanEvent>? _scan;
+  Completer<void>? _finished;
 
   /// Идёт ли обход прямо сейчас.
   bool get isScanning => _scan != null;
@@ -109,10 +110,20 @@ class DeviceLibrary {
   }
 
   /// Останавливает обход.
+  ///
+  /// Отписка от потока не приводит к `onDone` — значит, тот, кто ждёт
+  /// конца обхода, ждал бы вечно. Поэтому конец объявляется здесь же:
+  /// остановленный обход обязан закончиться так же честно, как дошедший
+  /// до края.
   Future<void> stopScan() async {
     final StreamSubscription<ScanEvent>? scan = _scan;
     _scan = null;
     await scan?.cancel();
+    final Completer<void>? finished = _finished;
+    _finished = null;
+    if (finished != null && !finished.isCompleted) {
+      finished.complete();
+    }
   }
 
   /// Разбирает следующую порцию файлов.
@@ -251,7 +262,11 @@ class DeviceLibrary {
     // ускорят, зато сделают порядок записи непредсказуемым.
     Future<void> writes = Future<void>.value();
     final Completer<void> finished = Completer<void>();
-    _scan = _runner(roots).listen(
+    _finished = finished;
+    // Подписка живёт в переменной, а не только в поле: так она заводится
+    // и закрывается в одной функции — и видно, что забыть её закрытие
+    // здесь негде.
+    final StreamSubscription<ScanEvent> events = _runner(roots).listen(
       (ScanEvent event) {
         final ScannedFile? file = event.file;
         if (file == null) {
@@ -287,11 +302,14 @@ class DeviceLibrary {
       },
       cancelOnError: true,
     );
+    _scan = events;
 
     await finished.future;
+    await events.cancel();
+    _scan = null;
+    _finished = null;
     await writes;
     await flush();
-    _scan = null;
 
     // Пропавшие: те, кого знали, но в этом обходе не встретили.
     final List<DeviceFileRecord> gone = <DeviceFileRecord>[
@@ -306,11 +324,7 @@ class DeviceLibrary {
     }
 
     progress.add(
-      ScanProgress(
-        found: found,
-        visitedDirectories: directories,
-        done: true,
-      ),
+      ScanProgress(found: found, visitedDirectories: directories, done: true),
     );
     await progress.close();
   }
@@ -370,9 +384,11 @@ class DeviceLibrary {
       final String body = text.toString();
       return _Indexed(
         record.copyWith(stage: IndexStage.text, hasTextLayer: pages > 0),
-        body: indexableText(
-          body.length > kTextBudget ? body.substring(0, kTextBudget) : body,
-        ),
+        // Текст уходит живым: приводить его к виду индекса — дело
+        // репозитория, и делается это в одном месте.
+        body: body.length > kTextBudget
+            ? body.substring(0, kTextBudget)
+            : body,
       );
     } on Object {
       // Книга не открылась движком. Она остаётся в списке и находится по

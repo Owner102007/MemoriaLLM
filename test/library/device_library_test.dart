@@ -66,8 +66,10 @@ void main() {
 
       final List<DeviceFileRecord> records = await data.deviceFiles.files();
       expect(records.length, 2);
-      expect(records.every((DeviceFileRecord r) => r.stage == IndexStage.name),
-          isTrue);
+      expect(
+        records.every((DeviceFileRecord r) => r.stage == IndexStage.name),
+        isTrue,
+      );
     });
 
     test('обход отдаёт растущий счёт, а не один ответ в конце', () async {
@@ -171,10 +173,7 @@ void main() {
       await runScan(device);
       await device.indexBatch(upTo: IndexStage.meta);
 
-      expect(
-        (await data.deviceFiles.files()).single.stage,
-        IndexStage.meta,
-      );
+      expect((await data.deviceFiles.files()).single.stage, IndexStage.meta);
       expect(await device.indexBatch(upTo: IndexStage.meta), 0);
     });
 
@@ -204,10 +203,7 @@ void main() {
         build(files: <ScannedFile>[onDisk('/device/книга.pdf', size: 5000)]),
       );
 
-      expect(
-        (await data.deviceFiles.files()).single.stage,
-        IndexStage.name,
-      );
+      expect((await data.deviceFiles.files()).single.stage, IndexStage.name);
     });
   });
 

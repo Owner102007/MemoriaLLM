@@ -69,11 +69,7 @@ void main() {
         body: 'редкоеслово внутри текста',
       );
       await add(
-        record(
-          '/device/книга.pdf',
-          title: 'Название',
-          stage: IndexStage.text,
-        ),
+        record('/device/книга.pdf', title: 'Название', stage: IndexStage.text),
       );
 
       expect(await data.deviceFiles.search('редкоеслово'), <String>[

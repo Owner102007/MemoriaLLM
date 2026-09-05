@@ -114,10 +114,7 @@ class _DeviceBookCardState extends State<DeviceBookCard> {
               child: Stack(
                 fit: StackFit.expand,
                 children: <Widget>[
-                  _CoverOrBackdrop(
-                    title: widget.entry.title,
-                    cover: _cover,
-                  ),
+                  _CoverOrBackdrop(title: widget.entry.title, cover: _cover),
                   if (widget.onShelf)
                     Align(
                       alignment: Alignment.topLeft,

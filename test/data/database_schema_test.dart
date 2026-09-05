@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — пятая: места книг на полке', () {
+  test('версия схемы — шестая: файлы устройства и индекс поиска', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 5);
+    expect(appSchemaVersion, 6);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -59,6 +59,7 @@ void main() {
         'bookmarks',
         'llm_queries',
         'app_settings',
+        'device_files',
       ]),
     );
   });
