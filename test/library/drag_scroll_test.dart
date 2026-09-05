@@ -189,19 +189,31 @@ void main() {
       // Сходили к середине…
       expect(gate.speedAt(y: _phone / 2, height: _phone), 0);
       expect(gate.armed, isTrue);
-      // …и вернулись к краю: теперь полка едет.
-      expect(gate.speedAt(y: 4, height: _phone), -kDragScrollFastSpeed);
+      // …и вернулись к краю: теперь полка едет, и ровно с той скоростью,
+      // которую даёт сам расчёт. Сверяемся с ним, а не с числом: у самого
+      // края скорость полная, а в четырёх точках от него — уже нет, и
+      // переписывать эту арифметику в тесте значит однажды ошибиться в
+      // ней дважды.
+      expect(
+        gate.speedAt(y: 4, height: _phone),
+        dragScrollSpeed(y: 4, height: _phone),
+      );
+      expect(gate.speedAt(y: 4, height: _phone), lessThan(0));
     });
 
     test('книга из середины включает зону сразу', () {
       // Обычный случай: предохранителя как будто и нет вовсе.
       final DragScrollGate gate = DragScrollGate();
       expect(gate.speedAt(y: _phone / 2, height: _phone), 0);
-      expect(gate.speedAt(y: 4, height: _phone), -kDragScrollFastSpeed);
+      expect(
+        gate.speedAt(y: 4, height: _phone),
+        dragScrollSpeed(y: 4, height: _phone),
+      );
       expect(
         gate.speedAt(y: _phone - 4, height: _phone),
-        kDragScrollFastSpeed,
+        dragScrollSpeed(y: _phone - 4, height: _phone),
       );
+      expect(gate.speedAt(y: _phone - 4, height: _phone), greaterThan(0));
     });
 
     test('снятый предохранитель обратно не встаёт', () {

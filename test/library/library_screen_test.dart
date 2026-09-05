@@ -394,8 +394,24 @@ void main() {
       );
 
       // Подводим книгу к верхнему краю полки — туда, где зона и лежит.
-      final Finder card = find.byKey(const Key('library-book-b2'));
-      shelf.jumpTo(shelf.offset + tester.getCenter(card).dy - shelfBox.top - 30);
+      // `ListView` не строит того, чего не видно, поэтому сначала
+      // прокручиваем полку до нужной книги, и только потом ставим её на
+      // место: считать, что она построена заранее, нельзя.
+      final Finder card = find.byKey(const Key('library-book-b3'));
+      for (int i = 0; card.evaluate().isEmpty && i < 40; i++) {
+        shelf.jumpTo(
+          (shelf.offset + 150).clamp(0.0, shelf.position.maxScrollExtent),
+        );
+        await tester.pumpAndSettle();
+      }
+      expect(card, findsOneWidget);
+
+      shelf.jumpTo(
+        (shelf.offset + tester.getCenter(card).dy - shelfBox.top - 30).clamp(
+          0.0,
+          shelf.position.maxScrollExtent,
+        ),
+      );
       await tester.pumpAndSettle();
 
       final Offset grip = tester.getCenter(card);
