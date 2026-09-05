@@ -165,7 +165,9 @@ void main() {
       );
 
       expect(find.byType(DeviceBookCard), findsNWidgets(2));
-      expect(find.text('Онегин.pdf'), findsOneWidget);
+      // Название встречается дважды на карточку: подписью под обложкой и
+      // на самой подложке, пока обложка не нарисована.
+      expect(find.text('Онегин.pdf'), findsWidgets);
 
       await unmount(tester);
     });
@@ -231,7 +233,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(DeviceBookCard), findsOneWidget);
-      expect(find.text('Онегин.pdf'), findsOneWidget);
+      expect(find.text('Онегин.pdf'), findsWidgets);
+      expect(find.text('Гладиатор.pdf'), findsNothing);
 
       await unmount(tester);
     });
