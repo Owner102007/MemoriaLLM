@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
+import 'package:memoria/domain/library/device_files.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/infrastructure/database/app_database.dart';
 import 'package:path/path.dart' as p;
@@ -52,8 +53,15 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 5: файлов устройства тогда не было.
+  Future<void> undoDeviceFiles(AppData data) async {
+    await data.database.customStatement('DROP TABLE device_files');
+    await data.database.customStatement('DROP TABLE IF EXISTS device_search');
+  }
+
   /// Откатывает базу к версии 4: мест на полке тогда не было.
   Future<void> undoPositions(AppData data) async {
+    await undoDeviceFiles(data);
     await data.database.customStatement(
       'ALTER TABLE books DROP COLUMN shelf_position',
     );
@@ -76,7 +84,50 @@ void main() {
       containsAll(<String>['strip_fit', 'dim_outside']),
     );
     expect(await columnsOf(data, 'books'), contains('category_id'));
+    expect(await columnsOf(data, 'device_files'), contains('fingerprint'));
+    expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('база версии 5 доезжает до 6 и получает файлы устройства', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await first.deviceFiles.saveFile(
+      DeviceFileRecord(
+        path: '/device/Онегин.pdf',
+        size: 1000,
+        modifiedAt: DateTime.utc(2026, 9, 1),
+        seenAt: DateTime.utc(2026, 9, 5),
+      ),
+    );
+    await undoDeviceFiles(first);
+    await first.database.customStatement('PRAGMA user_version = 5');
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(await columnsOf(second, 'device_files'), contains('fingerprint'));
+
+    // Список файлов заводится **пустым**: он не переносится ниоткуда, а
+    // собирается обходом при первом заходе на экран. А книга читателя,
+    // обновившего приложение, обязана остаться на полке.
+    expect(await second.deviceFiles.files(), isEmpty);
+    expect((await second.library.bookById('book-1'))!.title, 'Пиковая дама');
+
+    // И поиск после миграции сразу работает.
+    expect(second.searchIndexed, isTrue);
+    await second.deviceFiles.saveFile(
+      DeviceFileRecord(
+        path: '/device/Пиковая дама.pdf',
+        size: 1000,
+        modifiedAt: DateTime.utc(2026, 9, 1),
+        seenAt: DateTime.utc(2026, 9, 5),
+      ),
+    );
+    expect(await second.deviceFiles.search('пиковая'), <String>[
+      '/device/Пиковая дама.pdf',
+    ]);
+    await second.close();
   });
 
   test('база версии 4 доезжает до 5 и получает места на полке', () async {

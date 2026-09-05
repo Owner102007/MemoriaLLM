@@ -3,10 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../application/app_services.dart';
-import '../../application/library/book_importer.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
-import '../../domain/library/book_file_picker.dart';
 import '../../domain/library/drag_scroll.dart';
 import '../../domain/library/shelf.dart';
 import '../../domain/reading/reading.dart';
@@ -14,6 +12,7 @@ import '../../domain/settings/app_settings.dart';
 import '../reader/reader_screen.dart';
 import 'book_drag.dart';
 import 'category_shelf.dart';
+import 'device_books_screen.dart';
 import 'library_dialogs.dart';
 
 /// Полка книг.
@@ -51,7 +50,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   static const Duration _autoScrollTick = Duration(milliseconds: 16);
 
   ShelfSort _sort = ShelfSort.recent;
-  bool _busy = false;
   final Map<String, Timer> _pending = <String, Timer>{};
   final ScrollController _shelf = ScrollController();
 
@@ -162,56 +160,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  /// Заводит выбранные книги сразу в нужную категорию.
+  /// Открывает экран книг, лежащих на устройстве.
+  ///
+  /// С S5.5 «+» ведёт сюда, а не в системный диалог. Разница в том, кто
+  /// ищет книгу: прежде — читатель, вспоминая, в какой папке она лежит;
+  /// теперь — приложение, показывая всё, что нашлось, с обложками и
+  /// поиском. Системный диалог никуда не делся и стоит на том же экране
+  /// кнопкой в шапке: разрешения может не быть, а книгу добавить надо.
   Future<void> _addBooks(String? categoryId) async {
-    if (_busy) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final List<PickedFile> files = await widget.services.picker.pickPdfs();
-      if (files.isEmpty) {
-        return;
-      }
-      final BookImporter importer = BookImporter(
-        library: widget.services.data.library,
-        storage: widget.services.storage,
-        opener: widget.services.opener,
-      );
-      final ImportReport report = await importer.registerAll(
-        files,
-        categoryId: categoryId,
-      );
-      if (!mounted) {
-        return;
-      }
-      _say(_describeImport(report));
-      // Одну книгу читатель выбирал, чтобы её открыть, а не чтобы
-      // полюбоваться полкой. Пачку — наоборот: открывать первую попавшуюся
-      // из тридцати было бы наглостью.
-      if (report.added.length == 1 && report.isClean) {
-        await _openBook(report.added.single);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  String _describeImport(ImportReport report) {
-    if (report.added.isEmpty) {
-      return report.failed.length == 1
-          ? 'Не удалось добавить: ${report.failed.single.reason}'
-          : 'Не удалось добавить ни одной книги из ${report.total}';
-    }
-    if (report.isClean) {
-      return report.added.length == 1
-          ? 'Книга добавлена'
-          : 'Добавлено книг: ${report.added.length}';
-    }
-    return 'Добавлено ${report.added.length} из ${report.total}; '
-        'не открылось: ${report.failed.length}';
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => DeviceBooksScreen(
+          services: widget.services,
+          categoryId: categoryId,
+        ),
+      ),
+    );
   }
 
   /// Убирает книгу с полки — с возможностью вернуть.
@@ -462,8 +426,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
           IconButton(
             key: const Key('library-open-file'),
             icon: const Icon(Icons.library_add_outlined),
-            tooltip: 'Добавить книги',
-            onPressed: _busy ? null : () => unawaited(_addBooks(null)),
+            tooltip: 'Книги на устройстве',
+            onPressed: () => unawaited(_addBooks(null)),
           ),
         ],
       ),
@@ -522,7 +486,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         entry.key: entry.value.progress,
     };
     if (books.isEmpty && categories.isEmpty) {
-      return _EmptyShelf(busy: _busy, onOpen: () => unawaited(_addBooks(null)));
+      return _EmptyShelf(onOpen: () => unawaited(_addBooks(null)));
     }
     final List<ShelfSection> sections = buildShelf(
       categories: categories,
@@ -560,7 +524,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
           section: section,
           covers: widget.services.covers,
           progress: progress,
-          busy: _busy,
+          // Импорт больше не идёт на этом экране: «+» открывает экран
+          // книг устройства, и ждать здесь нечего.
+          busy: false,
           onOpen: (Book book) => unawaited(_openBook(book)),
           onMenu: (Book book) =>
               unawaited(_showBookMenu(book, categories, sections)),
@@ -613,9 +579,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 }
 
 class _EmptyShelf extends StatelessWidget {
-  const _EmptyShelf({required this.busy, required this.onOpen});
+  const _EmptyShelf({required this.onOpen});
 
-  final bool busy;
   final VoidCallback onOpen;
 
   @override
@@ -648,14 +613,14 @@ class _EmptyShelf extends StatelessWidget {
             const SizedBox(height: 32),
             FilledButton.icon(
               key: const Key('library-open-file-empty'),
-              onPressed: busy ? null : onOpen,
+              onPressed: onOpen,
               icon: const Icon(Icons.library_add_outlined),
-              label: const Text('Добавить книги'),
+              label: const Text('Найти книги на устройстве'),
             ),
             const SizedBox(height: 16),
             Text(
-              'Можно отметить сразу несколько файлов. Категории заводятся '
-              'кнопкой в шапке — у каждой свой узор полки.',
+              'Приложение покажет все PDF, которые лежат на устройстве, — '
+              'с обложками и поиском. Можно и выбрать файлы вручную.',
               style: theme.textTheme.bodySmall,
               textAlign: TextAlign.center,
             ),

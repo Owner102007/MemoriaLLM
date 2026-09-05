@@ -1,7 +1,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Доступ ко всем файлам. Нужен ровно для одного: НАЙТИ книги там,
+         где они лежат, и показать их списком с обложками и поиском.
+         Приложение не копирует книги к себе, ничего не удаляет и не
+         отправляет содержимое файлов наружу — весь код на виду, лицензия
+         GPL-3.0. Список найденных файлов и индекс поиска остаются на
+         устройстве и не уезжают ни в облако, ни на второе устройство.
+
+         Отказ ничего не ломает: книги по-прежнему добавляются по одной
+         через системный диалог и читаются по дескриптору, без копии.
+         Подробнее — в README, раздел «Доступ к файлам». -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <!-- До Android 11 ту же работу делает обычное разрешение на чтение
+         вместе с requestLegacyExternalStorage ниже. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
     <application
         android:label="Memoria LLM HB"
         android:name="${applicationName}"
+        android:requestLegacyExternalStorage="true"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

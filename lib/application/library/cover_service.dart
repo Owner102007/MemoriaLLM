@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../../domain/library/book.dart';
+import '../../domain/library/book_source.dart';
 import '../../domain/library/cover.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../infrastructure/images/png.dart';
@@ -66,7 +67,29 @@ class CoverService {
   /// Повторные вызовы для той же книги бесплатны: ни файла, ни движка они
   /// не трогают вовсе.
   Future<String?> coverFor(Book book) {
-    final String key = coverKeyFor(book, width: _width);
+    return coverForSource(
+      key: coverKeyFor(book, width: _width),
+      source: book.source,
+      onStored: (String path) => _library.setCoverPath(book.id, path),
+      knownPath: book.coverPath,
+    );
+  }
+
+  /// Обложка чего угодно, у чего есть источник.
+  ///
+  /// Так рисуются карточки на экране «Книги на устройстве»: книги там ещё
+  /// нет — есть файл, — а обложка нужна ровно та же и по тому же кэшу.
+  /// Ключ считается снаружи: у файла устройства он строится по отпечатку,
+  /// если тот уже посчитан, и по пути, пока нет.
+  ///
+  /// [onStored] зовётся, когда обложка легла в кэш, — книге надо записать
+  /// путь к ней, файлу устройства не надо ничего.
+  Future<String?> coverForSource({
+    required String key,
+    required BookSource source,
+    Future<void> Function(String path)? onStored,
+    String? knownPath,
+  }) {
     final Future<String?>? ready = _known[key];
     if (ready != null) {
       return ready;
@@ -74,9 +97,38 @@ class CoverService {
     final Completer<String?> completer = Completer<String?>();
     final Future<String?> result = completer.future;
     _known[key] = result;
-    _queue.add(_CoverJob(book: book, key: key, completer: completer));
+    _queue.add(
+      _CoverJob(
+        key: key,
+        source: source,
+        completer: completer,
+        onStored: onStored,
+        knownPath: knownPath,
+      ),
+    );
     _pump();
     return result;
+  }
+
+  /// Снимает ещё не начатое задание: карточка ушла с экрана.
+  ///
+  /// Без этого прокрутка тысячи файлов ставит в очередь тысячу рендеров,
+  /// и обложка книги, на которую читатель смотрит **сейчас**, ждёт за
+  /// девятьюстами чужими. Уже идущий рендер не отменяется: PDFium
+  /// остановить посреди страницы нельзя.
+  ///
+  /// Возвращает `true`, если задание удалось снять.
+  bool cancel(String key) {
+    final int at = _queue.indexWhere((_CoverJob job) => job.key == key);
+    if (at < 0) {
+      return false;
+    }
+    final _CoverJob job = _queue.removeAt(at);
+    _known.remove(key);
+    if (!job.completer.isCompleted) {
+      job.completer.complete(null);
+    }
+    return true;
   }
 
   /// Убирает обложку книги, снятой с полки.
@@ -135,15 +187,15 @@ class CoverService {
     if (cached != null) {
       // Путь мог потеряться: кэш переехал, приложение переустановили,
       // база приехала с другого устройства. Книга при этом та же.
-      if (job.book.coverPath != cached) {
-        await _library.setCoverPath(job.book.id, cached);
+      if (job.knownPath != cached) {
+        await job.onStored?.call(cached);
       }
       return cached;
     }
 
     ReaderDocument? document;
     try {
-      document = await _opener.open(job.book.source);
+      document = await _opener.open(job.source);
       if (document.pageCount < 1) {
         return null;
       }
@@ -166,7 +218,7 @@ class CoverService {
       }
       final Uint8List png = await _encode(raster);
       final String path = await _store.write(job.key, png);
-      await _library.setCoverPath(job.book.id, path);
+      await job.onStored?.call(path);
       return path;
     } on Object {
       // Книга не открылась, файл унесли, страница не нарисовалась — это
@@ -188,9 +240,17 @@ Future<Uint8List> encodeCoverInIsolate(PageRaster raster) {
 }
 
 class _CoverJob {
-  _CoverJob({required this.book, required this.key, required this.completer});
+  _CoverJob({
+    required this.key,
+    required this.source,
+    required this.completer,
+    this.onStored,
+    this.knownPath,
+  });
 
-  final Book book;
   final String key;
+  final BookSource source;
   final Completer<String?> completer;
+  final Future<void> Function(String path)? onStored;
+  final String? knownPath;
 }

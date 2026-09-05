@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 
+import 'search_index.dart';
 import 'tables.dart';
 
 part 'app_database.g.dart';
@@ -10,8 +11,9 @@ part 'app_database.g.dart';
 /// (S4.6). 3 — сила затемнения нечитаемой части страницы (S4.7): страница
 /// в режимах половины и трети больше не обрезается, а гаснет. 4 —
 /// категории полки (S5.2): своя таблица и ссылка на неё у книги. 5 —
-/// место книги на полке (S5.3): книги переставляются руками.
-const int appSchemaVersion = 5;
+/// место книги на полке (S5.3): книги переставляются руками. 6 — файлы
+/// устройства и индекс поиска по ним (S5.5).
+const int appSchemaVersion = 6;
 
 /// База данных приложения.
 ///
@@ -30,6 +32,7 @@ const int appSchemaVersion = 5;
     Bookmarks,
     LlmQueries,
     AppSettings,
+    DeviceFiles,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -44,6 +47,7 @@ class AppDatabase extends _$AppDatabase {
     return MigrationStrategy(
       onCreate: (Migrator m) async {
         await m.createAll();
+        await createSearchIndex(this);
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // Каждая версия добавляет сюда свою ветку и тест. Ветки идут
@@ -71,6 +75,13 @@ class AppDatabase extends _$AppDatabase {
           // разводятся названием — то есть выглядят разложенными по
           // алфавиту, а не случайно.
           await m.addColumn(books, books.shelfPosition);
+        }
+        if (from < 6) {
+          // Список файлов устройства заводится пустым: он не переносится
+          // ниоткуда, а собирается обходом при первом же заходе на экран
+          // «Книги на устройстве». Индекс поиска — тоже.
+          await m.createTable(deviceFiles);
+          await createSearchIndex(this);
         }
       },
       beforeOpen: (OpeningDetails details) async {

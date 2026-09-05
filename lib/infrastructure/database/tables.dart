@@ -344,6 +344,54 @@ class LlmQueries extends Table with SyncedRow {
   Set<Column<Object>> get primaryKey => <Column<Object>>{id};
 }
 
+/// Файлы устройства, найденные обходом (S5.5).
+///
+/// **Полей CRDT здесь нет, и это решение, а не забывчивость.** Перечень
+/// файлов на диске читателя не создавал никто: он не цитата и не заметка,
+/// а слепок чужого устройства. В облако он не уезжает — как и индекс
+/// поиска, построенный по нему. Второму устройству этот список
+/// бесполезен: там другой диск.
+///
+/// Строка живёт на путь, а не на книгу: один и тот же файл лежит на
+/// телефоне в трёх местах, и склеиваются такие записи по отпечатку —
+/// уже при показе, в `groupDeviceFiles`.
+@DataClassName('DeviceFileRow')
+class DeviceFiles extends Table {
+  /// Полный путь к файлу — он же ключ.
+  TextColumn get path => text()();
+
+  /// Размер в байтах.
+  IntColumn get size => integer()();
+
+  /// Время последнего изменения файла.
+  DateTimeColumn get modifiedAt => dateTime()();
+
+  /// Когда файл в последний раз попадался обходу.
+  DateTimeColumn get seenAt => dateTime()();
+
+  /// Отпечаток содержимого; пусто — ещё не считали.
+  TextColumn get fingerprint => text().nullable()();
+
+  /// Заголовок из метаданных PDF.
+  TextColumn get title => text().nullable()();
+
+  /// Автор из метаданных PDF.
+  TextColumn get author => text().nullable()();
+
+  /// Докуда дошла разборка: `name`, `meta` или `text`.
+  TextColumn get stage => text().withDefault(const Constant<String>('name'))();
+
+  /// Есть ли текстовый слой; пусто — ещё не смотрели.
+  BoolColumn get hasTextLayer => boolean().nullable()();
+
+  /// Файла не было на месте при последнем обходе.
+  BoolColumn get missing =>
+      boolean().withDefault(const Constant<bool>(false))();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{path};
+}
+
 /// Локальные настройки приложения. Без полей CRDT: они не
 /// синхронизируются намеренно — см. `AppSettingsRepository`.
 @DataClassName('AppSettingRow')

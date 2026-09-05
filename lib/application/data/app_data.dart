@@ -5,15 +5,18 @@ import 'package:drift/drift.dart';
 import '../../domain/annotations/annotations.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
+import '../../domain/library/device_files.dart';
 import '../../domain/llm/llm_query.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
 import '../../domain/sync/hlc.dart';
 import '../../infrastructure/database/app_database.dart';
 import '../../infrastructure/database/connection.dart';
+import '../../infrastructure/database/search_index.dart';
 import '../../infrastructure/repositories/drift_annotation_repository.dart';
 import '../../infrastructure/repositories/drift_app_settings_repository.dart';
 import '../../infrastructure/repositories/drift_category_repository.dart';
+import '../../infrastructure/repositories/drift_device_file_repository.dart';
 import '../../infrastructure/repositories/drift_library_repository.dart';
 import '../../infrastructure/repositories/drift_llm_history_repository.dart';
 import '../../infrastructure/repositories/drift_reading_repository.dart';
@@ -33,6 +36,8 @@ class AppData {
     required this.reading,
     required this.annotations,
     required this.llmHistory,
+    required this.deviceFiles,
+    required this.searchIndexed,
   });
 
   /// Открывает базу и собирает репозитории.
@@ -43,6 +48,9 @@ class AppData {
     final AppSettingsRepository settings = DriftAppSettingsRepository(database);
     final HlcClock clock = await restoreClock(settings);
     final LibraryRepository library = DriftLibraryRepository(database, clock);
+    // FTS5 — необязательный модуль SQLite, и спрашивать о нём базу на
+    // каждый запрос незачем: ответ на всю жизнь подключения один.
+    final bool indexed = await hasSearchIndex(database);
     return AppData._(
       database: database,
       clock: clock,
@@ -52,6 +60,8 @@ class AppData {
       reading: DriftReadingRepository(database, clock),
       annotations: DriftAnnotationRepository(database, clock),
       llmHistory: DriftLlmHistoryRepository(database, clock),
+      deviceFiles: DriftDeviceFileRepository(database, indexed: indexed),
+      searchIndexed: indexed,
     );
   }
 
@@ -78,6 +88,15 @@ class AppData {
 
   /// История запросов к модели.
   final LlmHistoryRepository llmHistory;
+
+  /// Файлы устройства и индекс поиска по ним. Не синхронизируется.
+  final DeviceFileRepository deviceFiles;
+
+  /// Есть ли в этой базе рабочий FTS5.
+  ///
+  /// Читателю об этом знать незачем, а экрану поиска — да: без индекса
+  /// он честно ищет по именам файлов и не обещает большего.
+  final bool searchIndexed;
 
   /// Закрывает базу.
   Future<void> close() => database.close();

@@ -305,6 +305,50 @@ void main() {
 
       expect(await waiting, isNull);
     });
+
+    test('карточка ушла с экрана — её задание снято', () async {
+      // Без этого прокрутка по тысяче файлов ставит в очередь тысячу
+      // рендеров, и обложка книги, на которую читатель смотрит сейчас,
+      // ждёт за девятьюстами чужими.
+      final _CountingOpener opener = _CountingOpener()..hold = true;
+      final CoverService covers = CoverService(
+        opener: opener,
+        store: MemoryCoverStore(),
+        library: data.library,
+        parallel: 1,
+        encode: (PageRaster raster) async => Uint8List(4),
+      );
+
+      unawaited(
+        covers.coverForSource(key: 'занял', source: const FilePathSource('/a')),
+      );
+      final Future<String?> queued = covers.coverForSource(
+        key: 'ушёл',
+        source: const FilePathSource('/b'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(covers.cancel('ушёл'), isTrue);
+      expect(await queued, isNull);
+
+      // Уже начатое задание снять нельзя: PDFium не останавливают посреди
+      // страницы.
+      expect(covers.cancel('занял'), isFalse);
+
+      // А попросить снятую обложку заново — можно: карточка вернулась на
+      // экран, и работа обязана начаться, а не считаться сделанной.
+      final Future<String?> again = covers.coverForSource(
+        key: 'ушёл',
+        source: const FilePathSource('/b'),
+      );
+      for (int i = 0; i < 20; i++) {
+        await Future<void>.delayed(Duration.zero);
+        opener.releaseAll();
+      }
+      expect(await again, isNotNull);
+
+      covers.dispose();
+    });
   });
 
   group('размер обложки', () {

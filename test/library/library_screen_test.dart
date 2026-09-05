@@ -140,6 +140,20 @@ void main() {
   });
 
   group('добавление книг', () {
+    // С S5.5 «+» ведёт не в системный диалог, а на экран книг
+    // устройства; сам диалог остался там же кнопкой в шапке. Тесты идут
+    // тем же путём, каким пойдёт читатель.
+    Future<void> pickOnDeviceScreen(WidgetTester tester) async {
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('device-pick-files')),
+        findsOneWidget,
+        reason: 'выбор файлов вручную обязан остаться на виду',
+      );
+      await tester.tap(find.byKey(const Key('device-pick-files')));
+      await tester.pumpAndSettle();
+    }
+
     testWidgets('«+» в категории заводит книги именно в неё', (
       WidgetTester tester,
     ) async {
@@ -152,7 +166,7 @@ void main() {
       await pumpShelf(tester, services);
 
       await tester.tap(find.byKey(const Key('library-add-study')));
-      await tester.pumpAndSettle();
+      await pickOnDeviceScreen(tester);
 
       final List<Book> books = await data.library.books();
       expect(books.length, 1);
@@ -172,7 +186,7 @@ void main() {
       await pumpShelf(tester, services);
 
       await tester.tap(find.byKey(const Key('library-open-file')));
-      await tester.pumpAndSettle();
+      await pickOnDeviceScreen(tester);
 
       final List<Book> books = await data.library.books();
       expect(books.single.categoryId, isNull);
@@ -190,7 +204,7 @@ void main() {
       await pumpShelf(tester, services);
 
       await tester.tap(find.byKey(const Key('library-open-file')));
-      await tester.pumpAndSettle();
+      await pickOnDeviceScreen(tester);
 
       expect(await data.library.books(), isEmpty);
 

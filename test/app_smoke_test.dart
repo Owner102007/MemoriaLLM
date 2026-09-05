@@ -95,9 +95,14 @@ void main() {
     expect(find.byKey(const Key('library-open-file-empty')), findsOneWidget);
     expect(find.byKey(const Key('library-shelf')), findsNothing);
 
-    // Человек закрыл диалог, ничего не выбрав: приложение не должно
-    // ни падать, ни заводить пустую книгу.
+    // Кнопка на пустой полке ведёт на экран книг устройства. Ничего не
+    // выбрав, читатель возвращается назад — и полка обязана остаться
+    // пустой, а не завестись сама собой.
     await tester.tap(find.byKey(const Key('library-open-file-empty')));
+    await tester.pumpAndSettle();
+    expect(find.text('Книги на устройстве'), findsOneWidget);
+
+    await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('library-shelf')), findsNothing);
 

@@ -46,7 +46,19 @@ abstract interface class CoverStore {
 /// второй раз. Ширина входит в ключ, чтобы смена размера обложки в
 /// будущей версии не показывала читателю старые мелкие картинки.
 String coverKeyFor(Book book, {int width = kCoverWidth}) {
-  final String hash = book.fileHash.isEmpty ? book.id : book.fileHash;
+  return coverKeyForHash(
+    book.fileHash.isEmpty ? book.id : book.fileHash,
+    width: width,
+  );
+}
+
+/// Ключ обложки по произвольной строке-опознавателю.
+///
+/// На экране «Книги на устройстве» книги ещё нет — есть файл, и опознаётся
+/// он тем же отпечатком, а пока тот не посчитан, путём. Кэш обложек при
+/// этом общий: книга, поставленная на полку, получает уже нарисованную
+/// картинку, а не рисуется второй раз.
+String coverKeyForHash(String hash, {int width = kCoverWidth}) {
   final String safe = hash.replaceAll(RegExp('[^A-Za-z0-9_-]'), '');
   // Настоящий отпечаток — шестнадцатеричная строка, и чистка его не
   // трогает. Но полагаться на это нельзя: если из ключа что-то вырезали,
