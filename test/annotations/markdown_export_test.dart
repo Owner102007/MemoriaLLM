@@ -6,11 +6,7 @@ import 'package:memoria/domain/annotations/markdown_export.dart';
 ///
 /// Выгрузка — обещание, что написанное читателем принадлежит читателю:
 /// её проверяем на составе и порядке, а не на красоте.
-Quote quote({
-  required String id,
-  required int page,
-  required String content,
-}) {
+Quote quote({required String id, required int page, required String content}) {
   return Quote(
     id: id,
     bookId: 'book-1',
@@ -59,8 +55,12 @@ void main() {
         bookTitle: 'Пиковая дама',
         quotes: <Quote>[quote(id: 'q1', page: 7, content: 'две идеи')],
         notes: <Note>[
-          note(id: 'n1', page: 7, body: 'тут автор себе противоречит',
-              quoteId: 'q1'),
+          note(
+            id: 'n1',
+            page: 7,
+            body: 'тут автор себе противоречит',
+            quoteId: 'q1',
+          ),
         ],
       );
       expect(markdown, contains('> две идеи'));
@@ -132,7 +132,10 @@ void main() {
 
     test('ищет по всем словам запроса сразу', () {
       expect(matchesQuery('две неподвижные идеи', 'неподвижные идеи'), isTrue);
-      expect(matchesQuery('две неподвижные идеи', 'неподвижные слоны'), isFalse);
+      expect(
+        matchesQuery('две неподвижные идеи', 'неподвижные слоны'),
+        isFalse,
+      );
     });
 
     test('пустой запрос подходит всему', () {

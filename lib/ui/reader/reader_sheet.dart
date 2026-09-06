@@ -31,7 +31,9 @@ class SheetView {
       placement.top + y * zoom,
     );
     final double extra = transform.storage[0];
-    if (extra == 1 && transform.storage[12] == 0 && transform.storage[13] == 0) {
+    if (extra == 1 &&
+        transform.storage[12] == 0 &&
+        transform.storage[13] == 0) {
       return base;
     }
     return Offset(
@@ -77,7 +79,6 @@ class ReaderSheet extends StatefulWidget {
     this.onSelection,
     this.onSelectionReady,
     this.onDismissSelection,
-    this.onView,
     this.overlay,
     super.key,
   });
@@ -134,9 +135,6 @@ class ReaderSheet extends StatefulWidget {
   /// Читатель нажал мимо выделения.
   final VoidCallback? onDismissSelection;
 
-  /// Куда положен лист. Сообщается после отрисовки, а не во время неё.
-  final ValueChanged<SheetView>? onView;
-
   /// Что нарисовать поверх листа: подсветка найденного, панель действий.
   ///
   /// Строится по [SheetView], потому что всё, что кладётся поверх
@@ -149,9 +147,6 @@ class ReaderSheet extends StatefulWidget {
 
 class _ReaderSheetState extends State<ReaderSheet> {
   final TransformationController _zoom = TransformationController();
-
-  SheetPlacement? _reportedPlacement;
-  Matrix4? _reportedTransform;
 
   @override
   void didUpdateWidget(ReaderSheet oldWidget) {
@@ -187,35 +182,10 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (!mounted || widget.locked) {
       return;
     }
-    if (widget.overlay == null &&
-        widget.onView == null &&
-        widget.selectionStart == null) {
+    if (widget.overlay == null && widget.selectionStart == null) {
       return;
     }
     setState(() {});
-  }
-
-  /// Сообщает наружу, куда лёг лист.
-  ///
-  /// Не во время построения дерева, а после кадра: обратный вызов почти
-  /// наверняка приведёт к `setState` у того, кто его слушает, а вызвать
-  /// его посреди построения значит уронить приложение на ровном месте.
-  void _reportView(SheetView view) {
-    final ValueChanged<SheetView>? report = widget.onView;
-    if (report == null) {
-      return;
-    }
-    final SheetPlacement? last = _reportedPlacement;
-    if (last == view.placement && _reportedTransform == view.transform) {
-      return;
-    }
-    _reportedPlacement = view.placement;
-    _reportedTransform = view.transform;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        report(view);
-      }
-    });
   }
 
   @override
@@ -271,7 +241,6 @@ class _ReaderSheetState extends State<ReaderSheet> {
             placement: placement,
             transform: _zoom.value.clone(),
           );
-          _reportView(view);
           // Затемнение нечитаемой части листа рисуется дважды, и это не
           // расточительность: слой выделения кладёт поверх листа свою
           // страницу целиком, и без второго слоя погашенная часть
@@ -368,10 +337,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
                 ),
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: Transform(
-                      transform: _zoom.value,
-                      child: dimLayer,
-                    ),
+                    child: Transform(transform: _zoom.value, child: dimLayer),
                   ),
                 ),
               ],

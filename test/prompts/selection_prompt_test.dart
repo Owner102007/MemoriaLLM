@@ -188,9 +188,9 @@ void main() {
         book: const <SelectionPrompt>[],
       );
       expect(
-        set.prompts.where((SelectionPrompt p) => p.isPrimary).map(
-          (SelectionPrompt p) => p.id,
-        ),
+        set.prompts
+            .where((SelectionPrompt p) => p.isPrimary)
+            .map((SelectionPrompt p) => p.id),
         <String>['a'],
       );
       expect(set.primary!.id, 'a');

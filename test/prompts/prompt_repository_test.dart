@@ -55,9 +55,7 @@ void main() {
     await data.prompts.deletePrompt(kTranslatePromptId);
     expect(await data.prompts.seedDefaultsOnce(), isFalse);
     final List<SelectionPrompt> master = await data.prompts.masterPrompts();
-    expect(master.map((SelectionPrompt p) => p.id), <String>[
-      kMeaningPromptId,
-    ]);
+    expect(master.map((SelectionPrompt p) => p.id), <String>[kMeaningPromptId]);
   });
 
   test('набор книги главнее мастерского, а «как у всех» его стирает', () async {
@@ -107,9 +105,7 @@ void main() {
   test('правка промпта переписывает метку изменения', () async {
     await data.prompts.savePrompt(prompt(id: 'mine', name: 'Своё'));
     final String? before = await _hlcOf(data, 'mine');
-    await data.prompts.savePrompt(
-      prompt(id: 'mine', name: 'Своё, но лучше'),
-    );
+    await data.prompts.savePrompt(prompt(id: 'mine', name: 'Своё, но лучше'));
     final String? after = await _hlcOf(data, 'mine');
     expect(after, isNotNull);
     expect(after, isNot(before));
@@ -121,9 +117,7 @@ void main() {
   });
 
   test('удаление книги уносит её набор', () async {
-    await data.prompts.savePrompt(
-      prompt(id: 'book-prompt', bookId: 'book-1'),
-    );
+    await data.prompts.savePrompt(prompt(id: 'book-prompt', bookId: 'book-1'));
     await data.library.delete('book-1');
     await data.library.purgeDeleted();
     final List<QueryRow> rows = await data.database

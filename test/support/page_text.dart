@@ -54,4 +54,3 @@ PageTextLayout buildLayout(List<TestLine> lines) {
   expect(start, isNot(-1), reason: 'слова «$word» нет на странице');
   return (start: start, end: start + word.length);
 }
-

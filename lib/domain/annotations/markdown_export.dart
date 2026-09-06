@@ -43,11 +43,10 @@ String annotationsToMarkdown({
     }
   }
 
-  final List<int> pages =
-      <int>{
-        for (final Quote quote in quotes) quote.page,
-        for (final Note note in loose) note.page,
-      }.toList()..sort();
+  final List<int> pages = <int>{
+    for (final Quote quote in quotes) quote.page,
+    for (final Note note in loose) note.page,
+  }.toList()..sort();
 
   if (pages.isEmpty) {
     out.writeln();

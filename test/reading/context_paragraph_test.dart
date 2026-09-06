@@ -21,7 +21,11 @@ void main() {
       const TestLine('первая строка первого абзаца длинная', top: 0.10),
       const TestLine('вторая строка первого абзаца тоже', top: 0.13),
       const TestLine('конец.', top: 0.16),
-      const TestLine('новый абзац с красной строки идёт', top: 0.19, left: 0.13),
+      const TestLine(
+        'новый абзац с красной строки идёт',
+        top: 0.19,
+        left: 0.13,
+      ),
       const TestLine('и продолжается вот такой строкой', top: 0.22),
     ]);
 

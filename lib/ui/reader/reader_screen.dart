@@ -85,9 +85,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Что выделено сейчас.
   BookSelection? _selection;
 
-  /// Куда лёг лист: нужно, чтобы поставить панель и подсветку.
-  SheetView? _view;
-
   /// Промпты читателя: набор книги, если он есть, иначе мастерский.
   PromptSet _prompts = PromptSet.empty;
   StreamSubscription<PromptSet>? _promptsWatch;
@@ -890,8 +887,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final ThemeData theme = Theme.of(context);
     final BookSelection? selection = _selection;
     final SearchHit? hit = _foundHit;
-    final List<Rect> found =
-        hit == null || !pages.contains(hit.pageNumber)
+    final List<Rect> found = hit == null || !pages.contains(hit.pageNumber)
         ? const <Rect>[]
         : _screenRects(view, document, pages, hit.pageNumber, _foundRects);
     final List<Rect> selected = selection == null

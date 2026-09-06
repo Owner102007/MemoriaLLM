@@ -22,7 +22,11 @@ SelectionPrompt prompt(String id, String name) {
 Widget host(Widget child) {
   return MaterialApp(
     home: Scaffold(
-      body: SizedBox(width: 400, height: 800, child: Stack(children: <Widget>[child])),
+      body: SizedBox(
+        width: 400,
+        height: 800,
+        child: Stack(children: <Widget>[child]),
+      ),
     ),
   );
 }

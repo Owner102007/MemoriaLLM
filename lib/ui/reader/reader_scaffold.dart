@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../application/reading/document_search.dart';
-import '../../domain/reading/text_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/reading/navigation.dart';
+import '../../domain/reading/text_search.dart';
 import 'outline_panel.dart';
 import 'search_panel.dart';
 
@@ -116,7 +116,8 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         search: widget.search,
         onSelect: (SearchHit hit) async {
           Navigator.of(context).pop();
-          final Future<void> Function(SearchHit hit)? goToHit = widget.onGoToHit;
+          final Future<void> Function(SearchHit hit)? goToHit =
+              widget.onGoToHit;
           if (goToHit != null) {
             await goToHit(hit);
           } else {

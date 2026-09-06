@@ -21,10 +21,7 @@ void main() {
 
   group('матрица просмотрщика', () {
     test('масштаб берётся из раскладки листа', () {
-      final Matrix4 matrix = sheetMatrix(
-        placement: placement,
-        documentLeft: 0,
-      );
+      final Matrix4 matrix = sheetMatrix(placement: placement, documentLeft: 0);
       expect(matrix.storage[0], 2);
       expect(matrix.storage[12], -100);
       expect(matrix.storage[13], -50);
@@ -68,10 +65,7 @@ void main() {
         placement: placement,
         documentLeft: 0,
       )!;
-      final Matrix4 matrix = sheetMatrix(
-        placement: placement,
-        documentLeft: 0,
-      );
+      final Matrix4 matrix = sheetMatrix(placement: placement, documentLeft: 0);
       final Offset back = Offset(
         point.dx * matrix.storage[0] + matrix.storage[12],
         point.dy * matrix.storage[0] + matrix.storage[13],

@@ -59,7 +59,9 @@ ParagraphContext? paragraphAround({
   if (text.isEmpty || selectionStart < 0 || selectionEnd > text.length) {
     return null;
   }
-  final int from = selectionStart < selectionEnd ? selectionStart : selectionEnd;
+  final int from = selectionStart < selectionEnd
+      ? selectionStart
+      : selectionEnd;
   final int to = selectionStart < selectionEnd ? selectionEnd : selectionStart;
   if (from == to) {
     return null;
@@ -164,12 +166,7 @@ class _Shape {
 }
 
 /// Кончается ли абзац между строкой [index] и следующей.
-bool _breaksBetween(
-  List<TextRow> rows,
-  int index,
-  String text,
-  _Shape shape,
-) {
+bool _breaksBetween(List<TextRow> rows, int index, String text, _Shape shape) {
   final TextRow current = rows[index];
   final TextRow next = rows[index + 1];
 
