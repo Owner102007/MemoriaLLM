@@ -15,10 +15,7 @@ void main() {
         readerTapAt(share: 0.1, selecting: false),
         ReaderTap.previousFragment,
       );
-      expect(
-        readerTapAt(share: 0.9, selecting: false),
-        ReaderTap.nextFragment,
-      );
+      expect(readerTapAt(share: 0.9, selecting: false), ReaderTap.nextFragment);
       expect(readerTapAt(share: 0.5, selecting: false), ReaderTap.toggleChrome);
     });
 
@@ -59,10 +56,7 @@ void main() {
         readerTapAt(share: -0.2, selecting: false),
         ReaderTap.previousFragment,
       );
-      expect(
-        readerTapAt(share: 1.2, selecting: false),
-        ReaderTap.nextFragment,
-      );
+      expect(readerTapAt(share: 1.2, selecting: false), ReaderTap.nextFragment);
     });
   });
 

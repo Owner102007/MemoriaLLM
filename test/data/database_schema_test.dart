@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — седьмая: промпты к выделению', () {
+  test('версия схемы — восьмая: место цитаты в тексте страницы', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 7);
+    expect(appSchemaVersion, 8);
   });
 
   test('созданы все таблицы слоя данных', () async {

@@ -77,11 +77,7 @@ void main() {
         ReaderKeyAction.nextHit,
       );
       expect(
-        readerKeyAction(
-          key: LogicalKeyboardKey.f3,
-          shift: true,
-          hasHits: true,
-        ),
+        readerKeyAction(key: LogicalKeyboardKey.f3, shift: true, hasHits: true),
         ReaderKeyAction.previousHit,
       );
     });
