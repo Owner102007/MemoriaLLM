@@ -13,6 +13,8 @@ Quote _quote({String id = 'quote-1', int page = 7}) {
     createdAt: DateTime.utc(2026, 8, 2, page),
     context: 'Абзац вокруг выделения',
     color: 0xFFA32F35,
+    textStart: 120,
+    textEnd: 169,
   );
 }
 
@@ -60,6 +62,38 @@ void main() {
     expect(quotes.single.context, 'Абзац вокруг выделения');
     expect(quotes.single.color, 0xFFA32F35);
     expect(quotes.single.page, 7);
+  });
+
+  test('цитата помнит своё место в тексте страницы', () async {
+    // По этим числам она подсвечивается, когда читатель возвращается к
+    // ней из списка. Без них карточка умеет только «открыть страницу».
+    await data.annotations.saveQuote(_quote());
+    final Quote quote = (await data.annotations.quotes('book-1')).single;
+
+    expect(quote.textStart, 120);
+    expect(quote.textEnd, 169);
+    expect(quote.target.page, 7);
+    expect(quote.target.textStart, 120);
+  });
+
+  test('цитата без места в тексте сохраняется как есть', () async {
+    // Так выглядит цитата, снятая до схемы 8: страница есть, координат
+    // нет. Придумывать их за читателя нельзя — подсветка наугад хуже её
+    // отсутствия.
+    await data.annotations.saveQuote(
+      Quote(
+        id: 'quote-old',
+        bookId: 'book-1',
+        page: 3,
+        content: 'Старая цитата',
+        createdAt: DateTime.utc(2026, 8, 1),
+      ),
+    );
+    final Quote quote = (await data.annotations.quotes('book-1')).single;
+
+    expect(quote.textStart, isNull);
+    expect(quote.target.textEnd, isNull);
+    expect(quote.target.page, 3);
   });
 
   test('цитаты идут свежими сверху', () async {

@@ -33,6 +33,8 @@ class DriftAnnotationRepository implements AnnotationRepository {
       content: Value<String>(quote.content),
       context: Value<String?>(quote.context),
       color: Value<int?>(quote.color),
+      textStart: Value<int?>(quote.textStart),
+      textEnd: Value<int?>(quote.textEnd),
       createdAt: Value<DateTime>(quote.createdAt),
       hlc: Value<String>(mark),
       nodeId: Value<String>(stamp.nodeId),
@@ -191,6 +193,8 @@ class DriftAnnotationRepository implements AnnotationRepository {
       createdAt: row.createdAt,
       context: row.context,
       color: row.color,
+      textStart: row.textStart,
+      textEnd: row.textEnd,
     );
   }
 

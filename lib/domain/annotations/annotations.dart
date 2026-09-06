@@ -1,3 +1,22 @@
+/// Куда открыть книгу из списка цитат и заметок.
+///
+/// Страница есть всегда, места в тексте может не быть: у цитат, снятых до
+/// схемы 8, координат не сохранялось. Такая открывается на своей странице
+/// без подсветки — это честно, а угадывать место по содержимому нельзя.
+class AnnotationTarget {
+  /// Создаёт цель перехода.
+  const AnnotationTarget({required this.page, this.textStart, this.textEnd});
+
+  /// Страница книги.
+  final int page;
+
+  /// Где кусок начинается в тексте страницы.
+  final int? textStart;
+
+  /// Где кусок кончается в тексте страницы.
+  final int? textEnd;
+}
+
 /// Цитата — сохранённый фрагмент текста книги.
 class Quote {
   /// Создаёт цитату.
@@ -9,6 +28,8 @@ class Quote {
     required this.createdAt,
     this.context,
     this.color,
+    this.textStart,
+    this.textEnd,
   });
 
   /// Идентификатор (UUID).
@@ -30,8 +51,18 @@ class Quote {
   /// Цвет маркера в формате `0xAARRGGBB`.
   final int? color;
 
+  /// Где цитата начинается в тексте страницы. Пусто у старых цитат.
+  final int? textStart;
+
+  /// Где цитата кончается в тексте страницы. Пусто у старых цитат.
+  final int? textEnd;
+
   /// Когда цитата сохранена.
   final DateTime createdAt;
+
+  /// Куда открыть книгу, чтобы увидеть эту цитату на своём месте.
+  AnnotationTarget get target =>
+      AnnotationTarget(page: page, textStart: textStart, textEnd: textEnd);
 }
 
 /// Заметка читателя. Может быть привязана к цитате, а может стоять сама

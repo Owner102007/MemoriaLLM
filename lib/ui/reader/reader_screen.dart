@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -18,6 +19,7 @@ import '../../domain/prompts/selection_prompt.dart';
 import '../../domain/reading/context_paragraph.dart';
 import '../../domain/reading/fragments.dart';
 import '../../domain/reading/reader_document.dart';
+import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_search.dart';
@@ -33,6 +35,7 @@ import 'reader_settings_sheet.dart';
 import 'reader_sheet.dart';
 import 'reading_filter_layer.dart';
 import 'selection_panel.dart';
+import 'selection_sheet.dart';
 
 /// Экран чтения.
 ///
@@ -60,10 +63,23 @@ class ReaderScreen extends StatefulWidget {
 }
 
 class _ReaderScreenState extends State<ReaderScreen> {
-  /// Доля ширины экрана по краям, отданная переходу по фрагментам.
-  static const double _tapZone = 0.3;
+  /// Указатели, которыми выделяют протяжкой, и те, которыми удерживают.
+  ///
+  /// Наборы выведены из одного правила, а не написаны дважды: правило
+  /// живёт в домене и проверяется тестом, а здесь только исполняется.
+  static final Set<PointerDeviceKind> _dragDevices = <PointerDeviceKind>{
+    for (final PointerDeviceKind kind in PointerDeviceKind.values)
+      if (selectionStartsOnDrag(kind)) kind,
+  };
+  static final Set<PointerDeviceKind> _holdDevices = <PointerDeviceKind>{
+    for (final PointerDeviceKind kind in PointerDeviceKind.values)
+      if (!selectionStartsOnDrag(kind)) kind,
+  };
 
   final PdfViewerController _viewer = PdfViewerController();
+
+  /// Слой выделения: он стоит на месте всегда, а это — рычаги к нему.
+  final SelectionLayerController _selectionLayer = SelectionLayerController();
 
   /// Книга может смениться прямо на этом экране: если файл переехал,
   /// читатель выбирает его заново, и у книги становится новый источник.
@@ -79,9 +95,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _zoomLocked = true;
   DisplayArea _area = DisplayArea.unknown;
 
-  /// Точка, в которой читатель начал выделять. Пусто — слоя выделения нет.
-  Offset? _selectionStart;
-
   /// Что выделено сейчас.
   BookSelection? _selection;
 
@@ -89,9 +102,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   PromptSet _prompts = PromptSet.empty;
   StreamSubscription<PromptSet>? _promptsWatch;
 
-  /// Найденное поиском, что подсвечено на странице.
-  SearchHit? _foundHit;
-  List<TextBox> _foundRects = const <TextBox>[];
+  /// Что подсвечено на странице: найденное поиском или открытая цитата.
+  _PageMark? _mark;
+  List<TextBox> _markRects = const <TextBox>[];
 
   /// Язык, на который читатель просит переводить. Подставляется в
   /// `{{мой_язык}}`; настоящий выбор языка появится в S8 вместе с
@@ -281,6 +294,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
+    _selectionLayer.dispose();
     _search?.dispose();
     final ReaderController? controller = _controller;
     _controller = null;
@@ -365,37 +379,46 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _onControllerChanged() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) {
+      return;
     }
+    // Читатель ушёл со страницы — подсветке нечего показывать: текста, к
+    // которому она относилась, на экране больше нет.
+    final _PageMark? mark = _mark;
+    if (mark != null && mark.pageNumber != _controller?.page) {
+      _mark = null;
+      _markRects = const <TextBox>[];
+    }
+    setState(() {});
   }
 
   /// Читатель начал выделять.
   ///
-  /// Слой выделения поднимается по долгому нажатию и держится до тех пор,
-  /// пока выделение не снято. Точка нажатия запоминается: сам жест до
-  /// слоя не доходит — Flutter отдаёт события указателя тем, кто был на
-  /// месте в момент касания, — поэтому намерение повторяется программно,
-  /// выделением слова в этой самой точке.
-  void _startSelection(Offset at) {
+  /// Слой выделения стоит на месте всё время, пока читатель на странице,
+  /// — жест только делает его видимым и отдаёт ему указатель. Но самого
+  /// жеста слой не видел: Flutter отдаёт события указателя тем, кто был
+  /// на месте в момент касания, а слой до этого касания не ловил вовсе.
+  /// Поэтому намерение читателя повторяется программно — слово под
+  /// пальцем или начало диапазона под курсором.
+  void _startSelection(Offset at, {required bool word}) {
     if (_flow != PageFlow.paged) {
       // В ленте выделение своё, просмотрщика: он там и рисует страницы.
       return;
     }
-    setState(() {
-      _selectionStart = at;
-      _selection = null;
-    });
+    final bool was = _selectionLayer.active;
+    _selectionLayer.start(at, word: word);
+    if (!was || _selection != null) {
+      setState(() => _selection = null);
+    }
   }
 
+  /// Снять выделение вместе с панелью.
   void _dismissSelection() {
-    if (_selectionStart == null && _selection == null) {
+    if (!_selectionLayer.active && _selection == null) {
       return;
     }
-    setState(() {
-      _selectionStart = null;
-      _selection = null;
-    });
+    _selectionLayer.dismiss();
+    setState(() => _selection = null);
   }
 
   Future<void> _onSelectionRanges(List<PdfPageTextRange> ranges) async {
@@ -417,18 +440,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
         .map((PdfPageTextRange part) => part.text)
         .join(' ')
         .trim();
+    // Просмотрщик считает места по своему разбору страницы, а всё
+    // остальное в читалке — по нашему. Числа переводятся сразу, у самого
+    // входа: дальше по ним и подсветка, и абзац контекста, и координаты
+    // цитаты, которые уедут в базу и переживут перезапуск.
+    final ({int start, int end})? place = await controller.locateOnPage(
+      pageNumber: range.pageNumber,
+      text: range.text,
+      hint: range.start,
+    );
+    final int start = place?.start ?? range.start;
+    final int end = place?.end ?? range.end;
     final List<TextBox> rects = await controller.highlightFor(
       pageNumber: range.pageNumber,
-      start: range.start,
-      end: range.end,
+      start: start,
+      end: end,
     );
     if (!mounted) {
       return;
     }
     final BookSelection selection = BookSelection(
       pageNumber: range.pageNumber,
-      start: range.start,
-      end: range.end,
+      start: start,
+      end: end,
       text: text,
       rects: rects,
     );
@@ -495,6 +529,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       page: selection.pageNumber,
       content: selection.text,
       context: paragraph?.text,
+      // Место цитаты в тексте страницы: по нему она подсвечивается, когда
+      // читатель возвращается к ней из списка. У цитат, сохранённых до
+      // схемы 8, его нет — такие открываются на своей странице без
+      // подсветки.
+      textStart: selection.start,
+      textEnd: selection.end,
       createdAt: DateTime.now(),
     );
     await widget.services.data.annotations.saveQuote(quote);
@@ -576,45 +616,81 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ///
   /// Долг S3: список результатов был, а подсветки на странице не было —
   /// координаты символов появились только в S4, а перевод «место в тексте
-  /// → прямоугольник» написан в этой сессии.
+  /// → прямоугольник» написан в S6.
   Future<void> _goToHit(SearchHit hit) async {
+    await _showMark(
+      page: hit.pageNumber,
+      start: hit.sourceStart,
+      end: hit.sourceEnd,
+    );
+  }
+
+  /// Открывает страницу и подсвечивает на ней кусок текста.
+  ///
+  /// Подсветка **держится**, пока читатель на этой странице: она отвечает
+  /// на вопрос «где здесь то, что я искал», и первое же касание экрана
+  /// этого ответа не отменяет (правка по проверке S6: прежде подсветка
+  /// пропадала от любого нажатия, и найти её снова было нечем).
+  ///
+  /// Без координат — просто переход на страницу. Так открываются старые
+  /// цитаты, сохранённые до схемы 8: подсвечивать у них нечего, и делать
+  /// вид, что есть, нечестно.
+  Future<void> _showMark({
+    required int page,
+    required int? start,
+    required int? end,
+  }) async {
     final ReaderController? controller = _controller;
     if (controller == null) {
       return;
     }
-    await _goToPage(hit.pageNumber);
+    await _goToPage(page);
+    if (!mounted) {
+      return;
+    }
+    if (start == null || end == null || end <= start) {
+      setState(() {
+        _mark = null;
+        _markRects = const <TextBox>[];
+      });
+      return;
+    }
     final List<TextBox> rects = await controller.highlightFor(
-      pageNumber: hit.pageNumber,
-      start: hit.sourceStart,
-      end: hit.sourceEnd,
+      pageNumber: page,
+      start: start,
+      end: end,
     );
     if (!mounted) {
       return;
     }
     setState(() {
-      _foundHit = hit;
-      _foundRects = rects;
+      _mark = _PageMark(pageNumber: page, start: start, end: end);
+      _markRects = rects;
     });
   }
 
-  void _clearHighlight() {
-    if (_foundHit == null) {
+  /// Экран «Цитаты и заметки» и возвращение из него в книгу.
+  ///
+  /// Карточка отвечает на вопрос «а где это было»: экран закрывается,
+  /// книга открывается на своей странице, сама цитата подсвечена.
+  Future<void> _openAnnotations() async {
+    final AnnotationTarget? target = await Navigator.of(context)
+        .push<AnnotationTarget>(
+          MaterialPageRoute<AnnotationTarget>(
+            builder: (BuildContext context) => AnnotationsScreen(
+              book: _book,
+              annotations: widget.services.data.annotations,
+            ),
+          ),
+        );
+    if (target == null || !mounted) {
       return;
     }
-    setState(() {
-      _foundHit = null;
-      _foundRects = const <TextBox>[];
-    });
-  }
-
-  Future<void> _openAnnotations() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (BuildContext context) => AnnotationsScreen(
-          book: _book,
-          annotations: widget.services.data.annotations,
-        ),
-      ),
+    _dismissSelection();
+    await _showMark(
+      page: target.page,
+      start: target.textStart,
+      end: target.textEnd,
     );
   }
 
@@ -635,30 +711,56 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// экрана. Пробовали привязать их к направлению деления — читатель
   /// каждый раз вспоминал, куда нажимать в этом режиме. Привычка «вправо
   /// значит дальше» сильнее любой логики раскладки.
+  ///
+  /// **Зоны работают и при выделенном тексте** (главное замечание
+  /// владельца по проверке S6): книга не перестаёт быть книгой оттого,
+  /// что в ней что-то выделено. Переход снимает выделение вместе с
+  /// панелью — текста, к которому оно относилось, на экране больше нет.
   void _onTap(Offset position, Size size, VoidCallback toggleChrome) {
     final ReaderController? controller = _controller;
-    // Подсветка найденного живёт до первого перехода: она отвечает на
-    // вопрос «где здесь то, что я искал», и, ответив, обязана уйти.
-    _clearHighlight();
-    if (controller == null || _flow != PageFlow.paged) {
+    if (controller == null || _flow != PageFlow.paged || size.width <= 0) {
       toggleChrome();
       return;
     }
-    final double extent = size.width;
-    if (extent <= 0) {
-      toggleChrome();
+    final ReaderTap action = readerTapAt(
+      share: position.dx / size.width,
+      selecting: _selectionLayer.active,
+    );
+    switch (action) {
+      case ReaderTap.previousFragment:
+        _dismissSelection();
+        unawaited(controller.previousFragment());
+      case ReaderTap.nextFragment:
+        _dismissSelection();
+        unawaited(controller.nextFragment());
+      case ReaderTap.dismissSelection:
+        _dismissSelection();
+      case ReaderTap.toggleChrome:
+        toggleChrome();
+    }
+  }
+
+  /// Листание клавишами: то же самое, что зонами.
+  ///
+  /// В ленте фрагментов нет, там шаг — страница, и просмотрщик обязан
+  /// доехать до неё сам: иначе номер страницы уехал бы, а лента осталась
+  /// на месте.
+  void _stepFragment({required bool forward}) {
+    final ReaderController? controller = _controller;
+    if (controller == null) {
       return;
     }
-    final double share = position.dx / extent;
-    if (share < _tapZone) {
-      unawaited(controller.previousFragment());
+    _dismissSelection();
+    if (_flow == PageFlow.continuous) {
+      final int target = controller.page + (forward ? 1 : -1);
+      if (target >= 1 && target <= controller.pageCount) {
+        unawaited(_goToPage(target));
+      }
       return;
     }
-    if (share > 1 - _tapZone) {
-      unawaited(controller.nextFragment());
-      return;
-    }
-    toggleChrome();
+    unawaited(
+      forward ? controller.nextFragment() : controller.previousFragment(),
+    );
   }
 
   Future<void> _openSettings() async {
@@ -729,6 +831,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       search: _search!,
       onGoToPage: _goToPage,
       onGoToHit: _goToHit,
+      onPreviousFragment: () => _stepFragment(forward: false),
+      onNextFragment: () => _stepFragment(forward: true),
+      onDismiss: _dismissSelection,
       extraActions: <Widget>[
         IconButton(
           key: const Key('reader-annotations-button'),
@@ -838,15 +943,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         final List<int> pages = isSpreadMode(controller.settings.displayMode)
             ? spreadPages(controller.page, controller.pageCount)
             : <int>[controller.page];
-        return GestureDetector(
+        return RawGestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapUp: (TapUpDetails details) =>
-              _onTap(details.localPosition, size, onTap),
-          // Долгое нажатие — это выделение. На телефоне так начинают
-          // выделять везде, а на ПК то же самое делает удержание кнопки
-          // мыши: дальше работают настоящие ручки просмотрщика.
-          onLongPressStart: (LongPressStartDetails details) =>
-              _startSelection(details.localPosition),
+          gestures: _selectionGestures(size, onTap),
           child: document == null
               ? ColoredBox(color: background, child: const SizedBox.expand())
               : ReaderSheet(
@@ -859,16 +958,73 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   locked: _zoomLocked,
                   stripFit: controller.settings.stripFit,
                   dim: controller.settings.dimOutside,
-                  selectionStart: _selectionStart,
+                  selection: _selectionLayer,
+                  columnsOf: controller.columnsOf,
                   onSelection: (List<PdfPageTextRange> ranges) =>
                       unawaited(_onSelectionRanges(ranges)),
-                  onDismissSelection: _dismissSelection,
+                  onSelectionTap: (Offset at) => _onTap(at, size, onTap),
                   overlay: (BuildContext context, SheetView view) =>
                       _buildOverlay(context, view, document, pages, size),
                 ),
         );
       },
     );
+  }
+
+  /// Жесты страницы: нажатие листает, а выделение начинается по-разному.
+  ///
+  /// **Стартер зависит от указателя** (правка S6.1 по проверке
+  /// 06.09.2026). Мышью текст выделяют протяжкой и делают это сразу:
+  /// полсекунды с зажатой кнопкой — не настольная привычка, а задержка
+  /// непонятно за что. Пальцем наоборот — там протяжка принадлежит
+  /// странице, и выделение начинается удержанием, но порог опущен до
+  /// четверти секунды.
+  ///
+  /// Протяжка мышью заводится только при **запертом замке**: отперев
+  /// его, читатель попросил двигать страницу, и отбирать у него движение
+  /// ради выделения нельзя. Там выделение по-прежнему начинается
+  /// удержанием — на обоих указателях.
+  Map<Type, GestureRecognizerFactory<GestureRecognizer>> _selectionGestures(
+    Size size,
+    VoidCallback onTap,
+  ) {
+    return <Type, GestureRecognizerFactory<GestureRecognizer>>{
+      TapGestureRecognizer:
+          GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+            TapGestureRecognizer.new,
+            (TapGestureRecognizer instance) {
+              instance.onTapUp = (TapUpDetails details) =>
+                  _onTap(details.localPosition, size, onTap);
+            },
+          ),
+      LongPressGestureRecognizer:
+          GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+            () => LongPressGestureRecognizer(
+              duration: kTouchSelectionDelay,
+              supportedDevices: _zoomLocked
+                  ? _holdDevices
+                  : PointerDeviceKind.values.toSet(),
+            ),
+            (LongPressGestureRecognizer instance) {
+              instance.onLongPressStart = (LongPressStartDetails details) =>
+                  _startSelection(details.localPosition, word: true);
+            },
+          ),
+      if (_zoomLocked)
+        PanGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<PanGestureRecognizer>(
+              () => PanGestureRecognizer(supportedDevices: _dragDevices),
+              (PanGestureRecognizer instance) {
+                instance.onStart = (DragStartDetails details) =>
+                    _startSelection(details.localPosition, word: false);
+                // Диапазон ведём сами, по координатам символов: слой
+                // выделения этой протяжки не видел и вести её не может.
+                // Ручки, лупа и правка после отпускания — уже его.
+                instance.onUpdate = (DragUpdateDetails details) =>
+                    _selectionLayer.extendTo(details.localPosition);
+              },
+            ),
+    };
   }
 
   /// Что лежит поверх листа: подсветка найденного и панель действий.
@@ -886,10 +1042,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ) {
     final ThemeData theme = Theme.of(context);
     final BookSelection? selection = _selection;
-    final SearchHit? hit = _foundHit;
-    final List<Rect> found = hit == null || !pages.contains(hit.pageNumber)
+    final _PageMark? mark = _mark;
+    final List<Rect> found = mark == null || !pages.contains(mark.pageNumber)
         ? const <Rect>[]
-        : _screenRects(view, document, pages, hit.pageNumber, _foundRects);
+        : _screenRects(view, document, pages, mark.pageNumber, _markRects);
     final List<Rect> selected = selection == null
         ? const <Rect>[]
         : _screenRects(
@@ -1021,6 +1177,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
   }
+}
+
+/// Кусок текста, подсвеченный на странице.
+///
+/// Один и тот же для найденного поиском и для открытой из списка цитаты:
+/// и то, и другое — ответ на вопрос «где здесь то, что я ищу».
+class _PageMark {
+  const _PageMark({
+    required this.pageNumber,
+    required this.start,
+    required this.end,
+  });
+
+  final int pageNumber;
+  final int start;
+  final int end;
 }
 
 /// Экран «книга не открылась».

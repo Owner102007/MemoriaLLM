@@ -365,6 +365,59 @@ class ReaderController extends ChangeNotifier {
     );
   }
 
+  /// Переводит место выделения в счёт **нашего** слоя текста.
+  ///
+  /// У pdfrx два текста страницы, и они не совпадают: сырой
+  /// (`loadText`), по которому мы считаем всё — рамку, контекст,
+  /// подсветку, поиск, — и разобранный на строки (`loadStructuredText`),
+  /// по которому просмотрщик считает выделение. Во втором подряд идущие
+  /// пробелы склеены, а переводы строк расставлены заново, поэтому число,
+  /// пришедшее от просмотрщика, в нашем тексте означает не то же место.
+  ///
+  /// Ищется само выделение — ближайшее к подсказке вхождение. Не нашлось
+  /// (тексты разошлись сильнее, чем на пробелы) — возвращается `null`, и
+  /// зовущий остаётся с числами просмотрщика: это не хуже, чем было.
+  Future<({int start, int end})?> locateOnPage({
+    required int pageNumber,
+    required String text,
+    required int hint,
+  }) async {
+    if (text.isEmpty) {
+      return null;
+    }
+    final PageTextLayout layout = await textLayout(pageNumber);
+    final String page = layout.text;
+    if (page.isEmpty) {
+      return null;
+    }
+    if (hint >= 0 && hint + text.length <= page.length) {
+      // Обычный случай: тексты сошлись, и по подсказке лежит ровно оно.
+      if (page.startsWith(text, hint)) {
+        return (start: hint, end: hint + text.length);
+      }
+    }
+    int best = -1;
+    int at = page.indexOf(text);
+    while (at >= 0) {
+      if (best < 0 || (at - hint).abs() < (best - hint).abs()) {
+        best = at;
+      }
+      at = page.indexOf(text, at + 1);
+    }
+    return best < 0 ? null : (start: best, end: best + text.length);
+  }
+
+  /// Колонки страницы.
+  ///
+  /// Нужны выделению протяжкой: без них точка в конце левой колонки
+  /// уехала бы в текст, стоящий справа на той же высоте. Рамка страницы
+  /// к этому моменту обычно уже разобрана — колонки берутся из неё, а не
+  /// считаются заново.
+  Future<List<ColumnBand>> columnsOf(int pageNumber) async {
+    final PageFrame frame = await _frames.frameFor(pageNumber);
+    return frame.columns;
+  }
+
   Future<PageTextLayout> _loadLayout(int pageNumber) async {
     if (pageNumber < 1 || pageNumber > pageCount) {
       return PageTextLayout.empty;

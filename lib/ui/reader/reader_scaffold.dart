@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/reading/navigation.dart';
 import '../../domain/reading/text_search.dart';
 import 'outline_panel.dart';
+import 'reader_keys.dart';
 import 'search_panel.dart';
 
 /// Обвязка экрана чтения: страница во весь экран, панели поверх неё.
@@ -27,6 +29,9 @@ class ReaderScaffold extends StatefulWidget {
     required this.viewerBuilder,
     required this.onGoToPage,
     this.onGoToHit,
+    this.onPreviousFragment,
+    this.onNextFragment,
+    this.onDismiss,
     this.extraActions = const <Widget>[],
     super.key,
   });
@@ -53,6 +58,16 @@ class ReaderScaffold extends StatefulWidget {
   /// нельзя — нужны координаты в тексте.
   final Future<void> Function(SearchHit hit)? onGoToHit;
 
+  /// Предыдущий фрагмент — клавишами. Зоны листания живут на самой
+  /// странице, а клавиатура принадлежит экрану целиком.
+  final VoidCallback? onPreviousFragment;
+
+  /// Следующий фрагмент — клавишами.
+  final VoidCallback? onNextFragment;
+
+  /// `Esc`, когда закрывать нечего: снять выделение, спрятать панели.
+  final VoidCallback? onDismiss;
+
   @override
   State<ReaderScaffold> createState() => ReaderScaffoldState();
 }
@@ -63,21 +78,39 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _chromeVisible = false;
 
+  /// На каком совпадении читатель стоит сейчас.
+  ///
+  /// Нужно `F3`: «следующее» имеет смысл только относительно текущего.
+  /// Минус единица — ни на каком, и следующее равно первому.
+  int _hit = -1;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
+    widget.search.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
+    widget.search.removeListener(_onSearchChanged);
     super.dispose();
   }
 
   void _onControllerChanged() {
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  /// Новый запрос — счёт совпадений начинается заново.
+  void _onSearchChanged() {
+    if (!mounted) {
+      return;
+    }
+    if (_hit >= widget.search.hits.length) {
+      _hit = -1;
     }
   }
 
@@ -95,59 +128,143 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     await widget.onGoToPage(page);
   }
 
+  void _openSearch() {
+    final ScaffoldState? scaffold = _scaffoldKey.currentState;
+    if (scaffold != null && !scaffold.isEndDrawerOpen) {
+      scaffold.openEndDrawer();
+    }
+  }
+
+  Future<void> _goToHit(SearchHit hit) async {
+    final Future<void> Function(SearchHit hit)? goToHit = widget.onGoToHit;
+    if (goToHit != null) {
+      await goToHit(hit);
+    } else {
+      await _goTo(hit.pageNumber);
+    }
+  }
+
+  /// Следующее или предыдущее совпадение по кругу.
+  ///
+  /// По кругу потому, что упереться в конец списка и не понять, кончился
+  /// он или сломалась клавиша, — худший из исходов. Панель поиска при
+  /// этом не закрывается: `F3` для того и нужен, чтобы пройти совпадения
+  /// подряд, не трогая список.
+  Future<void> _stepHit(int step) async {
+    final List<SearchHit> hits = widget.search.hits;
+    if (hits.isEmpty) {
+      return;
+    }
+    final int next = (_hit + step) % hits.length;
+    _hit = next < 0 ? next + hits.length : next;
+    await _goToHit(hits[_hit]);
+  }
+
+  /// Клавиши чтения.
+  ///
+  /// Работают **всегда**: выделен текст или нет, открыт поиск или нет.
+  /// Слой выделения поднят над страницей, но своей навигации по клавишам
+  /// у него нет — она выключена намеренно, чтобы его страница не уехала
+  /// от нашей.
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    final ScaffoldState? scaffold = _scaffoldKey.currentState;
+    final bool searching = scaffold?.isEndDrawerOpen ?? false;
+    final ReaderKeyAction? action = readerKeyAction(
+      key: event.logicalKey,
+      control: keyboard.isControlPressed || keyboard.isMetaPressed,
+      shift: keyboard.isShiftPressed,
+      searching: searching,
+      hasHits: widget.search.hits.isNotEmpty,
+    );
+    if (action == null) {
+      return KeyEventResult.ignored;
+    }
+    switch (action) {
+      case ReaderKeyAction.previous:
+        widget.onPreviousFragment?.call();
+      case ReaderKeyAction.next:
+        widget.onNextFragment?.call();
+      case ReaderKeyAction.openSearch:
+        _openSearch();
+      case ReaderKeyAction.nextHit:
+        unawaited(_stepHit(1));
+      case ReaderKeyAction.previousHit:
+        unawaited(_stepHit(-1));
+      case ReaderKeyAction.dismiss:
+        if (searching) {
+          scaffold?.closeEndDrawer();
+        } else if (scaffold?.isDrawerOpen ?? false) {
+          scaffold?.closeDrawer();
+        } else {
+          widget.onDismiss?.call();
+          hideChrome();
+        }
+    }
+    return KeyEventResult.handled;
+  }
+
   @override
   Widget build(BuildContext context) {
     final ReaderController controller = widget.controller;
-    return Scaffold(
-      key: _scaffoldKey,
-      // Панели открываются кнопками, а не свайпом от края: свайп на
-      // экране чтения принадлежит странице.
-      drawerEnableOpenDragGesture: false,
-      endDrawerEnableOpenDragGesture: false,
-      drawer: OutlinePanel(
-        controller: controller,
-        onSelect: (int page) async {
-          Navigator.of(context).pop();
-          await _goTo(page);
-          hideChrome();
-        },
-      ),
-      endDrawer: SearchPanel(
-        search: widget.search,
-        onSelect: (SearchHit hit) async {
-          Navigator.of(context).pop();
-          final Future<void> Function(SearchHit hit)? goToHit =
-              widget.onGoToHit;
-          if (goToHit != null) {
-            await goToHit(hit);
-          } else {
-            await _goTo(hit.pageNumber);
-          }
-          hideChrome();
-        },
-      ),
-      body: Stack(
-        children: <Widget>[
-          Positioned.fill(child: widget.viewerBuilder(context, toggleChrome)),
-          _TopBar(
-            visible: _chromeVisible,
-            title: controller.book.title,
-            subtitle: controller.label,
-            extraActions: widget.extraActions,
-            onBack: () => Navigator.of(context).maybePop(),
-          ),
-          _BottomBar(
-            visible: _chromeVisible,
-            page: controller.page,
-            pageCount: controller.pageCount,
-            onPage: (int page) => unawaited(_goTo(page)),
-            onOutline: () {
-              unawaited(controller.loadOutline());
-              _scaffoldKey.currentState?.openDrawer();
-            },
-            onSearch: () => _scaffoldKey.currentState?.openEndDrawer(),
-          ),
-        ],
+    // Клавиатура принадлежит всему экрану чтения, а не какой-то его
+    // части, поэтому узел стоит **над** `Scaffold`: панель поиска — не
+    // ребёнок тела экрана, и `Esc`, нажатый в её поле, иначе до нас не
+    // дошёл бы вовсе. Поле при этом ничего не теряет: свои клавиши оно
+    // разбирает первым, а сюда доходит только то, чего оно не взяло.
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: Scaffold(
+        key: _scaffoldKey,
+        // Панели открываются кнопками, а не свайпом от края: свайп на
+        // экране чтения принадлежит странице.
+        drawerEnableOpenDragGesture: false,
+        endDrawerEnableOpenDragGesture: false,
+        drawer: OutlinePanel(
+          controller: controller,
+          onSelect: (int page) async {
+            Navigator.of(context).pop();
+            await _goTo(page);
+            hideChrome();
+          },
+        ),
+        endDrawer: SearchPanel(
+          search: widget.search,
+          onSelect: (SearchHit hit) async {
+            Navigator.of(context).pop();
+            _hit = widget.search.hits.indexOf(hit);
+            await _goToHit(hit);
+            hideChrome();
+          },
+          onNextHit: () => unawaited(_stepHit(1)),
+        ),
+        body: Stack(
+          children: <Widget>[
+            Positioned.fill(child: widget.viewerBuilder(context, toggleChrome)),
+            _TopBar(
+              visible: _chromeVisible,
+              title: controller.book.title,
+              subtitle: controller.label,
+              extraActions: widget.extraActions,
+              onBack: () => Navigator.of(context).maybePop(),
+              onSearch: _openSearch,
+            ),
+            _BottomBar(
+              visible: _chromeVisible,
+              page: controller.page,
+              pageCount: controller.pageCount,
+              onPage: (int page) => unawaited(_goTo(page)),
+              onOutline: () {
+                unawaited(controller.loadOutline());
+                _scaffoldKey.currentState?.openDrawer();
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -156,9 +273,14 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
 /// Верхняя панель: чем управляют, глядя на страницу.
 ///
 /// Здесь живёт всё, что меняет вид страницы прямо сейчас, — деление,
-/// поворот, замок, рамка и фильтр. Поиск и оглавление отсюда уехали вниз,
-/// к шкале прогресса: они отвечают на другой вопрос — «где я в книге», —
-/// и вместе с ними панель переставала помещаться в ширину телефона.
+/// поворот, замок, рамка и фильтр, — и здесь же **поиск**. Наверх он
+/// вернулся по проверке S6: владелец искал его тут и не нашёл, а поиск,
+/// до которого не добрался читатель, всё равно что отсутствует.
+///
+/// Оглавление осталось внизу, у шкалы прогресса, и это не забывчивость, а
+/// ширина телефона: кнопок наверху уже семь, восьмая не помещается в
+/// портрет (368 точек против 360 у обычного экрана) и съела бы название
+/// книги целиком. Поиском пользуются чаще оглавления — наверх уехал он.
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.visible,
@@ -166,6 +288,7 @@ class _TopBar extends StatelessWidget {
     required this.subtitle,
     required this.extraActions,
     required this.onBack,
+    required this.onSearch,
   });
 
   final bool visible;
@@ -173,6 +296,7 @@ class _TopBar extends StatelessWidget {
   final String subtitle;
   final List<Widget> extraActions;
   final VoidCallback onBack;
+  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -215,6 +339,13 @@ class _TopBar extends StatelessWidget {
                     ],
                   ),
                 ),
+                IconButton(
+                  key: const Key('reader-search-button'),
+                  icon: const Icon(Icons.search),
+                  tooltip: 'Поиск по книге (Ctrl+F)',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onSearch,
+                ),
                 ...extraActions,
               ],
             ),
@@ -232,7 +363,6 @@ class _BottomBar extends StatelessWidget {
     required this.pageCount,
     required this.onPage,
     required this.onOutline,
-    required this.onSearch,
   });
 
   final bool visible;
@@ -240,7 +370,6 @@ class _BottomBar extends StatelessWidget {
   final int pageCount;
   final void Function(int page) onPage;
   final VoidCallback onOutline;
-  final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -299,22 +428,15 @@ class _BottomBar extends StatelessWidget {
                     key: const Key('reader-progress-percent'),
                     style: theme.textTheme.bodySmall,
                   ),
-                  // Оглавление и поиск живут рядом со шкалой прогресса:
-                  // все трое отвечают на вопрос «где я в книге», а
-                  // наверху эти кнопки путались с настройками вида.
+                  // Оглавление живёт рядом со шкалой прогресса: оба
+                  // отвечают на вопрос «где я в книге». Поиск уехал
+                  // отсюда наверх — его там искали и не нашли.
                   IconButton(
                     key: const Key('reader-outline-button'),
                     icon: const Icon(Icons.list_alt_outlined),
                     tooltip: 'Оглавление',
                     visualDensity: VisualDensity.compact,
                     onPressed: onOutline,
-                  ),
-                  IconButton(
-                    key: const Key('reader-search-button'),
-                    icon: const Icon(Icons.search),
-                    tooltip: 'Поиск по книге',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onSearch,
                   ),
                 ],
               ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import '../../domain/reading/columns.dart';
 import '../../domain/reading/progress_slot.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/sheet_placement.dart';
@@ -75,10 +76,10 @@ class ReaderSheet extends StatefulWidget {
     required this.locked,
     this.stripFit = 1,
     this.dim = kDefaultDimOutside,
-    this.selectionStart,
+    this.selection,
     this.onSelection,
-    this.onSelectionReady,
-    this.onDismissSelection,
+    this.onSelectionTap,
+    this.columnsOf,
     this.overlay,
     super.key,
   });
@@ -121,19 +122,20 @@ class ReaderSheet extends StatefulWidget {
   /// Сила затемнения нечитаемой части страницы.
   final double dim;
 
-  /// Точка на экране, с которой читатель начал выделять.
+  /// Управление слоем выделения.
   ///
-  /// Пусто — слоя выделения нет вовсе, и лист рисуется как всегда.
-  final Offset? selectionStart;
+  /// Пусто — слоя нет вовсе (лента, отсутствующий текстовый слой), и лист
+  /// рисуется как всегда.
+  final SelectionLayerController? selection;
 
   /// Выделение изменилось.
   final void Function(List<PdfPageTextRange> ranges)? onSelection;
 
-  /// Слой выделения встал на место и нарисовал страницу.
-  final VoidCallback? onSelectionReady;
+  /// Нажатие по слою выделения мимо выделенного текста.
+  final void Function(Offset localPosition)? onSelectionTap;
 
-  /// Читатель нажал мимо выделения.
-  final VoidCallback? onDismissSelection;
+  /// Колонки страницы для выделения протяжкой.
+  final Future<List<ColumnBand>> Function(int pageNumber)? columnsOf;
 
   /// Что нарисовать поверх листа: подсветка найденного, панель действий.
   ///
@@ -182,7 +184,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (!mounted || widget.locked) {
       return;
     }
-    if (widget.overlay == null && widget.selectionStart == null) {
+    if (widget.overlay == null && widget.selection == null) {
       return;
     }
     setState(() {});
@@ -245,7 +247,8 @@ class _ReaderSheetState extends State<ReaderSheet> {
           // расточительность: слой выделения кладёт поверх листа свою
           // страницу целиком, и без второго слоя погашенная часть
           // страницы вспыхнула бы ровно в тот момент, когда читатель
-          // начал выделять.
+          // начал выделять. Второй экземпляр живёт внутри слоя и гаснет
+          // вместе с ним.
           final Widget dimLayer = DimOutside(
             key: const Key('reader-dim-outside'),
             sheet: Rect.fromLTWH(
@@ -262,7 +265,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
             ),
             dim: widget.dim,
           );
-          final Offset? selectionStart = widget.selectionStart;
+          final SelectionLayerController? selection = widget.selection;
           return Stack(
             children: <Widget>[
               Positioned.fill(
@@ -319,28 +322,55 @@ class _ReaderSheetState extends State<ReaderSheet> {
                   ),
                 ),
               ),
-              if (selectionStart != null) ...<Widget>[
+              // Слой выделения стоит здесь всегда, а не появляется по
+              // жесту: виджет, созданный в момент касания, рисует свою
+              // копию страницы с нуля и успевает моргнуть. Пока им не
+              // пользуются, он невидим и указателя не ловит вовсе — иначе
+              // под ним умерли бы зоны листания.
+              if (selection != null)
                 Positioned.fill(
-                  child: SelectionSheet(
-                    key: const Key('reader-selection-sheet'),
-                    document: widget.document,
-                    pages: widget.pages,
-                    placement: placement,
-                    transform: _zoom.value,
-                    startAt: selectionStart,
-                    onSelection:
-                        widget.onSelection ??
-                        (List<PdfPageTextRange> ranges) {},
-                    onReady: widget.onSelectionReady,
-                    onDismiss: widget.onDismissSelection,
+                  child: ListenableBuilder(
+                    listenable: selection,
+                    builder: (BuildContext context, Widget? child) {
+                      return IgnorePointer(
+                        ignoring: !selection.active,
+                        child: Opacity(
+                          opacity: selection.active
+                              ? 1
+                              : kSelectionLayerWarmOpacity,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: Stack(
+                      children: <Widget>[
+                        Positioned.fill(
+                          child: SelectionSheet(
+                            key: const Key('reader-selection-sheet'),
+                            document: widget.document,
+                            pages: widget.pages,
+                            placement: placement,
+                            transform: _zoom.value,
+                            selection: selection,
+                            columnsOf: widget.columnsOf,
+                            onSelection:
+                                widget.onSelection ??
+                                (List<PdfPageTextRange> ranges) {},
+                            onTap: widget.onSelectionTap,
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Transform(
+                              transform: _zoom.value,
+                              child: dimLayer,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Transform(transform: _zoom.value, child: dimLayer),
-                  ),
-                ),
-              ],
               // Без `IgnorePointer` намеренно: подсветка нажатий не ловит
               // (у неё нет своей области), а панель действий обязана их
               // ловить — она и есть то, ради чего выделяют.

@@ -62,7 +62,18 @@ void main() {
   /// который обновляется, её и не могло быть — она появилась в этой же
   /// версии. Без этого проверка мерила бы не то: заведение промптов
   /// случилось бы при первом открытии, а не после миграции.
+  /// Откатывает базу к версии 7: места цитаты в тексте тогда не было.
+  Future<void> undoQuoteCoordinates(AppData data) async {
+    await data.database.customStatement(
+      'ALTER TABLE quotes DROP COLUMN text_start',
+    );
+    await data.database.customStatement(
+      'ALTER TABLE quotes DROP COLUMN text_end',
+    );
+  }
+
   Future<void> undoPrompts(AppData data) async {
+    await undoQuoteCoordinates(data);
     await data.database.customStatement('DROP TABLE selection_prompts');
     await data.settings.remove(SettingsKeys.promptsSeeded);
   }
@@ -106,6 +117,58 @@ void main() {
     );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('база версии 7 доезжает до 8 и получает место цитаты', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await first.annotations.saveQuote(
+      Quote(
+        id: 'quote-old',
+        bookId: 'book-1',
+        page: 12,
+        content: 'Старая цитата без координат',
+        createdAt: DateTime.utc(2026, 9, 5),
+      ),
+    );
+    await undoQuoteCoordinates(first);
+    await first.database.customStatement('PRAGMA user_version = 7');
+    expect(await columnsOf(first, 'quotes'), isNot(contains('text_start')));
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(
+      await columnsOf(second, 'quotes'),
+      containsAll(<String>['text_start', 'text_end']),
+    );
+
+    // Старая цитата на месте, но без координат: восстановить их неоткуда,
+    // и такая цитата откроется на своей странице без подсветки.
+    final Quote old = (await second.annotations.quotes('book-1')).single;
+    expect(old.id, 'quote-old');
+    expect(old.page, 12);
+    expect(old.textStart, isNull);
+    expect(old.textEnd, isNull);
+
+    // А новая цитата координаты уже носит.
+    await second.annotations.saveQuote(
+      Quote(
+        id: 'quote-new',
+        bookId: 'book-1',
+        page: 12,
+        content: 'Новая',
+        textStart: 100,
+        textEnd: 106,
+        createdAt: DateTime.utc(2026, 9, 6),
+      ),
+    );
+    final Quote fresh = (await second.annotations.quotes(
+      'book-1',
+    )).firstWhere((Quote quote) => quote.id == 'quote-new');
+    expect(fresh.textStart, 100);
+    expect(fresh.textEnd, 106);
+    await second.close();
   });
 
   test('база версии 6 доезжает до 7 и получает промпты', () async {

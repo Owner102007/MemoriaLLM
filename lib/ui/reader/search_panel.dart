@@ -12,13 +12,21 @@ import '../../domain/reading/text_search.dart';
 /// а нужное обычно находится в первой сотне.
 class SearchPanel extends StatefulWidget {
   /// Создаёт панель.
-  const SearchPanel({required this.search, required this.onSelect, super.key});
+  const SearchPanel({
+    required this.search,
+    required this.onSelect,
+    this.onNextHit,
+    super.key,
+  });
 
   /// Поиск по книге.
   final DocumentSearch search;
 
   /// Переход к найденному.
   final void Function(SearchHit hit) onSelect;
+
+  /// Следующее совпадение: `Enter` по уже найденному запросу.
+  final VoidCallback? onNextHit;
 
   @override
   State<SearchPanel> createState() => _SearchPanelState();
@@ -91,8 +99,15 @@ class _SearchPanelState extends State<SearchPanel> {
                   ),
                 ),
                 onChanged: _onQueryChanged,
+                // Enter по уже найденному запросу — это «следующее
+                // совпадение», а не «искать то же самое заново»: искать
+                // повторно то, что уже найдено, читателю незачем.
                 onSubmitted: (String value) {
                   _debounce?.cancel();
+                  if (value.trim() == search.query && search.hits.isNotEmpty) {
+                    widget.onNextHit?.call();
+                    return;
+                  }
                   unawaited(search.start(value));
                 },
               ),

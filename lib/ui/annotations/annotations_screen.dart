@@ -121,6 +121,7 @@ class _AnnotationsScreenState extends State<AnnotationsScreen> {
                     itemBuilder: (BuildContext context, int index) {
                       return _EntryCard(
                         entry: entries[index],
+                        onOpen: () => _open(entries[index]),
                         onDelete: () => unawaited(_delete(entries[index])),
                         onNote: () => unawaited(_editNote(entries[index])),
                       );
@@ -167,6 +168,15 @@ class _AnnotationsScreenState extends State<AnnotationsScreen> {
       for (final _Entry entry in entries)
         if (matchesQuery(entry.searchable, query)) entry,
     ];
+  }
+
+  /// Вернуться в книгу на место этой цитаты.
+  ///
+  /// Экран закрывается и отдаёт цель переходом наверх, а не зовёт книгу
+  /// сам: открыта она уже есть — этот экран из неё и открыли. Второй её
+  /// экземпляр стоил бы второго документа в памяти.
+  void _open(_Entry entry) {
+    Navigator.of(context).pop(entry.target);
   }
 
   Future<void> _delete(_Entry entry) async {
@@ -242,6 +252,12 @@ class _Entry {
   final Quote? quote;
   final List<Note> notes;
 
+  /// Куда открыть книгу по этой карточке.
+  ///
+  /// У заметки без цитаты координат пока нет — они появятся в S6.3
+  /// вместе с полотном; такая карточка открывает просто свою страницу.
+  AnnotationTarget get target => quote?.target ?? AnnotationTarget(page: page);
+
   /// Текст, по которому ищут.
   String get searchable {
     final StringBuffer buffer = StringBuffer();
@@ -261,11 +277,13 @@ class _Entry {
 class _EntryCard extends StatelessWidget {
   const _EntryCard({
     required this.entry,
+    required this.onOpen,
     required this.onDelete,
     required this.onNote,
   });
 
   final _Entry entry;
+  final VoidCallback onOpen;
   final VoidCallback onDelete;
   final VoidCallback onNote;
 
@@ -275,54 +293,62 @@ class _EntryCard extends StatelessWidget {
     final Quote? quote = entry.quote;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 4, 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              'Страница ${entry.page}',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+      // Нажатие на карточку возвращает в книгу, на место цитаты. Это
+      // первое, чего ждут от списка цитат, и до S6.1 этого не было вовсе:
+      // цитату было видно, а дойти до неё нечем.
+      child: InkWell(
+        key: Key('annotation-open-${quote?.id ?? entry.page}'),
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 4, 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                'Страница ${entry.page}',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            if (quote != null)
-              Text(quote.content, style: theme.textTheme.bodyMedium),
-            for (final Note note in entry.notes) ...<Widget>[
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
+              if (quote != null)
+                Text(quote.content, style: theme.textTheme.bodyMedium),
+              for (final Note note in entry.notes) ...<Widget>[
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Icon(
+                      Icons.edit_note,
+                      size: 16,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(note.body, style: theme.textTheme.bodySmall),
+                    ),
+                  ],
+                ),
+              ],
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: <Widget>[
-                  Icon(
-                    Icons.edit_note,
-                    size: 16,
-                    color: theme.colorScheme.onSurfaceVariant,
+                  TextButton(
+                    key: Key('annotation-note-${quote?.id ?? entry.page}'),
+                    onPressed: onNote,
+                    child: Text(entry.notes.isEmpty ? 'Заметка' : 'Правка'),
                   ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(note.body, style: theme.textTheme.bodySmall),
+                  IconButton(
+                    key: Key('annotation-delete-${quote?.id ?? entry.page}'),
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Удалить',
+                    onPressed: onDelete,
                   ),
                 ],
               ),
             ],
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: <Widget>[
-                TextButton(
-                  key: Key('annotation-note-${quote?.id ?? entry.page}'),
-                  onPressed: onNote,
-                  child: Text(entry.notes.isEmpty ? 'Заметка' : 'Правка'),
-                ),
-                IconButton(
-                  key: Key('annotation-delete-${quote?.id ?? entry.page}'),
-                  icon: const Icon(Icons.delete_outline),
-                  tooltip: 'Удалить',
-                  onPressed: onDelete,
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );

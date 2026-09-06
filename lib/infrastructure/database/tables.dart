@@ -231,6 +231,16 @@ class Quotes extends Table with SyncedRow {
   /// Абзац вокруг выделения.
   TextColumn get context => text().nullable()();
 
+  /// Где цитата начинается в тексте страницы.
+  ///
+  /// Пусто у цитат, сохранённых до схемы 8: тогда координат не было
+  /// вовсе. Такая цитата открывается на своей странице без подсветки — и
+  /// это честнее, чем подсветить наугад похожий кусок текста.
+  IntColumn get textStart => integer().nullable()();
+
+  /// Где цитата кончается в тексте страницы.
+  IntColumn get textEnd => integer().nullable()();
+
   /// Цвет маркера.
   IntColumn get color => integer().nullable()();
 

@@ -608,6 +608,39 @@ void main() {
       }, timeout: const Timeout(Duration(minutes: 3)));
     });
 
+    test('страница в двух растрах: сколько это стоит на тысяче страниц', () async {
+      // Цена решения S6.1: слой выделения стоит над листом всегда, и одна
+      // и та же страница живёт в памяти дважды. Владелец эту цену принял,
+      // но её надо знать числом — и знать, что она не растёт вместе с
+      // книгой. Меряется на самой большой книге корпуса: если однажды
+      // растр начнёт заводиться на каждую страницу, тест это увидит.
+      final ReaderDocument document = await open('huge_1200_pages.pdf');
+      final PageGeometry geometry = document.geometry(1);
+
+      // Размер экрана обычного телефона: страница вписана по ширине.
+      const int width = 1080;
+      final int height = (width * geometry.height / geometry.width).round();
+      final PageRaster? first = await document.renderPage(
+        1,
+        width: width,
+        height: height,
+      );
+      final PageRaster? second = await document.renderPage(
+        1,
+        width: width,
+        height: height,
+      );
+      expect(first, isNotNull);
+      expect(second, isNotNull);
+
+      final int bytes = first!.pixels.length + second!.pixels.length;
+      // Два растра страницы 1080×1528 — около 13 МБ. Потолок кэша слоя
+      // (`SelectionSheet.imageCacheBytes`) держит его вторую копию в тех
+      // же рамках: больше одной страницы туда не помещается.
+      expect(bytes, lessThan(20 * 1024 * 1024), reason: 'два растра: $bytes Б');
+      expect(bytes, first.pixels.length * 2);
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
     test('движок отдаёт тот же документ, что читает текст', () async {
       // Рисовать страницу должен тот же открытый файл: второе открытие
       // стоит вдвое больше памяти, а на большой книге отдаёт страницы

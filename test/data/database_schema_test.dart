@@ -99,6 +99,13 @@ void main() {
     expect(columns, <String>['setting_key', 'setting_value']);
   });
 
+  test('цитата носит своё место в тексте страницы', () async {
+    // Без координат карточка цитаты умеет только «открыть страницу», а
+    // читатель ждёт «покажи, где это было».
+    final List<String> columns = await _columnNames(data.database, 'quotes');
+    expect(columns, containsAll(<String>['text_start', 'text_end']));
+  });
+
   test('имена колонок переведены в snake_case', () async {
     final List<String> columns = await _columnNames(data.database, 'books');
     expect(columns, contains('file_hash'));

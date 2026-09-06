@@ -107,6 +107,84 @@ void main() {
     controller.dispose();
   });
 
+  group('место выделения в нашем счёте', () {
+    /// Страница, на которой одно и то же слово встречается дважды.
+    PageTextLayout twice() {
+      return buildLayout(<TestLine>[
+        const TestLine('идея первая и ясная', top: 0.10),
+        const TestLine('идея вторая и мутная', top: 0.14),
+      ]);
+    }
+
+    test('подсказка совпала — берётся она', () async {
+      final PageTextLayout layout = twice();
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(
+          pages: <String>[layout.text],
+          layouts: <int, PageTextLayout>{1: layout},
+        ),
+      );
+
+      final int hint = layout.text.indexOf('вторая');
+      final ({int start, int end})? place = await controller.locateOnPage(
+        pageNumber: 1,
+        text: 'вторая',
+        hint: hint,
+      );
+      expect(place!.start, hint);
+      expect(place.end, hint + 'вторая'.length);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('подсказка сбилась — берётся ближайшее вхождение', () async {
+      // Ровно это и происходит на живой книге: просмотрщик считает места
+      // по своему разбору страницы, где лишние пробелы склеены, и его
+      // число в нашем тексте означает не то же место.
+      final PageTextLayout layout = twice();
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(
+          pages: <String>[layout.text],
+          layouts: <int, PageTextLayout>{1: layout},
+        ),
+      );
+
+      final int second = layout.text.lastIndexOf('идея');
+      final ({int start, int end})? place = await controller.locateOnPage(
+        pageNumber: 1,
+        text: 'идея',
+        hint: second - 2,
+      );
+      expect(place!.start, second, reason: 'ближайшее, а не первое');
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('текст не нашёлся — числа остаются просмотрщика', () async {
+      final PageTextLayout layout = twice();
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(
+          pages: <String>[layout.text],
+          layouts: <int, PageTextLayout>{1: layout},
+        ),
+      );
+
+      expect(
+        await controller.locateOnPage(pageNumber: 1, text: 'третья', hint: 0),
+        isNull,
+      );
+      expect(
+        await controller.locateOnPage(pageNumber: 1, text: '', hint: 0),
+        isNull,
+      );
+
+      await controller.close();
+      controller.dispose();
+    });
+  });
+
   test('у страницы без геометрии подсветки нет, но текст есть', () async {
     // Скан: символов с местом на странице нет вовсе. Подсвечивать нечего,
     // и это не ошибка — это честный ответ.

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
@@ -21,10 +22,14 @@ const List<OutlineEntry> _outline = <OutlineEntry>[
 void main() {
   late FakeReadingRepository reading;
   late List<int> jumps;
+  late List<String> steps;
+  late int dismissals;
 
   setUp(() {
     reading = FakeReadingRepository();
     jumps = <int>[];
+    steps = <String>[];
+    dismissals = 0;
   });
 
   Future<ReaderController> makeController({
@@ -55,6 +60,9 @@ void main() {
           controller: controller,
           search: search ?? DocumentSearch(document: controller.document),
           onGoToHit: onGoToHit,
+          onPreviousFragment: () => steps.add('назад'),
+          onNextFragment: () => steps.add('вперёд'),
+          onDismiss: () => dismissals++,
           onGoToPage: (int page) async {
             jumps.add(page);
             controller.onPageChanged(page);
@@ -343,6 +351,36 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('кнопка поиска стоит в верхней панели', (
+      WidgetTester tester,
+    ) async {
+      // Владелец её не нашёл: она жила внизу, а искал он наверху. Поиск,
+      // до которого не добрался читатель, всё равно что отсутствует.
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller);
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+
+      final double search = tester
+          .getCenter(find.byKey(const Key('reader-search-button')))
+          .dy;
+      final double label = tester
+          .getCenter(find.byKey(const Key('reader-page-label')))
+          .dy;
+      final double outline = tester
+          .getCenter(find.byKey(const Key('reader-outline-button')))
+          .dy;
+      expect(search, lessThan(outline), reason: 'поиск выше оглавления');
+      expect(
+        (search - label).abs(),
+        lessThan(40),
+        reason: 'поиск стоит в одной строке с названием книги',
+      );
+
+      await controller.close();
+      controller.dispose();
+    });
+
     testWidgets('пустой результат так и написан', (WidgetTester tester) async {
       // Книга нарочно короче, чем шаг, на котором поиск уступает
       // управление интерфейсу. В widget-тестах время подменено, и
@@ -363,6 +401,133 @@ void main() {
       expect(find.text('Ничего не найдено.'), findsOneWidget);
 
       search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+  });
+
+  group('клавиатура', () {
+    Future<void> press(
+      WidgetTester tester,
+      LogicalKeyboardKey key, {
+      bool control = false,
+      bool shift = false,
+    }) async {
+      if (control) {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      }
+      if (shift) {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      }
+      await tester.sendKeyEvent(key);
+      if (shift) {
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      }
+      if (control) {
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      }
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('стрелки и пробел листают книгу', (WidgetTester tester) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller);
+
+      await press(tester, LogicalKeyboardKey.arrowRight);
+      await press(tester, LogicalKeyboardKey.space);
+      await press(tester, LogicalKeyboardKey.arrowLeft);
+      await press(tester, LogicalKeyboardKey.pageDown);
+
+      expect(steps, <String>['вперёд', 'вперёд', 'назад', 'вперёд']);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('Ctrl+F открывает поиск, Esc его закрывает', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller);
+
+      // Панели при этом спрятаны: поиск обязан открываться и с чистой
+      // страницы, иначе клавиша ничем не лучше кнопки.
+      expect(find.byKey(const Key('search-panel')), findsNothing);
+      await press(tester, LogicalKeyboardKey.keyF, control: true);
+      expect(find.byKey(const Key('search-panel')), findsOneWidget);
+
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(find.byKey(const Key('search-panel')), findsNothing);
+      // Esc ушёл на закрытие поиска и до выделения не добрался.
+      expect(dismissals, 0);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('Esc без открытых панелей снимает выделение', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller);
+
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(dismissals, 1);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F3 ведёт по совпадениям по кругу', (
+      WidgetTester tester,
+    ) async {
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>['тройка', 'ничего', 'снова тройка'],
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: fakeBook(pageCount: 3),
+        opener: FakeDocumentOpener(document),
+        reading: reading,
+      );
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start('тройка');
+
+      final List<int> visited = <int>[];
+      await pumpReader(
+        tester,
+        controller,
+        search: search,
+        onGoToHit: (SearchHit hit) async => visited.add(hit.pageNumber),
+      );
+
+      await press(tester, LogicalKeyboardKey.f3);
+      await press(tester, LogicalKeyboardKey.f3);
+      // Третье нажатие возвращает к первому: упереться в конец списка и
+      // не понять, кончился он или сломалась клавиша, — худший исход.
+      await press(tester, LogicalKeyboardKey.f3);
+      expect(visited, <int>[1, 3, 1]);
+
+      // Shift+F3 — назад по тому же кругу.
+      await press(tester, LogicalKeyboardKey.f3, shift: true);
+      expect(visited.last, 3);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('без найденного F3 молчит', (WidgetTester tester) async {
+      final ReaderController controller = await makeController();
+      final List<int> visited = <int>[];
+      await pumpReader(
+        tester,
+        controller,
+        onGoToHit: (SearchHit hit) async => visited.add(hit.pageNumber),
+      );
+
+      await press(tester, LogicalKeyboardKey.f3);
+      expect(visited, isEmpty);
+
       await controller.close();
       controller.dispose();
     });

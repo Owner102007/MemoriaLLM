@@ -125,6 +125,40 @@ int? indexAtPoint({
   return nearest;
 }
 
+/// Место символа среди прямоугольников движка по месту [index] в тексте.
+///
+/// Наш слой текста считает места **кодовыми единицами** строки Dart, а
+/// движок отдаёт по прямоугольнику на **кодовую точку**. Пока в тексте
+/// нет ничего за пределами основной плоскости Юникода, это одно и то же;
+/// как только встретится эмодзи или редкий иероглиф, счёт разъедется — и
+/// выделение, отданное просмотрщику, поедет на соседние буквы. Поэтому
+/// перевод делается явно и только тогда, когда длины не сошлись.
+///
+/// Возвращает `null`, если переводить не во что.
+int? charRectIndex(String text, int index, int rectCount) {
+  if (index < 0 || rectCount <= 0) {
+    return null;
+  }
+  if (text.length == rectCount) {
+    return index >= rectCount ? rectCount - 1 : index;
+  }
+  int at = 0;
+  int unit = 0;
+  while (unit < index && unit < text.length) {
+    final int code = text.codeUnitAt(unit);
+    // Суррогатная пара — одна кодовая точка и один прямоугольник.
+    final bool pair =
+        code >= 0xD800 &&
+        code <= 0xDBFF &&
+        unit + 1 < text.length &&
+        text.codeUnitAt(unit + 1) >= 0xDC00 &&
+        text.codeUnitAt(unit + 1) <= 0xDFFF;
+    unit += pair ? 2 : 1;
+    at++;
+  }
+  return at >= rectCount ? rectCount - 1 : at;
+}
+
 /// Границы слова вокруг места [index].
 ///
 /// Выделение начинается со слова, а не с буквы: попасть пальцем в букву

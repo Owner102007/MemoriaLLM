@@ -52,6 +52,8 @@ void main() {
     required int page,
     required String content,
     String? note,
+    int? textStart,
+    int? textEnd,
   }) async {
     await data.annotations.saveQuote(
       Quote(
@@ -59,6 +61,8 @@ void main() {
         bookId: book.id,
         page: page,
         content: content,
+        textStart: textStart,
+        textEnd: textEnd,
         createdAt: DateTime.utc(2026, 9, 6),
       ),
     );
@@ -176,6 +180,87 @@ void main() {
     expect(find.textContaining('> две идеи'), findsOneWidget);
     expect(find.byKey(const Key('annotations-export-copy')), findsOneWidget);
     await close(tester);
+  });
+
+  group('возвращение в книгу', () {
+    /// Открывает экран цитат **из другого экрана**.
+    ///
+    /// Иначе проверять нечего: карточка возвращает место переходом
+    /// наверх, а у корневого экрана возвращать некуда.
+    Future<AnnotationTarget?> openFromBook(
+      WidgetTester tester,
+      String quoteId,
+    ) async {
+      AnnotationTarget? target;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (BuildContext context) {
+              return Scaffold(
+                body: Center(
+                  child: ElevatedButton(
+                    key: const Key('open-annotations'),
+                    onPressed: () async {
+                      target = await Navigator.of(context)
+                          .push<AnnotationTarget>(
+                            MaterialPageRoute<AnnotationTarget>(
+                              builder: (BuildContext context) =>
+                                  AnnotationsScreen(
+                                    book: book,
+                                    annotations: data.annotations,
+                                  ),
+                            ),
+                          );
+                    },
+                    child: const Text('Цитаты'),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('open-annotations')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(Key('annotation-open-$quoteId')));
+      await tester.pumpAndSettle();
+      return target;
+    }
+
+    testWidgets('карточка открывает книгу на месте цитаты', (
+      WidgetTester tester,
+    ) async {
+      await addQuote(
+        id: 'q1',
+        page: 12,
+        content: 'две идеи',
+        textStart: 40,
+        textEnd: 48,
+      );
+
+      final AnnotationTarget? target = await openFromBook(tester, 'q1');
+      expect(target, isNotNull);
+      expect(target!.page, 12);
+      expect(target.textStart, 40);
+      expect(target.textEnd, 48);
+      await close(tester);
+    });
+
+    testWidgets('старая цитата открывает страницу без подсветки', (
+      WidgetTester tester,
+    ) async {
+      // Цитата, снятая до схемы 8: координат у неё нет и взять их
+      // неоткуда. Открыть страницу всё равно надо — это половина ответа,
+      // и она лучше, чем никакого.
+      await addQuote(id: 'q-old', page: 5, content: 'старая');
+
+      final AnnotationTarget? target = await openFromBook(tester, 'q-old');
+      expect(target, isNotNull);
+      expect(target!.page, 5);
+      expect(target.textStart, isNull);
+      expect(target.textEnd, isNull);
+      await close(tester);
+    });
   });
 
   testWidgets('у пустой книги выгружать нечего', (WidgetTester tester) async {

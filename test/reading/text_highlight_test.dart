@@ -135,4 +135,33 @@ void main() {
       expect(text.substring(word!.start, word.end), '这是');
     });
   });
+
+  group('место среди прямоугольников движка', () {
+    test('пока длины сходятся, счёт один и тот же', () {
+      const String text = 'обычная строка';
+      expect(charRectIndex(text, 7, text.length), 7);
+      expect(charRectIndex(text, 0, text.length), 0);
+    });
+
+    test('за концом текста берётся последний прямоугольник', () {
+      // Просмотрщик считает место выделения **включительно**: указать ему
+      // на несуществующий символ значит получить пустое выделение.
+      const String text = 'строка';
+      expect(charRectIndex(text, 99, text.length), text.length - 1);
+    });
+
+    test('суррогатная пара сдвигает счёт на один', () {
+      // Эмодзи — две кодовые единицы строки Dart и один прямоугольник
+      // движка. Без перевода выделение уехало бы на соседние буквы.
+      const String text = '🙂абв';
+      expect(text.length, 5);
+      expect(charRectIndex(text, 2, 4), 1);
+      expect(charRectIndex(text, 4, 4), 3);
+    });
+
+    test('бессмыслица не проходит', () {
+      expect(charRectIndex('строка', -1, 6), isNull);
+      expect(charRectIndex('строка', 0, 0), isNull);
+    });
+  });
 }
