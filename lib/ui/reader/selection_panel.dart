@@ -107,28 +107,35 @@ class SelectionPanel extends StatelessWidget {
                           ],
                         ),
                       ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        _Action(
-                          id: 'quote',
-                          icon: Icons.format_quote,
-                          label: 'В цитаты',
-                          onPressed: onQuote,
-                        ),
-                        _Action(
-                          id: 'note',
-                          icon: Icons.edit_note,
-                          label: 'Заметка',
-                          onPressed: onNote,
-                        ),
-                        _Action(
-                          id: 'copy',
-                          icon: Icons.copy_all_outlined,
-                          label: 'Копировать',
-                          onPressed: onCopy,
-                        ),
-                      ],
+                    // Три подписи в ряд не помещаются в телефон в
+                    // портрете, и ряд, который «почти влезает», — это
+                    // сломанная вёрстка на первом же узком экране.
+                    // Поэтому оба ряда прокручиваются вбок.
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          _Action(
+                            id: 'quote',
+                            icon: Icons.format_quote,
+                            label: 'В цитаты',
+                            onPressed: onQuote,
+                          ),
+                          _Action(
+                            id: 'note',
+                            icon: Icons.edit_note,
+                            label: 'Заметка',
+                            onPressed: onNote,
+                          ),
+                          _Action(
+                            id: 'copy',
+                            icon: Icons.copy_all_outlined,
+                            label: 'Копировать',
+                            onPressed: onCopy,
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

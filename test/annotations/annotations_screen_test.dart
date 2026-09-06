@@ -31,21 +31,20 @@ void main() {
         home: AnnotationsScreen(book: book, annotations: data.annotations),
       ),
     );
-    // Списки приезжают потоками из базы: без нескольких кадров они не
-    // успевают дойти до экрана. Ждать «пока всё уляжется» тут нельзя —
-    // ожидание, которому не нужен кадр, `pumpAndSettle` не дожидается.
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    // Списки приезжают потоками из базы, и до экрана они доходят не в
+    // тот же кадр.
+    await tester.pumpAndSettle();
   }
 
-  /// Снимает дерево до конца теста.
+  /// Снимает дерево и даёт drift прибраться.
   ///
-  /// Живые запросы drift планируют уборку обычным таймером, а в
-  /// widget-тестах время подменено: оставшийся таймер валит тест
-  /// сообщением «A Timer is still pending».
+  /// Живые запросы при отписке планируют уборку **обычным таймером**, а в
+  /// widget-тестах время подменено: нулевой кадр его не дожидается, и
+  /// тест валится сообщением «A Timer is still pending» — а следом висит
+  /// до своего десятиминутного предела. На этом сгорел прогон №93.
   Future<void> close(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
   }
 
   Future<void> addQuote({
@@ -156,8 +155,7 @@ void main() {
     await open(tester);
 
     await tester.tap(find.byKey(const Key('annotation-delete-q1')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpAndSettle();
 
     expect(find.text('две идеи'), findsNothing);
     expect(await data.annotations.quotes(book.id), isEmpty);
@@ -172,8 +170,7 @@ void main() {
     await open(tester);
 
     await tester.tap(find.byKey(const Key('annotations-export-button')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('annotations-export-text')), findsOneWidget);
     expect(find.textContaining('> две идеи'), findsOneWidget);
