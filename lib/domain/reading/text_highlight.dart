@@ -6,6 +6,11 @@
 /// отложенный в S3 именно до этой сессии, потому что до координат
 /// символов подсвечивать было нечем.
 ///
+/// Обратного хода — «точка на странице → место в тексте» — здесь больше
+/// нет. Он был нужен, пока мы вели диапазон выделения сами, отдавая его
+/// просмотрщику готовым; с S6.2 диапазон ведёт сам просмотрщик, потому
+/// что страницу рисует он же.
+///
 /// Прямоугольник строится **на строку**, а не на символ: подсветка из
 /// сотни отдельных клеток выглядит рябью, а строка — маркером.
 library;
@@ -66,97 +71,6 @@ List<TextBox> highlightRects({
     }
   }
   return rects;
-}
-
-/// Место в тексте, ближайшее к точке страницы.
-///
-/// Точка — в долях страницы. Нужна выделению: палец попадает не в символ,
-/// а куда придётся, и промах по вертикали (между строк) стоит дороже
-/// промаха по горизонтали — поэтому сначала выбирается строка, и только
-/// потом место внутри неё.
-int? indexAtPoint({
-  required PageTextLayout layout,
-  required double x,
-  required double y,
-  List<ColumnBand> columns = const <ColumnBand>[],
-  List<TextRow>? rows,
-}) {
-  if (!layout.hasGeometry) {
-    return null;
-  }
-  final List<TextRow> lines = rows ?? pageRows(layout, columns: columns);
-  if (lines.isEmpty) {
-    return null;
-  }
-  TextRow? best;
-  double bestDistance = double.infinity;
-  for (final TextRow row in lines) {
-    final double distance = y < row.top
-        ? row.top - y
-        : (y > row.bottom ? y - row.bottom : 0);
-    // При равном расстоянии выигрывает строка, в которую точка попала по
-    // горизонтали: на двухколоночной странице соседняя колонка стоит на
-    // той же высоте, и без этого палец уезжал бы в чужой текст.
-    final double penalty = x < row.left
-        ? row.left - x
-        : (x > row.right ? x - row.right : 0);
-    final double score = distance * 4 + penalty;
-    if (score < bestDistance) {
-      bestDistance = score;
-      best = row;
-    }
-  }
-  if (best == null) {
-    return null;
-  }
-  int nearest = best.start;
-  double nearestDistance = double.infinity;
-  for (int i = best.start; i < best.end; i++) {
-    final TextBox? box = layout.boxAt(i);
-    if (box == null) {
-      continue;
-    }
-    final double distance = (box.centerX - x).abs();
-    if (distance < nearestDistance) {
-      nearestDistance = distance;
-      nearest = i;
-    }
-  }
-  return nearest;
-}
-
-/// Место символа среди прямоугольников движка по месту [index] в тексте.
-///
-/// Наш слой текста считает места **кодовыми единицами** строки Dart, а
-/// движок отдаёт по прямоугольнику на **кодовую точку**. Пока в тексте
-/// нет ничего за пределами основной плоскости Юникода, это одно и то же;
-/// как только встретится эмодзи или редкий иероглиф, счёт разъедется — и
-/// выделение, отданное просмотрщику, поедет на соседние буквы. Поэтому
-/// перевод делается явно и только тогда, когда длины не сошлись.
-///
-/// Возвращает `null`, если переводить не во что.
-int? charRectIndex(String text, int index, int rectCount) {
-  if (index < 0 || rectCount <= 0) {
-    return null;
-  }
-  if (text.length == rectCount) {
-    return index >= rectCount ? rectCount - 1 : index;
-  }
-  int at = 0;
-  int unit = 0;
-  while (unit < index && unit < text.length) {
-    final int code = text.codeUnitAt(unit);
-    // Суррогатная пара — одна кодовая точка и один прямоугольник.
-    final bool pair =
-        code >= 0xD800 &&
-        code <= 0xDBFF &&
-        unit + 1 < text.length &&
-        text.codeUnitAt(unit + 1) >= 0xDC00 &&
-        text.codeUnitAt(unit + 1) <= 0xDFFF;
-    unit += pair ? 2 : 1;
-    at++;
-  }
-  return at >= rectCount ? rectCount - 1 : at;
 }
 
 /// Границы слова вокруг места [index].

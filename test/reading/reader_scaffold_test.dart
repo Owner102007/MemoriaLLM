@@ -23,12 +23,14 @@ void main() {
   late FakeReadingRepository reading;
   late List<int> jumps;
   late List<String> steps;
+  late List<LogicalKeyboardKey> bubbled;
   late int dismissals;
 
   setUp(() {
     reading = FakeReadingRepository();
     jumps = <int>[];
     steps = <String>[];
+    bubbled = <LogicalKeyboardKey>[];
     dismissals = 0;
   });
 
@@ -56,24 +58,35 @@ void main() {
   }) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: ReaderScaffold(
-          controller: controller,
-          search: search ?? DocumentSearch(document: controller.document),
-          onGoToHit: onGoToHit,
-          onPreviousFragment: () => steps.add('назад'),
-          onNextFragment: () => steps.add('вперёд'),
-          onDismiss: () => dismissals++,
-          onGoToPage: (int page) async {
-            jumps.add(page);
-            controller.onPageChanged(page);
+        // Узел-свидетель над экраном чтения: до него доходит только то,
+        // чего экран не забрал себе. Так проверяется, что клавиши поля
+        // ввода не съедены по дороге.
+        home: Focus(
+          onKeyEvent: (FocusNode node, KeyEvent event) {
+            if (event is KeyDownEvent) {
+              bubbled.add(event.logicalKey);
+            }
+            return KeyEventResult.ignored;
           },
-          viewerBuilder: (BuildContext context, VoidCallback onTap) {
-            return GestureDetector(
-              key: const Key('fake-viewer'),
-              onTap: onTap,
-              child: const ColoredBox(color: Color(0xFF101010)),
-            );
-          },
+          child: ReaderScaffold(
+            controller: controller,
+            search: search ?? DocumentSearch(document: controller.document),
+            onGoToHit: onGoToHit,
+            onPreviousFragment: () => steps.add('назад'),
+            onNextFragment: () => steps.add('вперёд'),
+            onDismiss: () => dismissals++,
+            onGoToPage: (int page) async {
+              jumps.add(page);
+              controller.onPageChanged(page);
+            },
+            viewerBuilder: (BuildContext context, VoidCallback onTap) {
+              return GestureDetector(
+                key: const Key('fake-viewer'),
+                onTap: onTap,
+                child: const ColoredBox(color: Color(0xFF101010)),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -549,6 +562,68 @@ void main() {
       await tester.pumpAndSettle();
       await press(tester, LogicalKeyboardKey.f3);
       expect(visited.last, 1, reason: 'первое совпадение нового запроса');
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('пробел и Backspace в поле поиска принадлежат полю', (
+      WidgetTester tester,
+    ) async {
+      // Регрессия S6.1, и она видна ровно так: клавиатурный узел стоит
+      // над `Scaffold`, событие из поля проходит через него раньше, чем
+      // через правила редактирования текста, и ответ «разобрано»
+      // отбирает у поля пробел и `Backspace`. Фразу с пробелами было не
+      // набрать, набранное — не стереть.
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller);
+      await press(tester, LogicalKeyboardKey.keyF, control: true);
+      expect(find.byKey(const Key('search-field')), findsOneWidget);
+
+      steps.clear();
+      bubbled.clear();
+      await press(tester, LogicalKeyboardKey.space);
+      await press(tester, LogicalKeyboardKey.backspace);
+
+      expect(steps, isEmpty, reason: 'книга не листается, пока набирают');
+      expect(
+        bubbled,
+        containsAll(<LogicalKeyboardKey>[
+          LogicalKeyboardKey.space,
+          LogicalKeyboardKey.backspace,
+        ]),
+        reason: 'клавиши доходят до правил редактирования текста',
+      );
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F3 работает и из поля: его поле не ждёт', (
+      WidgetTester tester,
+    ) async {
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>['тройка', 'ничего', 'снова тройка'],
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: fakeBook(pageCount: 3),
+        opener: FakeDocumentOpener(document),
+        reading: reading,
+      );
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start('тройка');
+
+      final List<int> visited = <int>[];
+      await pumpReader(
+        tester,
+        controller,
+        search: search,
+        onGoToHit: (SearchHit hit) async => visited.add(hit.pageNumber),
+      );
+      await press(tester, LogicalKeyboardKey.keyF, control: true);
+      await press(tester, LogicalKeyboardKey.f3);
+      expect(visited, <int>[1]);
 
       search.dispose();
       await controller.close();

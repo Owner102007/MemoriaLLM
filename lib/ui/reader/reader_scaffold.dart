@@ -174,9 +174,14 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// Клавиши чтения.
   ///
   /// Работают **всегда**: выделен текст или нет, открыт поиск или нет.
-  /// Слой выделения поднят над страницей, но своей навигации по клавишам
-  /// у него нет — она выключена намеренно, чтобы его страница не уехала
-  /// от нашей.
+  /// Своей навигации по клавишам у просмотрщика нет — она выключена
+  /// намеренно, чтобы его страница не уехала от нашей.
+  ///
+  /// Единственное исключение — набор текста. Узел стоит над `Scaffold`, и
+  /// событие из поля поиска проходит через него **раньше**, чем через
+  /// правила редактирования текста, которые живут выше, в `WidgetsApp`.
+  /// Ответить «разобрано» здесь значит съесть у поля пробел и
+  /// `Backspace` — ровно это и случилось в S6.1.
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -190,6 +195,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       shift: keyboard.isShiftPressed,
       searching: searching,
       hasHits: widget.search.hits.isNotEmpty,
+      typing: isTypingInField(),
     );
     if (action == null) {
       return KeyEventResult.ignored;
@@ -252,6 +258,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
             hideChrome();
           },
           onNextHit: () => unawaited(_stepHit(1)),
+          // `Esc` закрывает поиск, но разбирает его сама панель: пока
+          // курсор стоит в поле, клавиши чтения молчат вовсе, и до нас
+          // событие не дошло бы.
+          onClose: () => _scaffoldKey.currentState?.closeEndDrawer(),
         ),
         body: Stack(
           children: <Widget>[

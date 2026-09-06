@@ -407,17 +407,6 @@ class ReaderController extends ChangeNotifier {
     return best < 0 ? null : (start: best, end: best + text.length);
   }
 
-  /// Колонки страницы.
-  ///
-  /// Нужны выделению протяжкой: без них точка в конце левой колонки
-  /// уехала бы в текст, стоящий справа на той же высоте. Рамка страницы
-  /// к этому моменту обычно уже разобрана — колонки берутся из неё, а не
-  /// считаются заново.
-  Future<List<ColumnBand>> columnsOf(int pageNumber) async {
-    final PageFrame frame = await _frames.frameFor(pageNumber);
-    return frame.columns;
-  }
-
   Future<PageTextLayout> _loadLayout(int pageNumber) async {
     if (pageNumber < 1 || pageNumber > pageCount) {
       return PageTextLayout.empty;

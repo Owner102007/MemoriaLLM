@@ -1,16 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:memoria/domain/reading/columns.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
 import 'package:memoria/domain/reading/text_highlight.dart';
 
 import '../support/page_text.dart';
 
-/// Перевод «кусок текста → прямоугольники на странице» и обратно.
+/// Перевод «кусок текста → прямоугольники на странице».
 ///
-/// На этой математике держатся сразу трое: подсветка найденного (долг
-/// S3), панель действий, которой надо знать, где стоит выделение, и само
-/// попадание пальцем в слово.
+/// На этой математике держатся двое: подсветка найденного (долг S3) и
+/// панель действий, которой надо знать, где стоит выделение. Обратный
+/// перевод — «точка на странице → место в тексте» — ушёл вместе со слоем
+/// выделения в S6.2: диапазон теперь ведёт сам просмотрщик.
 void main() {
   final PageTextLayout page = buildLayout(<TestLine>[
     const TestLine('первая строка страницы', top: 0.10),
@@ -67,44 +67,6 @@ void main() {
     });
   });
 
-  group('попадание пальцем', () {
-    test('точка внутри строки даёт место в тексте', () {
-      final int? index = indexAtPoint(
-        layout: page,
-        x: 0.10 + 2.5 * kCharWidth,
-        y: 0.11,
-      );
-      expect(index, isNotNull);
-      expect(page.text[index!], 'р'); // «пе*р*вая»
-    });
-
-    test('промах между строк уводит к ближайшей, а не в пустоту', () {
-      final int? index = indexAtPoint(layout: page, x: 0.11, y: 0.135);
-      expect(index, isNotNull);
-      // Между строками: ближе нижняя, значит вторая.
-      expect(page.text.substring(index!, index + 6), 'вторая');
-    });
-
-    test('на двухколоночной странице палец не уезжает в чужую колонку', () {
-      final PageTextLayout columnsPage = buildLayout(<TestLine>[
-        const TestLine('левая строка', top: 0.20),
-        const TestLine('правая строка', top: 0.20, left: 0.52),
-      ]);
-      const List<ColumnBand> bands = <ColumnBand>[
-        ColumnBand(left: 0.05, right: 0.45),
-        ColumnBand(left: 0.5, right: 0.95),
-      ];
-      final int? index = indexAtPoint(
-        layout: columnsPage,
-        x: 0.53,
-        y: 0.21,
-        columns: bands,
-      );
-      expect(index, isNotNull);
-      expect(columnsPage.text.substring(index!, index + 6), 'правая');
-    });
-  });
-
   group('слово вокруг места', () {
     test('палец в середине слова берёт слово целиком', () {
       const String text = 'мир полон вещей';
@@ -133,35 +95,6 @@ void main() {
       const String text = '这是 书';
       final ({int start, int end})? word = wordAround(text, 0);
       expect(text.substring(word!.start, word.end), '这是');
-    });
-  });
-
-  group('место среди прямоугольников движка', () {
-    test('пока длины сходятся, счёт один и тот же', () {
-      const String text = 'обычная строка';
-      expect(charRectIndex(text, 7, text.length), 7);
-      expect(charRectIndex(text, 0, text.length), 0);
-    });
-
-    test('за концом текста берётся последний прямоугольник', () {
-      // Просмотрщик считает место выделения **включительно**: указать ему
-      // на несуществующий символ значит получить пустое выделение.
-      const String text = 'строка';
-      expect(charRectIndex(text, 99, text.length), text.length - 1);
-    });
-
-    test('суррогатная пара сдвигает счёт на один', () {
-      // Эмодзи — две кодовые единицы строки Dart и один прямоугольник
-      // движка. Без перевода выделение уехало бы на соседние буквы.
-      const String text = '🙂абв';
-      expect(text.length, 5);
-      expect(charRectIndex(text, 2, 4), 1);
-      expect(charRectIndex(text, 4, 4), 3);
-    });
-
-    test('бессмыслица не проходит', () {
-      expect(charRectIndex('строка', -1, 6), isNull);
-      expect(charRectIndex('строка', 0, 0), isNull);
     });
   });
 }

@@ -115,4 +115,68 @@ void main() {
     expect(readerKeyAction(key: LogicalKeyboardKey.keyF), isNull);
     expect(readerKeyAction(key: LogicalKeyboardKey.keyG), isNull);
   });
+
+  group('пока читатель набирает текст', () {
+    test('пробел и Backspace принадлежат полю, а не книге', () {
+      // Регрессия S6.1: клавиатурный узел стоит над `Scaffold` и отвечал
+      // «разобрано» на клавиши листания, не спросив, не набирает ли
+      // читатель прямо сейчас. Фразу с пробелами в поиске было не
+      // набрать, а набранное — не стереть.
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.space, typing: true),
+        isNull,
+      );
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.backspace, typing: true),
+        isNull,
+      );
+    });
+
+    test('и стрелки с Page тоже: ими двигают курсор', () {
+      for (final LogicalKeyboardKey key in <LogicalKeyboardKey>[
+        LogicalKeyboardKey.arrowLeft,
+        LogicalKeyboardKey.arrowRight,
+        LogicalKeyboardKey.arrowUp,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.pageUp,
+        LogicalKeyboardKey.pageDown,
+      ]) {
+        expect(readerKeyAction(key: key, typing: true), isNull, reason: '$key');
+      }
+    });
+
+    test('Enter в поле разбирает само поле', () {
+      expect(
+        readerKeyAction(
+          key: LogicalKeyboardKey.enter,
+          searching: true,
+          hasHits: true,
+          typing: true,
+        ),
+        isNull,
+      );
+    });
+
+    test('Esc оставлен панели поиска: ей ближе', () {
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.escape, typing: true),
+        isNull,
+      );
+    });
+
+    test('F3 и Ctrl+F поле не ждёт никогда — они работают', () {
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.f3, hasHits: true, typing: true),
+        ReaderKeyAction.nextHit,
+      );
+      expect(
+        readerKeyAction(
+          key: LogicalKeyboardKey.keyF,
+          control: true,
+          typing: true,
+        ),
+        ReaderKeyAction.openSearch,
+      );
+    });
+  });
 }

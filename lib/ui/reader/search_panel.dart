@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../application/reading/document_search.dart';
 import '../../domain/reading/text_search.dart';
@@ -16,6 +17,7 @@ class SearchPanel extends StatefulWidget {
     required this.search,
     required this.onSelect,
     this.onNextHit,
+    this.onClose,
     super.key,
   });
 
@@ -27,6 +29,13 @@ class SearchPanel extends StatefulWidget {
 
   /// Следующее совпадение: `Enter` по уже найденному запросу.
   final VoidCallback? onNextHit;
+
+  /// Закрыть панель: `Esc`.
+  ///
+  /// Разбирается здесь, а не в клавиатурном узле экрана: пока курсор
+  /// стоит в поле, клавиши чтения не разбираются вовсе — иначе поле
+  /// осталось бы без пробела и `Backspace`.
+  final VoidCallback? onClose;
 
   @override
   State<SearchPanel> createState() => _SearchPanelState();
@@ -58,6 +67,25 @@ class _SearchPanelState extends State<SearchPanel> {
     }
   }
 
+  /// `Esc` в поле поиска закрывает панель.
+  ///
+  /// Узел стоит вокруг поля, а не над экраном: событие доходит сюда
+  /// раньше всех, и разбирается ровно одна клавиша — та, которой поле
+  /// ввода всё равно не пользуется. Всё остальное уходит дальше, к
+  /// правилам редактирования текста.
+  KeyEventResult _onFieldKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.escape) {
+      return KeyEventResult.ignored;
+    }
+    final VoidCallback? close = widget.onClose;
+    if (close == null) {
+      return KeyEventResult.ignored;
+    }
+    close();
+    return KeyEventResult.handled;
+  }
+
   void _onQueryChanged(String value) {
     // Пауза перед запуском: иначе каждый набранный символ запускает
     // проход по всей книге, и первые буквы съедают процессор впустую.
@@ -80,36 +108,40 @@ class _SearchPanelState extends State<SearchPanel> {
           children: <Widget>[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: TextField(
-                key: const Key('search-field'),
-                controller: _field,
-                autofocus: true,
-                textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  labelText: 'Поиск по книге',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    key: const Key('search-clear'),
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Очистить',
-                    onPressed: () {
-                      _field.clear();
-                      search.clear();
-                    },
+              child: Focus(
+                onKeyEvent: _onFieldKey,
+                child: TextField(
+                  key: const Key('search-field'),
+                  controller: _field,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    labelText: 'Поиск по книге',
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      key: const Key('search-clear'),
+                      icon: const Icon(Icons.close),
+                      tooltip: 'Очистить',
+                      onPressed: () {
+                        _field.clear();
+                        search.clear();
+                      },
+                    ),
                   ),
+                  onChanged: _onQueryChanged,
+                  // Enter по уже найденному запросу — это «следующее
+                  // совпадение», а не «искать то же самое заново»: искать
+                  // повторно то, что уже найдено, читателю незачем.
+                  onSubmitted: (String value) {
+                    _debounce?.cancel();
+                    if (value.trim() == search.query &&
+                        search.hits.isNotEmpty) {
+                      widget.onNextHit?.call();
+                      return;
+                    }
+                    unawaited(search.start(value));
+                  },
                 ),
-                onChanged: _onQueryChanged,
-                // Enter по уже найденному запросу — это «следующее
-                // совпадение», а не «искать то же самое заново»: искать
-                // повторно то, что уже найдено, читателю незачем.
-                onSubmitted: (String value) {
-                  _debounce?.cancel();
-                  if (value.trim() == search.query && search.hits.isNotEmpty) {
-                    widget.onNextHit?.call();
-                    return;
-                  }
-                  unawaited(search.start(value));
-                },
               ),
             ),
             if (search.isRunning)

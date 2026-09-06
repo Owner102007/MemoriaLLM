@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -35,7 +34,6 @@ import 'reader_settings_sheet.dart';
 import 'reader_sheet.dart';
 import 'reading_filter_layer.dart';
 import 'selection_panel.dart';
-import 'selection_sheet.dart';
 
 /// Экран чтения.
 ///
@@ -63,23 +61,11 @@ class ReaderScreen extends StatefulWidget {
 }
 
 class _ReaderScreenState extends State<ReaderScreen> {
-  /// Указатели, которыми выделяют протяжкой, и те, которыми удерживают.
-  ///
-  /// Наборы выведены из одного правила, а не написаны дважды: правило
-  /// живёт в домене и проверяется тестом, а здесь только исполняется.
-  static final Set<PointerDeviceKind> _dragDevices = <PointerDeviceKind>{
-    for (final PointerDeviceKind kind in PointerDeviceKind.values)
-      if (selectionStartsOnDrag(kind)) kind,
-  };
-  static final Set<PointerDeviceKind> _holdDevices = <PointerDeviceKind>{
-    for (final PointerDeviceKind kind in PointerDeviceKind.values)
-      if (!selectionStartsOnDrag(kind)) kind,
-  };
-
+  /// Просмотрщик непрерывной ленты. Постраничное чтение рисует лист сам.
   final PdfViewerController _viewer = PdfViewerController();
 
-  /// Слой выделения: он стоит на месте всегда, а это — рычаги к нему.
-  final SelectionLayerController _selectionLayer = SelectionLayerController();
+  /// Рычаги к листу: снять выделение, не трогая страницу.
+  final ReaderSheetController _sheet = ReaderSheetController();
 
   /// Книга может смениться прямо на этом экране: если файл переехал,
   /// читатель выбирает его заново, и у книги становится новый источник.
@@ -294,7 +280,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
-    _selectionLayer.dispose();
     _search?.dispose();
     final ReaderController? controller = _controller;
     _controller = null;
@@ -392,32 +377,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     setState(() {});
   }
 
-  /// Читатель начал выделять.
-  ///
-  /// Слой выделения стоит на месте всё время, пока читатель на странице,
-  /// — жест только делает его видимым и отдаёт ему указатель. Но самого
-  /// жеста слой не видел: Flutter отдаёт события указателя тем, кто был
-  /// на месте в момент касания, а слой до этого касания не ловил вовсе.
-  /// Поэтому намерение читателя повторяется программно — слово под
-  /// пальцем или начало диапазона под курсором.
-  void _startSelection(Offset at, {required bool word}) {
-    if (_flow != PageFlow.paged) {
-      // В ленте выделение своё, просмотрщика: он там и рисует страницы.
-      return;
-    }
-    final bool was = _selectionLayer.active;
-    _selectionLayer.start(at, word: word);
-    if (!was || _selection != null) {
-      setState(() => _selection = null);
-    }
-  }
-
   /// Снять выделение вместе с панелью.
+  ///
+  /// Выделение живёт внутри просмотрщика — он же его и рисует, — поэтому
+  /// снимается оно там, а панель уходит вместе с ним.
   void _dismissSelection() {
-    if (!_selectionLayer.active && _selection == null) {
+    _sheet.clearSelection();
+    if (_selection == null) {
       return;
     }
-    _selectionLayer.dismiss();
     setState(() => _selection = null);
   }
 
@@ -724,7 +692,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     final ReaderTap action = readerTapAt(
       share: position.dx / size.width,
-      selecting: _selectionLayer.active,
+      selecting: _selection != null,
     );
     switch (action) {
       case ReaderTap.previousFragment:
@@ -925,6 +893,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// книги — пока замок заперт. Отперев его, читатель двигает и
   /// масштабирует страницу как в обычном просмотрщике, и она остаётся в
   /// том виде, в каком он её оставил.
+  ///
+  /// Жестов здесь больше нет: страницу рисует просмотрщик, он же ловит
+  /// нажатия и разводит выделение с перемещением. Нам он отдаёт готовое —
+  /// нажатие мимо выделения и сам выделенный диапазон.
   Widget _buildSheet(
     BuildContext context,
     ReaderController controller,
@@ -943,88 +915,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
         final List<int> pages = isSpreadMode(controller.settings.displayMode)
             ? spreadPages(controller.page, controller.pageCount)
             : <int>[controller.page];
-        return RawGestureDetector(
-          behavior: HitTestBehavior.opaque,
-          gestures: _selectionGestures(size, onTap),
-          child: document == null
-              ? ColoredBox(color: background, child: const SizedBox.expand())
-              : ReaderSheet(
-                  document: document,
-                  pages: pages,
-                  fragment: controller.fragmentBox,
-                  background: background,
-                  page: controller.page,
-                  pageCount: controller.pageCount,
-                  locked: _zoomLocked,
-                  stripFit: controller.settings.stripFit,
-                  dim: controller.settings.dimOutside,
-                  selection: _selectionLayer,
-                  columnsOf: controller.columnsOf,
-                  onSelection: (List<PdfPageTextRange> ranges) =>
-                      unawaited(_onSelectionRanges(ranges)),
-                  onSelectionTap: (Offset at) => _onTap(at, size, onTap),
-                  overlay: (BuildContext context, SheetView view) =>
-                      _buildOverlay(context, view, document, pages, size),
-                ),
+        if (document == null) {
+          return ColoredBox(color: background, child: const SizedBox.expand());
+        }
+        return ReaderSheet(
+          document: document,
+          pages: pages,
+          fragment: controller.fragmentBox,
+          background: background,
+          page: controller.page,
+          pageCount: controller.pageCount,
+          locked: _zoomLocked,
+          stripFit: controller.settings.stripFit,
+          dim: controller.settings.dimOutside,
+          sheetController: _sheet,
+          onSelection: (List<PdfPageTextRange> ranges) =>
+              unawaited(_onSelectionRanges(ranges)),
+          onTap: (Offset at) => _onTap(at, size, onTap),
+          overlay: (BuildContext context, SheetView view) =>
+              _buildOverlay(context, view, document, pages, size),
         );
       },
     );
-  }
-
-  /// Жесты страницы: нажатие листает, а выделение начинается по-разному.
-  ///
-  /// **Стартер зависит от указателя** (правка S6.1 по проверке
-  /// 06.09.2026). Мышью текст выделяют протяжкой и делают это сразу:
-  /// полсекунды с зажатой кнопкой — не настольная привычка, а задержка
-  /// непонятно за что. Пальцем наоборот — там протяжка принадлежит
-  /// странице, и выделение начинается удержанием, но порог опущен до
-  /// четверти секунды.
-  ///
-  /// Протяжка мышью заводится только при **запертом замке**: отперев
-  /// его, читатель попросил двигать страницу, и отбирать у него движение
-  /// ради выделения нельзя. Там выделение по-прежнему начинается
-  /// удержанием — на обоих указателях.
-  Map<Type, GestureRecognizerFactory<GestureRecognizer>> _selectionGestures(
-    Size size,
-    VoidCallback onTap,
-  ) {
-    return <Type, GestureRecognizerFactory<GestureRecognizer>>{
-      TapGestureRecognizer:
-          GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
-            TapGestureRecognizer.new,
-            (TapGestureRecognizer instance) {
-              instance.onTapUp = (TapUpDetails details) =>
-                  _onTap(details.localPosition, size, onTap);
-            },
-          ),
-      LongPressGestureRecognizer:
-          GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
-            () => LongPressGestureRecognizer(
-              duration: kTouchSelectionDelay,
-              supportedDevices: _zoomLocked
-                  ? _holdDevices
-                  : PointerDeviceKind.values.toSet(),
-            ),
-            (LongPressGestureRecognizer instance) {
-              instance.onLongPressStart = (LongPressStartDetails details) =>
-                  _startSelection(details.localPosition, word: true);
-            },
-          ),
-      if (_zoomLocked)
-        PanGestureRecognizer:
-            GestureRecognizerFactoryWithHandlers<PanGestureRecognizer>(
-              () => PanGestureRecognizer(supportedDevices: _dragDevices),
-              (PanGestureRecognizer instance) {
-                instance.onStart = (DragStartDetails details) =>
-                    _startSelection(details.localPosition, word: false);
-                // Диапазон ведём сами, по координатам символов: слой
-                // выделения этой протяжки не видел и вести её не может.
-                // Ручки, лупа и правка после отпускания — уже его.
-                instance.onUpdate = (DragUpdateDetails details) =>
-                    _selectionLayer.extendTo(details.localPosition);
-              },
-            ),
-    };
   }
 
   /// Что лежит поверх листа: подсветка найденного и панель действий.
