@@ -84,6 +84,9 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// Минус единица — ни на каком, и следующее равно первому.
   int _hit = -1;
 
+  /// Запрос, по которому идёт счёт совпадений.
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
@@ -105,8 +108,16 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   }
 
   /// Новый запрос — счёт совпадений начинается заново.
+  ///
+  /// Иначе `F3` по новому запросу продолжал бы с того места, где читатель
+  /// бросил прошлый, и первое совпадение оказалось бы пропущено.
   void _onSearchChanged() {
     if (!mounted) {
+      return;
+    }
+    if (widget.search.query != _query) {
+      _query = widget.search.query;
+      _hit = -1;
       return;
     }
     if (_hit >= widget.search.hits.length) {

@@ -516,6 +516,45 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('новый запрос начинает счёт совпадений заново', (
+      WidgetTester tester,
+    ) async {
+      // Иначе `F3` по новому запросу продолжал бы с того места, где
+      // читатель бросил прошлый, и первое совпадение оказалось бы
+      // пропущено — а оно обычно и есть нужное.
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>['тройка семёрка', 'семёрка', 'тройка семёрка'],
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: fakeBook(pageCount: 3),
+        opener: FakeDocumentOpener(document),
+        reading: reading,
+      );
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start('тройка');
+
+      final List<int> visited = <int>[];
+      await pumpReader(
+        tester,
+        controller,
+        search: search,
+        onGoToHit: (SearchHit hit) async => visited.add(hit.pageNumber),
+      );
+
+      await press(tester, LogicalKeyboardKey.f3);
+      await press(tester, LogicalKeyboardKey.f3);
+      expect(visited, <int>[1, 3]);
+
+      await search.start('семёрка');
+      await tester.pumpAndSettle();
+      await press(tester, LogicalKeyboardKey.f3);
+      expect(visited.last, 1, reason: 'первое совпадение нового запроса');
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
     testWidgets('без найденного F3 молчит', (WidgetTester tester) async {
       final ReaderController controller = await makeController();
       final List<int> visited = <int>[];
