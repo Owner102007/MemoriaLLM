@@ -160,10 +160,12 @@ PromptCheck checkPrompt({required String name, required String body}) {
 
 /// Подставляет в промпт то, что нашлось.
 ///
-/// Пустое значение не оставляет после себя дыру: место подстановки
-/// исчезает вместе с лишними пробелами вокруг него. Модель, получившая
-/// «Переведи «слово» с языка  на », отвечает хуже, чем модель, получившая
-/// «Переведи «слово»».
+/// **Строка, все подстановки которой оказались пустыми, выбрасывается
+/// целиком.** «Отрывок: {{контекст}}» без контекста превращается в
+/// «Отрывок:» — обрубок, который модели ничего не говорит, а место в
+/// запросе занимает. Строка, у которой есть хоть одна непустая
+/// подстановка, остаётся; строка вовсе без мест подстановки — тем более:
+/// это текст читателя, и трогать его незачем.
 String fillPrompt(
   String body, {
   required String selection,
@@ -177,15 +179,29 @@ String fillPrompt(
     PromptSlot.bookLanguage: bookLanguage ?? '',
     PromptSlot.myLanguage: myLanguage ?? '',
   };
-  final String filled = body.replaceAllMapped(_slotPattern, (Match match) {
-    final String token = (match.group(1) ?? '').trim();
-    final PromptSlot? slot = _slotByToken(token);
-    if (slot == null) {
-      return match.group(0)!;
+  final List<String> kept = <String>[];
+  for (final String line in body.split('\n')) {
+    int known = 0;
+    int filledIn = 0;
+    final String result = line.replaceAllMapped(_slotPattern, (Match match) {
+      final String token = (match.group(1) ?? '').trim();
+      final PromptSlot? slot = _slotByToken(token);
+      if (slot == null) {
+        return match.group(0)!;
+      }
+      known++;
+      final String value = values[slot] ?? '';
+      if (value.trim().isNotEmpty) {
+        filledIn++;
+      }
+      return value;
+    });
+    if (known > 0 && filledIn == 0) {
+      continue;
     }
-    return values[slot] ?? '';
-  });
-  return _tidy(filled);
+    kept.add(result);
+  }
+  return _tidy(kept.join('\n'));
 }
 
 /// Промпт к выделению.

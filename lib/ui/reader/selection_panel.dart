@@ -108,34 +108,34 @@ class SelectionPanel extends StatelessWidget {
                         ),
                       ),
                     // Три подписи в ряд не помещаются в телефон в
-                    // портрете, и ряд, который «почти влезает», — это
-                    // сломанная вёрстка на первом же узком экране.
-                    // Поэтому оба ряда прокручиваются вбок.
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          _Action(
-                            id: 'quote',
-                            icon: Icons.format_quote,
-                            label: 'В цитаты',
-                            onPressed: onQuote,
-                          ),
-                          _Action(
-                            id: 'note',
-                            icon: Icons.edit_note,
-                            label: 'Заметка',
-                            onPressed: onNote,
-                          ),
-                          _Action(
-                            id: 'copy',
-                            icon: Icons.copy_all_outlined,
-                            label: 'Копировать',
-                            onPressed: onCopy,
-                          ),
-                        ],
-                      ),
+                    // портрете: «Копировать» уезжало за край экрана, и
+                    // до него приходилось бы доскроллить. Подписей у
+                    // действий поэтому нет — только значки и всплывающие
+                    // подсказки. Имена остаются там, где они и есть
+                    // смысл: на кнопках промптов, которые читатель назвал
+                    // сам.
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        _Action(
+                          id: 'quote',
+                          icon: Icons.format_quote,
+                          label: 'В цитаты',
+                          onPressed: onQuote,
+                        ),
+                        _Action(
+                          id: 'note',
+                          icon: Icons.edit_note,
+                          label: 'Заметка',
+                          onPressed: onNote,
+                        ),
+                        _Action(
+                          id: 'copy',
+                          icon: Icons.copy_all_outlined,
+                          label: 'Копировать',
+                          onPressed: onCopy,
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -163,12 +163,12 @@ class _Action extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
+    return IconButton(
       key: Key('selection-action-$id'),
       onPressed: onPressed,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+      icon: Icon(icon, size: 20),
+      tooltip: label,
+      visualDensity: VisualDensity.compact,
     );
   }
 }
