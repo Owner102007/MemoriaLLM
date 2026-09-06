@@ -166,7 +166,11 @@ void main() {
 
     test('F3 и Ctrl+F поле не ждёт никогда — они работают', () {
       expect(
-        readerKeyAction(key: LogicalKeyboardKey.f3, hasHits: true, typing: true),
+        readerKeyAction(
+          key: LogicalKeyboardKey.f3,
+          hasHits: true,
+          typing: true,
+        ),
         ReaderKeyAction.nextHit,
       );
       expect(
