@@ -1,0 +1,152 @@
+# Канарейка: недельный прогон на том, что придёт само.
+#
+# Смысл. Обычный CI зафиксирован (S6.2.1): точная версия Flutter в
+# `.github/actions/flutter`, зависимости из `pubspec.lock`, PDFium по
+# сумме из `tool/pdfium_version.txt`. Это возвращает главное свойство
+# формата работы — красный CI означает, что сессия сломала код, — но
+# создаёт вторую опасность: проект молча отстаёт, и подъём версий через
+# полгода превращается в отдельный проект.
+#
+# Канарейка закрывает её. Она берёт `stable` без фиксации и
+# `flutter pub upgrade`, то есть ровно то будущее, в которое проект
+# когда-нибудь переедет. Ей **разрешено падать**: её падение — не
+# поломка, а сообщение «новое ломает вот это». Единственный её продукт —
+# issue с логом. Обновление после этого делается отдельной сессией с
+# намерением, а не сюрпризом, который отбирает у текущей сессии критерий
+# готовности.
+#
+# Прямой вызов subosito/flutter-action здесь намеренный и единственный в
+# репозитории: композитное действие ставит закреплённую версию, а
+# канарейке нужна как раз незакреплённая.
+name: Канарейка
+
+on:
+  schedule:
+    # Понедельник, 04:17 UTC. Минута не круглая нарочно: в начале часа
+    # у GitHub очередь из всех расписаний мира, и запуск съезжает.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    name: stable без фиксации и pub upgrade
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v7
+
+      - name: Поставить Flutter со stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: Библиотека SQLite для тестов
+        run: sudo apt-get install -y libsqlite3-dev
+
+      # Та же библиотека и та же сверка суммы, что в обычном прогоне.
+      # Если новый pdfrx приедет с другой версией движка, тест согласия
+      # версий упадёт — и это ровно тот сигнал, за которым канарейка.
+      - name: Библиотека PDFium для корпус-тестов
+        run: |
+          set -eu
+          spec='tool/pdfium_version.txt'
+          release=$(sed -n 's/^release=//p' "$spec")
+          asset=$(sed -n 's/^asset=//p' "$spec")
+          sha256=$(sed -n 's/^sha256=//p' "$spec")
+          base='https://github.com/bblanchon/pdfium-binaries/releases/download'
+          curl -sSL --retry 3 -o /tmp/pdfium.tgz \
+            "$base/${release/\//%2F}/$asset"
+          echo "$sha256  /tmp/pdfium.tgz" | sha256sum -c -
+          mkdir -p /tmp/pdfium
+          tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
+          echo 'PDFIUM_PATH=/tmp/pdfium/lib/libpdfium.so' >> "$GITHUB_ENV"
+
+      - name: Прогон на свежих версиях
+        id: run
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            echo '### Версия Flutter'
+            flutter --version
+            echo
+            echo '### pub upgrade'
+            flutter pub upgrade
+            echo
+            echo '### Кодогенерация'
+            dart run build_runner build
+            echo
+            echo '### Анализ'
+            flutter analyze --fatal-infos --fatal-warnings
+            echo
+            echo '### Тесты'
+            flutter test --reporter compact
+          } 2>&1 | tee /tmp/canary.txt
+
+      # Сравнение с замком нужно и при зелёном прогоне: зелёная канарейка
+      # на новой версии — это приглашение обновиться, а не тишина.
+      - name: Что разошлось с замком
+        id: diff
+        if: always()
+        run: |
+          set -eu
+          pinned=$(sed -n "s/^ *default: '\(.*\)'$/\1/p" \
+            .github/actions/flutter/action.yml)
+          actual=$(flutter --version | sed -n \
+            's/^Flutter \([0-9][^ ]*\).*/\1/p' | head -1)
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "actual=$actual" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Канарейка"
+            echo
+            echo "- в замке: \`$pinned\`"
+            echo "- на stable: \`$actual\`"
+            echo "- прогон: **${{ steps.run.outcome }}**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Issue с логом
+        if: steps.run.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.diff.outputs.pinned }}
+          ACTUAL: ${{ steps.diff.outputs.actual }}
+        run: |
+          set -eu
+          title='Канарейка: свежие версии ломают прогон'
+          {
+            echo 'Недельный прогон на `stable` без фиксации и с'
+            echo '`flutter pub upgrade` упал. Обычный CI это не задевает:'
+            echo 'он собирается по замку и остаётся зелёным.'
+            echo
+            echo "- Flutter в замке: \`$PINNED\`"
+            echo "- Flutter на stable: \`$ACTUAL\`"
+            echo "- прогон канарейки: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo 'Что делать: заводить отдельную сессию подъёма версий,'
+            echo 'а не править замок внутри текущей работы.'
+            echo
+            echo '<details><summary>Лог прогона (хвост)</summary>'
+            echo
+            echo '```'
+            tail -c 50000 /tmp/canary.txt
+            echo '```'
+            echo
+            echo '</details>'
+          } > /tmp/issue.md
+          existing=$(gh issue list --state open \
+            --search "\"$title\" in:title" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file /tmp/issue.md
+          else
+            gh issue create --title "$title" --body-file /tmp/issue.md
+          fi

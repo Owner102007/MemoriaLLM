@@ -1,0 +1,28 @@
+# Единственное место в репозитории, где записана версия Flutter.
+#
+# До S6.2.1 (12.09.2026) во всех работах стоял `channel: stable` без
+# версии: любой релиз Flutter менял нашу сборку без нашего коммита, и
+# красный CI перестал означать «сессия сломала код». Теперь версия
+# меняется только осознанно — отдельной сессией по сигналу канарейки
+# (`.github/workflows/canary.yml`), — и меняется здесь, одной строкой.
+#
+# Канарейка этим действием намеренно не пользуется: её задача — взять
+# `stable` без фиксации и упасть раньше, чем упадёт обычный прогон.
+name: Поставить Flutter
+description: Ставит Flutter точной версии — одним значением на весь репозиторий.
+
+inputs:
+  version:
+    description: Версия Flutter. По умолчанию — та самая зафиксированная.
+    required: false
+    default: '3.47.4'
+
+runs:
+  using: composite
+  steps:
+    - name: Flutter ${{ inputs.version }}
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        flutter-version: ${{ inputs.version }}
+        cache: true

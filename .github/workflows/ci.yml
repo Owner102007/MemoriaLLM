@@ -21,17 +21,22 @@ jobs:
       - name: Забрать репозиторий
         uses: actions/checkout@v7
 
+      # Версия Flutter записана одним значением в
+      # `.github/actions/flutter` (S6.2.1). Прямой вызов
+      # subosito/flutter-action остался только у канарейки — там он
+      # нарочно без версии.
       - name: Поставить Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
+        uses: ./.github/actions/flutter
 
       - name: Версия Flutter
         run: flutter --version
 
+      # `--enforce-lockfile`: версии берутся из `pubspec.lock` и молча не
+      # обновляются. Расхождение замка с `pubspec.yaml` — внятный отказ
+      # прогона, а не другая сборка того же коммита (S6.2.1). Сам замок
+      # создаёт работа «Замок зависимостей» в `bootstrap.yml`.
       - name: Зависимости
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       # Тесты слоя данных гоняют настоящий SQLite в памяти, а не заглушку.
       # На устройствах библиотеку приносит sqlite3_flutter_libs, раннеру
@@ -43,15 +48,26 @@ jobs:
       # приносит pdfrx нативным ассетом, но в среде `flutter test` этот
       # путь ненадёжен, поэтому библиотека кладётся руками, а pdfrx
       # получает её через PDFIUM_PATH — единственный документированный
-      # способ указать модуль явно. Версия взята та же, что тянет
-      # pdfium_dart в сборки (pdfium_dart/hook/build.dart).
+      # способ указать модуль явно.
+      #
+      # Версия и контрольная сумма живут в `tool/pdfium_version.txt` —
+      # одном месте на весь проект, которое читают и этот шаг, и человек,
+      # и тест согласия с `pdfium_dart/hook/build.dart` (S6.2.1). Архив
+      # проверяется суммой, а не наличием файла: недокачанный или
+      # подменённый раньше проходил `test -f` и валился внутри тестов,
+      # где причина уже не видна.
       - name: Библиотека PDFium для корпус-тестов
         run: |
           set -eu
-          release='chromium%2F7811'
-          url="https://github.com/bblanchon/pdfium-binaries/releases/download"
+          spec='tool/pdfium_version.txt'
+          release=$(sed -n 's/^release=//p' "$spec")
+          asset=$(sed -n 's/^asset=//p' "$spec")
+          sha256=$(sed -n 's/^sha256=//p' "$spec")
+          test -n "$release" && test -n "$asset" && test -n "$sha256"
+          base='https://github.com/bblanchon/pdfium-binaries/releases/download'
           curl -sSL --retry 3 -o /tmp/pdfium.tgz \
-            "$url/$release/pdfium-linux-x64.tgz"
+            "$base/${release/\//%2F}/$asset"
+          echo "$sha256  /tmp/pdfium.tgz" | sha256sum -c -
           mkdir -p /tmp/pdfium
           tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium
           test -f /tmp/pdfium/lib/libpdfium.so
@@ -101,6 +117,19 @@ jobs:
           set -o pipefail
           flutter test --reporter expanded 2>&1 | tee /tmp/tests.txt
 
+      # Принцип 4: номер сессии выдаётся один раз и имеет статус. Оба
+      # уже случившихся сбоя — S4.1 и S5.4, выданные дважды, — эта
+      # проверка поймала бы в день, когда их написали. План лежит вне
+      # репозитория, поэтому в CI сверяется только реестр в
+      # `PROGRESS.md`; локально, когда папка `docs/` на месте,
+      # проверяются оба файла.
+      - name: Номера сессий
+        id: sessions
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          dart run tool/check_session_numbers.dart 2>&1 | tee /tmp/sessions.txt
+
       # Сводка видна только авторизованным, а аннотации — всем, поэтому при
       # падении вывод дублируется ещё и аннотацией.
       - name: Ошибки в аннотации
@@ -120,7 +149,8 @@ jobs:
                       'Кодогенерация:/tmp/codegen.txt' \
                       'Анализ:/tmp/analyze.txt' \
                       'Упавшие тесты:/tmp/failures.txt' \
-                      'Тесты:/tmp/tests.txt'; do
+                      'Тесты:/tmp/tests.txt' \
+                      'Номера сессий:/tmp/sessions.txt'; do
             title="${pair%%:*}"
             file="${pair#*:}"
             [ -s "$file" ] || continue
@@ -149,7 +179,8 @@ jobs:
           for pair in 'format:/tmp/fmt.txt' \
                       'codegen:/tmp/codegen.txt' \
                       'analyze:/tmp/analyze.txt' \
-                      'tests:/tmp/tests.txt'; do
+                      'tests:/tmp/tests.txt' \
+                      'sessions:/tmp/sessions.txt'; do
             file="${pair#*:}"
             [ -s "$file" ] && cp "$file" "/tmp/report/${pair%%:*}.txt"
           done
@@ -180,7 +211,8 @@ jobs:
             for pair in 'Форматирование:/tmp/fmt.txt' \
                         'Кодогенерация:/tmp/codegen.txt' \
                         'Анализ:/tmp/analyze.txt' \
-                        'Тесты:/tmp/tests.txt'; do
+                        'Тесты:/tmp/tests.txt' \
+                        'Номера сессий:/tmp/sessions.txt'; do
               title="${pair%%:*}"
               file="${pair#*:}"
               echo "### $title"
@@ -221,14 +253,11 @@ jobs:
 
       - name: Поставить Flutter
         if: steps.probe.outputs.ready == 'true'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
+        uses: ./.github/actions/flutter
 
       - name: Зависимости
         if: steps.probe.outputs.ready == 'true'
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Кодогенерация drift
         if: steps.probe.outputs.ready == 'true'
@@ -271,14 +300,11 @@ jobs:
 
       - name: Поставить Flutter
         if: steps.probe.outputs.ready == 'true'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
+        uses: ./.github/actions/flutter
 
       - name: Зависимости
         if: steps.probe.outputs.ready == 'true'
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Кодогенерация drift
         if: steps.probe.outputs.ready == 'true'
@@ -353,7 +379,7 @@ jobs:
             echo "- страница прогона:"
             echo "  $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > out/report.md
-          for name in failures analyze format codegen tests; do
+          for name in failures analyze format codegen tests sessions; do
             file="logs/$name.txt"
             [ -s "$file" ] || continue
             {

@@ -1,9 +1,16 @@
-# Одноразовая генерация платформенных папок.
+# Одноразовые работы, которые может сделать только раннер.
 #
 # У сессии разработки нет Flutter SDK (сеть контейнера закрыта для
-# storage.googleapis.com и pub.dev), поэтому android/ и windows/ создаёт
-# `flutter create` на раннере. Workflow сам себя выключает, как только папки
-# оказались в репозитории.
+# storage.googleapis.com и pub.dev), поэтому всё, что требует `flutter`
+# один раз и с записью результата в репозиторий, живёт здесь. Каждая
+# работа сама себя выключает, как только её результат на месте:
+#
+#   * «Платформенные папки» — `android/` и `windows/` (`flutter create`),
+#     сделано в S1;
+#   * «Замок зависимостей» — `pubspec.lock` (S6.2.1). Сессия не может
+#     посчитать замок сама: `pub.dev` ей закрыт, а сумму каждого пакета
+#     берут оттуда. Нажимается один раз; дальше замок правит сессия,
+#     поднимающая версии осознанно.
 name: Bootstrap
 
 on:
@@ -31,10 +38,7 @@ jobs:
 
       - name: Поставить Flutter
         if: steps.probe.outputs.needed == 'true'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
+        uses: ./.github/actions/flutter
 
       - name: Сгенерировать android/ и windows/
         if: steps.probe.outputs.needed == 'true'
@@ -68,5 +72,56 @@ jobs:
             echo 'нечего коммитить'
           else
             git commit -m 'S1: платформенные папки android/ и windows/ (flutter create) + dart format'
+            git push
+          fi
+
+  lockfile:
+    name: Замок зависимостей
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v7
+
+      - name: Нужен ли замок
+        id: probe
+        run: |
+          if [ -f pubspec.lock ]; then
+            echo 'needed=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::pubspec.lock уже в репозитории — работа пропущена'
+          else
+            echo 'needed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Поставить Flutter
+        if: steps.probe.outputs.needed == 'true'
+        uses: ./.github/actions/flutter
+
+      # Единственное место во всём репозитории, где `pub get` идёт без
+      # `--enforce-lockfile`: замка ещё нет, он здесь и рождается.
+      - name: Посчитать pubspec.lock
+        if: steps.probe.outputs.needed == 'true'
+        run: |
+          set -eu
+          flutter pub get
+          test -f pubspec.lock
+          {
+            echo '## Замок посчитан'
+            echo
+            echo '```'
+            grep -A 2 '^  pdfrx:' pubspec.lock || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Закоммитить
+        if: steps.probe.outputs.needed == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email \
+            '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pubspec.lock
+          if git diff --cached --quiet; then
+            echo 'нечего коммитить'
+          else
+            git commit -m 'S6.2.1: pubspec.lock посчитан на раннере'
             git push
           fi

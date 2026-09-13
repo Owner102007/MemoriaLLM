@@ -25,12 +25,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
+      # Версия Flutter — одним значением в `.github/actions/flutter`
+      # (S6.2.1): релиз обязан собираться тем же SDK, что и прогон CI.
+      - uses: ./.github/actions/flutter
 
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
 
       - name: Кодогенерация drift
         run: dart run build_runner build
@@ -65,12 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
+      # Версия Flutter — одним значением в `.github/actions/flutter`
+      # (S6.2.1): релиз обязан собираться тем же SDK, что и прогон CI.
+      - uses: ./.github/actions/flutter
 
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
 
       - name: Кодогенерация drift
         run: dart run build_runner build
