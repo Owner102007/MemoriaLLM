@@ -11,7 +11,16 @@ final RegExp _pinned = RegExp(r"^\s*default: '([^']+)'", multiLine: true);
 const String _noLockReason =
     'Без замка «одинаковый код → одинаковая сборка» не работает. Замок '
     'считает работа «Замок зависимостей» в bootstrap.yml: у сессии нет '
-    'доступа к pub.dev, и посчитать его может только раннер.';
+    'доступа к pub.dev, и посчитать его может только раннер. Проверяется '
+    'индекс git, а не диск: `pub get` создаёт pubspec.lock сам, если его '
+    'нет, и к моменту тестов файл есть всегда.';
+
+/// Спрашивает git, отслеживается ли замок, — а не диск.
+const List<String> _lsFiles = <String>[
+  'ls-files',
+  '--error-unmatch',
+  'pubspec.lock',
+];
 
 const String _exactReason =
     'Версия обязана быть точной: канал или диапазон возвращает ту самую '
@@ -36,9 +45,17 @@ const String _directReason =
 /// (`.github/workflows/canary.yml`).
 void main() {
   group('замок зависимостей', () {
-    test('pubspec.lock лежит в репозитории', () {
-      final bool exists = File('pubspec.lock').existsSync();
-      expect(exists, isTrue, reason: _noLockReason);
+    // Наличие файла на диске о замке не говорит ничего: прогон №109
+    // прошёл этот тест при пустом репозитории, потому что `pub get`
+    // создал `pubspec.lock` сам за два шага до тестов. Спрашивать надо
+    // git. Ту же проверку делает шаг «Зависимости» в `ci.yml` — там она
+    // идёт до `pub get` и отвечает внятной аннотацией.
+    test('pubspec.lock отслеживается git', () {
+      if (!Directory('.git').existsSync()) {
+        return;
+      }
+      final ProcessResult result = Process.runSync('git', _lsFiles);
+      expect(result.exitCode, 0, reason: _noLockReason);
     });
 
     test('в замке есть движок с точной версией', () {
