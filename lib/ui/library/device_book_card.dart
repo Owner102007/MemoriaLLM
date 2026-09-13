@@ -200,9 +200,11 @@ class _CoverOrBackdrop extends StatelessWidget {
           File(path),
           fit: BoxFit.cover,
           filterQuality: FilterQuality.medium,
-          errorBuilder:
-              (BuildContext context, Object error, StackTrace? stack) =>
-                  _NameBackdrop(title: title),
+          errorBuilder: (
+            BuildContext context,
+            Object error,
+            StackTrace? stack,
+          ) => _NameBackdrop(title: title),
         );
       },
     );

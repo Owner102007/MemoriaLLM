@@ -45,9 +45,9 @@ void main() {
     test('файл начинается подписью и кончается IEND', () {
       final Uint8List png = encodeBgraToPng(_raster(4, 3), 4, 3);
       expect(png.sublist(0, 8), kPngSignature);
-      final List<String> names = _chunks(
-        png,
-      ).map((MapEntry<String, Uint8List> e) => e.key).toList();
+      final List<String> names = _chunks(png)
+          .map((MapEntry<String, Uint8List> e) => e.key)
+          .toList();
       expect(names.first, 'IHDR');
       expect(names.last, 'IEND');
       expect(names, contains('IDAT'));
@@ -75,9 +75,9 @@ void main() {
       const int height = 6;
       final Uint8List pixels = _raster(width, height);
       final Uint8List png = encodeBgraToPng(pixels, width, height);
-      final Uint8List idat = _chunks(
-        png,
-      ).firstWhere((MapEntry<String, Uint8List> e) => e.key == 'IDAT').value;
+      final Uint8List idat = _chunks(png)
+          .firstWhere((MapEntry<String, Uint8List> e) => e.key == 'IDAT')
+          .value;
       final List<int> raw = ZLibCodec().decode(idat);
 
       expect(raw.length, height * (1 + width * 3));

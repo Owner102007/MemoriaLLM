@@ -128,9 +128,11 @@ class _CoverFrame extends StatelessWidget {
                 File(path),
                 fit: BoxFit.cover,
                 filterQuality: FilterQuality.medium,
-                errorBuilder:
-                    (BuildContext context, Object error, StackTrace? stack) =>
-                        _CoverPlaceholder(book: book, waiting: false),
+                errorBuilder: (
+                  BuildContext context,
+                  Object error,
+                  StackTrace? stack,
+                ) => _CoverPlaceholder(book: book, waiting: false),
               );
             },
           ),

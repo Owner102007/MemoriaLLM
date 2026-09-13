@@ -62,9 +62,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('эталонная таблица', () {
-    final Map<String, Object?> golden =
-        jsonDecode(File(_goldenPath).readAsStringSync())
-            as Map<String, Object?>;
+    final Map<String, Object?> golden = jsonDecode(
+      File(_goldenPath).readAsStringSync(),
+    ) as Map<String, Object?>;
     final List<Object?> cases = golden['cases']! as List<Object?>;
 
     test('таблица не пустая', () {

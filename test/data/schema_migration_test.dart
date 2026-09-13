@@ -163,9 +163,8 @@ void main() {
         createdAt: DateTime.utc(2026, 9, 6),
       ),
     );
-    final Quote fresh = (await second.annotations.quotes(
-      'book-1',
-    )).firstWhere((Quote quote) => quote.id == 'quote-new');
+    final Quote fresh = (await second.annotations.quotes('book-1'))
+        .firstWhere((Quote quote) => quote.id == 'quote-new');
     expect(fresh.textStart, 100);
     expect(fresh.textEnd, 106);
     await second.close();

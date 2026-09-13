@@ -246,12 +246,11 @@ void main() {
 
     test('о ходе импорта сообщается по файлу за раз', () async {
       final List<String> steps = <String>[];
-      await batchImporter(
-        FakeReaderDocument(pages: <String>['раз']),
-      ).registerAll(
-        files(3),
-        onProgress: (int done, int total) => steps.add('$done/$total'),
-      );
+      await batchImporter(FakeReaderDocument(pages: <String>['раз']))
+          .registerAll(
+            files(3),
+            onProgress: (int done, int total) => steps.add('$done/$total'),
+          );
       expect(steps, <String>['1/3', '2/3', '3/3']);
     });
 

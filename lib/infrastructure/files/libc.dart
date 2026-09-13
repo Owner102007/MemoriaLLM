@@ -14,8 +14,12 @@ import 'dart:ffi';
 /// который поедет на телефон.
 
 /// Читает с позиции, не двигая позицию дескриптора.
-typedef PositionalRead =
-    int Function(int fd, Pointer<Uint8> buffer, int count, int offset);
+typedef PositionalRead = int Function(
+  int fd,
+  Pointer<Uint8> buffer,
+  int count,
+  int offset,
+);
 
 /// Читает подряд, двигая позицию дескриптора.
 typedef SequentialRead = int Function(int fd, Pointer<Uint8> buffer, int count);

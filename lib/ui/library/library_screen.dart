@@ -372,9 +372,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   void _say(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override

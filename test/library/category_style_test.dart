@@ -105,9 +105,9 @@ void main() {
     late List<Map<String, Object?>> golden;
 
     setUpAll(() {
-      final Map<String, Object?> file =
-          jsonDecode(File(_goldenPath).readAsStringSync())
-              as Map<String, Object?>;
+      final Map<String, Object?> file = jsonDecode(
+        File(_goldenPath).readAsStringSync(),
+      ) as Map<String, Object?>;
       golden = (file['styles']! as List<Object?>).cast<Map<String, Object?>>();
     });
 

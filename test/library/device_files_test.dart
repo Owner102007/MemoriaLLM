@@ -177,9 +177,8 @@ void main() {
       // «Microsoft Word - Document1» в заголовке — это не название книги,
       // а след программы, в которой её сохранили.
       final DeviceBookEntry entry = DeviceBookEntry(
-        primary: known(
-          '/a/Онегин.pdf',
-        ).copyWith(title: 'Microsoft Word - Document1.doc'),
+        primary: known('/a/Онегин.pdf')
+            .copyWith(title: 'Microsoft Word - Document1.doc'),
       );
       expect(entry.title, 'Онегин.pdf');
     });

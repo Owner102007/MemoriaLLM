@@ -256,9 +256,8 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(_describe(report))));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(_describe(report))));
     // Книги встали на полку — читателю здесь больше делать нечего, и он
     // хочет увидеть результат. Но если экран открыт первым (так бывает
     // только в тесте), возвращаться некуда, и закрывать последний экран
