@@ -164,6 +164,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _flow = flow == PageFlow.continuous.name
           ? PageFlow.continuous
           : PageFlow.paged;
+      _controller?.setSheetModes(enabled: _flow == PageFlow.paged);
       // Заперто по умолчанию: обычное чтение — это листание, и страница,
       // уехавшая от случайного движения двумя пальцами, читателю ничего
       // не даёт, а вернуть её он не догадается.
@@ -227,7 +228,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (flow == _flow) {
       return;
     }
+    // В ленте разворота нет: лист там — одна страница, и подпись со
+    // стрелками обязаны считать так же (F-READ-06).
+    _controller?.setSheetModes(enabled: flow == PageFlow.paged);
     setState(() => _flow = flow);
+    // Вернулись к листам в развороте — рамка соседней страницы могла
+    // остаться непосчитанной, пока шла лента.
+    unawaited(_controller?.loadFrame());
     await widget.services.data.settings.write(SettingsKeys.pageFlow, flow.name);
   }
 
@@ -310,6 +317,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       }
       controller.addListener(_onControllerChanged);
       controller.setDisplayArea(_area, canTurn: _canTurn);
+      controller.setSheetModes(enabled: _flow == PageFlow.paged);
       unawaited(controller.loadFrame());
       setState(() {
         _controller = controller;
@@ -612,8 +620,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
-    await _goToPage(page);
-    if (!mounted) {
+    // Переход обогнали — читатель уже ушёл дальше, и отмечать на
+    // странице, которой нет на экране, нечего (BUG-11).
+    if (!await _goToPage(page) || !mounted) {
       return;
     }
     if (start == null || end == null || end <= start) {
@@ -662,15 +671,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  Future<void> _goToPage(int page) async {
+  /// Переход на страницу; `false` — его обогнал следующий (BUG-11).
+  ///
+  /// Ленту довозим только до страницы, на которую переход состоялся:
+  /// иначе устаревший переход увёз бы её туда, откуда читатель уже ушёл.
+  Future<bool> _goToPage(int page) async {
     final ReaderController? controller = _controller;
     if (controller == null) {
-      return;
+      return false;
     }
-    await controller.goToPage(page);
+    if (!await controller.goToPage(page)) {
+      return false;
+    }
     if (_flow == PageFlow.continuous && _viewer.isReady) {
       await _viewer.goToPage(pageNumber: page);
     }
+    return true;
   }
 
   /// Нажатие по странице: переход к соседнему фрагменту или панели.
@@ -720,8 +736,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     _dismissSelection();
     if (_flow == PageFlow.continuous) {
-      final int target = controller.page + (forward ? 1 : -1);
-      if (target >= 1 && target <= controller.pageCount) {
+      // Цель считает контроллер: он знает, куда ведёт ещё не законченный
+      // переход, и два быстрых нажатия дают два шага (BUG-11).
+      final int? target = forward
+          ? controller.nextSheetStart
+          : controller.previousSheetStart;
+      if (target != null) {
         unawaited(_goToPage(target));
       }
       return;
@@ -766,7 +786,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         builder: (BuildContext context) => CropEditorScreen(
           document: controller.document,
           pageNumber: controller.page,
-          initial: controller.contentBox,
+          // Рамка страницы, а не листа: редактор показывает одну
+          // страницу, а в развороте рамка листа записана в его долях.
+          initial: controller.pageContentBox,
         ),
       ),
     );
@@ -912,9 +934,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // читатель видел пустой экран.
         final Object? engine = controller.document.engineDocument;
         final PdfDocument? document = engine is PdfDocument ? engine : null;
-        final List<int> pages = isSpreadMode(controller.settings.displayMode)
-            ? spreadPages(controller.page, controller.pageCount)
-            : <int>[controller.page];
+        final List<int> pages = controller.sheetPages;
         if (document == null) {
           return ColoredBox(color: background, child: const SizedBox.expand());
         }
@@ -923,7 +943,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
           pages: pages,
           fragment: controller.fragmentBox,
           background: background,
-          page: controller.page,
+          // Указатель места считает по правой странице разворота: она
+          // тоже открыта, и процент в панели считается так же.
+          page: controller.lastShownPage,
           pageCount: controller.pageCount,
           locked: _zoomLocked,
           stripFit: controller.settings.stripFit,

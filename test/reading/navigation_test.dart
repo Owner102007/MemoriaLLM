@@ -110,6 +110,16 @@ void main() {
       expect(pageLabel(1, 0), '1 / 1');
     });
 
+    test('F-READ-06: подпись разворота называет обе страницы', () {
+      expect(sheetLabel(<int>[12, 13], 340), '12–13 / 340');
+      expect(sheetLabel(<int>[12], 340), '12 / 340');
+      expect(sheetLabel(<int>[340], 340), '340 / 340');
+      // Пустой лист и страницы за краем книги не роняют подпись.
+      expect(sheetLabel(const <int>[], 340), '1 / 340');
+      expect(sheetLabel(<int>[340, 341], 340), '340 / 340');
+      expect(sheetLabel(<int>[1], 0), '1 / 1');
+    });
+
     test('проценты', () {
       expect(progressPercent(0), 0);
       expect(progressPercent(0.5), 50);

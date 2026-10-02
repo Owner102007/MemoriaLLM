@@ -13,6 +13,7 @@ import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/reading_filter.dart';
 import '../../domain/reading/sheet_placement.dart';
+import '../../domain/reading/spread.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_highlight.dart';
 import 'page_frames.dart';
@@ -122,6 +123,30 @@ class ReaderController extends ChangeNotifier {
   bool _closed = false;
   bool _disposed = false;
   bool _navigating = false;
+
+  /// Действуют ли режимы листа. В ленте — нет: там лист всегда одна
+  /// страница, каким бы режимом книгу ни читали по страницам.
+  bool _sheetModes = true;
+
+  /// Номер последнего запрошенного перехода (BUG-11).
+  ///
+  /// Рамка страницы считается не мгновенно, и переходы завершаются не в
+  /// том порядке, в каком их просили. Переход, чей номер устарел, свой
+  /// результат выбрасывает: экран обязан встать туда, куда читатель
+  /// попросил **последним**, а не туда, где рамка досчиталась позже.
+  int _request = 0;
+
+  /// Куда ведёт переход, который ещё не закончился; `null` — такого нет.
+  ///
+  /// Следующий шаг считается от этой цели, а не от страницы на экране:
+  /// иначе два быстрых нажатия «вперёд» дают один шаг (BUG-11).
+  int? _pendingPage;
+  int _pendingFragment = 0;
+
+  /// Номер последней просьбы сменить режим — той же природы, что
+  /// [_request]: смена разворота ждёт рамку соседней страницы, и за это
+  /// время читатель мог выбрать другой режим.
+  int _modeRequest = 0;
   List<OutlineEntry>? _outline;
   bool _outlineLoading = false;
 
@@ -155,14 +180,44 @@ class ReaderController extends ChangeNotifier {
   /// при первой отрисовке и больше к ней не возвращается.
   int get initialPage => _initialPage;
 
+  /// Страницы листа, который сейчас на экране: одна или две страницы
+  /// разворота (F-READ-06).
+  ///
+  /// Всё, что спрашивает «что читатель видит сейчас», — лист, подпись,
+  /// прогресс, шаг листания — обязано идти отсюда, а не от номера
+  /// страницы: в развороте страниц на экране две.
+  List<int> get sheetPages => _pagesOf(_page, _settings.displayMode);
+
+  /// Последняя из страниц, которые сейчас на экране.
+  int get lastShownPage => sheetPages.last;
+
   /// Доля прочитанного, от 0 до 1.
   ///
   /// Считается по страницам, а не по фрагментам: индикатор книги должен
   /// показывать одно и то же независимо от того, каким режимом её читают.
-  double get progress => progressForPage(_page, pageCount);
+  /// В развороте счёт идёт по правой странице: она тоже открыта, и по
+  /// левой последний разворот книги не дал бы ста процентов.
+  double get progress => progressForPage(lastShownPage, pageCount);
 
-  /// Подпись для панели: `12 / 340`.
-  String get label => pageLabel(_page, pageCount);
+  /// Подпись для панели: `12 / 340`, в развороте — `12–13 / 340`.
+  String get label => sheetLabel(sheetPages, pageCount);
+
+  /// С какой страницы начинается следующий лист; `null` — книга кончилась.
+  ///
+  /// Считается от цели незаконченного перехода, если такой есть: стрелка,
+  /// нажатая дважды подряд, обязана дать два шага (BUG-11).
+  int? get nextSheetStart => nextSheetPage(
+    page: _pendingPage ?? _page,
+    pageCount: pageCount,
+    spread: _isSpread,
+  );
+
+  /// С какой страницы начинается предыдущий лист; `null` — начало книги.
+  int? get previousSheetStart => previousSheetPage(
+    page: _pendingPage ?? _page,
+    pageCount: pageCount,
+    spread: _isSpread,
+  );
 
   /// Настройки чтения этой книги в текущей ориентации экрана.
   BookReadingSettings get settings => _settings;
@@ -170,13 +225,18 @@ class ReaderController extends ChangeNotifier {
   /// Разобранная рамка текущей страницы; `null` — ещё считается.
   PageFrame? get frame => _frame;
 
-  /// Прямоугольник содержимого текущей страницы с учётом настроек.
-  CropBox get contentBox {
-    return effectiveCrop(
-      settings: _settings,
-      automatic: _frame?.content ?? CropBox.full,
-    );
-  }
+  /// Прямоугольник содержимого листа в долях листа, с учётом настроек.
+  ///
+  /// На одной странице это её рамка. В развороте — объединение рамок
+  /// обеих страниц (BUG-02): прежде сюда шла рамка одной страницы, и лист
+  /// из двух понимал её поля как свои, вдвое шире.
+  CropBox get contentBox => _contentFor(_settings.displayMode);
+
+  /// Прямоугольник содержимого текущей страницы в долях **страницы**.
+  ///
+  /// Нужен редактору рамки: он показывает одну страницу, и рамка листа
+  /// из двух страниц ему не годится.
+  CropBox get pageContentBox => _pageContent(_page);
 
   /// Колонки текущей страницы.
   ///
@@ -186,10 +246,13 @@ class ReaderController extends ChangeNotifier {
   /// правильном порядке.
   List<ColumnBand> get columns => _frame?.columns ?? const <ColumnBand>[];
 
-  /// Просветы между строками текущей страницы.
-  List<double> get breaks => _frame?.breaks ?? const <double>[];
+  /// Просветы между строками листа, в долях его высоты.
+  ///
+  /// В развороте — только общие для обеих страниц: полоса полразворота
+  /// идёт через обе сразу.
+  List<double> get breaks => _breaksFor(_settings.displayMode);
 
-  /// Фрагменты текущей страницы в порядке чтения.
+  /// Фрагменты листа в порядке чтения.
   List<CropBox> get fragments {
     return fragmentsFor(
       content: contentBox,
@@ -198,7 +261,7 @@ class ReaderController extends ChangeNotifier {
     );
   }
 
-  /// Сколько фрагментов на текущей странице.
+  /// Сколько фрагментов на листе.
   int get fragmentCount => fragments.length;
 
   /// Форма области показа, о которой сообщил экран.
@@ -221,6 +284,20 @@ class ReaderController extends ChangeNotifier {
     _canTurn = canTurn;
   }
 
+  /// Сообщает, листается книга листами или идёт лентой.
+  ///
+  /// В ленте режимы листа не действуют, и разворот там — одна страница:
+  /// иначе подпись называла бы две страницы над одной, а стрелки шагали
+  /// бы через страницу. Сам режим остаётся в настройках книги и вернётся
+  /// вместе с листанием по страницам.
+  ///
+  /// Слушатели не оповещаются по той же причине, что и в
+  /// [setDisplayArea]: способ листания меняет сам экран и перестраивается
+  /// при этом сам.
+  void setSheetModes({required bool enabled}) {
+    _sheetModes = enabled;
+  }
+
   /// Раскладка текущего режима: чем режем, в какой форме показываем и
   /// насколько от этого вырос кегль.
   FragmentLayout get layout => layoutFor(_settings.displayMode);
@@ -233,11 +310,11 @@ class ReaderController extends ChangeNotifier {
     final _SheetSize sheet = _sheetSize(mode);
     return chooseFragmentLayout(
       mode: mode,
-      content: contentBox,
+      content: _contentFor(mode),
       sheetWidth: sheet.width,
       sheetHeight: sheet.height,
       area: _area,
-      breaks: breaks,
+      breaks: _breaksFor(mode),
       canTurn: _canTurn,
     );
   }
@@ -247,12 +324,9 @@ class ReaderController extends ChangeNotifier {
 
   /// Размеры листа: одна страница или две страницы разворота рядом.
   _SheetSize _sheetSize(PageDisplayMode mode) {
-    final List<int> pages = isSpreadMode(mode)
-        ? spreadPages(_page, pageCount)
-        : <int>[_page];
     double width = 0;
     double height = 0;
-    for (final int number in pages) {
+    for (final int number in _pagesOf(_page, mode)) {
       final PageGeometry geometry = _document.geometry(number);
       width += geometry.width;
       height = height < geometry.height ? geometry.height : height;
@@ -260,7 +334,67 @@ class ReaderController extends ChangeNotifier {
     return _SheetSize(width, height);
   }
 
-  /// Область страницы, которую надо показать сейчас.
+  /// Идёт ли чтение разворотами: режим разворота и не лента.
+  bool get _isSpread => _sheetModes && isSpreadMode(_settings.displayMode);
+
+  /// Страницы листа, на котором лежит [page] в режиме [mode].
+  List<int> _pagesOf(int page, PageDisplayMode mode) {
+    return _sheetModes && isSpreadMode(mode)
+        ? spreadPages(page, pageCount)
+        : <int>[page];
+  }
+
+  /// Рамка страницы [page], если она уже посчитана.
+  PageFrame? _frameOf(int page) {
+    return page == _page ? _frame : _frames.cached(page);
+  }
+
+  /// Рамка содержимого страницы [page] в долях страницы.
+  ///
+  /// Пока рамка не посчитана, страница берётся целиком: лишнее поле
+  /// лучше срезанного текста.
+  CropBox _pageContent(int page) {
+    return effectiveCrop(
+      settings: _settings,
+      automatic: _frameOf(page)?.content ?? CropBox.full,
+    );
+  }
+
+  /// Страницы листа с размерами, рамками и просветами — для объединения.
+  List<SheetPage> _sheetOf(List<int> pages) {
+    return <SheetPage>[
+      for (final int number in pages)
+        SheetPage(
+          width: _document.geometry(number).width,
+          height: _document.geometry(number).height,
+          content: _pageContent(number),
+          breaks: _frameOf(number)?.breaks ?? const <double>[],
+        ),
+    ];
+  }
+
+  /// Рамка листа в режиме [mode], в долях листа.
+  ///
+  /// Лист из одной страницы отдаёт её рамку как есть и размеров страницы
+  /// не спрашивает: считать там нечего.
+  CropBox _contentFor(PageDisplayMode mode) {
+    final List<int> pages = _pagesOf(_page, mode);
+    if (pages.length < 2) {
+      return _pageContent(_page);
+    }
+    return sheetContent(_sheetOf(pages));
+  }
+
+  /// Просветы листа в режиме [mode], в долях его высоты.
+  List<double> _breaksFor(PageDisplayMode mode) {
+    final List<int> pages = _pagesOf(_page, mode);
+    if (pages.length < 2) {
+      return _frame?.breaks ?? const <double>[];
+    }
+    return sheetBreaks(_sheetOf(pages));
+  }
+
+  /// Область листа, которую надо показать сейчас, в долях листа.
   CropBox get fragmentBox {
     final List<CropBox> parts = fragments;
     return parts[clampFragment(_fragment, parts.length)];
@@ -428,19 +562,44 @@ class ReaderController extends ChangeNotifier {
     return layout;
   }
 
-  /// Считает рамку текущей страницы, если её ещё нет.
+  /// Считает рамки страниц листа, если их ещё нет.
+  ///
+  /// В развороте рамок две: без рамки соседней страницы лист показывается
+  /// с её полями целиком, и обрезка вступает в силу, когда рамка готова.
   Future<void> loadFrame() async {
     final int target = _page;
-    if (_frame?.pageNumber == target || _closed) {
+    final bool ready = _frame?.pageNumber == target && _sheetFramesReady;
+    if (_closed || ready) {
       return;
     }
-    final PageFrame frame = await _frames.frameFor(target);
+    final PageFrame frame = await _loadSheetFrames(target);
     if (_closed || _page != target) {
       return;
     }
     _frame = frame;
     _fragment = clampFragment(_fragment, fragmentCount);
     _notify();
+  }
+
+  /// Посчитаны ли рамки соседних страниц листа.
+  bool get _sheetFramesReady {
+    for (final int number in sheetPages) {
+      if (number != _page && _frames.cached(number) == null) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Считает рамки всех страниц листа и отдаёт рамку самой [page].
+  Future<PageFrame> _loadSheetFrames(int page) async {
+    final PageFrame own = await _frames.frameFor(page);
+    for (final int number in _pagesOf(page, _settings.displayMode)) {
+      if (number != page) {
+        await _frames.frameFor(number);
+      }
+    }
+    return own;
   }
 
   /// Просмотрщик сообщил, что показывается другая страница.
@@ -480,12 +639,24 @@ class ReaderController extends ChangeNotifier {
   /// Отрицательный [fragment] означает «последний фрагмент страницы» —
   /// так листается назад: читатель должен попасть в низ предыдущей
   /// страницы, а не в её начало.
-  Future<void> goToPage(int page, {int fragment = 0}) async {
+  ///
+  /// BUG-11: переходу выдаётся номер. Пока считалась рамка, читатель мог
+  /// попросить другой переход — тогда этот устарел и ничего не меняет.
+  /// Возвращает `true`, если переход состоялся, и `false`, если его
+  /// обогнал следующий: зовущему незачем довозить экран до страницы, с
+  /// которой читатель уже ушёл.
+  Future<bool> goToPage(int page, {int fragment = 0}) async {
     final int safe = clampPage(page, pageCount);
-    final PageFrame frame = await _frames.frameFor(safe);
-    if (_closed) {
-      return;
+    final int request = ++_request;
+    _pendingPage = safe;
+    _pendingFragment = fragment < 0
+        ? fragmentCountFor(mode: _settings.displayMode) - 1
+        : fragment;
+    final PageFrame frame = await _loadSheetFrames(safe);
+    if (_closed || request != _request) {
+      return false;
     }
+    _pendingPage = null;
     _page = safe;
     _frame = frame;
     final int count = fragmentCount;
@@ -493,41 +664,52 @@ class ReaderController extends ChangeNotifier {
     _dirty = true;
     _notify();
     _scheduleSave();
-  }
-
-  /// Следующий фрагмент; на последнем фрагменте последней страницы — ничего.
-  ///
-  /// Возвращает `true`, если позиция изменилась.
-  Future<bool> nextFragment() async {
-    if (_fragment + 1 < fragmentCount) {
-      _fragment++;
-      _dirty = true;
-      _notify();
-      _scheduleSave();
-      return true;
-    }
-    if (_page >= pageCount) {
-      return false;
-    }
-    await goToPage(_page + 1);
     return true;
   }
+
+  /// Следующий фрагмент; на последнем фрагменте последнего листа — ничего.
+  ///
+  /// Возвращает `true`, если позиция изменилась.
+  Future<bool> nextFragment() => _step(forward: true);
 
   /// Предыдущий фрагмент; на первом фрагменте первой страницы — ничего.
   ///
   /// Возвращает `true`, если позиция изменилась.
-  Future<bool> previousFragment() async {
-    if (_fragment > 0) {
-      _fragment--;
+  Future<bool> previousFragment() => _step(forward: false);
+
+  /// Шаг чтения: полоса, а за краем листа — соседний лист.
+  ///
+  /// BUG-01: в развороте соседний лист — это следующая **пара** страниц.
+  /// Прежде шаг вёл на страницу + 1, а она лежит на том же листе: каждое
+  /// второе нажатие не меняло экран.
+  ///
+  /// BUG-11: шаг считается от цели незаконченного перехода, если такой
+  /// есть. Число полос на листе известно заранее — его задаёт режим, —
+  /// поэтому ждать рамку той страницы не нужно.
+  Future<bool> _step({required bool forward}) async {
+    final int? pending = _pendingPage;
+    final SheetPosition? target = stepSheet(
+      page: pending ?? _page,
+      fragment: pending == null ? fragment : _pendingFragment,
+      pageCount: pageCount,
+      fragmentCount: pending == null
+          ? fragmentCount
+          : fragmentCountFor(mode: _settings.displayMode),
+      spread: _isSpread,
+      forward: forward,
+    );
+    if (target == null) {
+      return false;
+    }
+    if (pending == null && target.page == _page) {
+      // Полоса того же листа: рамка уже есть, ждать нечего.
+      _fragment = target.fragment;
       _dirty = true;
       _notify();
       _scheduleSave();
       return true;
     }
-    if (_page <= 1) {
-      return false;
-    }
-    await goToPage(_page - 1, fragment: -1);
+    await goToPage(target.page, fragment: target.fragment);
     return true;
   }
 
@@ -544,6 +726,19 @@ class ReaderController extends ChangeNotifier {
     if (!layoutFor(mode).isWorthwhile) {
       return DisplayModeOutcome.noGain;
     }
+    // Разворот кладёт на лист вторую страницу. Её рамка считается до
+    // смены режима: иначе первый кадр разворота вышел бы с необрезанной
+    // соседней страницей, а следующий — уже с обрезанной, и текст на
+    // глазах менял бы размер.
+    final int request = ++_modeRequest;
+    for (final int number in _pagesOf(_page, mode)) {
+      if (number != _page && _frames.cached(number) == null) {
+        await _frames.frameFor(number);
+      }
+    }
+    if (_closed || request != _modeRequest) {
+      return DisplayModeOutcome.unchanged;
+    }
     final int oldCount = fragmentCount;
     final int oldIndex = fragment;
     _settings = _settings.copyWith(displayMode: mode);
@@ -554,6 +749,10 @@ class ReaderController extends ChangeNotifier {
       newCount: newCount,
     );
     await _saveSettings();
+    if (_isSpread && !_sheetFramesReady) {
+      // Пока считалась рамка соседней, читатель мог уйти на другой лист.
+      await loadFrame();
+    }
     return DisplayModeOutcome.applied;
   }
 
@@ -661,13 +860,15 @@ class ReaderController extends ChangeNotifier {
       return;
     }
     _dirty = false;
+    // Место — страница, а прогресс — лист: в развороте правая страница
+    // тоже открыта, и полка обязана показывать то же, что экран чтения.
     await _reading.savePosition(
       positionForPage(
         bookId: book.id,
         page: _page,
         pageCount: pageCount,
         fragment: fragment,
-      ),
+      ).copyWith(progress: progress),
     );
   }
 

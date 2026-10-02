@@ -110,6 +110,22 @@ String pageLabel(int page, int pageCount) {
   return '${clampPage(page, pageCount)} / ${pageCount < 1 ? 1 : pageCount}';
 }
 
+/// Позиция листа для панели: `12 / 340`, а в развороте — `12–13 / 340`.
+///
+/// На развороте видны две страницы, и подпись обязана называть обе:
+/// «12 / 340» над страницами 12 и 13 — неправда наполовину (F-READ-06).
+String sheetLabel(List<int> pages, int pageCount) {
+  if (pages.isEmpty) {
+    return pageLabel(1, pageCount);
+  }
+  final int first = clampPage(pages.first, pageCount);
+  final int last = clampPage(pages.last, pageCount);
+  if (last <= first) {
+    return pageLabel(first, pageCount);
+  }
+  return '$first–$last / ${pageCount < 1 ? 1 : pageCount}';
+}
+
 /// Доля прочитанного в процентах, округлённая к целому.
 int progressPercent(double progress) {
   if (!progress.isFinite || progress <= 0) {

@@ -5,6 +5,7 @@ import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/ui/reader/reader_scaffold.dart';
 
@@ -168,6 +169,35 @@ void main() {
       await tester.tap(find.byKey(const Key('reader-prev-page')));
       await tester.pumpAndSettle();
       expect(jumps, <int>[2, 1]);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('BUG-01: стрелки в развороте шагают листами', (
+      WidgetTester tester,
+    ) async {
+      // Прежде стрелка вела на страницу + 1: со второй на третью, а она
+      // уже на экране, — и каждое второе нажатие ничего не меняло.
+      final ReaderController controller = await makeController();
+      await controller.setDisplayMode(PageDisplayMode.spread);
+      await pumpReader(tester, controller);
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('reader-next-page')));
+      await tester.pumpAndSettle();
+      expect(find.text('2–3 / 10'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('reader-next-page')));
+      await tester.pumpAndSettle();
+      expect(jumps, <int>[2, 4]);
+      expect(find.text('4–5 / 10'), findsOneWidget);
+      expect(find.text('50%'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('reader-prev-page')));
+      await tester.pumpAndSettle();
+      expect(jumps, <int>[2, 4, 2]);
 
       await controller.close();
       controller.dispose();

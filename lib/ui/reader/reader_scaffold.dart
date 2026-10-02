@@ -139,6 +139,23 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     await widget.onGoToPage(page);
   }
 
+  /// Стрелка нижней панели: соседний лист.
+  ///
+  /// Лист, а не страница (BUG-01): в развороте стрелка, шагавшая на
+  /// страницу, каждый второй раз оставляла экран прежним. Цель читается
+  /// в момент нажатия, а не при построении панели: контроллер считает её
+  /// от ещё не законченного перехода, и два быстрых нажатия дают два
+  /// шага (BUG-11).
+  void _stepSheet({required bool forward}) {
+    final ReaderController controller = widget.controller;
+    final int? target = forward
+        ? controller.nextSheetStart
+        : controller.previousSheetStart;
+    if (target != null) {
+      unawaited(_goTo(target));
+    }
+  }
+
   void _openSearch() {
     final ScaffoldState? scaffold = _scaffoldKey.currentState;
     if (scaffold != null && !scaffold.isEndDrawerOpen) {
@@ -278,6 +295,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
               visible: _chromeVisible,
               page: controller.page,
               pageCount: controller.pageCount,
+              canGoBack: controller.previousSheetStart != null,
+              canGoForward: controller.nextSheetStart != null,
+              progress: controller.progress,
+              onStep: _stepSheet,
               onPage: (int page) => unawaited(_goTo(page)),
               onOutline: () {
                 unawaited(controller.loadOutline());
@@ -382,6 +403,10 @@ class _BottomBar extends StatelessWidget {
     required this.visible,
     required this.page,
     required this.pageCount,
+    required this.canGoBack,
+    required this.canGoForward,
+    required this.progress,
+    required this.onStep,
     required this.onPage,
     required this.onOutline,
   });
@@ -389,6 +414,16 @@ class _BottomBar extends StatelessWidget {
   final bool visible;
   final int page;
   final int pageCount;
+
+  /// Есть ли лист перед этим и за этим: на краю книги стрелка гаснет.
+  final bool canGoBack;
+  final bool canGoForward;
+
+  /// Доля прочитанного — та же, что у контроллера и на полке.
+  final double progress;
+
+  /// Шаг стрелкой на соседний лист.
+  final void Function({required bool forward}) onStep;
   final void Function(int page) onPage;
   final VoidCallback onOutline;
 
@@ -415,9 +450,7 @@ class _BottomBar extends StatelessWidget {
                     icon: const Icon(Icons.chevron_left),
                     tooltip: 'Предыдущая страница',
                     visualDensity: VisualDensity.compact,
-                    onPressed: page > 1
-                        ? () => onPage(previousPage(page, pageCount))
-                        : null,
+                    onPressed: canGoBack ? () => onStep(forward: false) : null,
                   ),
                   Expanded(
                     // Ползунок нужен только там, где есть куда его тянуть:
@@ -439,13 +472,13 @@ class _BottomBar extends StatelessWidget {
                     icon: const Icon(Icons.chevron_right),
                     tooltip: 'Следующая страница',
                     visualDensity: VisualDensity.compact,
-                    onPressed: page < pageCount
-                        ? () => onPage(nextPage(page, pageCount))
+                    onPressed: canGoForward
+                        ? () => onStep(forward: true)
                         : null,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '${progressPercent(progressForPage(page, pageCount))}%',
+                    '${progressPercent(progress)}%',
                     key: const Key('reader-progress-percent'),
                     style: theme.textTheme.bodySmall,
                   ),
