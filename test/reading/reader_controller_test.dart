@@ -442,9 +442,12 @@ void main() {
           DisplayModeOutcome.applied,
         );
         expect(controller.preferredOrientation, ScreenOrientation.landscape);
+        // С нахлёстом по умолчанию (F-READ-12) выигрыш меньше, чем без
+        // него: седьмая часть экрана отдана соседним полосам. Текст всё
+        // равно обязан вырасти заметно.
         expect(
           controller.layout.gain,
-          greaterThan(1.3),
+          greaterThan(1.15),
           reason: 'текст обязан вырасти',
         );
         await controller.close();
@@ -672,6 +675,100 @@ void main() {
       );
       expect(saved.dimOutside, closeTo(0.5, 1e-9));
       await controller.close();
+      controller.dispose();
+    });
+
+    test('F-READ-12: нахлёст запоминается и не выходит за потолок', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.settings.stripOverlap, kDefaultStripOverlap);
+
+      await controller.setStripOverlap(0.11);
+      expect(controller.settings.stripOverlap, closeTo(0.11, 1e-9));
+
+      await controller.setStripOverlap(0.9);
+      expect(controller.settings.stripOverlap, kMaxStripOverlap);
+      // Ноль — законный выбор: полосы делятся чёткой линией.
+      await controller.setStripOverlap(-1);
+      expect(controller.settings.stripOverlap, 0);
+
+      await controller.setStripOverlap(0.05);
+      final BookReadingSettings saved = await data.reading.settings(
+        controller.book.id,
+        kSettingsSlot,
+      );
+      expect(saved.stripOverlap, closeTo(0.05, 1e-9));
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('F-READ-13: полоска соседней страницы запоминается', () async {
+      final ReaderController controller = await openFramed();
+      expect(controller.settings.neighbourShare, kDefaultNeighbourShare);
+
+      await controller.setNeighbourShare(2);
+      expect(controller.settings.neighbourShare, kMaxNeighbourShare);
+
+      await controller.setNeighbourShare(0);
+      final BookReadingSettings saved = await data.reading.settings(
+        controller.book.id,
+        kSettingsSlot,
+      );
+      expect(saved.neighbourShare, 0);
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('F-READ-12: выигрыш режима считается с нахлёстом книги', () async {
+      final ReaderController controller = await openFramed();
+      controller.setDisplayArea(const DisplayArea(width: 1080, height: 2400));
+
+      final double lapped = controller.layoutFor(PageDisplayMode.half).gain;
+      await controller.setStripOverlap(0);
+      final double plain = controller.layoutFor(PageDisplayMode.half).gain;
+
+      // Нахлёст отнимает экран у полосы, и кнопка-дробь обещает ровно
+      // то, что выйдет: с нахлёстом по умолчанию — меньше, чем без него.
+      expect(lapped, lessThan(plain));
+      expect(lapped, closeTo(plain * (1 - 2 * kDefaultStripOverlap), 1e-9));
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('BUG-12: правка без записи доезжает до базы одной записью', () async {
+      final ReaderController controller = await openFramed();
+      Future<double> savedDim() async {
+        final BookReadingSettings saved = await data.reading.settings(
+          controller.book.id,
+          kSettingsSlot,
+        );
+        return saved.dimOutside;
+      }
+
+      // Ползунок тянут: страница меняется, база — нет.
+      await controller.setDimOutside(0.5, persist: false);
+      await controller.setDimOutside(0.4, persist: false);
+      await controller.setDimOutside(0.3, persist: false);
+      expect(controller.settings.dimOutside, closeTo(0.3, 1e-9));
+      expect(await savedDim(), kDefaultDimOutside);
+
+      // Отпустили — записано последнее значение.
+      await controller.persistSettings();
+      expect(await savedDim(), closeTo(0.3, 1e-9));
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('BUG-12: закрытая книга не теряет неотпущенный ползунок', () async {
+      final ReaderController controller = await openFramed();
+      await controller.setStripFit(0.8, persist: false);
+
+      await controller.close();
+
+      final BookReadingSettings saved = await data.reading.settings(
+        controller.book.id,
+        kSettingsSlot,
+      );
+      expect(saved.stripFit, closeTo(0.8, 1e-9));
       controller.dispose();
     });
 

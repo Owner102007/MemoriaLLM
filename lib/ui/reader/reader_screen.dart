@@ -21,6 +21,7 @@ import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
+import '../../domain/reading/sheet_arrangement.dart';
 import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_search.dart';
@@ -455,11 +456,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Смена режима отображения заодно поворачивает чтение.
   ///
-  /// Положение экрана выбирает геометрия: на двухколоночной книге
-  /// половина — это колонка, и её экран **вертикальный**, а поворот в
-  /// альбом сделал бы текст мельче целой страницы. Режим, у которого
-  /// выигрыша нет вовсе, не включается — но и не молчит: читателю
-  /// говорится, почему страница осталась целой.
+  /// Положение экрана выбирает геометрия, а не название режима: полоса
+  /// страницы шире и ниже её самой, и крупнее всего она на лежащем
+  /// экране. Страница режется поперёк в любой книге, на колонки деление
+  /// не смотрит (BUG-13: прежде здесь было написано обратное). Режим, у
+  /// которого выигрыша нет вовсе, не включается — но и не молчит:
+  /// читателю говорится, почему страница осталась целой.
   Future<void> _setDisplayMode(PageDisplayMode mode) async {
     final ReaderController? controller = _controller;
     if (controller == null) {
@@ -1162,12 +1164,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return AnimatedBuilder(
           animation: controller,
           builder: (BuildContext context, Widget? child) {
+            // BUG-04: в постраничном чтении фильтр кладёт на страницу сам
+            // лист — под маской, подсветкой и панелями. Оборачивать его
+            // здесь целиком значило бы красить фильтром и их.
+            if (child == null) {
+              return _buildSheet(context, controller, onTap);
+            }
             return ReadingFilterLayer(
               filter: controller.filter,
               // Лента строится один раз и передаётся мимо перестроений:
               // пересоздавать просмотрщик на каждое уведомление значило бы
               // терять место прокрутки под руками у читателя.
-              child: child ?? _buildSheet(context, controller, onTap),
+              child: child,
             );
           },
           child: _flow == PageFlow.continuous
@@ -1208,11 +1216,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
         if (document == null) {
           return ColoredBox(color: background, child: const SizedBox.expand());
         }
+        final BookReadingSettings settings = controller.settings;
+        final PageDisplayMode mode = settings.displayMode;
         return ReaderSheet(
           document: document,
           pages: pages,
           fragment: controller.fragmentBox,
           background: background,
+          // BUG-04: фильтр — только на картинку страницы.
+          filter: controller.filter,
+          // F-READ-12: в режимах с полосами листы лежат в столбик, и под
+          // последней полосой страницы виден верх следующей.
+          arrangement: arrangementFor(mode),
+          spread: isSpreadMode(mode),
+          overlap: stripOverlapFor(
+            overlap: settings.stripOverlap,
+            count: fragmentCountFor(mode: mode),
+          ),
+          // F-READ-13: соседняя страница видна полоской заданной ширины.
+          neighbourShare: settings.neighbourShare,
           // Указатель места считает по правой странице разворота: она
           // тоже открыта, и процент в панели считается так же.
           page: controller.lastShownPage,
@@ -1221,11 +1243,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
           // F-READ-35: во весь экран полоса вписана вплотную, и
           // указатель места поверх страницы не ложится.
           stripFit: stripFitFor(
-            stripFit: controller.settings.stripFit,
+            stripFit: settings.stripFit,
             fullScreen: _fullScreen,
           ),
           progressOverPage: !_fullScreen,
-          dim: controller.settings.dimOutside,
+          dim: settings.dimOutside,
           preview: _turning.preview,
           reserve: _turning.effectiveReserve,
           sheetController: _sheet,

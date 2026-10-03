@@ -103,6 +103,8 @@ class DriftReadingRepository implements ReadingRepository {
       gamma: Value<double>(settings.gamma),
       stripFit: Value<double>(settings.stripFit),
       dimOutside: Value<double>(settings.dimOutside),
+      stripOverlap: Value<double>(settings.stripOverlap),
+      neighbourShare: Value<double>(settings.neighbourShare),
       hlc: Value<String>(mark),
       nodeId: Value<String>(stamp.nodeId),
       modified: Value<String>(mark),
@@ -149,6 +151,8 @@ class DriftReadingRepository implements ReadingRepository {
       gamma: row.gamma,
       stripFit: row.stripFit,
       dimOutside: row.dimOutside,
+      stripOverlap: row.stripOverlap,
+      neighbourShare: row.neighbourShare,
     );
   }
 

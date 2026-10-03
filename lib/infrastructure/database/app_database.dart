@@ -15,8 +15,9 @@ part 'app_database.g.dart';
 /// устройства и индекс поиска по ним (S5.5). 7 — промпты к выделению
 /// (S6): своя синхронизируемая таблица на два уровня. 8 — место цитаты в
 /// тексте страницы (S6.1): из списка цитат книга открывается на нужном
-/// месте и подсвечивает его.
-const int appSchemaVersion = 8;
+/// месте и подсвечивает его. 9 — нахлёст полос и ширина полоски соседней
+/// страницы в настройках книги (шаг 05, F-READ-12 и F-READ-13).
+const int appSchemaVersion = 9;
 
 /// База данных приложения.
 ///
@@ -106,6 +107,15 @@ class AppDatabase extends _$AppDatabase {
           // своей странице без подсветки.
           await m.addColumn(quotes, quotes.textStart);
           await m.addColumn(quotes, quotes.textEnd);
+        }
+        if (from < 9) {
+          // Обе колонки приходят со значениями по умолчанию: книга,
+          // которую читали до обновления, получает тот же нахлёст и ту
+          // же полоску соседней страницы, что и новая. Прежнего вида —
+          // полосы вплотную, сосед закрыт фоном — читатель добивается
+          // нулём на ползунках.
+          await m.addColumn(bookSettings, bookSettings.stripOverlap);
+          await m.addColumn(bookSettings, bookSettings.neighbourShare);
         }
       },
       beforeOpen: (OpeningDetails details) async {

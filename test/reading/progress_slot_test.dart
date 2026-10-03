@@ -178,4 +178,101 @@ void main() {
       expect(slot.overlaps, isFalse);
     });
   });
+
+  group('F-READ-13: указатель места и полоска соседней страницы', () {
+    // Страница на широком окне ПК: справа от неё поле в 300 точек.
+    const SheetPlacement wide = SheetPlacement(
+      scale: 1,
+      left: 300,
+      top: 0,
+      sheetWidth: 400,
+      sheetHeight: 600,
+    );
+
+    test('F-READ-13: указатель встаёт за полоской, а не поверх неё', () {
+      final ProgressSlot slot = progressSlotFor(
+        placement: wide,
+        screenWidth: 1000,
+        screenHeight: 600,
+        reservedRight: 50,
+      );
+      expect(slot.side, ProgressSlotSide.right);
+      expect(slot.left, closeTo(750, 1e-9));
+      expect(slot.width, closeTo(250, 1e-9));
+      expect(slot.overlaps, isFalse);
+    });
+
+    test('F-READ-13: без полоски указатель стоит у самой страницы', () {
+      final ProgressSlot slot = progressSlotFor(
+        placement: wide,
+        screenWidth: 1000,
+        screenHeight: 600,
+      );
+      expect(slot.left, closeTo(700, 1e-9));
+      expect(slot.width, closeTo(300, 1e-9));
+    });
+
+    test('F-READ-13: полоска съела поле — указатель уходит вниз', () {
+      // Справа после полоски осталось меньше, чем нужно указателю, а под
+      // страницей поле есть.
+      const SheetPlacement placement = SheetPlacement(
+        scale: 1,
+        left: 0,
+        top: 0,
+        sheetWidth: 300,
+        sheetHeight: 400,
+      );
+      final ProgressSlot slot = progressSlotFor(
+        placement: placement,
+        screenWidth: 360,
+        screenHeight: 600,
+        reservedRight: 40,
+      );
+      expect(slot.side, ProgressSlotSide.bottom);
+      expect(slot.overlaps, isFalse);
+      expect(slot.top, closeTo(400, 1e-9));
+    });
+
+    test('F-READ-12: под листом указатель встаёт ниже соседней страницы', () {
+      // Последняя полоса страницы: под листом виден верх следующей — на
+      // высоту нахлёста. Указатель ложится под ним.
+      const SheetPlacement placement = SheetPlacement(
+        scale: 1,
+        left: 0,
+        top: -200,
+        sheetWidth: 800,
+        sheetHeight: 400,
+      );
+      final ProgressSlot slot = progressSlotFor(
+        placement: placement,
+        screenWidth: 800,
+        screenHeight: 360,
+        reservedBottom: 30,
+      );
+      expect(slot.side, ProgressSlotSide.bottom);
+      expect(slot.top, closeTo(230, 1e-9));
+      expect(slot.height, closeTo(130, 1e-9));
+      expect(slot.overlaps, isFalse);
+    });
+
+    test('F-READ-13: мусор в занятом поле не двигает указатель', () {
+      final ProgressSlot plain = progressSlotFor(
+        placement: wide,
+        screenWidth: 1000,
+        screenHeight: 600,
+      );
+      for (final double junk in <double>[-40, double.nan, double.infinity]) {
+        expect(
+          progressSlotFor(
+            placement: wide,
+            screenWidth: 1000,
+            screenHeight: 600,
+            reservedRight: junk,
+          ),
+          plain,
+          reason: '$junk',
+        );
+      }
+    });
+  });
 }

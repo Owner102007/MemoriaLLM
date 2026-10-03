@@ -102,6 +102,125 @@ void main() {
     });
   });
 
+  group('F-READ-12: листы в столбик', () {
+    test('F-READ-12: лист ниже по документу сдвигает матрицу вверх', () {
+      // В режимах с полосами листы лежат в столбик: лист, перед которым
+      // три страницы по 842 точки, начинается в документе на 2526 точек
+      // ниже нуля.
+      final Matrix4 matrix = sheetMatrix(
+        placement: placement,
+        documentLeft: 0,
+        documentTop: 2526,
+      );
+      expect(matrix.storage[0], 2);
+      expect(matrix.storage[12], -100);
+      expect(matrix.storage[13], -50 - 2526 * 2);
+    });
+
+    test('F-READ-12: верх листа встаёт туда, куда велит раскладка', () {
+      // Смысл матрицы один: точка документа, с которой начинается лист,
+      // обязана попасть в точку экрана, куда лист положила раскладка.
+      const SheetTransform pinch = SheetTransform(scale: 1.5, dx: 30, dy: -40);
+      final Matrix4 matrix = sheetMatrix(
+        placement: placement,
+        documentLeft: 0,
+        documentTop: 2526,
+        transform: pinch,
+      );
+      final Offset corner = pinch.apply(Offset(placement.left, placement.top));
+      expect(
+        0 * matrix.storage[0] + matrix.storage[12],
+        closeTo(corner.dx, 1e-9),
+      );
+      expect(
+        2526 * matrix.storage[0] + matrix.storage[13],
+        closeTo(corner.dy, 1e-9),
+      );
+    });
+
+    test('F-READ-12: обратный ход в столбике возвращает тот же щипок', () {
+      const SheetTransform pinch = SheetTransform(scale: 1.5, dx: 30, dy: -40);
+      final Matrix4 matrix = sheetMatrix(
+        placement: placement,
+        documentLeft: 0,
+        documentTop: 2526,
+        transform: pinch,
+      );
+      final SheetTransform back = sheetTransformOf(
+        matrix: matrix,
+        placement: placement,
+        documentLeft: 0,
+        documentTop: 2526,
+      );
+      expect(back.scale, closeTo(pinch.scale, 1e-9));
+      expect(back.dx, closeTo(pinch.dx, 1e-9));
+      expect(back.dy, closeTo(pinch.dy, 1e-9));
+    });
+
+    test('F-READ-12: нетронутый лист в столбике не даёт преобразования', () {
+      final SheetTransform back = sheetTransformOf(
+        matrix: sheetMatrix(
+          placement: placement,
+          documentLeft: 0,
+          documentTop: 2526,
+        ),
+        placement: placement,
+        documentLeft: 0,
+        documentTop: 2526,
+      );
+      expect(back.isNeutral, isTrue);
+    });
+
+    test('F-READ-12: точка экрана переводится в точку листа в столбике', () {
+      const Offset screen = Offset(320, 480);
+      final Offset point = documentPoint(
+        screen: screen,
+        placement: placement,
+        documentLeft: 0,
+        documentTop: 2526,
+      )!;
+      // Точка лежит на листе: ниже его начала в документе.
+      expect(point.dy, closeTo(2526 + (480 + 50) / 2, 1e-9));
+      expect(point.dx, closeTo((320 + 100) / 2, 1e-9));
+    });
+
+    test('BUG-40: возврат просмотрщика в столбике отклоняется так же', () {
+      // Просмотрщик возвращает вид к прежнему листу; в столбике это
+      // расстояние между листами по вертикали. Окно перекладки отклоняет
+      // его так же, как в ряду.
+      const SheetPlacement page = SheetPlacement(
+        scale: 1,
+        left: 0,
+        top: 0,
+        sheetWidth: 400,
+        sheetHeight: 800,
+      );
+      final SheetTransform proposed = sheetTransformOf(
+        matrix: sheetMatrix(
+          placement: page,
+          documentLeft: 0,
+          documentTop: 39 * 800,
+        ),
+        placement: page,
+        documentLeft: 0,
+        documentTop: 699 * 800,
+      );
+      expect(proposed.dy, closeTo((699 - 39) * 800, 1e-6));
+      expect(proposed.dx, closeTo(0, 1e-9));
+      expect(
+        sheetTransformAfterMove(
+          current: SheetTransform.none,
+          proposed: proposed,
+          placement: page,
+          screen: const Size(400, 800),
+          locked: false,
+          relaying: true,
+        ),
+        SheetTransform.none,
+      );
+    });
+  });
+
   group('точка экрана в координатах документа', () {
     test('перевод обратим', () {
       const Offset screen = Offset(320, 480);

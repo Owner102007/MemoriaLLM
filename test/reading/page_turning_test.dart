@@ -203,6 +203,107 @@ void main() {
     });
   });
 
+  group('F-READ-12: запас соседних листов в столбике', () {
+    /// Какие листы попадают в запас: ноль — читаемый, отрицательные —
+    /// над ним, положительные — под ним. Листы одной высоты.
+    List<int> covered({
+      required double sheet,
+      required double top,
+      required double visible,
+      required int sheets,
+    }) {
+      final double extent = columnCacheExtent(
+        sheetHeight: sheet,
+        visibleTop: top,
+        visibleHeight: visible,
+        sheets: sheets,
+      );
+      final double from = top - visible * extent;
+      final double to = top + visible + visible * extent;
+      return <int>[
+        for (int n = -4; n <= 4; n++)
+          if (sheet * n < to && sheet * (n + 1) > from) n,
+      ];
+    }
+
+    test('F-READ-12: с любой полосы запас 1 — по листу сверху и снизу', () {
+      // Полоса стоит не посередине листа: первая у его верха, последняя
+      // у низа. Сосед обязан быть наготове с обеих сторон — а лист за
+      // ним в запас попадать не должен.
+      const double sheet = 842;
+      for (final int count in <int>[2, 3]) {
+        final double strip = sheet / count;
+        // Видимая область чуть выше полосы: над ней и под ней нахлёст.
+        final double visible = strip * 1.16;
+        for (int i = 0; i < count; i++) {
+          expect(
+            covered(
+              sheet: sheet,
+              top: strip * i - strip * 0.08,
+              visible: visible,
+              sheets: 1,
+            ),
+            <int>[-1, 0, 1],
+            reason: 'полос $count, полоса $i',
+          );
+        }
+      }
+    });
+
+    test('F-READ-12: запас 2 — по два листа, третий не захвачен', () {
+      const double sheet = 842;
+      for (final double top in <double>[-30, 250, 530]) {
+        expect(
+          covered(sheet: sheet, top: top, visible: 320, sheets: 2),
+          <int>[-2, -1, 0, 1, 2],
+          reason: 'верх видимой области $top',
+        );
+      }
+    });
+
+    test('F-READ-12: запас 0 запаса не просит', () {
+      expect(
+        columnCacheExtent(
+          sheetHeight: 842,
+          visibleTop: 0,
+          visibleHeight: 421,
+          sheets: 0,
+        ),
+        0,
+      );
+    });
+
+    test('F-READ-12: вырожденные размеры — ноль, а не бесконечность', () {
+      expect(
+        columnCacheExtent(
+          sheetHeight: 0,
+          visibleTop: 0,
+          visibleHeight: 421,
+          sheets: 1,
+        ),
+        0,
+      );
+      expect(
+        columnCacheExtent(
+          sheetHeight: 842,
+          visibleTop: 0,
+          visibleHeight: 0,
+          sheets: 1,
+        ),
+        0,
+      );
+      expect(
+        columnCacheExtent(
+          sheetHeight: 842,
+          visibleTop: double.nan,
+          visibleHeight: 421,
+          sheets: 1,
+        ),
+        0,
+      );
+    });
+  });
+
   group('F-READ-02: масштаб грубой картинки', () {
     test('предел пикселей: страница A4 — около двух с половиной', () {
       final double cap = previewScaleCap(pageWidth: 595, pageHeight: 842);

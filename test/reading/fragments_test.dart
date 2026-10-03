@@ -554,4 +554,66 @@ void main() {
       );
     });
   });
+
+  group('F-READ-12: выигрыш режима считается с нахлёстом', () {
+    // Страница А4 и телефон 1080×2400. Полоса на лежащем телефоне
+    // упирается в высоту экрана, и нахлёст отнимает у неё ровно столько
+    // экрана, сколько занял сам: сверху и снизу.
+    const double sheetW = 595;
+    const double sheetH = 842;
+    const DisplayArea phone = DisplayArea(width: 1080, height: 2400);
+
+    FragmentLayout layout(PageDisplayMode mode, {double overlap = 0}) {
+      return chooseFragmentLayout(
+        mode: mode,
+        content: CropBox.full,
+        sheetWidth: sheetW,
+        sheetHeight: sheetH,
+        area: phone,
+        overlap: overlap,
+      );
+    }
+
+    test('F-READ-12: половина платит за нахлёст своей долей экрана', () {
+      final FragmentLayout plain = layout(PageDisplayMode.half);
+      final FragmentLayout lapped = layout(PageDisplayMode.half, overlap: 0.07);
+      expect(lapped.orientation, ScreenOrientation.landscape);
+      expect(lapped.scale, closeTo(plain.scale * 0.86, 1e-9));
+      // Кнопка обещает ровно то, что выйдет на экране: меньше, чем без
+      // нахлёста, но всё ещё заметно крупнее страницы целиком.
+      expect(lapped.gain, lessThan(plain.gain));
+      expect(lapped.isWorthwhile, isTrue);
+    });
+
+    test('F-READ-12: у трети действует половина нахлёста', () {
+      final FragmentLayout plain = layout(PageDisplayMode.third);
+      final FragmentLayout lapped = layout(
+        PageDisplayMode.third,
+        overlap: 0.07,
+      );
+      expect(lapped.scale, closeTo(plain.scale * 0.93, 1e-9));
+    });
+
+    test('F-READ-12: страница целиком нахлёста не знает', () {
+      for (final PageDisplayMode mode in <PageDisplayMode>[
+        PageDisplayMode.full,
+        PageDisplayMode.spread,
+      ]) {
+        expect(
+          layout(mode, overlap: 0.15).scale,
+          layout(mode).scale,
+          reason: '$mode',
+        );
+      }
+    });
+
+    test('F-READ-12: масштаб страницы целиком от нахлёста не зависит', () {
+      // Выигрыш меряется против страницы, показанной без нахлёста: его у
+      // неё и нет.
+      expect(
+        layout(PageDisplayMode.half, overlap: 0.15).wholeScale,
+        layout(PageDisplayMode.half).wholeScale,
+      );
+    });
+  });
 }

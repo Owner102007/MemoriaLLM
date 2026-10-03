@@ -1,4 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../../domain/reading/sheet_arrangement.dart';
 
 /// Насколько маска заходит на лист, закрывая его край.
 ///
@@ -9,22 +12,33 @@ import 'package:flutter/material.dart';
 /// которой всё равно не видно.
 const double kReaderMaskOverlap = 0.5;
 
-/// Маска поверх страницы: два уровня темноты вместо второго виджета.
+/// Толщина линии на стыке своей страницы и соседней, в точках экрана.
+///
+/// Страницы в раскладке стоят вплотную, и без линии низ одной страницы
+/// перетекал бы в верх другой: по одной темноте стык не найти.
+const double kNeighbourSeamWidth = 1.5;
+
+/// Маска поверх страницы: уровни темноты вместо второго виджета.
 ///
 /// Решение владельца от 06.09.2026, по проверке S6.1 на ПК. Читательская
 /// рамка перестала быть отдельным листом и стала **позицией плюс маской**:
 /// матрица просмотрщика приколочена к нашей раскладке, а всё лишнее
 /// закрашивается сверху, в координатах экрана.
 ///
-/// Уровней ровно два, и это не украшение:
+/// Уровней три (ALG-UI-16), и это не украшение:
 ///
-/// * **За пределами листа** — соседние страницы, промежутки, поля
-///   просмотрщика — фон **наглухо**. Полупрозрачная тень соседнюю
-///   страницу не прячет, и ровно на этом сломалась S6.1: на широком окне
-///   ПК рядом с читаемой страницей было видно соседние.
+/// * **За пределами листа и назначенных кусков соседей** — промежутки,
+///   поля просмотрщика, всё остальное от соседних страниц — фон
+///   **наглухо**. Полупрозрачная тень соседнюю страницу не прячет, и
+///   ровно на этом сломалась S6.1: на широком окне ПК рядом с читаемой
+///   страницей торчало столько чужого текста, сколько влезло в окно.
 /// * **На самом листе, вне читаемой полосы** — затемнение по настройке
 ///   `dimOutside`, как с S4.7. Страница не обрезана: она продолжается в
 ///   темноте, и, отперев замок, читатель видит её целиком.
+/// * **Назначенный кусок соседнего листа** (F-READ-13, F-READ-12) —
+///   темнее своей страницы, а по стыку с ней идёт тонкая линия. Сколько
+///   соседа видно, решает не окно, а мы: [neighbours] считает
+///   `neighbourZones`.
 class ReaderMask extends StatelessWidget {
   /// Создаёт маску.
   const ReaderMask({
@@ -32,6 +46,7 @@ class ReaderMask extends StatelessWidget {
     required this.strip,
     required this.dim,
     required this.background,
+    this.neighbours = const <NeighbourZone>[],
     super.key,
   });
 
@@ -50,6 +65,9 @@ class ReaderMask extends StatelessWidget {
   /// заканчивается там, где заканчивается лист.
   final Color background;
 
+  /// Куски соседних листов, которые остаются видны, — затемнёнными.
+  final List<NeighbourZone> neighbours;
+
   @override
   Widget build(BuildContext context) {
     // Нажатия принадлежат странице: маска не должна перехватывать ни
@@ -61,26 +79,36 @@ class ReaderMask extends StatelessWidget {
           strip: strip,
           dim: dim,
           background: background,
+          neighbours: neighbours,
         ),
       ),
     );
   }
 }
 
-/// Путь первого уровня: экран без листа.
+/// Путь первого уровня: экран без листа и без назначенных кусков соседей.
 ///
-/// Дырка вырезается правилом «чёт-нечет» — два прямоугольника дешевле
+/// Дырки вырезаются правилом «чёт-нечет» — прямоугольники дешевле
 /// вычитания путей и не зависят от того, попал ли лист в экран целиком.
+/// Куски соседей с листом не пересекаются — они стоят к нему вплотную, —
+/// поэтому правило «чёт-нечет» остаётся верным и для них.
 Path outsideSheetPath({
   required Rect screen,
   required Rect sheet,
   double overlap = kReaderMaskOverlap,
+  List<NeighbourZone> neighbours = const <NeighbourZone>[],
 }) {
   final Path path = Path()..fillType = PathFillType.evenOdd;
   path.addRect(screen);
   final Rect hole = sheet.deflate(overlap).intersect(screen);
   if (hole.width > 0 && hole.height > 0) {
     path.addRect(hole);
+  }
+  for (final NeighbourZone zone in neighbours) {
+    final Rect open = zone.rect.intersect(screen);
+    if (open.width > 0 && open.height > 0) {
+      path.addRect(open);
+    }
   }
   return path;
 }
@@ -96,7 +124,7 @@ Path dimOutsidePath({required Rect sheet, required Rect fragment}) {
   return path;
 }
 
-/// Рисует оба уровня маски.
+/// Рисует уровни маски.
 class ReaderMaskPainter extends CustomPainter {
   /// Создаёт художника.
   const ReaderMaskPainter({
@@ -104,6 +132,7 @@ class ReaderMaskPainter extends CustomPainter {
     required this.strip,
     required this.dim,
     required this.background,
+    this.neighbours = const <NeighbourZone>[],
   });
 
   /// Весь лист на экране.
@@ -118,6 +147,9 @@ class ReaderMaskPainter extends CustomPainter {
   /// Фон за пределами листа.
   final Color background;
 
+  /// Куски соседних листов, которые остаются видны.
+  final List<NeighbourZone> neighbours;
+
   @override
   void paint(Canvas canvas, Size size) {
     final Rect screen = Offset.zero & size;
@@ -128,9 +160,23 @@ class ReaderMaskPainter extends CustomPainter {
       return;
     }
     canvas.drawPath(
-      outsideSheetPath(screen: screen, sheet: sheet),
+      outsideSheetPath(screen: screen, sheet: sheet, neighbours: neighbours),
       Paint()..color = background,
     );
+    // Третий уровень: сосед темнее своей страницы и остаётся притушенным
+    // даже при нулевом затемнении — иначе он читался бы как вторая
+    // страница разворота. Стык со своей страницей — тонкая линия фона.
+    if (neighbours.isNotEmpty) {
+      final Paint shade = Paint()
+        ..color = Color.fromRGBO(0, 0, 0, neighbourDimFor(dim));
+      final Paint seam = Paint()
+        ..color = background
+        ..strokeWidth = kNeighbourSeamWidth;
+      for (final NeighbourZone zone in neighbours) {
+        canvas.drawRect(zone.rect, shade);
+        canvas.drawLine(zone.seamFrom, zone.seamTo, seam);
+      }
+    }
     if (dim <= 0) {
       return;
     }
@@ -149,6 +195,7 @@ class ReaderMaskPainter extends CustomPainter {
     return oldDelegate.sheet != sheet ||
         oldDelegate.strip != strip ||
         oldDelegate.dim != dim ||
-        oldDelegate.background != background;
+        oldDelegate.background != background ||
+        !listEquals(oldDelegate.neighbours, neighbours);
   }
 }

@@ -283,6 +283,45 @@ double clampDimOutside(double value) {
   return value > kMaxDimOutside ? kMaxDimOutside : value;
 }
 
+/// Нахлёст соседних полос по умолчанию, в долях высоты экрана
+/// (F-READ-12).
+///
+/// Сверху и снизу читаемой полосы остаётся по столько экрана: там видны
+/// затемнённые конец прочитанного и начало следующего. Задаётся долей
+/// **экрана**, а не страницы: десять процентов страницы в режиме
+/// половины превратили бы полосу в шестьдесят процентов листа и отняли
+/// бы шестую часть кегля.
+const double kDefaultStripOverlap = 0.07;
+
+/// Больше этого нахлёст не бывает: дальше он отнимает у полосы слишком
+/// много экрана.
+const double kMaxStripOverlap = 0.15;
+
+/// Приводит нахлёст к допустимому диапазону. Ноль допустим: полосы
+/// делятся чёткой линией, как до F-READ-12.
+double clampStripOverlap(double value) {
+  if (!value.isFinite || value <= 0) {
+    return 0;
+  }
+  return value > kMaxStripOverlap ? kMaxStripOverlap : value;
+}
+
+/// Ширина полоски соседней страницы по умолчанию, в долях ширины экрана
+/// (F-READ-13).
+const double kDefaultNeighbourShare = 0.05;
+
+/// Шире этого полоска соседней страницы не бывает.
+const double kMaxNeighbourShare = 0.15;
+
+/// Приводит ширину полоски соседней страницы к допустимому диапазону.
+/// Ноль допустим: соседняя страница закрыта фоном наглухо.
+double clampNeighbourShare(double value) {
+  if (!value.isFinite || value <= 0) {
+    return 0;
+  }
+  return value > kMaxNeighbourShare ? kMaxNeighbourShare : value;
+}
+
 /// Настройки чтения одной книги.
 class BookReadingSettings {
   /// Создаёт настройки.
@@ -300,6 +339,8 @@ class BookReadingSettings {
     this.gamma = 1,
     this.stripFit = 1,
     this.dimOutside = kDefaultDimOutside,
+    this.stripOverlap = kDefaultStripOverlap,
+    this.neighbourShare = kDefaultNeighbourShare,
   });
 
   /// Книга.
@@ -358,6 +399,18 @@ class BookReadingSettings {
   /// до конца листа, — и при этом глаз не цепляется за соседние строки.
   final double dimOutside;
 
+  /// Нахлёст соседних полос, в долях высоты экрана (F-READ-12).
+  ///
+  /// Над полосой и под ней остаётся по столько экрана, и там видны
+  /// затемнённые конец прочитанного и начало следующего. В режиме трети
+  /// действует половина значения. Сама полоса от нахлёста не меняется —
+  /// она остаётся ровно своей долей страницы.
+  final double stripOverlap;
+
+  /// Ширина полоски, которой видна соседняя страница, в долях ширины
+  /// экрана (F-READ-13). Ноль — соседняя страница закрыта фоном.
+  final double neighbourShare;
+
   /// Копия с изменёнными полями.
   BookReadingSettings copyWith({
     PageDisplayMode? displayMode,
@@ -371,6 +424,8 @@ class BookReadingSettings {
     double? gamma,
     double? stripFit,
     double? dimOutside,
+    double? stripOverlap,
+    double? neighbourShare,
   }) {
     return BookReadingSettings(
       bookId: bookId,
@@ -386,6 +441,8 @@ class BookReadingSettings {
       gamma: gamma ?? this.gamma,
       stripFit: stripFit ?? this.stripFit,
       dimOutside: dimOutside ?? this.dimOutside,
+      stripOverlap: stripOverlap ?? this.stripOverlap,
+      neighbourShare: neighbourShare ?? this.neighbourShare,
     );
   }
 }

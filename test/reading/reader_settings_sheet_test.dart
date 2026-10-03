@@ -190,9 +190,13 @@ void main() {
     expect(controller.settings.manualCrop, isNull);
   });
 
-  testWidgets('про двухколоночную страницу сказано прямо', (
+  testWidgets('BUG-13: шторка не обещает колонку вместо половины', (
     WidgetTester tester,
   ) async {
+    // Подсказка «половина — это колонка» осталась от прежнего деления по
+    // колонкам. Страница режется поперёк в любой книге (решение владельца
+    // 23.08.2026), и на двухколоночной странице подсказка обещала то,
+    // чего режим не делает.
     build(
       boxes: <int, List<TextBox>>{
         1: <TextBox>[
@@ -218,7 +222,11 @@ void main() {
     await controller.loadFrame();
     await pumpSheet(tester);
 
-    expect(find.byKey(const Key('reader-columns-hint')), findsOneWidget);
+    // Колонки на странице найдены — они нужны извлечению контекста, —
+    // но шторка про них молчит.
+    expect(controller.frame?.hasColumns, isTrue);
+    expect(find.byKey(const Key('reader-columns-hint')), findsNothing);
+    expect(find.textContaining('это колонка'), findsNothing);
   });
 
   testWidgets('способ листания переехал в настройки', (
@@ -291,6 +299,133 @@ void main() {
 
     expect(controller.settings.dimOutside, lessThan(kDefaultDimOutside));
     expect(controller.settings.dimOutside, greaterThanOrEqualTo(0));
+  });
+
+  testWidgets('BUG-12: ползунок пишет настройки один раз — по отпусканию', (
+    WidgetTester tester,
+  ) async {
+    // Каждое движение ползунка писало строку настроек с новой меткой
+    // HLC: десятки записей на один жест. Страница обязана меняться
+    // вживую, а запись — одна.
+    build();
+    await pumpSheet(tester);
+
+    final Finder slider = find.byKey(const Key('reader-dim-outside'));
+    await tester.ensureVisible(slider);
+    await tester.pump();
+    final int before = reading.settingsSaveCount;
+
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(slider),
+    );
+    await tester.pump();
+    final List<double> seen = <double>[];
+    for (int i = 0; i < 4; i++) {
+      await gesture.moveBy(const Offset(-25, 0));
+      await tester.pump();
+      seen.add(controller.settings.dimOutside);
+    }
+    // Пока ползунок тянут, значение меняется, а в базу не пишется.
+    expect(seen.last, lessThan(seen.first));
+    expect(seen.last, lessThan(kDefaultDimOutside));
+    expect(reading.settingsSaveCount, before);
+
+    await gesture.up();
+    await tester.pump();
+
+    expect(reading.settingsSaveCount, before + 1);
+    final BookReadingSettings saved = await reading.settings(
+      controller.book.id,
+      ScreenOrientation.portrait,
+    );
+    expect(saved.dimOutside, controller.settings.dimOutside);
+  });
+
+  testWidgets('BUG-12: отпущенный без сдвига ползунок ничего не пишет', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+    final int before = reading.settingsSaveCount;
+
+    await controller.persistSettings();
+
+    expect(reading.settingsSaveCount, before);
+  });
+
+  testWidgets('F-READ-12: нахлёст есть в шторке и меняется ползунком', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+
+    expect(find.byKey(const Key('reader-overlap-hint')), findsOneWidget);
+    expect(controller.settings.stripOverlap, kDefaultStripOverlap);
+    expect(find.text('7 %'), findsOneWidget);
+
+    final Finder slider = find.byKey(const Key('reader-strip-overlap'));
+    await tester.ensureVisible(slider);
+    await tester.pump();
+    await tester.drag(slider, const Offset(300, 0));
+    await tester.pump();
+
+    // До упора вправо — потолок, и дальше него ползунок не уводит.
+    expect(controller.settings.stripOverlap, greaterThan(kDefaultStripOverlap));
+    expect(
+      controller.settings.stripOverlap,
+      lessThanOrEqualTo(kMaxStripOverlap),
+    );
+    final BookReadingSettings saved = await reading.settings(
+      controller.book.id,
+      ScreenOrientation.portrait,
+    );
+    expect(saved.stripOverlap, controller.settings.stripOverlap);
+  });
+
+  testWidgets('F-READ-13: полоска соседней страницы убирается в ноль', (
+    WidgetTester tester,
+  ) async {
+    build();
+    await pumpSheet(tester);
+
+    expect(find.byKey(const Key('reader-neighbour-hint')), findsOneWidget);
+    expect(controller.settings.neighbourShare, kDefaultNeighbourShare);
+
+    final Finder slider = find.byKey(const Key('reader-neighbour-share'));
+    await tester.ensureVisible(slider);
+    await tester.pump();
+    await tester.drag(slider, const Offset(-300, 0));
+    await tester.pump();
+
+    // Ноль — соседняя страница закрыта фоном, как было до F-READ-13.
+    expect(controller.settings.neighbourShare, 0);
+  });
+
+  testWidgets('BUG-15: в ленте нахлёста и полоски соседа в шторке нет', (
+    WidgetTester tester,
+  ) async {
+    // На ленту они не действуют, и показывать их там значило бы
+    // добавлять ещё две кнопки, которые обманывают.
+    build();
+    flowNow.value = PageFlow.continuous;
+    await pumpSheet(tester);
+
+    expect(find.byKey(const Key('reader-strip-overlap')), findsNothing);
+    expect(find.byKey(const Key('reader-neighbour-share')), findsNothing);
+
+    flowNow.value = PageFlow.paged;
+    await tester.pump();
+
+    expect(find.byKey(const Key('reader-strip-overlap')), findsOneWidget);
+    expect(find.byKey(const Key('reader-neighbour-share')), findsOneWidget);
+  });
+
+  test('F-READ-12: доля экрана подписана процентами', () {
+    expect(percentLabel(0.07), '7 %');
+    expect(percentLabel(0.035), '3,5 %');
+    expect(percentLabel(0), '0 %');
+    expect(percentLabel(0.15), '15 %');
+    expect(percentLabel(0.052), '5 %');
   });
 
   testWidgets('сказано, зачем режимы поворачивают экран', (

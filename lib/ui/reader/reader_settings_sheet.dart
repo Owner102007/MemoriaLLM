@@ -52,6 +52,9 @@ class ReaderSettingsSheet extends StatelessWidget {
         final ThemeData theme = Theme.of(context);
         final BookReadingSettings settings = controller.settings;
         final PageFlow current = flow.value;
+        // BUG-12: ползунок меняет страницу вживую, а в базу пишет один
+        // раз — когда его отпустили.
+        void persist(double value) => unawaited(controller.persistSettings());
         return Material(
           color: theme.colorScheme.surface.withValues(alpha: 0.97),
           child: SafeArea(
@@ -76,14 +79,9 @@ class ReaderSettingsSheet extends StatelessWidget {
                     key: const Key('reader-mode-hint'),
                     style: theme.textTheme.bodySmall,
                   ),
-                  if (controller.frame?.hasColumns ?? false) ...<Widget>[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Страница двухколоночная: половина — это колонка.',
-                      key: const Key('reader-columns-hint'),
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ],
+                  // BUG-13: подсказки «половина — это колонка» здесь больше
+                  // нет. Страница режется поперёк в любой книге (решение
+                  // владельца 23.08.2026), и обещать колонку было неправдой.
                   const SizedBox(height: 16),
                   const _Title(text: 'Листание'),
                   const SizedBox(height: 8),
@@ -111,8 +109,10 @@ class ReaderSettingsSheet extends StatelessWidget {
                     value: settings.stripFit,
                     min: kMinStripFit,
                     max: 1,
-                    onChanged: (double value) =>
-                        unawaited(controller.setStripFit(value)),
+                    onChanged: (double value) => unawaited(
+                      controller.setStripFit(value, persist: false),
+                    ),
+                    onChangeEnd: persist,
                   ),
                   Text(
                     'Полоса вписана в экран вплотную, и её крайняя строка '
@@ -129,8 +129,10 @@ class ReaderSettingsSheet extends StatelessWidget {
                     value: settings.dimOutside,
                     min: 0,
                     max: kMaxDimOutside,
-                    onChanged: (double value) =>
-                        unawaited(controller.setDimOutside(value)),
+                    onChanged: (double value) => unawaited(
+                      controller.setDimOutside(value, persist: false),
+                    ),
+                    onChangeEnd: persist,
                   ),
                   Text(
                     'В половине и трети страница видна целиком, а всё, что '
@@ -139,6 +141,49 @@ class ReaderSettingsSheet extends StatelessWidget {
                     key: const Key('reader-dim-hint'),
                     style: theme.textTheme.bodySmall,
                   ),
+                  // Нахлёст и полоска соседней страницы — про листы. В
+                  // ленте они не действуют, и показывать их там значило
+                  // бы обманывать (BUG-15).
+                  if (current == PageFlow.paged) ...<Widget>[
+                    _ValueSlider(
+                      valueKey: const Key('reader-strip-overlap'),
+                      label: 'Нахлёст',
+                      value: settings.stripOverlap,
+                      min: 0,
+                      max: kMaxStripOverlap,
+                      format: percentLabel,
+                      onChanged: (double value) => unawaited(
+                        controller.setStripOverlap(value, persist: false),
+                      ),
+                      onChangeEnd: persist,
+                    ),
+                    Text(
+                      'Над полосой и под ней остаётся по столько экрана: '
+                      'там видны затемнённые конец прочитанного и начало '
+                      'следующего. В трети действует половина. Ноль — '
+                      'полосы делятся чёткой линией.',
+                      key: const Key('reader-overlap-hint'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    _ValueSlider(
+                      valueKey: const Key('reader-neighbour-share'),
+                      label: 'Соседняя страница',
+                      value: settings.neighbourShare,
+                      min: 0,
+                      max: kMaxNeighbourShare,
+                      format: percentLabel,
+                      onChanged: (double value) => unawaited(
+                        controller.setNeighbourShare(value, persist: false),
+                      ),
+                      onChangeEnd: persist,
+                    ),
+                    Text(
+                      'На широком экране соседние страницы видны тёмными '
+                      'полосками такой ширины. Ноль — закрыты фоном.',
+                      key: const Key('reader-neighbour-hint'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   const _Title(text: 'Поля'),
                   SwitchListTile(
@@ -198,8 +243,10 @@ class ReaderSettingsSheet extends StatelessWidget {
                       value: settings.filterIntensity,
                       min: 0,
                       max: 1,
-                      onChanged: (double value) =>
-                          unawaited(controller.setFilterIntensity(value)),
+                      onChanged: (double value) => unawaited(
+                        controller.setFilterIntensity(value, persist: false),
+                      ),
+                      onChangeEnd: persist,
                     ),
                   _ValueSlider(
                     valueKey: const Key('reader-brightness'),
@@ -207,8 +254,10 @@ class ReaderSettingsSheet extends StatelessWidget {
                     value: settings.brightness,
                     min: 0.15,
                     max: 1,
-                    onChanged: (double value) =>
-                        unawaited(controller.setBrightness(value)),
+                    onChanged: (double value) => unawaited(
+                      controller.setBrightness(value, persist: false),
+                    ),
+                    onChangeEnd: persist,
                   ),
                   _ValueSlider(
                     valueKey: const Key('reader-contrast'),
@@ -216,8 +265,10 @@ class ReaderSettingsSheet extends StatelessWidget {
                     value: settings.contrast,
                     min: 0.5,
                     max: 2,
-                    onChanged: (double value) =>
-                        unawaited(controller.setContrast(value)),
+                    onChanged: (double value) => unawaited(
+                      controller.setContrast(value, persist: false),
+                    ),
+                    onChangeEnd: persist,
                   ),
                   _ValueSlider(
                     valueKey: const Key('reader-gamma'),
@@ -226,7 +277,8 @@ class ReaderSettingsSheet extends StatelessWidget {
                     min: 0.5,
                     max: 2,
                     onChanged: (double value) =>
-                        unawaited(controller.setGamma(value)),
+                        unawaited(controller.setGamma(value, persist: false)),
+                    onChangeEnd: persist,
                   ),
                 ],
               ),
@@ -323,6 +375,8 @@ class _ValueSlider extends StatelessWidget {
     required this.min,
     required this.max,
     required this.onChanged,
+    required this.onChangeEnd,
+    this.format,
   });
 
   final Key valueKey;
@@ -330,7 +384,15 @@ class _ValueSlider extends StatelessWidget {
   final double value;
   final double min;
   final double max;
+
+  /// Ползунок сдвинули: значение меняется вживую, без записи.
   final ValueChanged<double> onChanged;
+
+  /// Ползунок отпустили: значение пора записать (BUG-12).
+  final ValueChanged<double> onChangeEnd;
+
+  /// Как подписать значение; без него — число с двумя знаками.
+  final String Function(double value)? format;
 
   @override
   Widget build(BuildContext context) {
@@ -349,12 +411,13 @@ class _ValueSlider extends StatelessWidget {
             max: max,
             value: safe,
             onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
           ),
         ),
         SizedBox(
           width: 44,
           child: Text(
-            safe.toStringAsFixed(2),
+            format?.call(safe) ?? safe.toStringAsFixed(2),
             textAlign: TextAlign.end,
             style: theme.textTheme.bodySmall,
           ),
@@ -362,6 +425,16 @@ class _ValueSlider extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Доля экрана — процентами: «7 %», а половины — «3,5 %».
+String percentLabel(double share) {
+  final double percent = share * 100;
+  final double rounded = (percent * 2).round() / 2;
+  final String text = rounded == rounded.roundToDouble()
+      ? rounded.toStringAsFixed(0)
+      : rounded.toStringAsFixed(1).replaceAll('.', ',');
+  return '$text %';
 }
 
 /// Человеческое название режима отображения.

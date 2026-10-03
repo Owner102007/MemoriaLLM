@@ -38,6 +38,7 @@
 library;
 
 import 'reading.dart';
+import 'sheet_placement.dart';
 
 /// Насколько соседние полосы налезают там, где просвет **нашёлся**.
 ///
@@ -45,6 +46,11 @@ import 'reading.dart';
 /// строке на границе, но на деле повторял её на обоих экранах, и читатель
 /// спотыкался — глаз видит знакомый текст и теряет место. Раз граница
 /// проходит между строк, повторять нечего.
+///
+/// Нахлёст F-READ-12 — другое, и эту константу он не трогает: полоса
+/// остаётся ровно своей долей страницы, а соседние полосы видны вокруг
+/// неё **затемнёнными** — глаз не принимает их за читаемое. Он живёт в
+/// раскладке (`placeFragment`), а не в делении.
 const double kFragmentOverlap = 0;
 
 /// Насколько полосы налезают там, где просвет **не нашёлся**.
@@ -185,6 +191,11 @@ class FragmentLayout {
 ///
 /// [sheetWidth] и [sheetHeight] — размеры листа в любых одинаковых
 /// единицах: одна страница или две страницы разворота рядом.
+///
+/// [overlap] — нахлёст полос, доля высоты экрана (F-READ-12). Он отнимает
+/// экран у полосы, и выигрыш считается честно, **с ним**: режим, который
+/// из-за нахлёста перестал увеличивать текст, не включается так же, как
+/// любой другой режим без выигрыша. Страница целиком нахлёста не имеет.
 FragmentLayout chooseFragmentLayout({
   required PageDisplayMode mode,
   required CropBox content,
@@ -193,6 +204,7 @@ FragmentLayout chooseFragmentLayout({
   required DisplayArea area,
   List<double> breaks = const <double>[],
   bool canTurn = true,
+  double overlap = 0,
 }) {
   if (!area.isKnown ||
       !content.isValid ||
@@ -208,6 +220,9 @@ FragmentLayout chooseFragmentLayout({
     mode: mode,
     breaks: breaks,
   );
+  // Сколько экрана остаётся полосе: нахлёст занят соседними полосами.
+  final double room =
+      1 - 2 * stripOverlapFor(overlap: overlap, count: parts.length);
   final List<DisplayArea> candidates = canTurn
       ? <DisplayArea>[
           area.oriented(ScreenOrientation.portrait),
@@ -234,7 +249,7 @@ FragmentLayout chooseFragmentLayout({
         fragmentWidth: sheetWidth * part.width,
         fragmentHeight: sheetHeight * part.height,
         screenWidth: candidate.width,
-        screenHeight: candidate.height,
+        screenHeight: candidate.height * room,
       );
       if (scale < worst) {
         worst = scale;

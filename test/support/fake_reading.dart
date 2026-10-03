@@ -183,6 +183,9 @@ class FakeReadingRepository implements ReadingRepository {
   /// Сколько раз записывали позицию.
   int saveCount = 0;
 
+  /// Сколько раз записывали настройки книги (BUG-12).
+  int settingsSaveCount = 0;
+
   @override
   Future<ReadingPosition?> position(String bookId) async => _positions[bookId];
 
@@ -213,6 +216,7 @@ class FakeReadingRepository implements ReadingRepository {
 
   @override
   Future<void> saveSettings(BookReadingSettings settings) async {
+    settingsSaveCount++;
     _settings['${settings.bookId}:${settings.orientation.name}'] = settings;
   }
 }

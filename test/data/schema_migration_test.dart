@@ -62,8 +62,20 @@ void main() {
   /// который обновляется, её и не могло быть — она появилась в этой же
   /// версии. Без этого проверка мерила бы не то: заведение промптов
   /// случилось бы при первом открытии, а не после миграции.
+  /// Откатывает базу к версии 8: ни нахлёста полос, ни полоски соседней
+  /// страницы в настройках книги тогда не было.
+  Future<void> undoStripWindow(AppData data) async {
+    await data.database.customStatement(
+      'ALTER TABLE book_settings DROP COLUMN strip_overlap',
+    );
+    await data.database.customStatement(
+      'ALTER TABLE book_settings DROP COLUMN neighbour_share',
+    );
+  }
+
   /// Откатывает базу к версии 7: места цитаты в тексте тогда не было.
   Future<void> undoQuoteCoordinates(AppData data) async {
+    await undoStripWindow(data);
     await data.database.customStatement(
       'ALTER TABLE quotes DROP COLUMN text_start',
     );
@@ -107,7 +119,12 @@ void main() {
     expect(await versionOf(data), appSchemaVersion);
     expect(
       await columnsOf(data, 'book_settings'),
-      containsAll(<String>['strip_fit', 'dim_outside']),
+      containsAll(<String>[
+        'strip_fit',
+        'dim_outside',
+        'strip_overlap',
+        'neighbour_share',
+      ]),
     );
     expect(await columnsOf(data, 'books'), contains('category_id'));
     expect(await columnsOf(data, 'device_files'), contains('fingerprint'));
@@ -117,6 +134,59 @@ void main() {
     );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('F-READ-12: база версии 8 доезжает до 9 и получает нахлёст', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await first.reading.saveSettings(
+      const BookReadingSettings(
+        bookId: 'book-1',
+        orientation: ScreenOrientation.portrait,
+        displayMode: PageDisplayMode.half,
+        stripFit: 0.9,
+        dimOutside: 0.4,
+      ),
+    );
+    await undoStripWindow(first);
+    await first.database.customStatement('PRAGMA user_version = 8');
+    expect(
+      await columnsOf(first, 'book_settings'),
+      isNot(contains('strip_overlap')),
+    );
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(
+      await columnsOf(second, 'book_settings'),
+      containsAll(<String>['strip_overlap', 'neighbour_share']),
+    );
+
+    // Настройки книги, которую читали до обновления, на месте.
+    final BookReadingSettings loaded = await second.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    expect(loaded.displayMode, PageDisplayMode.half);
+    expect(loaded.stripFit, closeTo(0.9, 1e-9));
+    expect(loaded.dimOutside, closeTo(0.4, 1e-9));
+    // А новые приходят со значениями по умолчанию — те же, что у книги,
+    // открытой впервые.
+    expect(loaded.stripOverlap, kDefaultStripOverlap);
+    expect(loaded.neighbourShare, kDefaultNeighbourShare);
+
+    // И после миграции новые настройки пишутся и читаются.
+    await second.reading.saveSettings(
+      loaded.copyWith(stripOverlap: 0.12, neighbourShare: 0),
+    );
+    final BookReadingSettings saved = await second.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    expect(saved.stripOverlap, closeTo(0.12, 1e-9));
+    expect(saved.neighbourShare, 0);
+    await second.close();
   });
 
   test('база версии 7 доезжает до 8 и получает место цитаты', () async {
@@ -359,11 +429,13 @@ void main() {
     expect(loaded.filter, ReadingFilter.nightRed);
     expect(loaded.filterIntensity, 0.5);
     expect(loaded.brightness, 0.6);
-    // А новые настройки приходят со значениями по умолчанию: книга,
-    // которую читали до обновления, открывается точно так же, как
-    // открывалась.
+    // А новые настройки приходят со значениями по умолчанию: запас по
+    // краям и затемнение — как были, нахлёст и полоска соседней страницы
+    // — те же, что у книги, открытой впервые.
     expect(loaded.stripFit, 1);
     expect(loaded.dimOutside, kDefaultDimOutside);
+    expect(loaded.stripOverlap, kDefaultStripOverlap);
+    expect(loaded.neighbourShare, kDefaultNeighbourShare);
     await second.close();
   });
 

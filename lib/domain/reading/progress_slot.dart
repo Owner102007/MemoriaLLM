@@ -102,18 +102,29 @@ class ProgressSlot {
 /// нет. В чтении во весь экран нельзя (F-READ-35): там экран отдан
 /// читаемой полосе целиком, и указатель остаётся только в свободном
 /// поле.
+///
+/// [reservedRight] и [reservedBottom] — сколько поля у края листа занято
+/// соседней страницей (F-READ-13): указатель встаёт за ней, а не поверх.
 ProgressSlot progressSlotFor({
   required SheetPlacement placement,
   required double screenWidth,
   required double screenHeight,
   double thickness = 44,
   bool overPage = true,
+  double reservedRight = 0,
+  double reservedBottom = 0,
 }) {
+  final double takenRight = reservedRight.isFinite && reservedRight > 0
+      ? reservedRight
+      : 0;
+  final double takenBottom = reservedBottom.isFinite && reservedBottom > 0
+      ? reservedBottom
+      : 0;
   final double rightField = placement.isVisible
-      ? screenWidth - (placement.left + placement.sheetWidth)
+      ? screenWidth - (placement.left + placement.sheetWidth) - takenRight
       : 0;
   final double bottomField = placement.isVisible
-      ? screenHeight - (placement.top + placement.sheetHeight)
+      ? screenHeight - (placement.top + placement.sheetHeight) - takenBottom
       : screenHeight;
 
   if (rightField >= thickness) {

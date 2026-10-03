@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/domain/reading/sheet_arrangement.dart';
 import 'package:memoria/ui/reader/reader_mask.dart';
 
-/// Маска поверх страницы: два уровня темноты вместо второго виджета.
+/// Маска поверх страницы: уровни темноты вместо второго виджета.
 ///
 /// Проверяется не картинка, а смысл: что закрыто наглухо, что притушено и
 /// что осталось светлым. Путь отвечает на этот вопрос точкой — попала она
@@ -85,6 +86,122 @@ void main() {
         fragment: const Rect.fromLTWH(1000, 1000, 100, 100),
       );
       expect(lost.contains(const Offset(200, 300)), isTrue);
+    });
+  });
+
+  group('F-READ-13: третий уровень — назначенный кусок соседа', () {
+    // Широкое окно ПК: страница посередине, соседние — по бокам, и от
+    // каждой видна полоска в 40 точек.
+    const Rect wide = Rect.fromLTWH(0, 0, 1200, 600);
+    const Rect page = Rect.fromLTWH(400, 0, 400, 600);
+    final List<NeighbourZone> zones = neighbourZones(
+      arrangement: SheetArrangement.row,
+      sheet: page,
+      strip: page,
+      band: 0,
+      width: 40,
+      hasBefore: true,
+      hasAfter: true,
+    );
+    final Path path = outsideSheetPath(
+      screen: wide,
+      sheet: page,
+      neighbours: zones,
+    );
+
+    test('F-READ-13: полоска соседа открыта, дальше — фон наглухо', () {
+      // В полоске фона нет: там видна соседняя страница под своей тенью.
+      expect(path.contains(const Offset(380, 300)), isFalse);
+      expect(path.contains(const Offset(820, 300)), isFalse);
+      // А сразу за полоской — фон, сколько бы соседа ни влезло в окно.
+      expect(path.contains(const Offset(350, 300)), isTrue);
+      expect(path.contains(const Offset(850, 300)), isTrue);
+      expect(path.contains(const Offset(10, 300)), isTrue);
+      expect(path.contains(const Offset(1190, 300)), isTrue);
+    });
+
+    test('F-READ-13: своя страница по-прежнему открыта', () {
+      expect(path.contains(const Offset(600, 300)), isFalse);
+    });
+
+    test('F-READ-13: без соседей маска та же, что была', () {
+      final Path plain = outsideSheetPath(screen: wide, sheet: page);
+      expect(plain.contains(const Offset(380, 300)), isTrue);
+      expect(plain.contains(const Offset(820, 300)), isTrue);
+      expect(plain.contains(const Offset(600, 300)), isFalse);
+    });
+
+    test('F-READ-12: под листом открыт верх следующей страницы', () {
+      // Столбик: последняя полоса страницы, нахлёст 30 точек.
+      const Rect screen = Rect.fromLTWH(0, 0, 800, 360);
+      const Rect sheet = Rect.fromLTWH(0, -500, 800, 800);
+      final List<NeighbourZone> below = neighbourZones(
+        arrangement: SheetArrangement.column,
+        sheet: sheet,
+        strip: const Rect.fromLTWH(0, 30, 800, 270),
+        band: 30,
+        width: 0,
+        hasBefore: true,
+        hasAfter: true,
+      );
+      final Path lapped = outsideSheetPath(
+        screen: screen,
+        sheet: sheet,
+        neighbours: below,
+      );
+      // Тридцать точек под листом открыты, ниже — фон.
+      expect(lapped.contains(const Offset(400, 315)), isFalse);
+      expect(lapped.contains(const Offset(400, 345)), isTrue);
+    });
+
+    test('F-READ-13: смена соседей перерисовывает маску', () {
+      const ReaderMaskPainter plain = ReaderMaskPainter(
+        sheet: page,
+        strip: page,
+        dim: 0.6,
+        background: Color(0xFF0E0708),
+      );
+      final ReaderMaskPainter withZones = ReaderMaskPainter(
+        sheet: page,
+        strip: page,
+        dim: 0.6,
+        background: const Color(0xFF0E0708),
+        neighbours: zones,
+      );
+      final ReaderMaskPainter same = ReaderMaskPainter(
+        sheet: page,
+        strip: page,
+        dim: 0.6,
+        background: const Color(0xFF0E0708),
+        neighbours: List<NeighbourZone>.of(zones),
+      );
+      expect(withZones.shouldRepaint(plain), isTrue);
+      expect(withZones.shouldRepaint(same), isFalse);
+    });
+
+    testWidgets('F-READ-13: маска с соседями рисуется и нажатий не ловит', (
+      WidgetTester tester,
+    ) async {
+      int taps = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => taps++,
+            child: ReaderMask(
+              sheet: page,
+              strip: page,
+              dim: 0,
+              background: const Color(0xFF0E0708),
+              neighbours: zones,
+            ),
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.tapAt(const Offset(380, 300));
+      await tester.pump();
+      expect(taps, 1);
     });
   });
 

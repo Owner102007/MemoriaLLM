@@ -70,9 +70,249 @@ void main() {
       // Страница уже экрана по пропорциям, поэтому упирается в ширину.
       expect(placement.sheetWidth, closeTo(_shortSide, 1e-9));
       expect(placement.left, closeTo(0, 1e-9));
-      // По высоте остаётся запас, и лист стоит по центру.
-      final double slack = _longSide - placement.sheetHeight;
-      expect(placement.top, closeTo(slack / 2, 1e-9));
+      // По высоте остаётся запас, и он целиком уходит вниз (F-READ-11).
+      expect(placement.top, closeTo(0, 1e-9));
+      expect(_longSide - placement.sheetHeight, greaterThan(100));
+    });
+  });
+
+  group('F-READ-11: полоса прижата кверху', () {
+    // Широкое низкое окно ПК не годится: там полоса упирается в высоту,
+    // и прижимать нечего. Запас по вертикали появляется, когда полоса
+    // упёрлась в ширину, — на высоком экране.
+    final List<CropBox> halves = fragmentsFor(
+      content: CropBox.full,
+      mode: PageDisplayMode.half,
+      breaks: const <double>[0.5],
+    );
+
+    test('F-READ-11: полоса уже экрана начинается у его верха', () {
+      for (final CropBox half in halves) {
+        final SheetPlacement placement = place(fragment: half);
+        final SheetViewport window = fragmentBounds(
+          placement: placement,
+          fragment: half,
+        );
+        // Половина А4 на вертикальном телефоне упирается в ширину.
+        expect(window.width, closeTo(_shortSide, 1e-9));
+        expect(window.height, lessThan(_longSide - 100));
+        expect(window.top, closeTo(0, 1e-9), reason: 'весь запас — вниз');
+      }
+    });
+
+    test('F-READ-11: верх полосы не зависит от её высоты', () {
+      // Жалоба владельца была ровно на это: полосы одной страницы разной
+      // высоты — граница ищет просвет между строками, — и при центровке
+      // первая строка гуляла от экрана к экрану.
+      const CropBox shortStrip = CropBox(
+        left: 0,
+        top: 0,
+        right: 1,
+        bottom: 0.42,
+      );
+      const CropBox tallStrip = CropBox(
+        left: 0,
+        top: 0.42,
+        right: 1,
+        bottom: 1,
+      );
+      double topOf(CropBox strip) {
+        final SheetPlacement placement = place(fragment: strip);
+        return fragmentBounds(placement: placement, fragment: strip).top;
+      }
+
+      expect(topOf(shortStrip), closeTo(topOf(tallStrip), 1e-9));
+    });
+
+    test('F-READ-11: по горизонтали полоса по-прежнему по центру', () {
+      final SheetPlacement placement = place(
+        fragment: halves.first,
+        landscape: true,
+      );
+      final SheetViewport window = fragmentBounds(
+        placement: placement,
+        fragment: halves.first,
+      );
+      expect(window.left, greaterThan(1));
+      expect(
+        window.left,
+        closeTo(_longSide - (window.left + window.width), 1e-9),
+      );
+    });
+
+    test('F-READ-11: запас по краям отодвигает полосу и от верха', () {
+      final SheetViewport window = fragmentBounds(
+        placement: placeFragment(
+          sheetWidth: _pageWidth,
+          sheetHeight: _pageHeight,
+          fragment: halves.first,
+          screenWidth: _shortSide,
+          screenHeight: _longSide,
+          fit: 0.9,
+        ),
+        fragment: halves.first,
+      );
+      // Крайняя строка уходит от выреза камеры: сверху остаётся столько
+      // же, сколько осталось бы у полосы, упёршейся в высоту.
+      expect(window.top, closeTo(_longSide * 0.05, 1e-9));
+      expect(window.left, closeTo(_shortSide * 0.05, 1e-9));
+    });
+  });
+
+  group('F-READ-12: нахлёст', () {
+    final List<CropBox> halves = fragmentsFor(
+      content: CropBox.full,
+      mode: PageDisplayMode.half,
+      breaks: const <double>[0.5],
+    );
+    final List<CropBox> thirds = fragmentsFor(
+      content: CropBox.full,
+      mode: PageDisplayMode.third,
+      breaks: const <double>[1 / 3, 2 / 3],
+    );
+
+    SheetViewport windowOf(
+      CropBox strip, {
+      required double overlap,
+      bool landscape = true,
+    }) {
+      final double width = landscape ? _longSide : _shortSide;
+      final double height = landscape ? _shortSide : _longSide;
+      return fragmentBounds(
+        placement: placeFragment(
+          sheetWidth: _pageWidth,
+          sheetHeight: _pageHeight,
+          fragment: strip,
+          screenWidth: width,
+          screenHeight: height,
+          overlap: overlap,
+        ),
+        fragment: strip,
+      );
+    }
+
+    test('F-READ-12: над полосой и под ней остаётся по нахлёсту', () {
+      // Половина А4 на лежащем телефоне упирается в высоту: нахлёст
+      // отнимает у неё экран сверху и снизу поровну.
+      final SheetViewport window = windowOf(halves.first, overlap: 0.07);
+      expect(window.top, closeTo(_shortSide * 0.07, 1e-9));
+      expect(window.top + window.height, closeTo(_shortSide * 0.93, 1e-9));
+    });
+
+    test('F-READ-12: полоса содержимого равна 1/N при любом нахлёсте', () {
+      // Нахлёст расширяет окно показа, а не делитель: дробь на кнопке
+      // значит ровно то, что нарисована. Проверяется смыслом — какая
+      // доля листа лежит в светлом окне.
+      for (final List<CropBox> parts in <List<CropBox>>[halves, thirds]) {
+        for (final CropBox strip in parts) {
+          for (final double overlap in <double>[0, 0.035, 0.07, 0.15]) {
+            for (final bool landscape in <bool>[true, false]) {
+              final double width = landscape ? _longSide : _shortSide;
+              final double height = landscape ? _shortSide : _longSide;
+              final SheetPlacement placement = placeFragment(
+                sheetWidth: _pageWidth,
+                sheetHeight: _pageHeight,
+                fragment: strip,
+                screenWidth: width,
+                screenHeight: height,
+                overlap: overlap,
+              );
+              final SheetViewport window = fragmentBounds(
+                placement: placement,
+                fragment: strip,
+              );
+              final String at = 'нахлёст $overlap, полос ${parts.length}';
+              expect(
+                window.height / placement.sheetHeight,
+                closeTo(1 / parts.length, 1e-9),
+                reason: at,
+              );
+              expect(
+                window.width / placement.sheetWidth,
+                closeTo(1, 1e-9),
+                reason: at,
+              );
+              // И полоса целиком на экране, между нахлёстами.
+              expect(
+                window.top,
+                greaterThanOrEqualTo(height * overlap - 1e-9),
+                reason: at,
+              );
+              expect(
+                window.top + window.height,
+                lessThanOrEqualTo(height * (1 - overlap) + 1e-9),
+                reason: at,
+              );
+              expect(window.left, greaterThanOrEqualTo(-1e-9), reason: at);
+              expect(
+                window.left + window.width,
+                lessThanOrEqualTo(width + 1e-9),
+                reason: at,
+              );
+            }
+          }
+        }
+      }
+    });
+
+    test('F-READ-12: в нахлёсте видно продолжение той же страницы', () {
+      // Под первой половиной — начало второй: лист не обрезан, он
+      // продолжается под полосой, и маска его только затемняет.
+      final SheetPlacement placement = placeFragment(
+        sheetWidth: _pageWidth,
+        sheetHeight: _pageHeight,
+        fragment: halves.first,
+        screenWidth: _longSide,
+        screenHeight: _shortSide,
+        overlap: 0.07,
+      );
+      final CropBox shown = visible(placement, landscape: true);
+      expect(shown.bottom, greaterThan(halves.first.bottom + 0.01));
+      // А над первой полосой страницы нет: там её верхний край.
+      expect(placement.top, closeTo(_shortSide * 0.07, 1e-9));
+    });
+
+    test('F-READ-12: нулевой нахлёст — полоса вплотную, как прежде', () {
+      final SheetViewport window = windowOf(halves.first, overlap: 0);
+      expect(window.top, closeTo(0, 1e-9));
+      expect(window.height, closeTo(_shortSide, 1e-9));
+    });
+
+    test('F-READ-12: нахлёст не бывает больше потолка', () {
+      final SheetViewport capped = windowOf(halves.first, overlap: 0.6);
+      final SheetViewport top = windowOf(
+        halves.first,
+        overlap: kMaxStripOverlap,
+      );
+      expect(capped.top, closeTo(top.top, 1e-9));
+      expect(capped.height, closeTo(top.height, 1e-9));
+      expect(clampStripOverlap(double.nan), 0);
+      expect(clampStripOverlap(-1), 0);
+    });
+
+    test('F-READ-12: полосе, упёршейся в ширину, нахлёст ничего не стоит', () {
+      // На вертикальном экране запас по высоте и так есть: полоса
+      // остаётся того же размера и только съезжает под нахлёст.
+      final SheetViewport plain = windowOf(
+        halves.first,
+        overlap: 0,
+        landscape: false,
+      );
+      final SheetViewport lapped = windowOf(
+        halves.first,
+        overlap: 0.07,
+        landscape: false,
+      );
+      expect(lapped.height, closeTo(plain.height, 1e-9));
+      expect(lapped.top, closeTo(_longSide * 0.07, 1e-9));
+    });
+
+    test('F-READ-12: у трети нахлёст вдвое меньше, у страницы его нет', () {
+      expect(stripOverlapFor(overlap: 0.07, count: 2), closeTo(0.07, 1e-12));
+      expect(stripOverlapFor(overlap: 0.07, count: 3), closeTo(0.035, 1e-12));
+      expect(stripOverlapFor(overlap: 0.07, count: 1), 0);
+      expect(stripOverlapFor(overlap: 0.5, count: 2), kMaxStripOverlap);
+      expect(stripOverlapFor(overlap: 0, count: 2), 0);
     });
   });
 

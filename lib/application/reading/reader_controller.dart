@@ -142,6 +142,9 @@ class ReaderController extends ChangeNotifier {
   bool _canTurn = true;
   Timer? _saveTimer;
   bool _dirty = false;
+
+  /// Есть ли в настройках правки, ещё не записанные в базу (BUG-12).
+  bool _settingsUnsaved = false;
   bool _closed = false;
   bool _disposed = false;
   bool _navigating = false;
@@ -348,6 +351,9 @@ class ReaderController extends ChangeNotifier {
       area: _area,
       breaks: _breaksFor(mode),
       canTurn: _canTurn,
+      // F-READ-12: нахлёст отнимает экран у полосы, и выигрыш режима
+      // считается с ним — иначе кнопка обещала бы больше, чем выйдет.
+      overlap: _settings.stripOverlap,
     );
   }
 
@@ -960,6 +966,8 @@ class ReaderController extends ChangeNotifier {
       gamma: _settings.gamma,
       stripFit: _settings.stripFit,
       dimOutside: _settings.dimOutside,
+      stripOverlap: _settings.stripOverlap,
+      neighbourShare: _settings.neighbourShare,
     );
     _fragment = clampFragment(_fragment, fragmentCount);
     await _saveSettings();
@@ -969,21 +977,53 @@ class ReaderController extends ChangeNotifier {
   ///
   /// Значение приводится к допустимому диапазону здесь, а не в интерфейсе:
   /// полоса мельче [kMinStripFit] перестаёт быть чтением.
-  Future<void> setStripFit(double value) async {
+  ///
+  /// [persist] — писать ли значение в базу сразу. Ползунок, пока его
+  /// тянут, не пишет (BUG-12): страница меняется вживую, а запись одна —
+  /// по отпусканию, через [persistSettings]. То же у остальных настроек,
+  /// которые меняются ползунком.
+  Future<void> setStripFit(double value, {bool persist = true}) async {
     final double safe = clampStripFit(value);
     if (safe == _settings.stripFit) {
       return;
     }
-    await _updateSettings(_settings.copyWith(stripFit: safe));
+    await _updateSettings(_settings.copyWith(stripFit: safe), persist: persist);
   }
 
   /// Меняет силу затемнения нечитаемой части страницы.
-  Future<void> setDimOutside(double value) async {
+  Future<void> setDimOutside(double value, {bool persist = true}) async {
     final double safe = clampDimOutside(value);
     if (safe == _settings.dimOutside) {
       return;
     }
-    await _updateSettings(_settings.copyWith(dimOutside: safe));
+    await _updateSettings(
+      _settings.copyWith(dimOutside: safe),
+      persist: persist,
+    );
+  }
+
+  /// Меняет нахлёст соседних полос (F-READ-12).
+  Future<void> setStripOverlap(double value, {bool persist = true}) async {
+    final double safe = clampStripOverlap(value);
+    if (safe == _settings.stripOverlap) {
+      return;
+    }
+    await _updateSettings(
+      _settings.copyWith(stripOverlap: safe),
+      persist: persist,
+    );
+  }
+
+  /// Меняет ширину полоски соседней страницы (F-READ-13).
+  Future<void> setNeighbourShare(double value, {bool persist = true}) async {
+    final double safe = clampNeighbourShare(value);
+    if (safe == _settings.neighbourShare) {
+      return;
+    }
+    await _updateSettings(
+      _settings.copyWith(neighbourShare: safe),
+      persist: persist,
+    );
   }
 
   /// Выбирает светофильтр и сразу даёт ему заметную силу.
@@ -999,20 +1039,38 @@ class ReaderController extends ChangeNotifier {
   }
 
   /// Меняет силу фильтра.
-  Future<void> setFilterIntensity(double value) =>
-      _updateSettings(_settings.copyWith(filterIntensity: value));
+  Future<void> setFilterIntensity(double value, {bool persist = true}) =>
+      _updateSettings(
+        _settings.copyWith(filterIntensity: value),
+        persist: persist,
+      );
 
   /// Меняет яркость.
-  Future<void> setBrightness(double value) =>
-      _updateSettings(_settings.copyWith(brightness: value));
+  Future<void> setBrightness(double value, {bool persist = true}) =>
+      _updateSettings(_settings.copyWith(brightness: value), persist: persist);
 
   /// Меняет контраст.
-  Future<void> setContrast(double value) =>
-      _updateSettings(_settings.copyWith(contrast: value));
+  Future<void> setContrast(double value, {bool persist = true}) =>
+      _updateSettings(_settings.copyWith(contrast: value), persist: persist);
 
   /// Меняет гамму.
-  Future<void> setGamma(double value) =>
-      _updateSettings(_settings.copyWith(gamma: value));
+  Future<void> setGamma(double value, {bool persist = true}) =>
+      _updateSettings(_settings.copyWith(gamma: value), persist: persist);
+
+  /// Записывает настройки, которые менялись без записи (BUG-12).
+  ///
+  /// Каждое движение ползунка шторки писало строку настроек с новой
+  /// меткой HLC — десятки записей на один жест, а после появления
+  /// синхронизации столько же строк в чейнджсете. Теперь ползунок меняет
+  /// настройки вживую и без записи, а пишет один раз — по отпусканию.
+  /// Если писать нечего, не пишет вовсе.
+  Future<void> persistSettings() async {
+    if (!_settingsUnsaved) {
+      return;
+    }
+    _settingsUnsaved = false;
+    await _reading.saveSettings(_settings);
+  }
 
   /// Записывает позицию немедленно.
   ///
@@ -1049,6 +1107,8 @@ class ReaderController extends ChangeNotifier {
       wait.stop();
     }
     _prepareRun++;
+    // Ползунок шторки могли не отпустить: книгу закрыли раньше (BUG-12).
+    await persistSettings();
     await flush();
     await _document.close();
   }
@@ -1073,12 +1133,21 @@ class ReaderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _updateSettings(BookReadingSettings settings) async {
+  Future<void> _updateSettings(
+    BookReadingSettings settings, {
+    bool persist = true,
+  }) async {
     _settings = settings;
+    if (!persist) {
+      _settingsUnsaved = true;
+      _notify();
+      return;
+    }
     await _saveSettings();
   }
 
   Future<void> _saveSettings() async {
+    _settingsUnsaved = false;
     _notify();
     await _reading.saveSettings(_settings);
   }

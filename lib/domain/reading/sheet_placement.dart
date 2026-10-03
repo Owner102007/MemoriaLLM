@@ -40,6 +40,19 @@ double stripFitFor({required double stripFit, required bool fullScreen}) {
   return fullScreen ? 1 : clampStripFit(stripFit);
 }
 
+/// Нахлёст полосы в режиме с [count] полосами, в долях высоты экрана.
+///
+/// F-READ-12, ALG-PDF-19. Страница целиком нахлёста не имеет: соседних
+/// полос у неё нет. В режиме трети действует половина заданного: полоса
+/// там и так низкая, и полный нахлёст съел бы слишком много экрана.
+double stripOverlapFor({required double overlap, required int count}) {
+  if (count <= 1) {
+    return 0;
+  }
+  final double safe = clampStripOverlap(overlap);
+  return count >= 3 ? safe / 2 : safe;
+}
+
 /// Не трогал ли читатель масштаб страницы пальцами.
 ///
 /// Пальцы почти никогда не оставляют ровную единицу, поэтому «не трогал»
@@ -120,13 +133,22 @@ class SheetPlacement {
 /// срезается: у страницы остаются её поля, а обрезается ровно та граница,
 /// по которой лист поделён.
 ///
-/// Если по одной из сторон остаётся запас, фрагмент центрируется: пустота
-/// по краям выглядит куда спокойнее, чем прижатая к углу страница.
+/// **По горизонтали фрагмент центрируется, по вертикали прижат кверху**
+/// (F-READ-11, решение владельца 05.09.2026). Полосы одной страницы
+/// разной высоты — граница ищет просвет между строками, — и при
+/// центровке верх полосы гулял от экрана к экрану: глаз каждый раз
+/// искал, откуда читать. Теперь первая строка стоит на одном месте, а
+/// весь вертикальный остаток уходит вниз.
 ///
-/// [fit] меньше единицы оставляет запас по всем краям: полоса становится
-/// мельче, зато её крайние строки уходят от границы экрана. Это ответ на
-/// закруглённые углы, вырезы камеры и просто на желание видеть строку
-/// целиком, а не вплотную к краю.
+/// [fit] меньше единицы оставляет запас по краям: полоса становится
+/// мельче, зато её крайние строки уходят от границы экрана — в том числе
+/// от верхней. Это ответ на закруглённые углы, вырезы камеры и просто на
+/// желание видеть строку целиком, а не вплотную к краю.
+///
+/// [overlap] — нахлёст, доля высоты экрана (F-READ-12): столько экрана
+/// остаётся над полосой и под ней, и там видны соседние полосы. Полоса
+/// вписывается в то, что осталось, поэтому сама она от нахлёста не
+/// меняется — меняется только место под неё.
 SheetPlacement placeFragment({
   required double sheetWidth,
   required double sheetHeight,
@@ -134,6 +156,7 @@ SheetPlacement placeFragment({
   required double screenWidth,
   required double screenHeight,
   double fit = 1,
+  double overlap = 0,
 }) {
   if (sheetWidth <= 0 ||
       sheetHeight <= 0 ||
@@ -148,22 +171,29 @@ SheetPlacement placeFragment({
     return SheetPlacement.none;
   }
 
+  // Нахлёст отнимает экран сверху и снизу поровну; полоса вписывается в
+  // остаток.
+  final double band = clampStripOverlap(overlap) * screenHeight;
+  final double room = screenHeight - band * 2;
+  final double safeFit = clampStripFit(fit);
   final double byWidth = screenWidth / visibleWidth;
-  final double byHeight = screenHeight / visibleHeight;
-  final double scale =
-      (byWidth < byHeight ? byWidth : byHeight) * clampStripFit(fit);
+  final double byHeight = room / visibleHeight;
+  final double scale = (byWidth < byHeight ? byWidth : byHeight) * safeFit;
 
   final double sheetOnScreenWidth = sheetWidth * scale;
   final double sheetOnScreenHeight = sheetHeight * scale;
+
+  // Верх полосы: под нахлёстом и под запасом по краям. Запас берётся
+  // таким, каким он вышел бы у полосы, упёршейся в высоту, — тогда у
+  // такой полосы он одинаков сверху и снизу, как и был.
+  final double stripTop = band + room * (1 - safeFit) / 2;
 
   return SheetPlacement(
     scale: scale,
     left:
         (screenWidth - visibleWidth * scale) / 2 -
         fragment.left * sheetOnScreenWidth,
-    top:
-        (screenHeight - visibleHeight * scale) / 2 -
-        fragment.top * sheetOnScreenHeight,
+    top: stripTop - fragment.top * sheetOnScreenHeight,
     sheetWidth: sheetOnScreenWidth,
     sheetHeight: sheetOnScreenHeight,
   );

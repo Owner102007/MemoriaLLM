@@ -142,6 +142,40 @@ double neighbourCacheExtent({
   return reach <= 0 ? 0 : reach / visibleWidth;
 }
 
+/// Запас кэша просмотрщика по вертикали, в высотах видимой области —
+/// для листов, лежащих в столбик (F-READ-12).
+///
+/// То же, что [neighbourCacheExtent], но видимая область здесь — полоса,
+/// и стоит она не посередине листа: первая полоса у его верха, последняя
+/// у низа. Поэтому запас считается от настоящих краёв видимой области:
+/// он обязан дотянуться до [sheets]-го листа и сверху, и снизу, с какой
+/// бы полосы читатель ни смотрел.
+///
+/// [visibleTop] — верх видимой области относительно верха листа,
+/// отрицательный, когда она начинается выше листа. Всё в одних единицах
+/// (точках PDF).
+double columnCacheExtent({
+  required double sheetHeight,
+  required double visibleTop,
+  required double visibleHeight,
+  required int sheets,
+}) {
+  if (sheets <= 0 ||
+      sheetHeight <= 0 ||
+      visibleHeight <= 0 ||
+      !visibleTop.isFinite) {
+    return 0;
+  }
+  // До верхнего соседа: его нижний край лежит на `sheets - 1` листов
+  // выше нашего верха. До нижнего: его верхний край — на `sheets` листов
+  // ниже нашего верха.
+  final double up = visibleTop + sheetHeight * (sheets - 1 + kNeighbourReach);
+  final double down =
+      sheetHeight * (sheets + kNeighbourReach) - (visibleTop + visibleHeight);
+  final double reach = up > down ? up : down;
+  return reach <= 0 ? 0 : reach / visibleHeight;
+}
+
 /// Сколько пикселей отдаётся грубой картинке одной страницы.
 ///
 /// Три мегапикселя — двенадцать мегабайт на страницу. Грубая картинка

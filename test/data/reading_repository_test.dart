@@ -111,6 +111,35 @@ void main() {
     expect(loaded.stripFit, closeTo(0.86, 1e-9));
   });
 
+  test('F-READ-12: нахлёст и полоска соседа запоминаются для книги', () async {
+    final BookReadingSettings fresh = await data.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    // Книга, открытая впервые: нахлёст и полоска соседней страницы — по
+    // умолчанию.
+    expect(fresh.stripOverlap, kDefaultStripOverlap);
+    expect(fresh.neighbourShare, kDefaultNeighbourShare);
+
+    await data.reading.saveSettings(
+      const BookReadingSettings(
+        bookId: 'book-1',
+        orientation: ScreenOrientation.portrait,
+        displayMode: PageDisplayMode.half,
+        stripOverlap: 0.11,
+        neighbourShare: 0,
+      ),
+    );
+
+    final BookReadingSettings loaded = await data.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    expect(loaded.stripOverlap, closeTo(0.11, 1e-9));
+    // Ноль — тоже выбор читателя, а не «не задано».
+    expect(loaded.neighbourShare, 0);
+  });
+
   test('настройки сохраняются вместе с ручной рамкой', () async {
     const CropBox crop = CropBox(
       left: 0.08,

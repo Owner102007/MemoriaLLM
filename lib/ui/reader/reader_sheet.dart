@@ -10,9 +10,12 @@ import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/progress_slot.dart';
 import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
+import '../../domain/reading/reading_filter.dart';
+import '../../domain/reading/sheet_arrangement.dart';
 import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/sheet_transform.dart';
 import 'quick_tap.dart';
+import 'reader_layers.dart';
 import 'reader_mask.dart';
 import 'reading_progress_book.dart';
 
@@ -79,11 +82,22 @@ class ReaderSheetController {
 /// 1. **Позиция.** Матрица просмотрщика приколочена к нашей раскладке —
 ///    `normalizeMatrix` возвращает нашу матрицу, а не его. Масштаб считаем
 ///    мы, а не жест, и он одинаков на каждой странице книги.
-/// 2. **Маска.** Поверх — [ReaderMask] в координатах экрана, двух уровней:
-///    за пределами листа фон наглухо (иначе на широком окне видны соседние
-///    страницы — ровно то, на чём сломалась S6.1), на листе вне читаемой
-///    полосы — затемнение по настройке. Страница не обрезана: она
-///    продолжается в темноте.
+/// 2. **Маска.** Поверх — [ReaderMask] в координатах экрана, трёх уровней:
+///    за пределами листа фон наглухо (иначе на широком окне видно столько
+///    соседних страниц, сколько влезло, — ровно то, на чём сломалась
+///    S6.1), на листе вне читаемой полосы — затемнение по настройке, а от
+///    соседнего листа виден назначенный нами кусок, темнее своей страницы
+///    (F-READ-13). Страница не обрезана: она продолжается в темноте.
+///
+/// **Листы лежат в ряд или в столбик** (F-READ-12, `sheet_arrangement`).
+/// Лист, который показывается целиком, стоит в ряду: соседи по бокам. В
+/// режимах с полосами листы стоят в столбик: под последней полосой
+/// страницы физически лежит верх следующей, и подглядывание в неё рисует
+/// тот же просмотрщик.
+///
+/// **Светофильтр — только на картинке страницы** (BUG-04): маска,
+/// подсветка, панель над выделением и указатель места лежат выше него,
+/// порядок слоёв — [ReaderLayers].
 ///
 /// **Замок решает, можно ли трогать страницу.** Заперт — любая попытка
 /// сдвинуть или приблизить возвращает матрицу на место, страница стоит
@@ -116,6 +130,11 @@ class ReaderSheet extends StatefulWidget {
     required this.locked,
     this.stripFit = 1,
     this.dim = kDefaultDimOutside,
+    this.filter = const ReadingFilterPipeline(),
+    this.arrangement = SheetArrangement.row,
+    this.spread = false,
+    this.overlap = 0,
+    this.neighbourShare = 0,
     this.preview = true,
     this.reserve = 1,
     this.progressOverPage = true,
@@ -168,6 +187,23 @@ class ReaderSheet extends StatefulWidget {
   /// Сила затемнения нечитаемой части страницы.
   final double dim;
 
+  /// Светофильтр. Ложится только на картинку страницы (BUG-04).
+  final ReadingFilterPipeline filter;
+
+  /// Как листы лежат в документе просмотрщика: в ряд или в столбик.
+  final SheetArrangement arrangement;
+
+  /// Листается ли книга разворотами: в столбике лист разворота — две
+  /// страницы рядом.
+  final bool spread;
+
+  /// Нахлёст полосы, доля высоты экрана — уже для текущего режима
+  /// (F-READ-12). Ноль — полоса вплотную.
+  final double overlap;
+
+  /// Ширина полоски соседней страницы, доля ширины экрана (F-READ-13).
+  final double neighbourShare;
+
   /// Показывать ли страницу сразу — грубой картинкой, а резкую
   /// дорисовывать следом (F-READ-02).
   final bool preview;
@@ -207,6 +243,11 @@ class _ReaderSheetState extends State<ReaderSheet> {
 
   final PdfViewerController _viewer = PdfViewerController();
 
+  /// Ключ просмотрщика: светофильтр то оборачивает его, то нет, и без
+  /// ключа каждая смена фильтра пересоздавала бы просмотрщик — с белым
+  /// листом и возвратом на первую страницу листа (BUG-04).
+  final GlobalKey _viewerKey = GlobalKey(debugLabel: 'reader-viewer');
+
   /// Нажатие узнаём сами, по сырым событиям указателя, а не от
   /// просмотрщика: тот объявляет его на 300 мс позже (BUG-37).
   final TapWatch _taps = TapWatch();
@@ -224,6 +265,8 @@ class _ReaderSheetState extends State<ReaderSheet> {
   SheetPlacement? _appliedPlacement;
   List<int> _appliedPages = const <int>[];
   Size _appliedScreen = Size.zero;
+  SheetArrangement? _appliedArrangement;
+  bool _appliedSpread = false;
 
   /// Страницы документа, как мы их разложили для просмотрщика в прошлый
   /// раз. Сменились — он перекладывает их у себя.
@@ -331,11 +374,11 @@ class _ReaderSheetState extends State<ReaderSheet> {
   /// Движок домерил страницы книги.
   ///
   /// F-READ-02: книга открывается, не измеряя все свои страницы, и
-  /// размеры досчитываются уже при открытой книге. Страницы лежат в один
-  /// ряд, поэтому новый размер любой страницы левее листа сдвигает сам
-  /// лист: просмотрщик обязан встать на его новое место раньше, чем
-  /// нарисует кадр. А если домерили страницу самого листа, меняется и
-  /// раскладка — её пересчитает перестроение.
+  /// размеры досчитываются уже при открытой книге. Страницы лежат в ряд
+  /// или в столбик вплотную, поэтому новый размер любой страницы перед
+  /// листом сдвигает сам лист: просмотрщик обязан встать на его новое
+  /// место раньше, чем нарисует кадр. А если домерили страницу самого
+  /// листа, меняется и раскладка — её пересчитает перестроение.
   void _onDocumentEvent(PdfDocumentEvent event) {
     if (!mounted || event is! PdfDocumentPageStatusChangedEvent) {
       return;
@@ -382,10 +425,12 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (_relaying) {
       return;
     }
+    final Offset origin = _origin();
     final SheetTransform next = sheetTransformOf(
       matrix: _viewer.value,
       placement: _placement,
-      documentLeft: _documentLeft(),
+      documentLeft: origin.dx,
+      documentTop: origin.dy,
     );
     if (next == _transform) {
       return;
@@ -437,9 +482,11 @@ class _ReaderSheetState extends State<ReaderSheet> {
   }
 
   Matrix4 _target() {
+    final Offset origin = _origin();
     return sheetMatrix(
       placement: _placement,
-      documentLeft: _documentLeft(),
+      documentLeft: origin.dx,
+      documentTop: origin.dy,
       transform: _transform,
     );
   }
@@ -504,13 +551,14 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (!_placement.isVisible) {
       return matrix;
     }
-    final double documentLeft = _documentLeft();
+    final Offset origin = _origin();
     final SheetTransform kept = sheetTransformAfterMove(
       current: _transform,
       proposed: sheetTransformOf(
         matrix: matrix,
         placement: _placement,
-        documentLeft: documentLeft,
+        documentLeft: origin.dx,
+        documentTop: origin.dy,
       ),
       placement: _placement,
       screen: viewSize,
@@ -519,52 +567,55 @@ class _ReaderSheetState extends State<ReaderSheet> {
     );
     return sheetMatrix(
       placement: _placement,
-      documentLeft: documentLeft,
+      documentLeft: origin.dx,
+      documentTop: origin.dy,
       transform: kept,
     );
   }
 
-  /// Смещение первой страницы листа в координатах документа.
-  double _documentLeft() {
+  /// Где первая страница листа лежит в документе просмотрщика.
+  ///
+  /// Считается по тем же правилам, что и раскладка в [_layoutPages], и по
+  /// сегодняшним размерам страниц: домерили страницу перед листом — лист
+  /// уехал, и матрица обязана уехать за ним.
+  Offset _origin() {
     if (widget.pages.isEmpty) {
-      return 0;
+      return Offset.zero;
     }
     final List<PdfPage> pages = widget.document.pages;
-    double left = 0;
-    for (int i = 1; i < widget.pages.first && i <= pages.length; i++) {
-      left += pages[i - 1].width;
-    }
-    return left;
+    return sheetOrigin(
+      firstPage: widget.pages.first,
+      pageCount: pages.length,
+      widthOf: (int page) => pages[page - 1].width,
+      heightOf: (int page) => pages[page - 1].height,
+      arrangement: widget.arrangement,
+      spread: widget.spread,
+    );
   }
 
-  /// Страницы в один ряд, вплотную и без полей.
+  /// Страницы вплотную и без полей — в ряд или в столбик (F-READ-12).
   ///
   /// Соседние страницы при этом остаются в раскладке — их закрывает
   /// маска, а не отсутствие. Убрать их из раскладки нельзя: номера
   /// страниц и места в тексте считаются по всему документу.
   ///
   /// Просмотрщик зовёт это при каждом своём построении. Если страницы
-  /// легли иначе, чем в прошлый раз, — домерены их размеры, — он
-  /// переложит их и вернёт вид сам: открывается окно перекладки (BUG-40).
+  /// легли иначе, чем в прошлый раз, — домерены их размеры или режим
+  /// сменил ряд на столбик, — он переложит их и вернёт вид сам:
+  /// открывается окно перекладки (BUG-40).
   PdfPageLayout _layoutPages(List<PdfPage> pages, PdfViewerParams params) {
-    final List<Rect> rects = <Rect>[];
-    double x = 0;
-    double height = 0;
-    for (final PdfPage page in pages) {
-      rects.add(Rect.fromLTWH(x, 0, page.width, page.height));
-      x += page.width;
-      if (page.height > height) {
-        height = page.height;
-      }
-    }
+    final List<Rect> rects = arrangePages(
+      pageCount: pages.length,
+      widthOf: (int page) => pages[page - 1].width,
+      heightOf: (int page) => pages[page - 1].height,
+      arrangement: widget.arrangement,
+      spread: widget.spread,
+    );
     if (!listEquals(_laidOut, rects)) {
       _laidOut = rects;
       _beginRelay();
     }
-    return PdfPageLayout(
-      pageLayouts: rects,
-      documentSize: Size(x <= 0 ? 1 : x, height <= 0 ? 1 : height),
-    );
+    return PdfPageLayout(pageLayouts: rects, documentSize: arrangedSize(rects));
   }
 
   /// Выделено ли что-нибудь прямо сейчас — по словам самого просмотрщика.
@@ -653,10 +704,12 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (!_ready || !_placement.isVisible) {
       return;
     }
+    final Offset origin = _origin();
     final Offset? point = documentPoint(
       screen: screen,
       placement: _placement,
-      documentLeft: _documentLeft(),
+      documentLeft: origin.dx,
+      documentTop: origin.dy,
       transform: _transform,
     );
     if (point == null) {
@@ -707,6 +760,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
             screenWidth: limits.maxWidth,
             screenHeight: limits.maxHeight,
             fit: widget.stripFit,
+            overlap: widget.overlap,
           );
           _placement = placement;
           _screen = Size(limits.maxWidth, limits.maxHeight);
@@ -724,76 +778,122 @@ class _ReaderSheetState extends State<ReaderSheet> {
             placement: placement,
             transform: _transform,
           );
-          return Stack(
-            children: <Widget>[
-              Positioned.fill(
-                child: _buildViewer(
-                  // Запас откладывается от видимой области, а она
-                  // меряется в точках PDF: экран, делённый на масштаб —
-                  // вместе с тем, что читатель добавил щипком.
-                  cacheExtent: neighbourCacheExtent(
-                    sheetWidth: sheetWidth,
-                    visibleWidth:
-                        limits.maxWidth / (placement.scale * _transform.scale),
-                    sheets: widget.preview && !_reserveHeld
-                        ? widget.reserve
-                        : 0,
-                  ),
-                ),
+          final Rect sheetRect = sheetRectOnScreen(
+            placement: placement,
+            transform: _transform,
+          );
+          final Rect stripRect = stripRectOnScreen(
+            placement: placement,
+            fragment: widget.fragment,
+            transform: _transform,
+          );
+          // Что видно от соседних листов (F-READ-12, F-READ-13). Размеры
+          // назначены долями экрана и едут вместе со страницей, когда
+          // читатель двигает её при отпертом замке.
+          final List<NeighbourZone> neighbours = neighbourZones(
+            arrangement: widget.arrangement,
+            sheet: sheetRect,
+            strip: stripRect,
+            band: widget.overlap * limits.maxHeight * _transform.scale,
+            width: widget.neighbourShare * limits.maxWidth * _transform.scale,
+            hasBefore: widget.pages.first > 1,
+            hasAfter: widget.pages.last < widget.document.pages.length,
+          );
+          final int reserve = widget.preview && !_reserveHeld
+              ? widget.reserve
+              : 0;
+          // Запас откладывается от видимой области, а она меряется в
+          // точках PDF: экран, делённый на масштаб — вместе с тем, что
+          // читатель добавил щипком. В ряду запас идёт по горизонтали, в
+          // столбике — по вертикали.
+          final double zoom = placement.scale * _transform.scale;
+          final bool column = widget.arrangement == SheetArrangement.column;
+          return ReaderLayers(
+            filter: widget.filter,
+            page: KeyedSubtree(
+              key: _viewerKey,
+              child: _buildViewer(
+                horizontalExtent: column
+                    ? 0
+                    : neighbourCacheExtent(
+                        sheetWidth: sheetWidth,
+                        visibleWidth: limits.maxWidth / zoom,
+                        sheets: reserve,
+                      ),
+                verticalExtent: column
+                    ? columnCacheExtent(
+                        sheetHeight: sheetHeight,
+                        visibleTop: -sheetRect.top / zoom,
+                        visibleHeight: limits.maxHeight / zoom,
+                        sheets: reserve,
+                      )
+                    : kRowVerticalCacheExtent,
               ),
-              Positioned.fill(
-                child: ReaderMask(
-                  key: const Key('reader-mask'),
-                  sheet: sheetRectOnScreen(
-                    placement: placement,
-                    transform: _transform,
-                  ),
-                  strip: stripRectOnScreen(
-                    placement: placement,
-                    fragment: widget.fragment,
-                    transform: _transform,
-                  ),
-                  dim: widget.dim,
-                  background: widget.background,
-                ),
+            ),
+            mask: ReaderMask(
+              key: const Key('reader-mask'),
+              sheet: sheetRect,
+              strip: stripRect,
+              dim: widget.dim,
+              background: widget.background,
+              neighbours: neighbours,
+            ),
+            overlay: widget.overlay?.call(context, view),
+            progress: ReadingProgressBook(
+              slot: progressSlotFor(
+                placement: placement,
+                screenWidth: _screen.width,
+                screenHeight: _screen.height,
+                overPage: widget.progressOverPage,
+                reservedRight: _reserved(neighbours, sheetRect, right: true),
+                reservedBottom: _reserved(neighbours, sheetRect, right: false),
               ),
-              // Без `IgnorePointer` намеренно: подсветка нажатий не ловит
-              // (у неё нет своей области), а панель действий обязана их
-              // ловить — она и есть то, ради чего выделяют.
-              if (widget.overlay != null)
-                Positioned.fill(child: widget.overlay!(context, view)),
-              // Указатель места живёт поверх маски: гасить его вместе со
-              // страницей незачем, а терять при листании — тем более.
-              ReadingProgressBook(
-                slot: progressSlotFor(
-                  placement: placement,
-                  screenWidth: _screen.width,
-                  screenHeight: _screen.height,
-                  overPage: widget.progressOverPage,
-                ),
-                page: widget.page,
-                pageCount: widget.pageCount,
-              ),
-            ],
+              page: widget.page,
+              pageCount: widget.pageCount,
+            ),
           );
         },
       ),
     );
   }
 
+  /// Сколько поля у правого или нижнего края листа занято соседней
+  /// страницей: указатель места встаёт за ней (F-READ-13).
+  static double _reserved(
+    List<NeighbourZone> neighbours,
+    Rect sheet, {
+    required bool right,
+  }) {
+    double taken = 0;
+    for (final NeighbourZone zone in neighbours) {
+      final double size = right
+          ? (zone.rect.left >= sheet.right ? zone.rect.width : 0)
+          : (zone.rect.top >= sheet.bottom ? zone.rect.height : 0);
+      if (size > taken) {
+        taken = size;
+      }
+    }
+    return taken;
+  }
+
   /// Довозит просмотрщик до новой раскладки — но не во время построения.
   ///
-  /// Новый лист, новая раскладка или область показа другого размера —
-  /// это ещё и перекладка у просмотрщика: до её конца его матрицы не
-  /// принимаются за движение читателя (BUG-40).
+  /// Новый лист, новая раскладка, область показа другого размера или
+  /// листы, вставшие из ряда в столбик, — это ещё и перекладка у
+  /// просмотрщика: до её конца его матрицы не принимаются за движение
+  /// читателя (BUG-40).
   void _scheduleSync(SheetPlacement placement) {
     if (placement == _appliedPlacement &&
         _screen == _appliedScreen &&
+        widget.arrangement == _appliedArrangement &&
+        widget.spread == _appliedSpread &&
         _samePages(_appliedPages)) {
       return;
     }
     _appliedPlacement = placement;
     _appliedScreen = _screen;
+    _appliedArrangement = widget.arrangement;
+    _appliedSpread = widget.spread;
     _appliedPages = List<int>.of(widget.pages);
     _beginRelay();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -815,18 +915,27 @@ class _ReaderSheetState extends State<ReaderSheet> {
     return true;
   }
 
-  Widget _buildViewer({required double cacheExtent}) {
+  Widget _buildViewer({
+    required double horizontalExtent,
+    required double verticalExtent,
+  }) {
     // Слушатель нажатий стоит снаружи и в арене жестов не участвует
     // вовсе: он только смотрит на указатель и узнаёт нажатие раньше
     // просмотрщика (BUG-37).
     return QuickTap(
       watch: _taps,
       onTap: _onQuickTap,
-      child: _buildSelectingViewer(cacheExtent: cacheExtent),
+      child: _buildSelectingViewer(
+        horizontalExtent: horizontalExtent,
+        verticalExtent: verticalExtent,
+      ),
     );
   }
 
-  Widget _buildSelectingViewer({required double cacheExtent}) {
+  Widget _buildSelectingViewer({
+    required double horizontalExtent,
+    required double verticalExtent,
+  }) {
     // Своё долгое нажатие поверх просмотрщика: порог у него стандартный,
     // полсекунды, а нужно «почти моментально». Распознаватель спорит в
     // общей арене на равных — быстрое касание он проигрывает, и зоны
@@ -884,7 +993,8 @@ class _ReaderSheetState extends State<ReaderSheet> {
           //
           // Соседние страницы под маской, и платим мы памятью за
           // невидимое — зато к моменту нажатия они уже нарисованы.
-          horizontalCacheExtent: cacheExtent,
+          horizontalCacheExtent: horizontalExtent,
+          verticalCacheExtent: verticalExtent,
           maxImageBytesCachedOnMemory: ReaderSheet.imageCacheBytes,
           getPageRenderingScale: _pagePreviewScale,
           // Ступенька «грубо → резко» раздражает не всех одинаково, и
@@ -924,6 +1034,14 @@ class _ReaderSheetState extends State<ReaderSheet> {
   }
 }
 
+/// Запас кэша просмотрщика по вертикали, когда листы лежат в ряд.
+///
+/// Значение pdfrx по умолчанию, и стояло оно всегда: в ряду все страницы
+/// лежат на одной высоте, и вертикальный запас ни одной страницы не
+/// добавляет. Записано числом, чтобы в столбике его можно было заменить
+/// посчитанным, а в ряду оставить как было.
+const double kRowVerticalCacheExtent = 1.0;
+
 /// Системного меню над выделением нет: над ним стоит наша панель.
 Widget? _noContextMenu(
   BuildContext context,
@@ -940,9 +1058,14 @@ Widget? _noContextMenu(
 /// То, что читатель добавил сам, накладывается сверху: и то, и другое —
 /// только сдвиг и масштаб, поэтому произведение снова оказывается сдвигом
 /// и масштабом, а другого просмотрщик и не ждёт.
+///
+/// [documentLeft] и [documentTop] — где лист лежит в документе
+/// просмотрщика: в ряду листы уходят вправо, в столбике — вниз
+/// (F-READ-12).
 Matrix4 sheetMatrix({
   required SheetPlacement placement,
   required double documentLeft,
+  double documentTop = 0,
   SheetTransform transform = SheetTransform.none,
 }) {
   final double zoom = placement.scale * transform.scale;
@@ -957,7 +1080,12 @@ Matrix4 sheetMatrix({
     (placement.left - documentLeft * placement.scale) * transform.scale +
         transform.dx,
   );
-  matrix.setEntry(1, 3, placement.top * transform.scale + transform.dy);
+  matrix.setEntry(
+    1,
+    3,
+    (placement.top - documentTop * placement.scale) * transform.scale +
+        transform.dy,
+  );
   return matrix;
 }
 
@@ -969,6 +1097,7 @@ SheetTransform sheetTransformOf({
   required Matrix4 matrix,
   required SheetPlacement placement,
   required double documentLeft,
+  double documentTop = 0,
 }) {
   final double zoom = matrix.storage[0];
   if (!placement.isVisible || !zoom.isFinite || zoom <= 0) {
@@ -976,10 +1105,11 @@ SheetTransform sheetTransformOf({
   }
   final double scale = zoom / placement.scale;
   final double baseLeft = placement.left - documentLeft * placement.scale;
+  final double baseTop = placement.top - documentTop * placement.scale;
   return SheetTransform(
     scale: scale,
     dx: matrix.storage[12] - baseLeft * scale,
-    dy: matrix.storage[13] - placement.top * scale,
+    dy: matrix.storage[13] - baseTop * scale,
   );
 }
 
@@ -991,11 +1121,13 @@ Offset? documentPoint({
   required Offset screen,
   required SheetPlacement placement,
   required double documentLeft,
+  double documentTop = 0,
   SheetTransform transform = SheetTransform.none,
 }) {
   final Matrix4 matrix = sheetMatrix(
     placement: placement,
     documentLeft: documentLeft,
+    documentTop: documentTop,
     transform: transform,
   );
   final double zoom = matrix.storage[0];

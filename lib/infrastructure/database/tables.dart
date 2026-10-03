@@ -208,6 +208,19 @@ class BookSettings extends Table with SyncedRow {
   RealColumn get dimOutside =>
       real().withDefault(const Constant<double>(0.6))();
 
+  /// Нахлёст соседних полос, в долях высоты экрана (F-READ-12).
+  ///
+  /// Значение по умолчанию — число `kDefaultStripOverlap`, записанное
+  /// дословно по той же причине, что и у `dimOutside`.
+  RealColumn get stripOverlap =>
+      real().withDefault(const Constant<double>(0.07))();
+
+  /// Ширина полоски соседней страницы, в долях ширины экрана (F-READ-13).
+  ///
+  /// Значение по умолчанию — число `kDefaultNeighbourShare`.
+  RealColumn get neighbourShare =>
+      real().withDefault(const Constant<double>(0.05))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId, orientation};
 }
