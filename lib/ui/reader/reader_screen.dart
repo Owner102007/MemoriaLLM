@@ -76,6 +76,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Рычаги к листу: снять выделение, не трогая страницу.
   final ReaderSheetController _sheet = ReaderSheetController();
 
+  /// Обвязка экрана: у неё спрашиваем, ведут ли кнопки громкости по
+  /// совпадениям поиска, и ей возвращаем клавиши после нажатия по
+  /// странице (F-TEXT-11).
+  final GlobalKey<ReaderScaffoldState> _scaffold =
+      GlobalKey<ReaderScaffoldState>();
+
   /// Книга может смениться прямо на этом экране: если файл переехал,
   /// читатель выбирает его заново, и у книги становится новый источник.
   /// Идентификатор при этом прежний — место чтения и цитаты не теряются.
@@ -185,6 +191,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// устарел и ничего не меняет.
   int _markRun = 0;
 
+  /// Открыта ли панель поиска. Пока она открыта, на странице подсвечены
+  /// все совпадения запроса, а текущее — ярче (F-TEXT-11).
+  bool _searchShown = false;
+
+  /// Совпадения запроса на страницах листа и то, для чего они посчитаны.
+  List<_HitRects> _hitRects = const <_HitRects>[];
+  String _hitRectsFor = '';
+  int _hitRectsRun = 0;
+
+  /// Где на экране лежит текущее совпадение: по нему панель поиска на
+  /// узком экране выбирает край (ALG-UI-31). `null` — его не видно.
+  final ValueNotifier<Rect?> _found = ValueNotifier<Rect?>(null);
+
+  /// Что о месте найденного собираемся сказать после кадра.
+  Rect? _foundNext;
+  bool _foundQueued = false;
+
+  /// Сколько ширины у страницы отняла панель поиска: на широком окне
+  /// она стоит рядом со страницей (F-TEXT-11).
+  double _dock = 0;
+
+  /// Размер окна целиком — как о нём сообщила система.
+  Size _screen = Size.zero;
+
   /// Язык, на который читатель просит переводить. Подставляется в
   /// `{{мой_язык}}`; настоящий выбор языка появится в S8 вместе с
   /// редактором промптов.
@@ -242,21 +272,53 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final Size size = MediaQuery.sizeOf(context);
-    // F-DESK-02: на ПК форма окна принимается, когда его перестали
-    // тянуть, — вместе с местом под лист.
-    final bool changed = _window.offerArea(
-      DisplayArea(width: size.width, height: size.height),
-      hold: _holdsWindow,
-    );
-    if (changed) {
-      _controller?.setDisplayArea(_area, canTurn: _canTurn);
-    }
+    _screen = MediaQuery.sizeOf(context);
+    _offerArea();
     // Маршрут сообщает сюда же, когда поверх него что-то открыли или
     // закрыли: шторку, диалог, другой экран. Кнопки громкости листают,
     // только пока читатель смотрит на страницу (F-READ-26).
     _screenReader = MediaQuery.accessibleNavigationOf(context);
     _refreshOnTop();
+  }
+
+  /// Сообщает форму области показа: окно за вычетом панели поиска,
+  /// если та стоит рядом со страницей.
+  ///
+  /// F-DESK-02: на ПК форма окна принимается, когда его перестали
+  /// тянуть, — вместе с местом под лист. F-TEXT-11: режим выбирается по
+  /// тому месту, которое странице в самом деле досталось, — иначе
+  /// кнопка-дробь обещала бы выигрыш для окна целиком.
+  void _offerArea() {
+    final double width = _screen.width - _dock;
+    final bool changed = _window.offerArea(
+      DisplayArea(width: width > 0 ? width : 0, height: _screen.height),
+      hold: _holdsWindow,
+    );
+    if (changed) {
+      _controller?.setDisplayArea(_area, canTurn: _canTurn);
+    }
+  }
+
+  /// Панель поиска встала рядом со страницей или ушла (F-TEXT-11).
+  ///
+  /// Место под лист меняется один раз и известно зачем — это не
+  /// протяжка окна, и новый размер принимается сразу, как при развороте
+  /// во весь экран: лист перекладывается один раз при открытии панели и
+  /// один раз при закрытии.
+  void _onSearchDock(double width) {
+    if (!mounted || width == _dock) {
+      return;
+    }
+    _beginWindowJump();
+    setState(() => _dock = width);
+    _offerArea();
+    _endWindowJump();
+  }
+
+  /// Панель поиска открыли или закрыли.
+  void _onSearchOpen(bool open) {
+    _searchShown = open;
+    _refreshHitRects();
   }
 
   /// Окно перестали менять: лист перекладывается под новый размер.
@@ -350,10 +412,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
       active: mounted && _volumeKeysActive,
       downIsForward: _volume.downIsForward,
     );
-    if (outcome == VolumeKeyOutcome.forward) {
-      _stepFragment(forward: true);
-    } else if (outcome == VolumeKeyOutcome.back) {
-      _stepFragment(forward: false);
+    if (outcome == VolumeKeyOutcome.forward ||
+        outcome == VolumeKeyOutcome.back) {
+      final bool forward = outcome == VolumeKeyOutcome.forward;
+      final ReaderScaffoldState? scaffold = _scaffold.currentState;
+      if (scaffold != null && scaffold.searchSteps) {
+        // F-TEXT-11, решение владельца 03.10.2026: пока панель поиска
+        // открыта, а страница видна, кнопки ведут по совпадениям —
+        // найденное перебирается одной рукой.
+        unawaited(scaffold.stepHit(forward ? 1 : -1));
+      } else {
+        _stepFragment(forward: forward);
+      }
     }
     return outcome;
   }
@@ -582,6 +652,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // Место под лист в ленте не меряется: к возвращению оно устарело.
     _window.releaseBox();
     setState(() => _flowNow.value = flow);
+    // В ленте слоя подсветки нет: ни места найденного, ни остальных
+    // совпадений там не показать.
+    _sayFound(null);
+    _refreshHitRects();
     _offerZoneHint();
     // Вернулись к листам в развороте — рамка соседней страницы могла
     // остаться непосчитанной, пока шла лента.
@@ -647,6 +721,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _jumpTimer?.cancel();
     _window.dispose();
     _flowNow.dispose();
+    _found.dispose();
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
     _search?.dispose();
@@ -695,9 +770,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return;
       }
       controller.addListener(_onControllerChanged);
+      // Найденное приходит по мере поиска: совпадения на открытой
+      // странице подсвечиваются, как только до неё дошла очередь.
+      final DocumentSearch search = DocumentSearch(
+        document: controller.document,
+      )..addListener(_refreshHitRects);
       setState(() {
         _controller = controller;
-        _search = DocumentSearch(document: controller.document);
+        _search = search;
         _loading = false;
       });
       _syncVolumeKeys();
@@ -769,6 +849,100 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _markRects = const <TextBox>[];
     }
     setState(() {});
+    _refreshHitRects();
+  }
+
+  /// Пересчитывает, где на страницах листа лежат совпадения запроса.
+  ///
+  /// F-TEXT-11: пока поиск открыт, на странице подсвечены все совпадения,
+  /// а не одно — читатель оценивает найденное, не перебирая его по
+  /// одному. Зовётся на каждое сообщение поиска и контроллера, поэтому
+  /// сначала проверяет, изменилось ли что-нибудь: запрос, лист или число
+  /// совпадений на нём.
+  void _refreshHitRects() {
+    final ReaderController? controller = _controller;
+    final DocumentSearch? search = _search;
+    if (!mounted || controller == null || search == null) {
+      return;
+    }
+    final List<int> pages = controller.sheetPages;
+    final bool shown = _searchShown && _flow == PageFlow.paged;
+    final List<SearchHit> hits = <SearchHit>[
+      if (shown)
+        for (final SearchHit hit in search.hits)
+          if (pages.contains(hit.pageNumber)) hit,
+    ];
+    final String wanted = '${search.query}\n${pages.join(',')}\n${hits.length}';
+    if (wanted == _hitRectsFor) {
+      return;
+    }
+    _hitRectsFor = wanted;
+    final int run = ++_hitRectsRun;
+    if (hits.isEmpty) {
+      if (_hitRects.isNotEmpty) {
+        setState(() => _hitRects = const <_HitRects>[]);
+      }
+      return;
+    }
+    unawaited(_loadHitRects(controller, run, hits));
+  }
+
+  Future<void> _loadHitRects(
+    ReaderController controller,
+    int run,
+    List<SearchHit> hits,
+  ) async {
+    final List<_HitRects> found = <_HitRects>[];
+    // Страница, на которой слово встречается сотню раз, сотни подсветок
+    // не требует: за потолком найденное всё равно видно в списке.
+    for (final SearchHit hit in hits.take(_maxHitRects)) {
+      final List<TextBox> boxes;
+      try {
+        boxes = await controller.highlightFor(
+          pageNumber: hit.pageNumber,
+          start: hit.sourceStart,
+          end: hit.sourceEnd,
+        );
+      } on Object {
+        // Книгу закрыли или страницу не удалось разобрать: подсветка —
+        // не то, ради чего стоит ронять чтение.
+        return;
+      }
+      if (!mounted || run != _hitRectsRun) {
+        return;
+      }
+      if (boxes.isNotEmpty) {
+        found.add(
+          _HitRects(
+            pageNumber: hit.pageNumber,
+            start: hit.sourceStart,
+            boxes: boxes,
+          ),
+        );
+      }
+    }
+    setState(() => _hitRects = found);
+  }
+
+  /// Сколько совпадений одного листа подсвечивается, не больше.
+  static const int _maxHitRects = 80;
+
+  /// Говорит панели поиска, где на экране лежит текущее совпадение.
+  ///
+  /// Место становится известно, пока строится лист, а сообщать о нём
+  /// посреди построения дерева нельзя — сообщаем после кадра.
+  void _sayFound(Rect? rect) {
+    _foundNext = rect;
+    if (_foundQueued) {
+      return;
+    }
+    _foundQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _foundQueued = false;
+      if (mounted) {
+        _found.value = _foundNext;
+      }
+    });
   }
 
   /// Снять выделение вместе с панелью.
@@ -1117,6 +1291,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     VoidCallback toggleChrome, {
     required bool selecting,
   }) {
+    // F-TEXT-11: нажали по странице — клавиши возвращаются к ней из поля
+    // поиска.
+    _scaffold.currentState?.focusPage();
     final ReaderController? controller = _controller;
     if (controller == null || _flow != PageFlow.paged || size.width <= 0) {
       toggleChrome();
@@ -1243,6 +1420,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     final ReaderController controller = _controller!;
     return ReaderScaffold(
+      key: _scaffold,
       controller: controller,
       search: _search!,
       onGoToPage: _goToPage,
@@ -1251,6 +1429,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onNextFragment: () => _stepFragment(forward: true),
       onDismiss: _onDismissKey,
       onPanelsChanged: _onPanels,
+      onSearchOpen: _onSearchOpen,
+      onSearchDock: _onSearchDock,
+      found: _found,
       selecting: () => _selection != null || _sheet.selecting,
       fullScreen: _fullScreen,
       onFullScreen: widget.services.window.available
@@ -1495,6 +1676,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final List<Rect> found = mark == null || !pages.contains(mark.pageNumber)
         ? const <Rect>[]
         : _screenRects(view, document, pages, mark.pageNumber, _markRects);
+    // F-TEXT-11: остальные совпадения запроса — бледнее текущего.
+    final List<Rect> others = <Rect>[
+      for (final _HitRects hit in _hitRects)
+        if (pages.contains(hit.pageNumber) && !hit.isAt(mark))
+          ..._screenRects(view, document, pages, hit.pageNumber, hit.boxes),
+    ];
+    // Панели поиска надо знать, где найденное, чтобы не закрыть его
+    // (ALG-UI-31).
+    _sayFound(
+      found.isEmpty
+          ? null
+          : found.reduce((Rect a, Rect b) => a.expandToInclude(b)),
+    );
     final List<Rect> selected = selection == null
         ? const <Rect>[]
         : _screenRects(
@@ -1506,6 +1700,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
           );
     return Stack(
       children: <Widget>[
+        if (others.isNotEmpty)
+          Positioned.fill(
+            child: HighlightLayer(
+              rects: others,
+              color: theme.colorScheme.tertiary.withValues(alpha: 0.15),
+            ),
+          ),
         if (found.isNotEmpty)
           Positioned.fill(
             child: HighlightLayer(
@@ -1612,6 +1813,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// двигает молча, а о нажатии мимо сообщает нам — и панели тогда
   /// переключаются по его сообщению, через 300 мс, как и до BUG-38.
   void _onRibbonTap(VoidCallback toggleChrome) {
+    _scaffold.currentState?.focusPage();
     if (_viewer.isReady && _viewer.textSelectionDelegate.hasSelectedText) {
       _ribbonTaps.leaveToViewer();
       return;
@@ -1744,6 +1946,24 @@ class _PageMark {
   final int pageNumber;
   final int start;
   final int end;
+}
+
+/// Совпадение запроса на странице листа: где оно в тексте и на странице.
+class _HitRects {
+  const _HitRects({
+    required this.pageNumber,
+    required this.start,
+    required this.boxes,
+  });
+
+  final int pageNumber;
+  final int start;
+  final List<TextBox> boxes;
+
+  /// То ли это место, что отмечено текущим: его рисует своя подсветка,
+  /// ярче остальных.
+  bool isAt(_PageMark? mark) =>
+      mark != null && mark.pageNumber == pageNumber && mark.start == start;
 }
 
 /// Экран «книга не открылась».

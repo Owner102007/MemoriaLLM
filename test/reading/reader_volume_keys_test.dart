@@ -211,10 +211,13 @@ void main() {
 
     await tester.tap(find.byKey(const Key('reader-search-button')));
     await tester.pumpAndSettle();
+    // Узкий экран, читатель набирает запрос: панель закрывает страницу.
     expect(keys.active, isFalse);
 
     // Панель — не маршрут: её закрывает сам экран чтения.
-    tester.state<ScaffoldState>(find.byType(Scaffold).first).closeEndDrawer();
+    tester
+        .state<ReaderScaffoldState>(find.byType(ReaderScaffold))
+        .closeSearch();
     await tester.pumpAndSettle();
     expect(keys.active, isTrue);
 

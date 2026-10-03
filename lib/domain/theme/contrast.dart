@@ -44,3 +44,21 @@ double contrastRatio(int foreground, int background) {
   final double darker = a > b ? b : a;
   return (lighter + 0.05) / (darker + 0.05);
 }
+
+/// Цвет, который видит глаз, когда полупрозрачный [top] лежит поверх
+/// [under].
+///
+/// [alpha] — непрозрачность верхнего цвета, от 0 до 1; собственная альфа
+/// чисел не учитывается. Нужен там, где текст стоит на полупрозрачной
+/// панели: контраст считается против того, что получилось на экране, а
+/// не против цвета самой панели (F-TEXT-11).
+int blendOver(int top, double alpha, int under) {
+  final double a = alpha < 0 ? 0 : (alpha > 1 ? 1 : alpha);
+  int channel(int shift) {
+    final int upper = (top >> shift) & 0xFF;
+    final int lower = (under >> shift) & 0xFF;
+    return (upper * a + lower * (1 - a)).round();
+  }
+
+  return 0xFF000000 | (channel(16) << 16) | (channel(8) << 8) | channel(0);
+}

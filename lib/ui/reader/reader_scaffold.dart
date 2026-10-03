@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/reading/navigation.dart';
+import '../../domain/reading/search_dock.dart';
 import '../../domain/reading/text_search.dart';
 import 'key_bindings.dart';
 import 'outline_panel.dart';
@@ -22,6 +24,12 @@ import 'search_panel.dart';
 /// Главное правило экрана: **по умолчанию не видно ничего, кроме
 /// страницы**. Панели появляются по нажатию в середину и уходят сами,
 /// как только читатель переходит к делу.
+///
+/// **Поиск — спутник страницы** (F-TEXT-11, ALG-UI-31): выбор результата
+/// панель не закрывает. На широком окне она стоит справа, а страница —
+/// в оставшейся ширине; на узком экране после выбора результата она
+/// сжимается в полупрозрачную полосу у того края, где найденного нет.
+/// Закрывает поиск только читатель: `✕`, `Esc`, системное «назад».
 class ReaderScaffold extends StatefulWidget {
   /// Создаёт обвязку.
   const ReaderScaffold({
@@ -34,6 +42,9 @@ class ReaderScaffold extends StatefulWidget {
     this.onNextFragment,
     this.onDismiss,
     this.onPanelsChanged,
+    this.onSearchOpen,
+    this.onSearchDock,
+    this.found,
     this.selecting,
     this.fullScreen = false,
     this.onFullScreen,
@@ -74,12 +85,32 @@ class ReaderScaffold extends StatefulWidget {
   /// `Esc`, когда закрывать нечего: снять выделение, спрятать панели.
   final VoidCallback? onDismiss;
 
-  /// Открылась или закрылась боковая панель — оглавление или поиск.
+  /// Страницу закрыла панель — оглавление или поиск во время ввода на
+  /// узком экране — или снова открыла.
   ///
-  /// `true`, пока открыта хотя бы одна. Экрану чтения это нужно затем,
-  /// чтобы не листать кнопками громкости книгу, которую закрыла панель
+  /// `true`, пока страница закрыта. Экрану чтения это нужно затем,
+  /// чтобы не листать кнопками громкости книгу, которую не видно
   /// (F-READ-26): панель — не маршрут, и навигатор о ней не знает.
+  /// Поиск, который стоит рядом со страницей или лежит на ней полосой,
+  /// страницу не закрывает (F-TEXT-11).
   final ValueChanged<bool>? onPanelsChanged;
+
+  /// Поиск открыли или закрыли. Пока он открыт, экран чтения подсвечивает
+  /// на странице все совпадения запроса, а не одно (F-TEXT-11).
+  final ValueChanged<bool>? onSearchOpen;
+
+  /// Сколько ширины панель поиска отняла у страницы: на широком окне она
+  /// стоит рядом с ней. Ноль — страница снова во всю ширину.
+  ///
+  /// Сообщается до кадра, в котором место под страницу меняется: экран
+  /// чтения перекладывает лист один раз и сразу, не принимая это за
+  /// протяжку окна (F-DESK-02).
+  final ValueChanged<double>? onSearchDock;
+
+  /// Где на экране лежит текущее совпадение, в координатах страницы;
+  /// `null` — его не видно. По нему панель поиска на узком экране
+  /// выбирает край, у которого она найденного не закроет (ALG-UI-31).
+  final ValueListenable<Rect?>? found;
 
   /// Выделен ли текст на странице. Нужно `Esc`: выделение он снимает
   /// раньше, чем выводит из чтения во весь экран. Спрашивается в миг
@@ -107,11 +138,41 @@ class ReaderScaffold extends StatefulWidget {
 /// показать панель — например, по кнопке «назад» на Android.
 class ReaderScaffoldState extends State<ReaderScaffold> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  /// Панель поиска переезжает между местами — рядом со страницей, во
+  /// весь экран, полосой у края, — и обязана переезжать со своим
+  /// состоянием: набранным запросом и местом в списке.
+  final GlobalKey _searchKey = GlobalKey(debugLabel: 'search-panel');
+
+  /// Узел клавиш чтения. Свой, а не безымянный: выбрав результат,
+  /// читатель смотрит на страницу, и клавиши обязаны вернуться к ней из
+  /// поля поиска (F-TEXT-11).
+  final FocusNode _keys = FocusNode(debugLabel: 'reader-keys');
+
+  /// Узел поля поиска: открывая поиск, ставим указатель в поле сами.
+  final FocusNode _searchField = FocusNode(debugLabel: 'search-field');
+
   bool _chromeVisible = false;
 
   /// Открыты ли оглавление и поиск.
   bool _outlineOpen = false;
   bool _searchOpen = false;
+
+  /// Выбран ли результат: поиск открыт, а читатель смотрит на страницу.
+  /// На узком экране панель в это время — полоса у края.
+  bool _browsing = false;
+
+  /// Широкое ли окно: панель поиска стоит рядом со страницей.
+  bool _wide = false;
+
+  /// У какого края полоса поиска стояла в прошлый раз: без нужды она не
+  /// переезжает.
+  SearchDockSide? _dockSide;
+
+  /// Что экрану чтения сказано в последний раз.
+  bool _saidCovered = false;
+  bool _saidOpen = false;
+  double _saidDock = 0;
 
   /// На каком совпадении читатель стоит сейчас.
   ///
@@ -125,14 +186,39 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   @override
   void initState() {
     super.initState();
+    // Поиск мог начаться раньше экрана: его запрос — уже наш, и первое
+    // же сообщение о нём счёт совпадений не сбрасывает.
+    _query = widget.search.query;
     widget.controller.addListener(_onControllerChanged);
     widget.search.addListener(_onSearchChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bool wide = isSearchWide(MediaQuery.sizeOf(context));
+    if (wide == _wide) {
+      return;
+    }
+    _wide = wide;
+    if (_searchOpen) {
+      // Окно перешло границу «широкого» при открытом поиске: панель
+      // встаёт рядом со страницей или уходит с неё. Экрану чтения об
+      // этом говорится после кадра — посреди построения дерева нельзя.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _report();
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
     widget.search.removeListener(_onSearchChanged);
+    _keys.dispose();
+    _searchField.dispose();
     super.dispose();
   }
 
@@ -152,22 +238,56 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     }
     if (widget.search.query != _query) {
       _query = widget.search.query;
-      _hit = -1;
+      // Отметка текущего результата в списке уходит вместе со счётом.
+      setState(() => _hit = -1);
       return;
     }
     if (_hit >= widget.search.hits.length) {
-      _hit = -1;
+      setState(() => _hit = -1);
     }
   }
 
-  void _onPanel({bool? outline, bool? search}) {
-    final bool before = _outlineOpen || _searchOpen;
-    _outlineOpen = outline ?? _outlineOpen;
-    _searchOpen = search ?? _searchOpen;
-    final bool after = _outlineOpen || _searchOpen;
-    if (after != before) {
-      widget.onPanelsChanged?.call(after);
+  /// Открыт ли поиск.
+  bool get searchOpen => _searchOpen;
+
+  /// Закрывает ли поиск страницу: на узком экране, пока читатель
+  /// набирает запрос, панель занимает экран целиком.
+  bool get _searchCovers => _searchOpen && !_wide && !_browsing;
+
+  /// Ведут ли кнопки громкости по совпадениям вместо листания.
+  ///
+  /// F-TEXT-11, решение владельца 03.10.2026 (Ж1): пока панель поиска
+  /// открыта, а страница видна, «тише» и «громче» перебирают найденное —
+  /// одной рукой, не отрывая глаз от страницы. Без найденного
+  /// перебирать нечего, и кнопки листают, как всегда.
+  bool get searchSteps =>
+      _searchOpen && !_searchCovers && widget.search.hits.isNotEmpty;
+
+  /// Говорит экрану чтения, что изменилось: закрыта ли страница, открыт
+  /// ли поиск и сколько ширины он отнял у страницы.
+  ///
+  /// Зовётся из обработчиков событий — до кадра, в котором место под
+  /// страницу меняется, — и никогда из построения дерева.
+  void _report() {
+    final bool covered = _outlineOpen || _searchCovers;
+    if (covered != _saidCovered) {
+      _saidCovered = covered;
+      widget.onPanelsChanged?.call(covered);
     }
+    final double dock = _searchOpen && _wide ? kSearchPanelWidth : 0;
+    if (dock != _saidDock) {
+      _saidDock = dock;
+      widget.onSearchDock?.call(dock);
+    }
+    if (_searchOpen != _saidOpen) {
+      _saidOpen = _searchOpen;
+      widget.onSearchOpen?.call(_searchOpen);
+    }
+  }
+
+  void _onOutline(bool open) {
+    _outlineOpen = open;
+    _report();
   }
 
   /// Показать или спрятать панели.
@@ -201,11 +321,68 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     }
   }
 
-  void _openSearch() {
-    final ScaffoldState? scaffold = _scaffoldKey.currentState;
-    if (scaffold != null && !scaffold.isEndDrawerOpen) {
-      scaffold.openEndDrawer();
+  /// Открывает поиск — или возвращает уже открытый ко вводу запроса.
+  void openSearch() {
+    if (!mounted) {
+      return;
     }
+    setState(() {
+      _searchOpen = true;
+      _browsing = false;
+    });
+    _report();
+    // Указатель — в поле: открывший поиск собирается набирать. Поле в
+    // этом кадре может ещё не стоять на экране, поэтому после кадра.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searchOpen && !_browsing) {
+        _searchField.requestFocus();
+      }
+    });
+  }
+
+  /// Закрывает поиск. Запрос и место в списке остаются: откроют снова —
+  /// найденное на месте.
+  void closeSearch() {
+    if (!mounted || !_searchOpen) {
+      return;
+    }
+    setState(() {
+      _searchOpen = false;
+      _browsing = false;
+      _dockSide = null;
+    });
+    _report();
+    _keys.requestFocus();
+  }
+
+  /// Читатель нажал по странице: клавиши возвращаются к ней.
+  ///
+  /// На широком окне страница рядом с поиском живая, и после нажатия по
+  /// ней стрелки и пробел обязаны листать, а не уходить в поле запроса
+  /// (F-TEXT-11).
+  void focusPage() {
+    if (mounted && _searchOpen && _searchField.hasFocus) {
+      _keys.requestFocus();
+    }
+  }
+
+  /// Результат выбран: читатель смотрит на страницу, а панель остаётся.
+  ///
+  /// Клавиши возвращаются к странице — рядом с открытой панелью она
+  /// листается, как обычно, — а на телефоне заодно уходит клавиатура.
+  void _browse(int index) {
+    setState(() {
+      _hit = index;
+      _browsing = true;
+    });
+    _report();
+    _keys.requestFocus();
+  }
+
+  Future<void> _selectHit(SearchHit hit) async {
+    _browse(widget.search.hits.indexOf(hit));
+    await _goToHit(hit);
+    hideChrome();
   }
 
   Future<void> _goToHit(SearchHit hit) async {
@@ -220,17 +397,26 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// Следующее или предыдущее совпадение по кругу.
   ///
   /// По кругу потому, что упереться в конец списка и не понять, кончился
-  /// он или сломалась клавиша, — худший из исходов. Панель поиска при
-  /// этом не закрывается: `F3` для того и нужен, чтобы пройти совпадения
-  /// подряд, не трогая список. Куда ведёт шаг, решает [stepSearchHit]
-  /// (BUG-08).
-  Future<void> _stepHit(int step) async {
+  /// он или сломалась клавиша, — худший из исходов. Куда ведёт шаг,
+  /// решает [stepSearchHit] (BUG-08). Открытый поиск при этом переходит
+  /// к просмотру: шаг — это выбор результата (F-TEXT-11). Закрытый не
+  /// открывается: `F3` идёт по совпадениям и без панели.
+  Future<void> stepHit(int step) async {
     final List<SearchHit> hits = widget.search.hits;
     if (hits.isEmpty) {
       return;
     }
-    _hit = stepSearchHit(current: _hit, step: step, count: hits.length);
-    await _goToHit(hits[_hit]);
+    final int next = stepSearchHit(
+      current: _hit,
+      step: step,
+      count: hits.length,
+    );
+    if (_searchOpen) {
+      _browse(next);
+    } else {
+      _hit = next;
+    }
+    await _goToHit(hits[next]);
   }
 
   /// Клавиши чтения.
@@ -250,7 +436,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     }
     final HardwareKeyboard keyboard = HardwareKeyboard.instance;
     final ScaffoldState? scaffold = _scaffoldKey.currentState;
-    final bool searching = scaffold?.isEndDrawerOpen ?? false;
+    final bool searching = _searchOpen;
     final ReaderKeyAction? action = readerKeyAction(
       key: event.logicalKey,
       control: keyboard.isControlPressed || keyboard.isMetaPressed,
@@ -270,11 +456,11 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       case ReaderKeyAction.next:
         widget.onNextFragment?.call();
       case ReaderKeyAction.openSearch:
-        _openSearch();
+        openSearch();
       case ReaderKeyAction.nextHit:
-        unawaited(_stepHit(1));
+        unawaited(stepHit(1));
       case ReaderKeyAction.previousHit:
-        unawaited(_stepHit(-1));
+        unawaited(stepHit(-1));
       case ReaderKeyAction.fullScreen:
         // Только по нажатию: удержанная клавиша иначе гоняла бы окно
         // туда-сюда с частотой автоповтора.
@@ -291,7 +477,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         );
         switch (target) {
           case EscapeTarget.search:
-            scaffold?.closeEndDrawer();
+            closeSearch();
           case EscapeTarget.outline:
             scaffold?.closeDrawer();
           case EscapeTarget.fullScreen:
@@ -313,66 +499,207 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     // дошёл бы вовсе. Поле при этом ничего не теряет: свои клавиши оно
     // разбирает первым, а сюда доходит только то, чего оно не взяло.
     return Focus(
+      focusNode: _keys,
       autofocus: true,
       onKeyEvent: _onKey,
-      child: Scaffold(
-        key: _scaffoldKey,
-        // Панели открываются кнопками, а не свайпом от края: свайп на
-        // экране чтения принадлежит странице.
-        drawerEnableOpenDragGesture: false,
-        endDrawerEnableOpenDragGesture: false,
-        onDrawerChanged: (bool open) => _onPanel(outline: open),
-        onEndDrawerChanged: (bool open) => _onPanel(search: open),
-        drawer: OutlinePanel(
-          controller: controller,
-          onSelect: (int page) async {
-            Navigator.of(context).pop();
-            await _goTo(page);
-            hideChrome();
-          },
-        ),
-        endDrawer: SearchPanel(
-          search: widget.search,
-          onSelect: (SearchHit hit) async {
-            Navigator.of(context).pop();
-            _hit = widget.search.hits.indexOf(hit);
-            await _goToHit(hit);
-            hideChrome();
-          },
-          onNextHit: () => unawaited(_stepHit(1)),
-          // `Esc` закрывает поиск, но разбирает его сама панель: пока
-          // курсор стоит в поле, клавиши чтения молчат вовсе, и до нас
-          // событие не дошло бы.
-          onClose: () => _scaffoldKey.currentState?.closeEndDrawer(),
-        ),
-        body: Stack(
-          children: <Widget>[
-            Positioned.fill(child: widget.viewerBuilder(context, toggleChrome)),
-            _TopBar(
-              visible: _chromeVisible,
-              title: controller.book.title,
-              subtitle: controller.label,
-              extraActions: widget.extraActions,
-              onBack: () => Navigator.of(context).maybePop(),
-              onSearch: _openSearch,
-            ),
-            _BottomBar(
-              visible: _chromeVisible,
-              page: controller.page,
-              pageCount: controller.pageCount,
-              canGoBack: controller.previousSheetStart != null,
-              canGoForward: controller.nextSheetStart != null,
-              progress: controller.progress,
-              onStep: _stepSheet,
-              onPage: _goTo,
-              onOutline: () {
-                unawaited(controller.loadOutline());
-                _scaffoldKey.currentState?.openDrawer();
-              },
-            ),
-          ],
+      // Системное «назад» при открытом поиске закрывает поиск, а не
+      // книгу (F-TEXT-11).
+      child: PopScope<Object?>(
+        canPop: !_searchOpen,
+        onPopInvokedWithResult: (bool didPop, Object? result) {
+          if (!didPop) {
+            closeSearch();
+          }
+        },
+        child: Scaffold(
+          key: _scaffoldKey,
+          // Оглавление открывается кнопкой, а не свайпом от края: свайп
+          // на экране чтения принадлежит странице.
+          drawerEnableOpenDragGesture: false,
+          onDrawerChanged: _onOutline,
+          drawer: OutlinePanel(
+            controller: controller,
+            onSelect: (int page) async {
+              Navigator.of(context).pop();
+              await _goTo(page);
+              hideChrome();
+            },
+          ),
+          body: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints limits) {
+              return _buildBody(
+                context,
+                Size(limits.maxWidth, limits.maxHeight),
+              );
+            },
+          ),
         ),
       ),
+    );
+  }
+
+  /// Страница с панелями чтения и панель поиска — рядом с ней или
+  /// поверх неё.
+  ///
+  /// Страница стоит в дереве на одном и том же месте, с поиском и без
+  /// него: меняется только её правый край. Иначе просмотрщик под ней
+  /// пересоздавался бы на каждое открытие поиска.
+  Widget _buildBody(BuildContext context, Size area) {
+    final ReaderController controller = widget.controller;
+    return Stack(
+      children: <Widget>[
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          // На широком окне панель поиска стоит рядом со страницей, и
+          // лист раскладывается в оставшейся ширине: найденное под
+          // панелью оказаться не может.
+          right: _searchOpen && _wide ? kSearchPanelWidth : 0,
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: widget.viewerBuilder(context, toggleChrome),
+              ),
+              _TopBar(
+                visible: _chromeVisible,
+                title: controller.book.title,
+                subtitle: controller.label,
+                extraActions: widget.extraActions,
+                onBack: () => Navigator.of(context).maybePop(),
+                onSearch: openSearch,
+              ),
+              _BottomBar(
+                visible: _chromeVisible,
+                page: controller.page,
+                pageCount: controller.pageCount,
+                canGoBack: controller.previousSheetStart != null,
+                canGoForward: controller.nextSheetStart != null,
+                progress: controller.progress,
+                onStep: _stepSheet,
+                onPage: _goTo,
+                onOutline: () {
+                  unawaited(controller.loadOutline());
+                  _scaffoldKey.currentState?.openDrawer();
+                },
+              ),
+            ],
+          ),
+        ),
+        if (_searchOpen) _buildSearch(context, area),
+      ],
+    );
+  }
+
+  /// Панель поиска на своём месте (ALG-UI-31).
+  Widget _buildSearch(BuildContext context, Size area) {
+    if (_wide) {
+      // Рядом со страницей: места хватает и полю, и списку, и вид у
+      // панели один — что при вводе, что при просмотре.
+      return Positioned(
+        top: 0,
+        bottom: 0,
+        right: 0,
+        width: kSearchPanelWidth,
+        child: _searchPanel(edged: true),
+      );
+    }
+    if (!_browsing) {
+      // Узкий экран, ввод: клавиатура и так закрывает половину экрана —
+      // панель занимает его целиком.
+      return Positioned.fill(child: _searchPanel());
+    }
+    final ValueListenable<Rect?>? found = widget.found;
+    if (found == null) {
+      return _buildStrip(context, area, null);
+    }
+    return ValueListenableBuilder<Rect?>(
+      valueListenable: found,
+      builder: (BuildContext context, Rect? rect, Widget? child) {
+        return _buildStrip(context, area, rect);
+      },
+    );
+  }
+
+  /// Узкий экран, просмотр: полупрозрачная полоса у того края, где
+  /// найденного нет.
+  Widget _buildStrip(BuildContext context, Size area, Rect? found) {
+    final SearchDock dock = placeSearchPanel(
+      screen: MediaQuery.sizeOf(context),
+      area: area,
+      found: found,
+      current: _dockSide,
+    );
+    // Запоминаем край: в следующий раз панель останется у него, если
+    // найденное не окажется под ней.
+    _dockSide = dock.side;
+    final Widget panel = _searchPanel(
+      browsing: true,
+      compact: dock.compact,
+      translucent: true,
+    );
+    switch (dock.side) {
+      case SearchDockSide.bottom:
+        return Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: dock.extent),
+            child: panel,
+          ),
+        );
+      case SearchDockSide.top:
+        return Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: dock.extent),
+            child: panel,
+          ),
+        );
+      case SearchDockSide.right:
+        return Positioned(
+          top: 0,
+          bottom: 0,
+          right: 0,
+          width: dock.extent,
+          child: panel,
+        );
+      case SearchDockSide.left:
+        return Positioned(
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: dock.extent,
+          child: panel,
+        );
+    }
+  }
+
+  Widget _searchPanel({
+    bool browsing = false,
+    bool compact = false,
+    bool translucent = false,
+    bool edged = false,
+  }) {
+    return SearchPanel(
+      key: _searchKey,
+      search: widget.search,
+      current: _hit,
+      browsing: browsing,
+      compact: compact,
+      translucent: translucent,
+      edged: edged,
+      fieldFocus: _searchField,
+      onSelect: (SearchHit hit) => unawaited(_selectHit(hit)),
+      onStep: (int step) => unawaited(stepHit(step)),
+      onEdit: openSearch,
+      // `Esc` закрывает поиск, но в поле его разбирает сама панель: пока
+      // курсор стоит в поле, клавиши чтения молчат вовсе, и до нас
+      // событие не дошло бы.
+      onClose: closeSearch,
     );
   }
 }

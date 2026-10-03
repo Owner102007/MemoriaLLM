@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,11 +10,15 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/reading/navigation.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/reading/search_dock.dart';
 import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/ui/reader/key_bindings.dart';
 import 'package:memoria/ui/reader/reader_scaffold.dart';
 
 import '../support/fake_reading.dart';
+
+/// Открытая книга и поиск по ней — для тестов поиска.
+typedef _Searched = ({ReaderController controller, DocumentSearch search});
 
 const List<OutlineEntry> _outline = <OutlineEntry>[
   OutlineEntry(
@@ -32,6 +37,12 @@ void main() {
   late int dismissals;
   late List<bool> windows;
 
+  /// Что обвязка говорила экрану чтения: закрыта ли страница панелью,
+  /// открыт ли поиск и сколько ширины он отнял у страницы.
+  late List<bool> covers;
+  late List<bool> searches;
+  late List<double> docks;
+
   setUp(() {
     reading = FakeReadingRepository();
     jumps = <int>[];
@@ -39,6 +50,9 @@ void main() {
     bubbled = <LogicalKeyboardKey>[];
     dismissals = 0;
     windows = <bool>[];
+    covers = <bool>[];
+    searches = <bool>[];
+    docks = <double>[];
   });
 
   Future<ReaderController> makeController({
@@ -67,6 +81,7 @@ void main() {
     bool fullScreen = false,
     bool hasWindow = false,
     KeyBindings keyBindings = KeyBindings.standard,
+    ValueListenable<Rect?>? found,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -87,6 +102,10 @@ void main() {
             onPreviousFragment: () => steps.add('назад'),
             onNextFragment: () => steps.add('вперёд'),
             onDismiss: () => dismissals++,
+            onPanelsChanged: covers.add,
+            onSearchOpen: searches.add,
+            onSearchDock: docks.add,
+            found: found,
             selecting: () => selecting,
             fullScreen: fullScreen,
             onFullScreen: hasWindow ? windows.add : null,
@@ -581,6 +600,446 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Ничего не найдено.'), findsOneWidget);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+  });
+
+  group('F-TEXT-11: поиск остаётся открытым', () {
+    final Finder panel = find.byKey(const Key('search-panel'));
+    final Finder field = find.byKey(const Key('search-field'));
+    final Finder marker = find.byKey(const Key('search-current'));
+
+    /// Книга, где «тройка» встречается на трёх страницах.
+    Future<_Searched> threes() async {
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>[
+          'вступление',
+          'здесь встречается тройка',
+          'ничего',
+          'и снова тройка семёрка туз',
+          'ничего',
+          'последняя тройка',
+        ],
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: fakeBook(pageCount: 6),
+        opener: FakeDocumentOpener(document),
+        reading: reading,
+      );
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start('тройка');
+      return (controller: controller, search: search);
+    }
+
+    ReaderScaffoldState stateOf(WidgetTester tester) =>
+        tester.state<ReaderScaffoldState>(find.byType(ReaderScaffold));
+
+    Future<void> openSearch(WidgetTester tester) async {
+      stateOf(tester).openSearch();
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> tapKey(WidgetTester tester, String key) async {
+      await tester.tap(find.byKey(Key(key)));
+      await tester.pumpAndSettle();
+    }
+
+    String count(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const Key('search-count'))).data!;
+
+    /// Меняет размер экрана на время теста.
+    void resize(WidgetTester tester, Size size) {
+      tester.view.physicalSize = size * tester.view.devicePixelRatio;
+      addTearDown(tester.view.resetPhysicalSize);
+    }
+
+    testWidgets('выбор результата не закрывает панель', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      expect(panel, findsOneWidget);
+      expect(field, findsOneWidget);
+      expect(marker, findsNothing, reason: 'ещё ни на каком результате');
+
+      await tapKey(tester, 'search-hit-1');
+
+      expect(jumps, <int>[4]);
+      expect(panel, findsOneWidget, reason: 'панель осталась на экране');
+      expect(find.byKey(const Key('search-results')), findsOneWidget);
+      expect(marker, findsOneWidget, reason: 'текущий результат отмечен');
+      expect(count(tester), '2 из 3');
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('второй результат выбирается без повторного открытия', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+
+      await tapKey(tester, 'search-hit-1');
+      await tapKey(tester, 'search-hit-2');
+      await tapKey(tester, 'search-hit-0');
+
+      expect(jumps, <int>[4, 6, 2]);
+      expect(count(tester), '1 из 3');
+      expect(panel, findsOneWidget);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('‹ и › ведут по совпадениям по кругу', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-1');
+
+      await tapKey(tester, 'search-next');
+      expect(count(tester), '3 из 3');
+      await tapKey(tester, 'search-next');
+      expect(count(tester), '1 из 3', reason: 'за последним — первое');
+      await tapKey(tester, 'search-previous');
+      expect(count(tester), '3 из 3', reason: 'перед первым — последнее');
+      expect(jumps, <int>[4, 6, 2, 6]);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F3 при открытом поиске — тоже выбор результата', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      expect(field, findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f3);
+      await tester.pumpAndSettle();
+
+      expect(jumps, <int>[2]);
+      expect(panel, findsOneWidget);
+      expect(count(tester), '1 из 3');
+      // Узкий экран: результат выбран — панель сжалась в полосу, и поля
+      // ввода в ней нет.
+      expect(field, findsNothing);
+      expect(find.byKey(const Key('search-query')), findsOneWidget);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('Esc закрывает поиск и после выбора результата', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+      expect(panel, findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(panel, findsNothing);
+      expect(dismissals, 0, reason: 'Esc ушёл на поиск, а не на страницу');
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('кнопка ✕ закрывает поиск', (WidgetTester tester) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      await tapKey(tester, 'search-close');
+      expect(panel, findsNothing);
+
+      // И из полосы просмотра — тоже.
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+      await tapKey(tester, 'search-close');
+      expect(panel, findsNothing);
+      expect(searches, <bool>[true, false, true, false]);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('системное «назад» закрывает поиск, а не книгу', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(panel, findsNothing);
+      expect(find.byType(ReaderScaffold), findsOneWidget);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('при повторном открытии запрос и место в списке на месте', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-1');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(panel, findsNothing);
+
+      await openSearch(tester);
+
+      expect(tester.widget<TextField>(field).controller!.text, 'тройка');
+      expect(count(tester), '2 из 3');
+      expect(marker, findsOneWidget);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('нажатие по запросу возвращает ко вводу', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+      expect(field, findsNothing);
+      expect(find.text('тройка'), findsWidgets);
+
+      await tapKey(tester, 'search-query');
+
+      expect(field, findsOneWidget);
+      expect(tester.widget<TextField>(field).controller!.text, 'тройка');
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('узкий экран: страница закрыта, только пока набирают', (
+      WidgetTester tester,
+    ) async {
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      final ReaderScaffoldState state = stateOf(tester);
+      expect(state.searchSteps, isFalse, reason: 'поиск закрыт');
+
+      await openSearch(tester);
+      expect(covers, <bool>[true]);
+      expect(tester.getSize(panel), const Size(800, 600), reason: 'весь экран');
+      expect(state.searchSteps, isFalse, reason: 'страницы не видно');
+
+      await tapKey(tester, 'search-hit-0');
+      expect(covers, <bool>[true, false]);
+      expect(state.searchSteps, isTrue, reason: 'страница видна');
+      expect(docks, isEmpty, reason: 'поверх страницы, а не рядом с ней');
+
+      await tapKey(tester, 'search-close');
+      expect(covers, <bool>[true, false]);
+      expect(state.searchSteps, isFalse);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('телефон в альбоме: полоса сбоку и уступает найденному', (
+      WidgetTester tester,
+    ) async {
+      // Экран теста — 800×600: узкий и лежит на боку.
+      final ValueNotifier<Rect?> found = ValueNotifier<Rect?>(null);
+      addTearDown(found.dispose);
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search, found: found);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+
+      Rect strip() => tester.getRect(panel);
+      expect(strip().width, closeTo(800 * kSearchStripShare, 0.5));
+      expect(strip().right, 800, reason: 'из коробки — у правого края');
+      expect(strip().height, 600);
+
+      // Найденное оказалось под панелью — она переезжает налево.
+      found.value = const Rect.fromLTWH(600, 200, 100, 20);
+      await tester.pumpAndSettle();
+      expect(strip().left, 0);
+
+      // Следующее найденное панелью не закрыто — она стоит где стояла.
+      found.value = const Rect.fromLTWH(400, 300, 100, 20);
+      await tester.pumpAndSettle();
+      expect(strip().left, 0, reason: 'без нужды не переезжает');
+
+      // А это — под ней: возвращается направо.
+      found.value = const Rect.fromLTWH(100, 300, 100, 20);
+      await tester.pumpAndSettle();
+      expect(strip().right, 800);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('телефон в портрете: полоса снизу, не выше 40 % экрана', (
+      WidgetTester tester,
+    ) async {
+      resize(tester, const Size(400, 800));
+      final ValueNotifier<Rect?> found = ValueNotifier<Rect?>(null);
+      addTearDown(found.dispose);
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search, found: found);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+
+      Rect strip() => tester.getRect(panel);
+      expect(strip().bottom, 800, reason: 'из коробки — у нижнего края');
+      expect(strip().width, 400);
+      expect(strip().height, lessThanOrEqualTo(800 * kSearchStripShare));
+      // Страница под полосой не перекладывается: место под неё прежнее.
+      expect(
+        tester.getSize(find.byKey(const Key('fake-viewer'))),
+        const Size(400, 800),
+      );
+
+      // Найденное внизу экрана — полоса переезжает наверх.
+      found.value = const Rect.fromLTWH(40, 700, 320, 20);
+      await tester.pumpAndSettle();
+      expect(strip().top, 0);
+
+      // Выделение через весь экран — остаётся одна строка счёта.
+      found.value = const Rect.fromLTWH(40, 20, 320, 760);
+      await tester.pumpAndSettle();
+      expect(strip().height, lessThanOrEqualTo(kSearchCompactExtent));
+      expect(find.byKey(const Key('search-results')), findsNothing);
+      expect(find.byKey(const Key('search-count')), findsOneWidget);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('широкое окно: панель рядом со страницей, страница живая', (
+      WidgetTester tester,
+    ) async {
+      resize(tester, const Size(1280, 800));
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      final Finder viewer = find.byKey(const Key('fake-viewer'));
+      expect(tester.getSize(viewer), const Size(1280, 800));
+
+      await openSearch(tester);
+
+      // Панель стоит справа, страница — в оставшейся ширине.
+      expect(tester.getRect(panel).left, 1280 - kSearchPanelWidth);
+      expect(tester.getRect(panel).right, 1280);
+      expect(tester.getSize(viewer), const Size(1280 - kSearchPanelWidth, 800));
+      expect(docks, <double>[kSearchPanelWidth]);
+      expect(covers, isEmpty, reason: 'страницу панель не закрывает');
+
+      // Результат выбран: панель на месте, поле и список — тоже.
+      await tapKey(tester, 'search-hit-1');
+      expect(jumps, <int>[4]);
+      expect(panel, findsOneWidget);
+      expect(field, findsOneWidget);
+      expect(marker, findsOneWidget);
+      expect(tester.getSize(viewer), const Size(1280 - kSearchPanelWidth, 800));
+
+      // Страница рядом с панелью листается клавишами…
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(steps, <String>['вперёд', 'вперёд']);
+
+      // …и нажатием: панели чтения показываются по нажатию в неё.
+      await tester.tap(viewer);
+      await tester.pumpAndSettle();
+      expect(chromeOpacity(tester), 1);
+
+      // Закрыли — страница снова во всю ширину.
+      await tapKey(tester, 'search-close');
+      expect(panel, findsNothing);
+      expect(tester.getSize(viewer), const Size(1280, 800));
+      expect(docks, <double>[kSearchPanelWidth, 0]);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('широкое окно: пока набирают запрос, клавиши — у поля', (
+      WidgetTester tester,
+    ) async {
+      resize(tester, const Size(1280, 800));
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(steps, isEmpty, reason: 'пробел принадлежит полю');
+
+      // Читатель нажал по странице — клавиши вернулись к ней.
+      stateOf(tester).focusPage();
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(steps, <String>['вперёд']);
+      expect(panel, findsOneWidget);
 
       search.dispose();
       await controller.close();
