@@ -81,11 +81,12 @@ class ReaderController extends ChangeNotifier {
     _initialPage = _page;
     _fragment = position?.fragment ?? 0;
     // F-READ-15: рамка из базы годится, только если посчитана нынешним
-    // алгоритмом и с той же настройкой колонтитулов. Отставшая
-    // пересчитается сама, как только понадобится.
+    // алгоритмом, по этому же файлу и с той же настройкой колонтитулов.
+    // Отставшая пересчитается сама, как только понадобится.
     if (bookFrame != null &&
         bookFrame.isCurrentFor(
           ignoreRunningHeads: _settings.ignoreRunningHeads,
+          fingerprint: book.fileHash,
         )) {
       _bookFrame = bookFrame;
     }
@@ -118,7 +119,7 @@ class ReaderController extends ChangeNotifier {
       await document.measure(<int>[page - 1, page, page + 1]);
       // F-READ-15: рамка книги, посчитанная в прошлый раз, лежит в базе —
       // со второго открытия книга встаёт по ней с первого кадра.
-      final BookFrame? bookFrame = await reading.bookFrame(book.id);
+      final BookFrame? bookFrame = await _storedBookFrame(reading, book.id);
       return ReaderController(
         book: book,
         document: document,
@@ -134,6 +135,21 @@ class ReaderController extends ChangeNotifier {
       // иначе утечёт память движка.
       await document.close();
       rethrow;
+    }
+  }
+
+  /// Рамка книги из базы; `null` — её нет или она не прочиталась.
+  ///
+  /// Рамка — производное: сбой её чтения не повод не открыть книгу. Она
+  /// посчитается заново, как только понадобится.
+  static Future<BookFrame?> _storedBookFrame(
+    ReadingRepository reading,
+    String bookId,
+  ) async {
+    try {
+      return await reading.bookFrame(bookId);
+    } on Object {
+      return null;
     }
   }
 
@@ -446,9 +462,10 @@ class ReaderController extends ChangeNotifier {
     return pageContentInBook(
       book: book,
       page: page,
-      // У скана своей рамки по тексту нет, и рамка книги там стоит
-      // твёрдо: за неё выходят пыль и тень переплёта.
-      ownText: own != null && own.fromText ? own.content : null,
+      own: own?.content,
+      // У скана рамки по тексту нет, и рамка книги там стоит твёрдо: за
+      // неё выходят пыль и тень переплёта.
+      ownFromText: own?.fromText ?? false,
     );
   }
 
@@ -477,6 +494,9 @@ class ReaderController extends ChangeNotifier {
       }
     });
     _bookFrameWork = work;
+    // Шторка показывает, что рамка считается: на скане это заметное
+    // время, и молчать о нём незачем.
+    _notify();
     return work;
   }
 
@@ -548,6 +568,7 @@ class ReaderController extends ChangeNotifier {
     final BookFrame frame = bookFrameFromSamples(
       samples,
       ignoreRunningHeads: heads,
+      fingerprint: book.fileHash,
     );
     _bookFrame = frame;
     _fragment = clampFragment(_fragment, fragmentCount);
@@ -1294,6 +1315,7 @@ class ReaderController extends ChangeNotifier {
     }
     _prepareRun++;
     _bookFrameRun++;
+    _bookFrameWork = null;
     await flush();
     await _document.close();
   }

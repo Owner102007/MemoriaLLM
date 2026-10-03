@@ -209,6 +209,7 @@ void main() {
       evenShift: -0.07,
       samples: 16,
       ignoreRunningHeads: false,
+      fingerprint: 'hash-1',
     );
     await data.reading.saveBookFrame('book-1', frame);
 
@@ -216,6 +217,7 @@ void main() {
     expect(loaded, frame);
     expect(loaded?.version, kBookFrameVersion);
     expect(loaded?.isMirrored, isTrue);
+    expect(loaded?.fingerprint, 'hash-1');
   });
 
   test('F-READ-15: новая рамка заменяет прежнюю, а не плодит строки', () async {

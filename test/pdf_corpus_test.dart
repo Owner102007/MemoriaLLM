@@ -1327,7 +1327,8 @@ void main() {
           final CropBox content = pageContentInBook(
             book: book,
             page: page,
-            ownText: own.content,
+            own: own.content,
+            ownFromText: true,
           );
           final List<TextBox> boxes = await document.pageTextBoxes(page);
           double left = 1;
@@ -1376,7 +1377,8 @@ void main() {
         final CropBox content = pageContentInBook(
           book: book,
           page: page,
-          ownText: own.fromText ? own.content : null,
+          own: own.content,
+          ownFromText: own.fromText,
         );
         if (content == book.forPage(page)) {
           after.add(content.width.toStringAsFixed(4));

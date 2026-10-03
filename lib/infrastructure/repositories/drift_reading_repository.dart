@@ -131,6 +131,7 @@ class DriftReadingRepository implements ReadingRepository {
       evenShift: row.evenShift,
       samples: row.samplePages,
       ignoreRunningHeads: row.ignoreRunningHeads,
+      fingerprint: row.fingerprint,
       version: row.algorithmVersion,
     );
   }
@@ -148,6 +149,7 @@ class DriftReadingRepository implements ReadingRepository {
       evenShift: Value<double>(frame.evenShift),
       samplePages: Value<int>(frame.samples),
       ignoreRunningHeads: Value<bool>(frame.ignoreRunningHeads),
+      fingerprint: Value<String>(frame.fingerprint),
       algorithmVersion: Value<int>(frame.version),
     );
     await _db.into(_db.bookFrames).insertOnConflictUpdate(row);

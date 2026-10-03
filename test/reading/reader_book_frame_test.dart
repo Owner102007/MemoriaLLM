@@ -55,6 +55,49 @@ class _GatedDocument extends FakeReaderDocument {
   }
 }
 
+/// Хранилище, у которого рамка книги не читается и не пишется: так
+/// ведёт себя база, в которой таблица рамок испорчена.
+class _BrokenFrames implements ReadingRepository {
+  _BrokenFrames(this._inner);
+
+  final ReadingRepository _inner;
+
+  @override
+  Future<ReadingPosition?> position(String bookId) => _inner.position(bookId);
+
+  @override
+  Stream<ReadingPosition?> watchPosition(String bookId) =>
+      _inner.watchPosition(bookId);
+
+  @override
+  Stream<Map<String, ReadingPosition>> watchPositions() =>
+      _inner.watchPositions();
+
+  @override
+  Future<void> savePosition(ReadingPosition position) =>
+      _inner.savePosition(position);
+
+  @override
+  Future<BookReadingSettings> settings(
+    String bookId,
+    ScreenOrientation orientation,
+  ) => _inner.settings(bookId, orientation);
+
+  @override
+  Future<void> saveSettings(BookReadingSettings settings) =>
+      _inner.saveSettings(settings);
+
+  @override
+  Future<BookFrame?> bookFrame(String bookId) async {
+    throw StateError('таблица рамок не читается');
+  }
+
+  @override
+  Future<void> saveBookFrame(String bookId, BookFrame frame) async {
+    throw StateError('таблица рамок не пишется');
+  }
+}
+
 /// Даёт досчитаться всему, что считается без ожидания.
 Future<void> _idle() => Future<void>.delayed(Duration.zero);
 
@@ -152,11 +195,11 @@ void main() {
 
       await second.loadFrame();
       await _idle();
-      expect(
-        again.boxReads.keys.toSet(),
-        <int>{1, 2, 3},
-        reason: 'выборка не разбиралась заново',
-      );
+      expect(again.boxReads.keys.toSet(), <int>{
+        1,
+        2,
+        3,
+      }, reason: 'выборка не разбиралась заново');
       expect(reading.frameSaveCount, 1);
       await shut(second);
     });
@@ -181,6 +224,47 @@ void main() {
       expect(frame?.odd.left, lessThan(0.3));
       final BookFrame? stored = await reading.bookFrame('book-read');
       expect(stored, frame);
+      await shut(controller);
+    });
+
+    test('F-READ-15: рамка другого файла пересчитывается сама', () async {
+      // Книгу привязали к другому файлу: идентификатор прежний, отпечаток
+      // новый. Рамка прежнего файла новому не годится.
+      await cropSaved();
+      await reading.saveBookFrame(
+        'book-read',
+        const BookFrame(
+          odd: CropBox(left: 0.3, top: 0.3, right: 0.7, bottom: 0.7),
+          samples: 16,
+          fingerprint: 'hash-of-another-file',
+        ),
+      );
+
+      final ReaderController controller = await open(plain(12));
+      final BookFrame? frame = controller.bookFrame;
+      expect(frame?.fingerprint, controller.book.fileHash);
+      expect(frame?.samples, 12);
+      expect(frame?.odd.left, lessThan(0.3));
+      await shut(controller);
+    });
+
+    test('F-READ-15: рамка не читается — книга открывается', () async {
+      await cropSaved();
+      final ReaderController controller = await ReaderController.open(
+        book: fakeBook(pageCount: 12),
+        opener: FakeDocumentOpener(plain(12)),
+        reading: _BrokenFrames(reading),
+        frameWait: Duration.zero,
+      );
+      expect(controller.page, 1);
+      expect(controller.bookFrame, isNull);
+
+      // Рамка — производное: не прочиталась и не записалась — считается
+      // заново и действует до закрытия книги.
+      await controller.loadFrame();
+      await _idle();
+      expect(controller.bookFrame, isNotNull);
+      expect(controller.contentBox.width, lessThan(0.85));
       await shut(controller);
     });
 

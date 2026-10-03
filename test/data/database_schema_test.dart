@@ -120,6 +120,7 @@ void main() {
         'even_shift',
         'sample_pages',
         'ignore_running_heads',
+        'fingerprint',
         'algorithm_version',
       ]),
     );

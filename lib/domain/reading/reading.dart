@@ -212,6 +212,7 @@ class BookFrame {
     this.evenShift = 0,
     this.samples = 0,
     this.ignoreRunningHeads = true,
+    this.fingerprint = '',
     this.version = kBookFrameVersion,
   });
 
@@ -228,6 +229,12 @@ class BookFrame {
 
   /// С какой настройкой колонтитулов рамка посчитана.
   final bool ignoreRunningHeads;
+
+  /// Отпечаток файла, по которому рамка посчитана.
+  ///
+  /// Книгу можно привязать к другому файлу — идентификатор у неё при
+  /// этом остаётся прежним, а рамка прежнего файла новому не годится.
+  final String fingerprint;
 
   /// Версия алгоритма, которым рамка посчитана.
   final int version;
@@ -256,11 +263,15 @@ class BookFrame {
   /// Рамка страницы [page], начиная с единицы.
   CropBox forPage(int page) => page.isEven ? even : odd;
 
-  /// Годится ли рамка сейчас: посчитана нынешним алгоритмом и с той же
-  /// настройкой колонтитулов, что стоит у книги.
-  bool isCurrentFor({required bool ignoreRunningHeads}) {
+  /// Годится ли рамка сейчас: посчитана нынешним алгоритмом, по этому
+  /// самому файлу и с той же настройкой колонтитулов, что стоит у книги.
+  bool isCurrentFor({
+    required bool ignoreRunningHeads,
+    required String fingerprint,
+  }) {
     return version == kBookFrameVersion &&
-        this.ignoreRunningHeads == ignoreRunningHeads;
+        this.ignoreRunningHeads == ignoreRunningHeads &&
+        this.fingerprint == fingerprint;
   }
 
   @override
@@ -270,12 +281,19 @@ class BookFrame {
         other.evenShift == evenShift &&
         other.samples == samples &&
         other.ignoreRunningHeads == ignoreRunningHeads &&
+        other.fingerprint == fingerprint &&
         other.version == version;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(odd, evenShift, samples, ignoreRunningHeads, version);
+  int get hashCode => Object.hash(
+    odd,
+    evenShift,
+    samples,
+    ignoreRunningHeads,
+    fingerprint,
+    version,
+  );
 
   @override
   String toString() =>

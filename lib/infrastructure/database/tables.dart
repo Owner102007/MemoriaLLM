@@ -497,6 +497,11 @@ class BookFrames extends Table {
   /// С какой настройкой колонтитулов рамка посчитана.
   BoolColumn get ignoreRunningHeads => boolean()();
 
+  /// Отпечаток файла, по которому рамка посчитана: книгу можно привязать
+  /// к другому файлу, и рамка прежнего ему не годится.
+  TextColumn get fingerprint =>
+      text().withDefault(const Constant<String>(''))();
+
   /// Версия алгоритма, которым рамка посчитана.
   IntColumn get algorithmVersion => integer()();
 

@@ -217,16 +217,48 @@ void main() {
       final BookFrame frame = bookFrameFromSamples(
         _uniform(<int>[1, 2, 3]),
         ignoreRunningHeads: true,
+        fingerprint: 'hash',
       );
-      expect(frame.isCurrentFor(ignoreRunningHeads: true), isTrue);
-      expect(frame.isCurrentFor(ignoreRunningHeads: false), isFalse);
+      expect(frame.fingerprint, 'hash');
+      expect(
+        frame.isCurrentFor(ignoreRunningHeads: true, fingerprint: 'hash'),
+        isTrue,
+      );
+      expect(
+        frame.isCurrentFor(ignoreRunningHeads: false, fingerprint: 'hash'),
+        isFalse,
+      );
+      // Книгу привязали к другому файлу — рамка прежнего не годится.
+      expect(
+        frame.isCurrentFor(ignoreRunningHeads: true, fingerprint: 'other'),
+        isFalse,
+      );
       // ALG-DATA-09: рамка прежней версии алгоритма не годится.
       const BookFrame old = BookFrame(
         odd: _usual,
         samples: 3,
+        fingerprint: 'hash',
         version: kBookFrameVersion - 1,
       );
-      expect(old.isCurrentFor(ignoreRunningHeads: true), isFalse);
+      expect(
+        old.isCurrentFor(ignoreRunningHeads: true, fingerprint: 'hash'),
+        isFalse,
+      );
+    });
+
+    test('F-READ-15: в коротком документе обложка рамку не растягивает', () {
+      // Шесть страниц: восьмая часть выборки — ноль, но одна страница с
+      // каждой стороны выбросом всё же считается.
+      final List<FrameSample> samples = _uniform(<int>[1, 2, 3, 4, 5, 6]);
+      samples[0] = const FrameSample(
+        page: 1,
+        content: CropBox(left: 0, top: 0, right: 1, bottom: 0.995),
+      );
+      final BookFrame frame = bookFrameFromSamples(
+        samples,
+        ignoreRunningHeads: true,
+      );
+      expect(frame.odd, _usual);
     });
   });
 
@@ -238,7 +270,8 @@ void main() {
         pageContentInBook(
           book: book,
           page: 9,
-          ownText: const CropBox(left: 0.2, top: 0.1, right: 0.8, bottom: 0.5),
+          own: const CropBox(left: 0.2, top: 0.1, right: 0.8, bottom: 0.5),
+          ownFromText: true,
         ),
         _usual,
       );
@@ -251,12 +284,8 @@ void main() {
         pageContentInBook(
           book: book,
           page: 9,
-          ownText: const CropBox(
-            left: 0.13,
-            top: 0.09,
-            right: 0.87,
-            bottom: 0.91,
-          ),
+          own: const CropBox(left: 0.13, top: 0.09, right: 0.87, bottom: 0.91),
+          ownFromText: true,
         ),
         _usual,
       );
@@ -268,7 +297,8 @@ void main() {
       final CropBox content = pageContentInBook(
         book: book,
         page: 9,
-        ownText: const CropBox(left: 0.2, top: 0.3, right: 0.95, bottom: 0.6),
+        own: const CropBox(left: 0.2, top: 0.3, right: 0.95, bottom: 0.6),
+        ownFromText: true,
       );
       expect(content.left, _usual.left);
       expect(content.top, _usual.top);
@@ -277,12 +307,30 @@ void main() {
     });
 
     test('F-READ-15: у скана рамка книги стоит твёрдо', () {
-      // Своей рамки по текстовому слою у скана нет.
+      // Рамки по текстовому слою у скана нет, а за рамку книги на нём
+      // выходят пыль и тень переплёта.
       expect(pageContentInBook(book: book, page: 9), _usual);
       expect(
-        pageContentInBook(book: book, page: 9, ownText: CropBox.full),
+        pageContentInBook(
+          book: book,
+          page: 9,
+          own: const CropBox(left: 0.02, top: 0.02, right: 0.98, bottom: 0.98),
+        ),
         _usual,
-        reason: 'страница целиком — это «не разобрали», а не текст',
+      );
+    });
+
+    test('F-READ-15: текст до самых краёв — страница целиком', () {
+      // Рамка во всю страницу у страницы с текстом значит, что текст
+      // доходит до краёв, а не что страницу не разобрали.
+      expect(
+        pageContentInBook(
+          book: book,
+          page: 9,
+          own: CropBox.full,
+          ownFromText: true,
+        ),
+        CropBox.full,
       );
     });
 
@@ -301,10 +349,62 @@ void main() {
       final CropBox content = pageContentInBook(
         book: bound,
         page: 8,
-        ownText: even,
+        own: even,
+        ownFromText: true,
       );
       expect(content.left, closeTo(0.07, 1e-9));
       expect(content.right, closeTo(0.86, 1e-9));
+    });
+
+    test('F-READ-15: сбитая чётность — рамка другой стороны разворота', () {
+      // После вклейки чётность номеров сбита: страница с нечётным
+      // номером свёрстана как чётная. Рамка «своей» стороны срезала бы
+      // у неё край текста на величину сдвига.
+      const BookFrame bound = BookFrame(
+        odd: CropBox(left: 0.14, top: 0.1, right: 0.93, bottom: 0.9),
+        evenShift: -0.07,
+        samples: 16,
+      );
+      const CropBox asEven = CropBox(
+        left: 0.07,
+        top: 0.1,
+        right: 0.86,
+        bottom: 0.9,
+      );
+      // Скан: рамка страницы посчитана по пикселям.
+      final CropBox content = pageContentInBook(
+        book: bound,
+        page: 9,
+        own: asEven,
+      );
+      expect(content, bound.even);
+      expect(content.width, closeTo(bound.odd.width, 1e-9));
+    });
+
+    test('F-READ-15: короткая страница стороны разворота не меняет', () {
+      const BookFrame bound = BookFrame(
+        odd: CropBox(left: 0.14, top: 0.1, right: 0.93, bottom: 0.9),
+        evenShift: -0.07,
+        samples: 16,
+      );
+      // Заголовок посреди листа ложится в обе рамки одинаково.
+      expect(
+        pageContentInBook(
+          book: bound,
+          page: 9,
+          own: const CropBox(left: 0.3, top: 0.4, right: 0.7, bottom: 0.6),
+        ),
+        bound.odd,
+      );
+      // Полосная картинка выходит за обе рамки одинаково.
+      expect(
+        pageContentInBook(
+          book: bound,
+          page: 9,
+          own: const CropBox(left: 0.01, top: 0, right: 0.99, bottom: 1),
+        ),
+        bound.odd,
+      );
     });
   });
 }

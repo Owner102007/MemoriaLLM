@@ -242,6 +242,9 @@ void main() {
   });
 
   test('F-READ-15: строка о рамке говорит, откуда она', () {
+    // Общий `tearDown` закрывает контроллер; без своего он закрыл бы
+    // контроллер предыдущего теста во второй раз.
+    build();
     const BookReadingSettings off = BookReadingSettings(
       bookId: 'b',
       orientation: ScreenOrientation.portrait,

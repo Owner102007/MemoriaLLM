@@ -124,7 +124,8 @@ int usableSampleCount(List<FrameSample> samples) {
 /// Рамка книги по выборке страниц.
 ///
 /// Каждая сторона берётся **почти самой широкой** по выборке: восьмая
-/// часть страниц с каждой стороны считается выбросами и в счёт не идёт.
+/// часть страниц с каждой стороны (а в выборке из пяти–семи страниц —
+/// одна) считается выбросами и в счёт не идёт.
 /// Самая широкая рамка растянула бы рамку всей книги из-за одной
 /// полосной картинки, средняя срезала бы текст у половины страниц.
 /// Ошибка остаётся в сторону «обрезать меньше»: страница с содержимым
@@ -133,16 +134,24 @@ int usableSampleCount(List<FrameSample> samples) {
 /// Если поля чётных и нечётных страниц зеркальны, рамка считается по
 /// страницам, сдвинутым друг к другу, и получает сдвиг чётных страниц —
 /// но только когда так она выходит уже общей.
+///
+/// [fingerprint] — отпечаток файла, по которому рамка посчитана: она
+/// годится только ему.
 BookFrame bookFrameFromSamples(
   List<FrameSample> samples, {
   required bool ignoreRunningHeads,
+  String fingerprint = '',
 }) {
   final List<FrameSample> usable = <FrameSample>[
     for (final FrameSample sample in samples)
       if (sample.isUsable) sample,
   ];
   if (usable.isEmpty) {
-    return BookFrame(odd: CropBox.full, ignoreRunningHeads: ignoreRunningHeads);
+    return BookFrame(
+      odd: CropBox.full,
+      ignoreRunningHeads: ignoreRunningHeads,
+      fingerprint: fingerprint,
+    );
   }
   final CropBox plain = _robustBox(usable, evenShift: 0);
   final double shift = _mirrorShift(usable);
@@ -158,6 +167,7 @@ BookFrame bookFrameFromSamples(
         evenShift: safe,
         samples: usable.length,
         ignoreRunningHeads: ignoreRunningHeads,
+        fingerprint: fingerprint,
       );
     }
   }
@@ -165,32 +175,42 @@ BookFrame bookFrameFromSamples(
     odd: plain,
     samples: plain == CropBox.full ? 0 : usable.length,
     ignoreRunningHeads: ignoreRunningHeads,
+    fingerprint: fingerprint,
   );
 }
 
 /// Рамка страницы [page] внутри книги.
 ///
-/// Обычная страница получает рамку книги как есть. Страница, чей текст
-/// выходит за рамку книги дальше [tolerance] (широкая таблица, сноска на
-/// поле), получает рамку, расширенную до этого текста: на ней одной
-/// кегль мельче, зато ни один символ не срезан. [ownText] — рамка самой
-/// страницы, посчитанная **по текстовому слою**; у скана её нет, и там
-/// рамка книги стоит твёрдо: за неё на скане выходят пыль и тень
-/// переплёта, из-за которых рамка и дрожала.
+/// Обычная страница получает рамку книги как есть. [own] — рамка самой
+/// страницы, если она уже посчитана; [ownFromText] — посчитана ли она по
+/// текстовому слою.
+///
+/// Страница, чей **текст** выходит за рамку книги дальше [tolerance]
+/// (широкая таблица, сноска на поле), получает рамку, расширенную до
+/// этого текста: на ней одной кегль мельче, зато ни один символ не
+/// срезан. У скана текстового слоя нет, и там рамка книги стоит твёрдо:
+/// за неё на скане выходят пыль и тень переплёта, из-за которых рамка и
+/// дрожала.
+///
+/// У книги с зеркальными полями рамка страницы заодно выбирает сторону
+/// разворота — см. [_sideFor].
 CropBox pageContentInBook({
   required BookFrame book,
   required int page,
-  CropBox? ownText,
+  CropBox? own,
+  bool ownFromText = false,
   double tolerance = kBookFrameTolerance,
 }) {
   if (!book.hasContent) {
     return CropBox.full;
   }
-  final CropBox base = book.forPage(page);
-  final CropBox? own = ownText;
-  if (own == null || !own.isValid || own == CropBox.full) {
+  final CropBox base = _sideFor(book, page, own);
+  if (own == null || !own.isValid || !ownFromText) {
     return base;
   }
+  // Рамка во всю страницу у страницы с текстом — не «не разобрали», а
+  // текст до самых краёв: дальше она выйдет за рамку книги всеми
+  // сторонами, и страница покажется целиком.
   // Рамка страницы — её символы плюс запас автообрезки. Сравнивать с
   // рамкой книги надо сами символы, поэтому запас снимается; у края
   // страницы он был обрезан, и снимать там нечего.
@@ -215,6 +235,33 @@ CropBox pageContentInBook({
     right: own.right > base.right ? own.right : base.right,
     bottom: own.bottom > base.bottom ? own.bottom : base.bottom,
   );
+}
+
+/// Какая из двух рамок зеркальной книги подходит странице [page].
+///
+/// Обычно — по чётности номера. Но чётность сбивается: вклейка или лист,
+/// пропущенный при сканировании, сдвигают все страницы за собой, и рамка
+/// «своей» стороны срезала бы у них край текста на величину сдвига.
+/// Поэтому страница, чьё содержимое заметно лучше ложится в рамку другой
+/// стороны разворота, получает её. Размер у рамок один, и ширина текста
+/// от этого не меняется.
+CropBox _sideFor(BookFrame book, int page, CropBox? own) {
+  final CropBox base = book.forPage(page);
+  if (!book.isMirrored || own == null || !own.isValid || own == CropBox.full) {
+    return base;
+  }
+  final CropBox other = book.forPage(page + 1);
+  final double gain = _overflow(own, base) - _overflow(own, other);
+  // Полсдвига — порог: короткая страница и полосная картинка ложатся в
+  // обе рамки одинаково и стороны не меняют.
+  return gain > book.evenShift.abs() / 2 ? other : base;
+}
+
+/// На сколько рамка страницы выходит за [box] по горизонтали.
+double _overflow(CropBox own, CropBox box) {
+  final double left = box.left - own.left;
+  final double right = own.right - box.right;
+  return (left > 0 ? left : 0.0) + (right > 0 ? right : 0.0);
 }
 
 /// Сдвиг чётных страниц относительно нечётных; ноль — поля не зеркальны.
@@ -258,8 +305,11 @@ CropBox _robustBox(List<FrameSample> usable, {required double evenShift}) {
   tops.sort();
   rights.sort();
   bottoms.sort();
-  final int skip = usable.length ~/ 8;
-  final int far = usable.length - 1 - skip;
+  // В выборке из пяти–семи страниц (короткий документ) восьмая часть —
+  // ноль, и одна обложка растянула бы рамку всем остальным.
+  final int count = usable.length;
+  final int skip = count >= 8 ? count ~/ 8 : (count >= 5 ? 1 : 0);
+  final int far = count - 1 - skip;
   final double left = lefts[skip];
   final double right = rights[far];
   final CropBox box = CropBox(
