@@ -363,6 +363,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       done = await widget.services.window.setFullScreen(value);
     } finally {
       _switchingWindow = false;
+      // Платформа отказала или вызов сорвался — раскладка возвращается.
+      if (!done && mounted) {
+        setState(() => _fullScreen = !value);
+      }
     }
     if (!mounted) {
       // Книгу закрыли раньше, чем окно развернулось: оставлять его во
@@ -373,7 +377,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     if (!done) {
-      setState(() => _fullScreen = !value);
       return;
     }
     if (remember) {
