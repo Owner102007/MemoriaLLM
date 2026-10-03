@@ -1029,6 +1029,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       },
     );
     _refreshOnTop();
+    // Шторку могли смахнуть, не отпустив ползунок: его значение уже на
+    // странице, а в базу ещё не записано (BUG-12).
+    await controller.persistSettings();
   }
 
   Future<void> _editCrop() async {

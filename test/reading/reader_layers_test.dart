@@ -158,7 +158,10 @@ void main() {
     final GlobalKey viewer = GlobalKey();
     int created = 0;
     Widget page() {
-      return KeyedSubtree(key: viewer, child: _Probe(onInit: () => created++));
+      return KeyedSubtree(
+        key: viewer,
+        child: _Probe(onInit: () => created++),
+      );
     }
 
     await tester.pumpWidget(layers(filter: none, page: page()));

@@ -149,9 +149,9 @@ class ReaderSheet extends StatefulWidget {
   ///
   /// Проверено по исходникам pdfrx 2.6.1: когда все картинки вместе
   /// весят больше этого числа, просмотрщик выбрасывает картинки страниц
-  /// **левее** запаса, начиная с дальних. Картинки страниц, которые видны
-  /// или лежат в запасе, он не трогает; картинки страниц правее запаса —
-  /// тоже (BUG-35), и на это число не влияет ничто.
+  /// **до** запаса по порядку книги, начиная с дальних. Картинки страниц,
+  /// которые видны или лежат в запасе, он не трогает; картинки страниц
+  /// после запаса — тоже (BUG-35), и на это число не влияет ничто.
   ///
   /// Девяносто шесть мегабайт — это страница на экране, запас в две
   /// страницы с каждой стороны и резкие картинки к ним. Меньше нельзя:
@@ -761,6 +761,8 @@ class _ReaderSheetState extends State<ReaderSheet> {
             screenHeight: limits.maxHeight,
             fit: widget.stripFit,
             overlap: widget.overlap,
+            // F-READ-11: полоса прижата кверху; лист целиком — по центру.
+            anchorTop: widget.arrangement == SheetArrangement.column,
           );
           _placement = placement;
           _screen = Size(limits.maxWidth, limits.maxHeight);
@@ -966,7 +968,12 @@ class _ReaderSheetState extends State<ReaderSheet> {
         controller: _viewer,
         initialPageNumber: widget.pages.isEmpty ? 1 : widget.pages.first,
         params: PdfViewerParams(
-          backgroundColor: widget.background,
+          // Своего фона у просмотрщика нет (BUG-04): он лежит под
+          // светофильтром, и его фон «Инверсия» сделала бы светлым —
+          // там, где в дырке маски нет страницы: рядом с обложкой в
+          // столбике разворотов, под короткой страницей разворота. Фон
+          // даёт сам лист, ниже фильтра; прозрачность фильтр не трогает.
+          backgroundColor: Colors.transparent,
           margin: 0,
           pageDropShadow: null,
           // Пан и зум просмотрщику не запрещены вовсе, и это не оплошность.

@@ -366,7 +366,7 @@ void main() {
     final Finder slider = find.byKey(const Key('reader-strip-overlap'));
     await tester.ensureVisible(slider);
     await tester.pump();
-    await tester.drag(slider, const Offset(300, 0));
+    await tester.drag(slider, const Offset(600, 0));
     await tester.pump();
 
     // До упора вправо — потолок, и дальше него ползунок не уводит.
@@ -394,7 +394,7 @@ void main() {
     final Finder slider = find.byKey(const Key('reader-neighbour-share'));
     await tester.ensureVisible(slider);
     await tester.pump();
-    await tester.drag(slider, const Offset(-300, 0));
+    await tester.drag(slider, const Offset(-600, 0));
     await tester.pump();
 
     // Ноль — соседняя страница закрыта фоном, как было до F-READ-13.
@@ -421,6 +421,9 @@ void main() {
   });
 
   test('F-READ-12: доля экрана подписана процентами', () {
+    // Контроллер заводится только затем, чтобы общий `tearDown` закрыл
+    // свой, а не уже закрытый контроллер прошлого теста.
+    build();
     expect(percentLabel(0.07), '7 %');
     expect(percentLabel(0.035), '3,5 %');
     expect(percentLabel(0), '0 %');

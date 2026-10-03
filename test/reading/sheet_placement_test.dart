@@ -14,6 +14,7 @@ SheetPlacement place({
   bool landscape = false,
   double sheetWidth = _pageWidth,
   double sheetHeight = _pageHeight,
+  bool anchorTop = false,
 }) {
   return placeFragment(
     sheetWidth: sheetWidth,
@@ -21,6 +22,7 @@ SheetPlacement place({
     fragment: fragment,
     screenWidth: landscape ? _longSide : _shortSide,
     screenHeight: landscape ? _shortSide : _longSide,
+    anchorTop: anchorTop,
   );
 }
 
@@ -70,9 +72,10 @@ void main() {
       // Страница уже экрана по пропорциям, поэтому упирается в ширину.
       expect(placement.sheetWidth, closeTo(_shortSide, 1e-9));
       expect(placement.left, closeTo(0, 1e-9));
-      // По высоте остаётся запас, и он целиком уходит вниз (F-READ-11).
-      expect(placement.top, closeTo(0, 1e-9));
-      expect(_longSide - placement.sheetHeight, greaterThan(100));
+      // По высоте остаётся запас, и лист стоит по центру: прижимается
+      // кверху только полоса (F-READ-11), а не страница целиком.
+      final double slack = _longSide - placement.sheetHeight;
+      expect(placement.top, closeTo(slack / 2, 1e-9));
     });
   });
 
@@ -88,7 +91,7 @@ void main() {
 
     test('F-READ-11: полоса уже экрана начинается у его верха', () {
       for (final CropBox half in halves) {
-        final SheetPlacement placement = place(fragment: half);
+        final SheetPlacement placement = place(fragment: half, anchorTop: true);
         final SheetViewport window = fragmentBounds(
           placement: placement,
           fragment: half,
@@ -116,18 +119,40 @@ void main() {
         right: 1,
         bottom: 1,
       );
-      double topOf(CropBox strip) {
-        final SheetPlacement placement = place(fragment: strip);
+      double topOf(CropBox strip, {required bool anchorTop}) {
+        final SheetPlacement placement = place(
+          fragment: strip,
+          anchorTop: anchorTop,
+        );
         return fragmentBounds(placement: placement, fragment: strip).top;
       }
 
-      expect(topOf(shortStrip), closeTo(topOf(tallStrip), 1e-9));
+      expect(
+        topOf(shortStrip, anchorTop: true),
+        closeTo(topOf(tallStrip, anchorTop: true), 1e-9),
+      );
+      // А при центровке — ровно та жалоба: верх гуляет на десятки точек.
+      final double centredShort = topOf(shortStrip, anchorTop: false);
+      final double centredTall = topOf(tallStrip, anchorTop: false);
+      expect((centredShort - centredTall).abs(), greaterThan(20));
+    });
+
+    test('F-READ-11: лист целиком кверху не прижимается', () {
+      // Страница целиком и разворот стоят по центру, как и стояли:
+      // высота у листа одна и та же, и гулять нечему.
+      final SheetPlacement whole = place(fragment: CropBox.full);
+      expect(whole.top, greaterThan(100));
+      expect(
+        whole.top,
+        closeTo(_longSide - (whole.top + whole.sheetHeight), 1e-9),
+      );
     });
 
     test('F-READ-11: по горизонтали полоса по-прежнему по центру', () {
       final SheetPlacement placement = place(
         fragment: halves.first,
         landscape: true,
+        anchorTop: true,
       );
       final SheetViewport window = fragmentBounds(
         placement: placement,
@@ -149,6 +174,7 @@ void main() {
           screenWidth: _shortSide,
           screenHeight: _longSide,
           fit: 0.9,
+          anchorTop: true,
         ),
         fragment: halves.first,
       );
@@ -186,6 +212,7 @@ void main() {
           screenWidth: width,
           screenHeight: height,
           overlap: overlap,
+          anchorTop: true,
         ),
         fragment: strip,
       );
@@ -216,6 +243,7 @@ void main() {
                 screenWidth: width,
                 screenHeight: height,
                 overlap: overlap,
+                anchorTop: true,
               );
               final SheetViewport window = fragmentBounds(
                 placement: placement,
@@ -265,6 +293,7 @@ void main() {
         screenWidth: _longSide,
         screenHeight: _shortSide,
         overlap: 0.07,
+        anchorTop: true,
       );
       final CropBox shown = visible(placement, landscape: true);
       expect(shown.bottom, greaterThan(halves.first.bottom + 0.01));

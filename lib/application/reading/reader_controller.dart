@@ -1079,6 +1079,13 @@ class ReaderController extends ChangeNotifier {
   Future<void> flush() async {
     _saveTimer?.cancel();
     _saveTimer = null;
+    // Ползунок шторки могли не отпустить: книгу закрыли или приложение
+    // свернули раньше (BUG-12). Настройки уходят в базу вместе с местом.
+    // Когда писать нечего, ожидания нет вовсе: место пишется в тот же
+    // миг, что и прежде.
+    if (_settingsUnsaved) {
+      await persistSettings();
+    }
     if (!_dirty) {
       return;
     }
@@ -1107,8 +1114,6 @@ class ReaderController extends ChangeNotifier {
       wait.stop();
     }
     _prepareRun++;
-    // Ползунок шторки могли не отпустить: книгу закрыли раньше (BUG-12).
-    await persistSettings();
     await flush();
     await _document.close();
   }

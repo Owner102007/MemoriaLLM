@@ -45,7 +45,9 @@ class ReaderLayers extends StatelessWidget {
   Widget build(BuildContext context) {
     return Stack(
       children: <Widget>[
-        Positioned.fill(child: ReadingFilterLayer(filter: filter, child: page)),
+        Positioned.fill(
+          child: ReadingFilterLayer(filter: filter, child: page),
+        ),
         Positioned.fill(child: mask),
         // Без `IgnorePointer` намеренно: подсветка нажатий не ловит (у
         // неё нет своей области), а панель действий обязана их ловить —

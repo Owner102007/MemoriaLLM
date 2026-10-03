@@ -253,11 +253,13 @@ void main() {
     test('F-READ-12: запас 2 — по два листа, третий не захвачен', () {
       const double sheet = 842;
       for (final double top in <double>[-30, 250, 530]) {
-        expect(
-          covered(sheet: sheet, top: top, visible: 320, sheets: 2),
-          <int>[-2, -1, 0, 1, 2],
-          reason: 'верх видимой области $top',
-        );
+        expect(covered(sheet: sheet, top: top, visible: 320, sheets: 2), <int>[
+          -2,
+          -1,
+          0,
+          1,
+          2,
+        ], reason: 'верх видимой области $top');
       }
     });
 
