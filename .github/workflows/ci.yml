@@ -219,6 +219,12 @@ jobs:
           if [ -s /tmp/tests.txt ]; then
             { grep -B 100 -A 30 '\[E\]' /tmp/tests.txt || true; } \
               > /tmp/report/failures.txt
+            # Замеры скорости (F-READ-02) корпус-тесты печатают строками
+            # «ЗАМЕР». Идут они в середине прогона и в хвост вывода не
+            # попадают, а числа нужны в PROGRESS.md — поэтому вынимаются
+            # отдельным файлом и уезжают в отчёт своим разделом.
+            { grep -a 'ЗАМЕР' /tmp/tests.txt || true; } \
+              > /tmp/report/measures.txt
           fi
           echo "${{ job.status }}" > /tmp/report/status.txt
           ls -l /tmp/report
@@ -407,7 +413,7 @@ jobs:
             echo "- страница прогона:"
             echo "  $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > out/report.md
-          for name in failures analyze format codegen tests sessions; do
+          for name in failures analyze format codegen measures tests sessions; do
             file="logs/$name.txt"
             [ -s "$file" ] || continue
             {

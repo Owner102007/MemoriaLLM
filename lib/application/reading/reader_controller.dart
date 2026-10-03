@@ -794,12 +794,14 @@ class ReaderController extends ChangeNotifier {
         : fragment;
     PageFrame? frame = _readyFrame(safe);
     if (frame == null) {
-      if (await _within(_loadSheetFrames(safe), _frameWait)) {
-        frame = _readyFrame(safe);
-      }
+      await _within(_loadSheetFrames(safe), _frameWait);
       if (_closed || request != _request) {
         return false;
       }
+      // Спрашиваем кэш заново, чем бы ни кончилось ожидание: рамка
+      // страницы с текстом успевает досчитаться, даже когда её не ждали
+      // вовсе, и показывать такую страницу по чужой рамке незачем.
+      frame = _readyFrame(safe);
     }
     _pendingPage = null;
     _page = safe;

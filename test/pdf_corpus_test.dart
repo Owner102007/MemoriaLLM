@@ -1257,7 +1257,7 @@ void main() {
         final ReaderDocument document = await open(name);
         final PdfDocument engine = document.engineDocument! as PdfDocument;
         final Stopwatch watch = Stopwatch()..start();
-        await engine.loadPagesProgressively();
+        await engine.loadPagesProgressively<void>();
         watch.stop();
         stdout.writeln(
           'ЗАМЕР F-READ-02 | $name | измерить все страницы | '
