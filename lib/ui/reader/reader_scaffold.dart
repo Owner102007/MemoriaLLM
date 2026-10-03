@@ -456,6 +456,13 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     if (action == null) {
       return KeyEventResult.ignored;
     }
+    // Страницу, которую панель поиска закрыла целиком, клавиши не
+    // листают: читатель её не видит.
+    final bool turning =
+        action == ReaderKeyAction.previous || action == ReaderKeyAction.next;
+    if (turning && _searchCovers) {
+      return KeyEventResult.ignored;
+    }
     switch (action) {
       case ReaderKeyAction.previous:
         widget.onPreviousFragment?.call();

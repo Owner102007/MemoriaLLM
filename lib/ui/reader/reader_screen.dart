@@ -1243,13 +1243,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // Ждут их недолго ([_revealWait]): разбор тяжёлой страницы не должен
     // держать читателя на прежней (BUG-23). Не успели — переход идёт в
     // начало страницы, а полоса и подсветка встают, когда досчитаются.
+    // Читателя, который уже на этой странице, держать не на чем и
+    // возвращать к её началу нельзя: тут прямоугольники ждут до конца.
     final Future<List<TextBox>> loading = mark == null
         ? Future<List<TextBox>>.value(const <TextBox>[])
         : _markRectsOf(controller, mark);
-    List<TextBox> rects = await loading.timeout(
-      _revealWait,
-      onTimeout: () => const <TextBox>[],
-    );
+    List<TextBox> rects = controller.page == page
+        ? await loading
+        : await loading.timeout(
+            _revealWait,
+            onTimeout: () => const <TextBox>[],
+          );
     if (!mounted || run != _markRun) {
       return;
     }

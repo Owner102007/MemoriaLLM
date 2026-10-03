@@ -287,8 +287,12 @@ class _SearchPanelState extends State<SearchPanel> {
               child: TextField(
                 key: const Key('search-field'),
                 controller: _field,
+                // Указатель ввода в поле ставит экран чтения, когда
+                // открывает поиск. Сам себе поле его не берёт: панель
+                // переезжает между местами, и при повороте планшета или
+                // расширении окна поле отбирало бы клавиши у страницы, а
+                // на телефоне поднимало клавиатуру.
                 focusNode: widget.fieldFocus,
-                autofocus: true,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
                   labelText: 'Поиск по книге',
