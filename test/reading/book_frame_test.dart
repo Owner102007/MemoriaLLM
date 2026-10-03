@@ -406,5 +406,24 @@ void main() {
         bound.odd,
       );
     });
+
+    test('F-READ-15: тень корешка на скане стороны не меняет', () {
+      // Слева тень до самого края, справа строки короче обычного: в
+      // чужую рамку страница не ложится, хотя выходит за неё меньше, чем
+      // за свою. Смена стороны срезала бы текст справа.
+      const BookFrame bound = BookFrame(
+        odd: CropBox(left: 0.14, top: 0.1, right: 0.93, bottom: 0.9),
+        evenShift: -0.07,
+        samples: 16,
+      );
+      expect(
+        pageContentInBook(
+          book: bound,
+          page: 9,
+          own: const CropBox(left: 0, top: 0.1, right: 0.89, bottom: 0.9),
+        ),
+        bound.odd,
+      );
+    });
   });
 }
