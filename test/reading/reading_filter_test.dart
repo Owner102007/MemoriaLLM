@@ -322,9 +322,19 @@ void main() {
       }
     });
 
-    test('ось Y перевёрнута для OpenGL ES', () {
-      // Без этого страница на части Android-устройств встаёт на голову.
-      expect(source, contains('IMPELLER_TARGET_OPENGLES'));
+    test('BUG-41: шейдер не переворачивает ось Y сам', () {
+      // До Flutter 3.44 на OpenGL ES страница приходила шейдеру вверх
+      // ногами, и переворот в шейдере был обязателен. Позже движок стал
+      // переворачивать ось сам, и наш переворот оказался вторым: под
+      // любым фильтром страница вставала на голову. Комментарии в счёт
+      // не идут — причину в шейдере назвать можно, код вернуть нельзя.
+      final String code = source.replaceAll(
+        RegExp(r'//.*$', multiLine: true),
+        '',
+      );
+      expect(code, isNot(contains('IMPELLER_TARGET_OPENGLES')));
+      expect(code, isNot(contains('IMPELLER_OPENGLES_UNFLIPPED_DEPRECATED')));
+      expect(RegExp(r'1\.0\s*-\s*uv\.y').hasMatch(code), isFalse);
     });
   });
 

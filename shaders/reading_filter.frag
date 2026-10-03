@@ -4,7 +4,7 @@
 // файл не меняется. Порядок и все числа обязаны совпадать с эталонной
 // реализацией `lib/domain/reading/reading_filter.dart` — она источник
 // истины, а состав и порядок uniform-переменных проверяются тестом
-// `test/reading/shader_contract_test.dart`.
+// `test/reading/reading_filter_test.dart`, группа «договор с шейдером».
 //
 // Требования `ImageFilter.shader`: первая переменная — vec2, её движок
 // заполняет размером текстуры; первый sampler2D движок заполняет самой
@@ -35,11 +35,15 @@ const float kSaturationLow = 0.10;
 const float kSaturationHigh = 0.30;
 
 void main() {
+    // BUG-41: ось Y здесь не переворачивается. До Flutter 3.44 на OpenGL ES
+    // страница приходила вверх ногами, и шейдер переворачивал её сам; с тех
+    // пор ось выправляет движок, и второй переворот ставил страницу на
+    // голову под любым фильтром. Условие через макросы движка
+    // (IMPELLER_TARGET_OPENGLES и временный
+    // IMPELLER_OPENGLES_UNFLIPPED_DEPRECATED) не ставить: версия Flutter у
+    // нас зафиксирована и идёт только вверх. При подъёме Flutter первым
+    // делом проверить страницу под фильтром на телефоне с OpenGL ES.
     vec2 uv = FlutterFragCoord().xy / uSize;
-#ifdef IMPELLER_TARGET_OPENGLES
-    // На OpenGL ES ось Y перевёрнута: без этого страница встанет на голову.
-    uv.y = 1.0 - uv.y;
-#endif
 
     vec4 src = texture(uPage, uv);
     float alpha = src.a;
