@@ -70,6 +70,9 @@ class FakeReaderDocument implements ReaderDocument {
   /// Сколько раз рисовали страницу.
   final Map<int, int> renders = <int, int>{};
 
+  /// Какие страницы просили измерить, в порядке просьб.
+  final List<int> measured = <int>[];
+
   /// Закрыт ли документ.
   bool closed = false;
 
@@ -87,6 +90,13 @@ class FakeReaderDocument implements ReaderDocument {
   @override
   PageGeometry geometry(int pageNumber) =>
       PageGeometry(width: pageWidth, height: pageHeight);
+
+  /// У подставного документа размеры страниц известны сразу, измерять
+  /// нечего — просьбы только записываются.
+  @override
+  Future<void> measure(Iterable<int> pageNumbers) async {
+    measured.addAll(pageNumbers);
+  }
 
   @override
   Future<String> pageText(int pageNumber) async {

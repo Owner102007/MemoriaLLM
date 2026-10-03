@@ -6,9 +6,11 @@ import 'dart:ui' as ui;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/page_frames.dart';
+import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/cover.dart';
 import 'package:memoria/domain/reading/fragments.dart';
+import 'package:memoria/domain/reading/page_turning.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -16,9 +18,10 @@ import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/infrastructure/images/png.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
-import 'package:pdfrx/pdfrx.dart' show PdfDocument, pdfrxInitialize;
+import 'package:pdfrx/pdfrx.dart' show PdfDocument, PdfPage, pdfrxInitialize;
 
 import 'support/descriptors.dart';
+import 'support/fake_reading.dart';
 
 /// Прогон корпуса проблемных PDF через настоящий PDFium.
 ///
@@ -53,6 +56,7 @@ const Map<String, int> _readable = <String, int>{
   'mixed_page_sizes.pdf': 4,
   'broken_xref.pdf': 3,
   'huge_1200_pages.pdf': 1200,
+  'book_120_pages.pdf': 120,
 };
 
 /// Опорная область показа для проверки деления страницы.
@@ -297,6 +301,9 @@ void main() {
   group('геометрия страниц', () {
     test('повороты приходят уже применёнными к размерам', () async {
       final ReaderDocument document = await open('rotated_pages.pdf');
+      // F-READ-02: при открытии измерена одна первая страница; геометрия
+      // остальных настоящая только после измерения.
+      await document.measure(<int>[1, 2, 3, 4]);
       expect(document.geometry(1).isLandscape, isFalse);
       expect(document.geometry(2).isLandscape, isTrue);
       expect(document.geometry(3).isLandscape, isFalse);
@@ -307,6 +314,7 @@ void main() {
 
     test('в одной книге страницы бывают разного размера', () async {
       final ReaderDocument document = await open('mixed_page_sizes.pdf');
+      await document.measure(<int>[1, 2, 3, 4]);
       final Set<PageGeometry> sizes = <PageGeometry>{
         for (int page = 1; page <= document.pageCount; page++)
           document.geometry(page),
@@ -855,6 +863,7 @@ void main() {
 
     test('обложка альбомной страницы не выше положенного', () async {
       final ReaderDocument document = await open('rotated_pages.pdf');
+      await document.measure(<int>[1, 2, 3, 4]);
       for (int p = 1; p <= document.pageCount; p++) {
         final PageGeometry page = document.geometry(p);
         final CoverSize size = coverSizeFor(
@@ -970,5 +979,292 @@ void main() {
         ),
       );
     });
+  });
+
+  group('F-READ-02: книга открывается, не измеряя все страницы', () {
+    test('F-READ-02: число страниц известно сразу, размеры — нет', () async {
+      // Прежде движок до первого кадра загружал каждую страницу книги
+      // ради её размера. Теперь при открытии измерена одна первая, а
+      // число страниц отдаёт сам файл.
+      final ReaderDocument document = await open('huge_1200_pages.pdf');
+      expect(document.pageCount, 1200);
+
+      final PdfDocument engine = document.engineDocument! as PdfDocument;
+      expect(engine.pages.length, 1200);
+      expect(engine.pages.first.isLoaded, isTrue);
+      expect(
+        engine.pages.where((PdfPage page) => page.isLoaded).length,
+        lessThan(1200),
+        reason: 'книга измерена целиком уже при открытии',
+      );
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('F-READ-02: содержимое неизмеренной страницы доступно', () async {
+      // У неизмеренной страницы движок не отдаёт ни текста, ни растра.
+      // Документ обязан домерить её сам, не дожидаясь, пока до неё
+      // дойдёт просмотрщик.
+      final ReaderDocument document = await open('huge_1200_pages.pdf');
+
+      expect(await document.pageText(900), contains('Long book page'));
+      expect(await document.pageTextBoxes(1000), isNotEmpty);
+      expect((await document.pageTextLayout(950)).hasGeometry, isTrue);
+      final PageRaster? raster = await document.renderPage(
+        1100,
+        width: 100,
+        height: 141,
+      );
+      expect(raster, isNotNull);
+      expect(_darkPixels(raster!), greaterThan(0));
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('F-READ-02: измерение делает геометрию настоящей', () async {
+      final ReaderDocument document = await open('mixed_page_sizes.pdf');
+      await document.measure(<int>[4]);
+      expect(document.geometry(4).width, closeTo(200, 0.5));
+
+      // Номера за краем книги пропускаются, а не роняют открытие.
+      await document.measure(<int>[0, 5, 99]);
+    });
+
+    test('F-READ-02: рамка страницы из середины толстой книги', () async {
+      final ReaderDocument document = await open('book_120_pages.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+
+      final PageFrame even = await frames.frameFor(60);
+      final PageFrame odd = await frames.frameFor(61);
+      expect(even.fromText, isTrue);
+      expect(odd.fromText, isTrue);
+      // Поля зеркальны, как в переплёте: у нечётной страницы текст
+      // начинается правее.
+      expect(odd.content.left, greaterThan(even.content.left));
+    });
+
+    test('F-READ-02: поиск по всей книге видит все страницы', () async {
+      // Цена прогрессивного открытия, записанная в документации pdfrx:
+      // текст неизмеренной страницы пуст. Поиск не имеет права её
+      // заплатить — он обязан найти слово на любой странице сразу после
+      // открытия книги.
+      final ReaderDocument book = await open('book_120_pages.pdf');
+      final DocumentSearch search = DocumentSearch(document: book);
+      addTearDown(search.dispose);
+      await search.start('book-token-117');
+      expect(search.hits.length, 1);
+      expect(search.hits.single.pageNumber, 117);
+      expect(search.scannedPages, 120);
+
+      final ReaderDocument huge = await open('huge_1200_pages.pdf');
+      final DocumentSearch everywhere = DocumentSearch(
+        document: huge,
+        hitLimit: 5000,
+      );
+      addTearDown(everywhere.dispose);
+      await everywhere.start('Long book page');
+      expect(everywhere.scannedPages, 1200);
+      expect(everywhere.hits.length, 1200, reason: 'по совпадению на страницу');
+      expect(everywhere.hits.last.pageNumber, 1200);
+    }, timeout: const Timeout(Duration(minutes: 5)));
+
+    test('F-READ-02: измерить всё при открытии по-прежнему можно', () async {
+      final PdfrxDocumentOpener whole = PdfrxDocumentOpener(
+        storage: const LocalBookStorage(),
+        initialize: () => pdfrxInitialize(tmpPath: tmp.path),
+        measureAllPages: true,
+      );
+      final ReaderDocument document = await whole.open(
+        _source('book_120_pages.pdf'),
+      );
+      addTearDown(document.close);
+
+      final PdfDocument engine = document.engineDocument! as PdfDocument;
+      expect(engine.pages.every((PdfPage page) => page.isLoaded), isTrue);
+    });
+  });
+
+  group('F-READ-02: замеры скорости', () {
+    // Числа уходят в журнал прогона строками «ЗАМЕР F-READ-02» и оттуда —
+    // в PROGRESS.md. Сравнивать их с порогом здесь нельзя: раннер CI
+    // шумит, и тест начал бы падать от соседа по железу, а не от кода.
+    // Плавность показа на экране эти замеры не видят вовсе — только
+    // открытие книги и расчёт рамки; остальное проверяется на устройстве.
+    final PdfrxDocumentOpener whole = PdfrxDocumentOpener(
+      storage: const LocalBookStorage(),
+      initialize: () => pdfrxInitialize(tmpPath: tmp.path),
+      measureAllPages: true,
+    );
+
+    void report(String book, String what, double before, double after) {
+      stdout.writeln(
+        'ЗАМЕР F-READ-02 | $book | $what | '
+        'было ${before.toStringAsFixed(1)} мс | '
+        'стало ${after.toStringAsFixed(1)} мс',
+      );
+    }
+
+    double median(List<double> samples) {
+      final List<double> sorted = List<double>.of(samples)..sort();
+      return sorted[sorted.length ~/ 2];
+    }
+
+    double elapsedMs(Stopwatch watch) => watch.elapsedMicroseconds / 1000;
+
+    /// Время открытия книги: медиана пяти открытий.
+    Future<double> openMs(DocumentOpener by, String name) async {
+      final List<double> samples = <double>[];
+      for (int run = 0; run < 5; run++) {
+        final Stopwatch watch = Stopwatch()..start();
+        final ReaderDocument document = await by.open(_source(name));
+        watch.stop();
+        samples.add(elapsedMs(watch));
+        await document.close();
+      }
+      return median(samples);
+    }
+
+    /// Время от начала открытия до рамки страницы [page].
+    Future<double> firstFrameMs(
+      DocumentOpener by,
+      String name,
+      int page,
+    ) async {
+      final List<double> samples = <double>[];
+      for (int run = 0; run < 5; run++) {
+        final Stopwatch watch = Stopwatch()..start();
+        final ReaderDocument document = await by.open(_source(name));
+        await PageFrameSource(document: document).frameFor(page);
+        watch.stop();
+        samples.add(elapsedMs(watch));
+        await document.close();
+      }
+      return median(samples);
+    }
+
+    const Map<String, int> books = <String, int>{
+      'huge_1200_pages.pdf': 1200,
+      'book_120_pages.pdf': 120,
+      'scan_no_text.pdf': 2,
+    };
+
+    books.forEach((String name, int pages) {
+      test('F-READ-02: $name — открытие и первая рамка', () async {
+        // Первое открытие в прогоне греет движок и в счёт не идёт.
+        await (await opener.open(_source(name))).close();
+        final int middle = (pages + 1) ~/ 2;
+
+        final double openBefore = await openMs(whole, name);
+        final double openAfter = await openMs(opener, name);
+        report(name, 'открытие книги', openBefore, openAfter);
+
+        final double frameBefore = await firstFrameMs(whole, name, middle);
+        final double frameAfter = await firstFrameMs(opener, name, middle);
+        report(
+          name,
+          'открытие и рамка страницы $middle',
+          frameBefore,
+          frameAfter,
+        );
+
+        expect(openAfter.isFinite && frameAfter.isFinite, isTrue);
+      }, timeout: const Timeout(Duration(minutes: 5)));
+
+      test('F-READ-02: $name — переход на соседнюю страницу', () async {
+        final int steps = math.min(20, pages - 1);
+
+        // Было: переход ждал рамку страницы, на которую идёт (BUG-23).
+        final ReaderDocument cold = await open(name);
+        final PageFrameSource frames = PageFrameSource(document: cold);
+        await frames.frameFor(1);
+        final List<double> waited = <double>[];
+        for (int page = 2; page <= steps + 1; page++) {
+          final Stopwatch watch = Stopwatch()..start();
+          await frames.frameFor(page);
+          watch.stop();
+          waited.add(elapsedMs(watch));
+        }
+
+        // Стало: рамка посчитана заранее, пока читатель читал страницу.
+        final ReaderDocument warm = await open(name);
+        final ReaderController controller = ReaderController(
+          book: fakeBook(pageCount: pages),
+          document: warm,
+          reading: FakeReadingRepository(),
+        );
+        await controller.loadFrame();
+        final List<double> turned = <double>[];
+        for (int step = 0; step < steps; step++) {
+          await Future<void>.delayed(const Duration(milliseconds: 40));
+          final Stopwatch watch = Stopwatch()..start();
+          await controller.nextFragment();
+          watch.stop();
+          turned.add(elapsedMs(watch));
+        }
+        report(
+          name,
+          'переход на соседнюю страницу',
+          median(waited),
+          median(turned),
+        );
+        expect(controller.page, steps + 1);
+
+        await controller.close();
+        controller.dispose();
+      }, timeout: const Timeout(Duration(minutes: 5)));
+    });
+
+    test('F-READ-02: дальний переход не ждёт рамку дольше срока', () async {
+      // Скан — худший случай: рамка там считается рендером с разбором.
+      // Было — ожидание рамки целиком; стало — не дольше отведённого.
+      final ReaderDocument document = await open('scan_no_text.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final Stopwatch before = Stopwatch()..start();
+      await frames.frameFor(2);
+      before.stop();
+
+      final ReaderDocument fresh = await open('scan_no_text.pdf');
+      final ReaderController controller = ReaderController(
+        book: fakeBook(pageCount: 2),
+        document: fresh,
+        reading: FakeReadingRepository(),
+      );
+      final Stopwatch after = Stopwatch()..start();
+      expect(await controller.goToPage(2), isTrue);
+      after.stop();
+      report(
+        'scan_no_text.pdf',
+        'переход на непосчитанную страницу',
+        elapsedMs(before),
+        elapsedMs(after),
+      );
+      // Запас на раннер: срок — шестьдесят миллисекунд, и переход,
+      // который ждал бы рамку до победного, на загруженной машине
+      // легко уходит за полсекунды.
+      expect(
+        after.elapsed,
+        lessThan(kFrameWait + const Duration(milliseconds: 400)),
+      );
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('F-READ-02: сколько стоит измерить всю книгу', () async {
+      // Столько открытие книги больше не ждёт. Эта же работа идёт потом
+      // в фоне; убрать и её может флаг `loadPageDimensionsOnDemand`,
+      // который остаётся выключенным до кэша текста страниц.
+      for (final String name in <String>[
+        'huge_1200_pages.pdf',
+        'book_120_pages.pdf',
+      ]) {
+        final ReaderDocument document = await open(name);
+        final PdfDocument engine = document.engineDocument! as PdfDocument;
+        final Stopwatch watch = Stopwatch()..start();
+        await engine.loadPagesProgressively();
+        watch.stop();
+        stdout.writeln(
+          'ЗАМЕР F-READ-02 | $name | измерить все страницы | '
+          '${elapsedMs(watch).toStringAsFixed(1)} мс',
+        );
+        expect(engine.pages.every((PdfPage page) => page.isLoaded), isTrue);
+      }
+    }, timeout: const Timeout(Duration(minutes: 5)));
   });
 }

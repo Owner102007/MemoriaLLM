@@ -2,6 +2,7 @@ import 'dart:collection';
 
 import '../../domain/reading/columns.dart';
 import '../../domain/reading/crop.dart';
+import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/text_geometry.dart';
@@ -95,6 +96,18 @@ class PageFrameSource {
   /// Нужна отрисовке: она обязана ответить за один кадр и ждать разбора
   /// страницы не может.
   PageFrame? cached(int pageNumber) => _cache[pageNumber];
+
+  /// Рамка взаймы для страницы, своя рамка которой ещё не посчитана.
+  ///
+  /// BUG-23: страница показывается, не дожидаясь своей рамки, — по рамке
+  /// ближайшей посчитанной. `null` — занять не у кого.
+  CropBox? borrowed(int pageNumber) {
+    return borrowedContent(
+      page: pageNumber,
+      pageCount: _document.pageCount,
+      known: (int page) => _cache[page]?.content,
+    );
+  }
 
   /// Рамка страницы. Повторные вызовы бесплатны.
   Future<PageFrame> frameFor(int pageNumber) {

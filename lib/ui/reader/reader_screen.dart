@@ -17,6 +17,7 @@ import '../../domain/library/ids.dart';
 import '../../domain/prompts/selection_prompt.dart';
 import '../../domain/reading/context_paragraph.dart';
 import '../../domain/reading/fragments.dart';
+import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
@@ -80,6 +81,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ScreenOrientation _rotation = ScreenOrientation.portrait;
   bool _zoomLocked = true;
   DisplayArea _area = DisplayArea.unknown;
+
+  /// Как показывать страницу при листании: сразу ли и с каким запасом
+  /// соседних страниц (F-READ-02). Настройка устройства.
+  PageTurnSettings _turning = PageTurnSettings.parse(
+    preview: null,
+    reserve: null,
+    desktop: !_canTurn,
+  );
 
   /// Что выделено сейчас.
   BookSelection? _selection;
@@ -153,11 +162,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final String? flow = await settings.read(SettingsKeys.pageFlow);
     final String? locked = await settings.read(SettingsKeys.zoomLock);
     final String? language = await settings.read(SettingsKeys.targetLanguage);
+    final String? preview = await settings.read(SettingsKeys.pagePreview);
+    final String? reserve = await settings.read(SettingsKeys.pageReserve);
     if (!mounted) {
       return;
     }
     _myLanguage = language ?? _myLanguage;
     setState(() {
+      _turning = PageTurnSettings.parse(
+        preview: preview,
+        reserve: reserve,
+        desktop: !_canTurn,
+      );
       _rotation = rotation == ScreenOrientation.landscape.name
           ? ScreenOrientation.landscape
           : ScreenOrientation.portrait;
@@ -310,15 +326,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
         password: password,
       );
       await widget.services.data.library.markOpened(_book.id, DateTime.now());
+      controller.setDisplayArea(_area, canTurn: _canTurn);
+      controller.setSheetModes(enabled: _flow == PageFlow.paged);
+      // F-READ-02: первый кадр лучше показать уже по рамке — иначе
+      // страница встаёт целиком и тут же подрезается на глазах. Но и
+      // держать ради рамки пустой экран нельзя: на скане это рендер с
+      // разбором. Поэтому рамку ждут недолго, а не до победного.
+      await controller.settleFrame();
       if (!mounted) {
         await controller.close();
         controller.dispose();
         return;
       }
       controller.addListener(_onControllerChanged);
-      controller.setDisplayArea(_area, canTurn: _canTurn);
-      controller.setSheetModes(enabled: _flow == PageFlow.paged);
-      unawaited(controller.loadFrame());
       setState(() {
         _controller = controller;
         _search = DocumentSearch(document: controller.document);
@@ -950,6 +970,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
           locked: _zoomLocked,
           stripFit: controller.settings.stripFit,
           dim: controller.settings.dimOutside,
+          preview: _turning.preview,
+          reserve: _turning.effectiveReserve,
           sheetController: _sheet,
           onSelection: (List<PdfPageTextRange> ranges) =>
               unawaited(_onSelectionRanges(ranges)),

@@ -27,9 +27,11 @@ class PdfrxDocumentOpener implements DocumentOpener {
     required BookStorage storage,
     Future<void> Function()? initialize,
     int? maxBytesInMemory,
+    bool measureAllPages = false,
   }) : _storage = storage,
        _initialize = initialize ?? _flutterInitialize,
-       _maxBytesInMemory = maxBytesInMemory;
+       _maxBytesInMemory = maxBytesInMemory,
+       _measureAllPages = measureAllPages;
 
   final BookStorage _storage;
   final Future<void> Function() _initialize;
@@ -40,6 +42,13 @@ class PdfrxDocumentOpener implements DocumentOpener {
   /// его читать кусками всегда: так корпус-тесты гоняют настоящий путь
   /// чтения по дескриптору, а не быстрый обход для маленьких файлов.
   final int? _maxBytesInMemory;
+
+  /// Измерять ли все страницы книги прямо при открытии.
+  ///
+  /// Так было до F-READ-02, и так книга в семьсот страниц открывалась
+  /// секундами. Оставлено выключателем ради замера «было — стало» в
+  /// корпус-тестах; приложение открывает книги без него.
+  final bool _measureAllPages;
 
   static Future<void> _flutterInitialize() => pdfrxFlutterInitialize();
 
@@ -64,8 +73,13 @@ class PdfrxDocumentOpener implements DocumentOpener {
 
     final String name = source.encode();
     try {
-      // Число страниц нужно сразу: без него не восстановить позицию и
-      // не показать «12 / 340». Прогрессивная загрузка отдаёт его позже.
+      // F-READ-02: книга открывается прогрессивно — измеряется одна
+      // первая страница. Число страниц при этом известно сразу: его
+      // отдаёт сам файл, и позиция с подписью «12 / 340» ничего не ждут.
+      // Откладываются только размеры остальных страниц; их досчитывает
+      // [PdfrxReaderDocument.measure] по мере надобности. Прежде движок
+      // до первого кадра загружал каждую страницу книги ради её размера.
+      final bool progressive = !_measureAllPages;
       final PdfPasswordProvider? provider = password == null
           ? null
           : createSimplePasswordProvider(password);
@@ -79,7 +93,7 @@ class PdfrxDocumentOpener implements DocumentOpener {
           await PdfDocument.openFile(
             path,
             passwordProvider: provider,
-            useProgressiveLoading: false,
+            useProgressiveLoading: progressive,
           ),
         );
       }
@@ -90,7 +104,7 @@ class PdfrxDocumentOpener implements DocumentOpener {
           fileSize: book.length,
           sourceName: name,
           passwordProvider: provider,
-          useProgressiveLoading: false,
+          useProgressiveLoading: progressive,
           maxSizeToCacheOnMemory: _maxBytesInMemory,
           // Дескриптор живёт ровно столько, сколько открыт документ.
           onDispose: () => unawaited(book.close()),
@@ -132,8 +146,18 @@ class PdfrxReaderDocument implements ReaderDocument {
 
   final PdfDocument _document;
 
+  /// Сколько страниц измеряется одним походом в движок.
+  ///
+  /// Поиск и импорт читают страницы подряд. Измеряй мы их по одной,
+  /// каждая стоила бы отдельного похода в движок и отдельного сообщения
+  /// просмотрщику о том, что раскладка изменилась.
+  static const int _measureBatch = 16;
+
   List<OutlineEntry>? _outlineCache;
   bool _closed = false;
+
+  /// Измерения, которые идут прямо сейчас: страница → её измерение.
+  final Map<int, Future<void>> _measuring = <int, Future<void>>{};
 
   @override
   Object? get engineDocument => _document;
@@ -152,14 +176,77 @@ class PdfrxReaderDocument implements ReaderDocument {
   }
 
   @override
+  Future<void> measure(Iterable<int> pageNumbers) async {
+    for (final int number in pageNumbers) {
+      if (number >= 1 && number <= pageCount) {
+        await _measured(number);
+      }
+    }
+  }
+
+  /// Страница с настоящими размерами (F-READ-02).
+  ///
+  /// У неизмеренной страницы движок не отдаёт ни текста, ни растра:
+  /// размеры её пока прикидочные. Поэтому всё, что читает содержимое
+  /// страницы, приходит за ней сюда, — и поиск по всей книге видит все
+  /// страницы, сколько бы их ни осталось неизмеренными при открытии.
+  ///
+  /// Сбой измерения книгу не роняет: возвращается страница как есть, и
+  /// зовущий получит от неё пустой текст — как от страницы без текста.
+  Future<PdfPage> _measured(int pageNumber) async {
+    PdfPage page = _pageAt(pageNumber);
+    // Повтор нужен в одном случае: фоновое измерение просмотрщика
+    // успело вернуть в список страницу-заготовку поверх только что
+    // измеренной. Трёх попыток на это хватает с запасом.
+    for (int attempt = 0; attempt < 3; attempt++) {
+      if (page.isLoaded || _closed) {
+        break;
+      }
+      try {
+        await (_measuring[pageNumber] ??= _measureFrom(pageNumber));
+      } on Object {
+        break;
+      }
+      page = _pageAt(pageNumber);
+    }
+    return page;
+  }
+
+  /// Измеряет [pageNumber] и неизмеренные страницы сразу за ней.
+  Future<void> _measureFrom(int pageNumber) {
+    final List<PdfPage> pages = _document.pages;
+    final List<int> batch = <int>[];
+    for (int number = pageNumber; number <= pages.length; number++) {
+      if (batch.length >= _measureBatch) {
+        break;
+      }
+      if (!pages[number - 1].isLoaded && !_measuring.containsKey(number)) {
+        batch.add(number);
+      }
+    }
+    final Future<void> work = _document
+        .reloadPages(pageNumbersToReload: batch)
+        .whenComplete(() {
+          for (final int number in batch) {
+            _measuring.remove(number);
+          }
+        });
+    for (final int number in batch) {
+      _measuring[number] = work;
+    }
+    return work;
+  }
+
+  @override
   Future<String> pageText(int pageNumber) async {
-    final PdfPageRawText? text = await _pageAt(pageNumber).loadText();
+    final PdfPage page = await _measured(pageNumber);
+    final PdfPageRawText? text = await page.loadText();
     return text?.fullText ?? '';
   }
 
   @override
   Future<List<TextBox>> pageTextBoxes(int pageNumber) async {
-    final PdfPage page = _pageAt(pageNumber);
+    final PdfPage page = await _measured(pageNumber);
     final PdfPageRawText? raw = await page.loadText();
     if (raw == null) {
       return const <TextBox>[];
@@ -208,7 +295,7 @@ class PdfrxReaderDocument implements ReaderDocument {
 
   @override
   Future<PageTextLayout> pageTextLayout(int pageNumber) async {
-    final PdfPage page = _pageAt(pageNumber);
+    final PdfPage page = await _measured(pageNumber);
     final PdfPageRawText? raw = await page.loadText();
     if (raw == null || raw.fullText.isEmpty) {
       return PageTextLayout.empty;
@@ -272,7 +359,8 @@ class PdfrxReaderDocument implements ReaderDocument {
     if (width <= 0 || height <= 0) {
       return null;
     }
-    final PdfImage? image = await _pageAt(pageNumber).render(
+    final PdfPage page = await _measured(pageNumber);
+    final PdfImage? image = await page.render(
       width: width,
       height: height,
       fullWidth: width.toDouble(),

@@ -4,16 +4,25 @@ import 'package:flutter/material.dart';
 
 import '../../application/build_info.dart';
 import '../../application/theme/theme_controller.dart';
+import '../../domain/settings/app_settings.dart';
 import '../../domain/theme/app_palette.dart';
+import 'reading_defaults_screen.dart';
 
-/// Настройки. Пока здесь только выбор темы — остальное появляется
-/// по мере роста приложения.
+/// Настройки: оформление и чтение по умолчанию. Остальные разделы
+/// появляются по мере роста приложения.
 class SettingsScreen extends StatelessWidget {
   /// Создаёт экран настроек.
-  const SettingsScreen({required this.themeController, super.key});
+  const SettingsScreen({
+    required this.themeController,
+    required this.settings,
+    super.key,
+  });
 
   /// Контроллер тем.
   final ThemeController themeController;
+
+  /// Хранилище настроек устройства.
+  final AppSettingsRepository settings;
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +56,24 @@ class SettingsScreen extends StatelessWidget {
                   style: theme.textTheme.bodySmall,
                 ),
               ),
+              const Divider(),
+              ListTile(
+                key: const Key('reading-defaults-tile'),
+                title: const Text('Чтение по умолчанию'),
+                subtitle: const Text('Как появляется страница при листании'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  unawaited(
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (BuildContext context) =>
+                            ReadingDefaultsScreen(settings: settings),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const Divider(),
               ListTile(
                 key: const Key('build-label'),
                 dense: true,

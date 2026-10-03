@@ -75,7 +75,10 @@ class _HomeShellState extends State<HomeShell> {
         index: _index,
         children: <Widget>[
           LibraryScreen(services: widget.services),
-          SettingsScreen(themeController: widget.themeController),
+          SettingsScreen(
+            themeController: widget.themeController,
+            settings: widget.services.data.settings,
+          ),
         ],
       ),
       bottomNavigationBar: NavigationBar(

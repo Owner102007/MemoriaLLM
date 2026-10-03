@@ -440,6 +440,78 @@ def make_huge() -> None:
 
 
 # --------------------------------------------------------------------------
+# 9а. Обычная книга: сто двадцать плотных страниц
+# --------------------------------------------------------------------------
+
+BOOK_WORDS = (
+    "the of and to in is that it was for on are as with his they at be "
+    "this from have or one had by word but not what all were we when your "
+    "can said there use an each which she do how their if will up other "
+    "about out many then them these so some her would make like him into "
+    "time has look two more write go see number no way could people my "
+    "than first water been call who oil its now find long down day did "
+    "get come made may part reader margin chapter volume printed library"
+).split()
+
+
+def book_lines(page_no: int, count: int, width: int) -> list[str]:
+    """Строки страницы: слова выбирает свой счётчик, а не `random`.
+
+    Так корпус не зависит от версии Python: один и тот же номер страницы
+    всегда даёт один и тот же текст.
+    """
+    state = page_no * 2654435761 % 4294967296
+    lines = []
+    for _ in range(count):
+        words: list[str] = []
+        length = 0
+        while True:
+            state = (state * 1103515245 + 12345) % 4294967296
+            word = BOOK_WORDS[(state >> 16) % len(BOOK_WORDS)]
+            if length + len(word) + 1 > width:
+                break
+            words.append(word)
+            length += len(word) + 1
+        lines.append(" ".join(words))
+    return lines
+
+
+def make_book() -> None:
+    """Сто двадцать страниц сплошного текста, у каждой свой поток.
+
+    Нужна замерам скорости (F-READ-02). `huge_1200_pages.pdf` для них не
+    годится: поток содержимого там один на все страницы и в одну строку,
+    так что разбор страницы ничего не стоит. Здесь страница похожа на
+    книжную — колонтитул, тридцать шесть строк, номер внизу, — а поля
+    зеркальны, как в переплёте: у чётной страницы широкое поле справа,
+    у нечётной — слева.
+    """
+    pdf = new_pdf()
+    font = simple_font(pdf, "Times-Roman")
+    resources = pdf.make_indirect(Dictionary(Font=Dictionary(F1=font)))
+
+    for page_no in range(1, 121):
+        left = 62 if page_no % 2 == 0 else 96
+        parts = [
+            f"BT /F1 9 Tf {left} 800 Td (Memoria Book - chapter "
+            f"{(page_no - 1) // 12 + 1}) Tj ET\n",
+            f"BT /F1 11 Tf 15 TL {left} 770 Td\n",
+        ]
+        for line in book_lines(page_no, 36, 78):
+            parts.append(f"({line}) Tj T*\n")
+        parts.append("ET\n")
+        parts.append(
+            f"BT /F1 11 Tf {left} 214 Td (book-token-{page_no}) Tj ET\n"
+        )
+        parts.append(f"BT /F1 9 Tf 290 40 Td ({page_no}) Tj ET\n")
+        add_page(pdf, content(pdf, "".join(parts)), resources)
+
+    pdf.docinfo["/Title"] = String("Memoria Book")
+    pdf.docinfo["/Author"] = String("Memoria Fixtures")
+    save(pdf, "book_120_pages.pdf")
+
+
+# --------------------------------------------------------------------------
 # 10. Зашифрованный файл
 # --------------------------------------------------------------------------
 
@@ -528,6 +600,7 @@ def main() -> None:
     make_rotated_pages()
     make_mixed_page_sizes()
     make_huge()
+    make_book()
     make_encrypted()
     make_broken_xref()
     make_garbage()

@@ -9,6 +9,7 @@ import '../../domain/reading/context_paragraph.dart';
 import '../../domain/reading/crop.dart';
 import '../../domain/reading/fragments.dart';
 import '../../domain/reading/navigation.dart';
+import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/reading_filter.dart';
@@ -28,6 +29,14 @@ enum DisplayModeOutcome {
 
   /// Режим не включён: на этой странице он не увеличил бы текст.
   noGain,
+}
+
+/// Ожидание, у которого есть срок: таймер и способ его оборвать.
+class _Wait {
+  _Wait(this.timer, this.stop);
+
+  final Timer timer;
+  final void Function() stop;
 }
 
 /// Размеры листа: одна страница или две страницы разворота рядом.
@@ -55,9 +64,11 @@ class ReaderController extends ChangeNotifier {
     ReadingPosition? position,
     PageFrameSource? frames,
     Duration saveDelay = const Duration(seconds: 2),
+    Duration frameWait = kFrameWait,
   }) : _document = document,
        _reading = reading,
        _saveDelay = saveDelay,
+       _frameWait = frameWait,
        _settings =
            settings ??
            BookReadingSettings(bookId: book.id, orientation: kSettingsSlot),
@@ -76,6 +87,7 @@ class ReaderController extends ChangeNotifier {
     required ReadingRepository reading,
     String? password,
     Duration saveDelay = const Duration(seconds: 2),
+    Duration frameWait = kFrameWait,
   }) async {
     final ReaderDocument document = await opener.open(
       book.source,
@@ -87,6 +99,12 @@ class ReaderController extends ChangeNotifier {
         book.id,
         kSettingsSlot,
       );
+      // F-READ-02: книга открыта, но измерена в ней пока одна первая
+      // страница. Та, с которой начнётся чтение, и её соседи измеряются
+      // до первого кадра: лист обязан лечь по настоящим размерам, а не
+      // по прикидочным.
+      final int page = restorePage(position, document.pageCount);
+      await document.measure(<int>[page - 1, page, page + 1]);
       return ReaderController(
         book: book,
         document: document,
@@ -94,6 +112,7 @@ class ReaderController extends ChangeNotifier {
         settings: settings,
         position: position,
         saveDelay: saveDelay,
+        frameWait: frameWait,
       );
     } on Object {
       // База сломалась на ровном месте — документ всё равно надо закрыть,
@@ -109,6 +128,9 @@ class ReaderController extends ChangeNotifier {
   final ReaderDocument _document;
   final ReadingRepository _reading;
   final Duration _saveDelay;
+
+  /// Сколько переход ждёт рамку страницы (BUG-23).
+  final Duration _frameWait;
 
   late final PageFrameSource _frames;
   int _page;
@@ -147,6 +169,16 @@ class ReaderController extends ChangeNotifier {
   /// [_request]: смена разворота ждёт рамку соседней страницы, и за это
   /// время читатель мог выбрать другой режим.
   int _modeRequest = 0;
+
+  /// Ожидания рамки, у которых ещё не вышел срок.
+  final Set<_Wait> _waits = <_Wait>{};
+
+  /// В какую сторону читатель листал последним: туда и готовятся рамки.
+  bool _forward = true;
+
+  /// Номер последней подготовки рамок. Новая подготовка обрывает
+  /// прежнюю: рамки вокруг страницы, с которой читатель ушёл, не нужны.
+  int _prepareRun = 0;
   List<OutlineEntry>? _outline;
   bool _outlineLoading = false;
 
@@ -351,12 +383,15 @@ class ReaderController extends ChangeNotifier {
 
   /// Рамка содержимого страницы [page] в долях страницы.
   ///
-  /// Пока рамка не посчитана, страница берётся целиком: лишнее поле
-  /// лучше срезанного текста.
+  /// BUG-23: пока своя рамка не посчитана, берётся рамка ближайшей
+  /// посчитанной страницы — страница встаёт почти так, как встанет в
+  /// итоге, и подрезка следом почти не видна. Занять не у кого —
+  /// страница берётся целиком: лишнее поле лучше срезанного текста.
   CropBox _pageContent(int page) {
     return effectiveCrop(
       settings: _settings,
-      automatic: _frameOf(page)?.content ?? CropBox.full,
+      automatic:
+          _frameOf(page)?.content ?? _frames.borrowed(page) ?? CropBox.full,
     );
   }
 
@@ -566,6 +601,10 @@ class ReaderController extends ChangeNotifier {
   ///
   /// В развороте рамок две: без рамки соседней страницы лист показывается
   /// с её полями целиком, и обрезка вступает в силу, когда рамка готова.
+  ///
+  /// Это и есть «подрезка» из BUG-23: страница уже на экране, а рамка
+  /// приходит следом. Рамка, досчитавшаяся после того, как читатель ушёл
+  /// на другую страницу, ничего не меняет.
   Future<void> loadFrame() async {
     final int target = _page;
     final bool ready = _frame?.pageNumber == target && _sheetFramesReady;
@@ -577,8 +616,97 @@ class ReaderController extends ChangeNotifier {
       return;
     }
     _frame = frame;
+    // Число полос задаёт режим, а не рамка: читатель, пришедший назад в
+    // низ страницы по чужой рамке, после подрезки остаётся в её низу.
     _fragment = clampFragment(_fragment, fragmentCount);
     _notify();
+    _prepareFrames();
+  }
+
+  /// Ждёт рамку открытой страницы, но не дольше [limit].
+  ///
+  /// Нужен открытию книги: первый кадр лучше показать уже по рамке, но
+  /// держать ради неё пустой экран на скане нельзя (F-READ-02).
+  Future<void> settleFrame({Duration limit = kOpenFrameWait}) async {
+    await _within(loadFrame(), limit);
+  }
+
+  /// Ждёт [work], но не дольше [limit]; `true` — работа успела.
+  ///
+  /// Срок вышел — зовущий идёт дальше, а работа доделывается сама.
+  /// Нулевой срок означает «не ждать вовсе».
+  Future<bool> _within(Future<Object?> work, Duration limit) {
+    final Completer<bool> done = Completer<bool>();
+    _Wait? wait;
+    void finish(bool inTime) {
+      wait?.timer.cancel();
+      _waits.remove(wait);
+      if (!done.isCompleted) {
+        done.complete(inTime);
+      }
+    }
+
+    if (limit <= Duration.zero) {
+      // Ошибку работы всё равно кто-то обязан принять: иначе она станет
+      // необработанной и уронит приложение из-за рамки, которую не ждали.
+      unawaited(work.then<void>((_) {}, onError: (Object _) {}));
+      return Future<bool>.value(false);
+    }
+    wait = _Wait(Timer(limit, () => finish(false)), () => finish(false));
+    _waits.add(wait);
+    unawaited(
+      work.then<void>(
+        (_) => finish(true),
+        onError: (Object _) => finish(false),
+      ),
+    );
+    return done.future;
+  }
+
+  /// Рамка страницы [page], если посчитаны рамки всего её листа.
+  PageFrame? _readyFrame(int page) {
+    for (final int number in _pagesOf(page, _settings.displayMode)) {
+      if (_frames.cached(number) == null) {
+        return null;
+      }
+    }
+    return _frames.cached(page);
+  }
+
+  /// Считает заранее рамки листов, куда читатель уйдёт следующим шагом.
+  ///
+  /// F-READ-02: к моменту нажатия рамка следующей страницы уже лежит в
+  /// кэше, и переход не ждёт ничего. В ленте рамки не нужны вовсе.
+  void _prepareFrames() {
+    final int run = ++_prepareRun;
+    if (_closed || !_sheetModes) {
+      return;
+    }
+    final List<int> pages = framesAhead(
+      page: _page,
+      pageCount: pageCount,
+      spread: _isSpread,
+      forward: _forward,
+    );
+    unawaited(_prepare(run, pages));
+  }
+
+  Future<void> _prepare(int run, List<int> pages) async {
+    for (final int number in pages) {
+      // Читатель ушёл — эти рамки ему больше не соседние.
+      if (_closed || run != _prepareRun) {
+        return;
+      }
+      if (_frames.cached(number) != null) {
+        continue;
+      }
+      try {
+        await _frames.frameFor(number);
+      } on Object {
+        // Рамка про запас: не посчиталась — посчитается, когда
+        // читатель туда придёт.
+      }
+    }
   }
 
   /// Посчитаны ли рамки соседних страниц листа.
@@ -619,7 +747,12 @@ class ReaderController extends ChangeNotifier {
     _frame = _frames.cached(safe);
     _dirty = true;
     _notify();
-    unawaited(loadFrame());
+    // BUG-23: в ленте рамка каждой пролистанной страницы не считается.
+    // Полос там нет, а рамка понадобится, только когда читатель вернётся
+    // к листам, — тогда её и посчитает [loadFrame].
+    if (_sheetModes) {
+      unawaited(loadFrame());
+    }
     _scheduleSave();
   }
 
@@ -645,25 +778,47 @@ class ReaderController extends ChangeNotifier {
   /// Возвращает `true`, если переход состоялся, и `false`, если его
   /// обогнал следующий: зовущему незачем довозить экран до страницы, с
   /// которой читатель уже ушёл.
+  ///
+  /// BUG-23: переход не ждёт рамку. Посчитанная берётся из кэша, и
+  /// страница меняется сразу; непосчитанную ждут не дольше [_frameWait],
+  /// а потом показывают страницу по рамке ближайшей посчитанной и
+  /// подрезают, когда своя досчитается. Прежде смена страницы ждала
+  /// рамку всегда, и на скане каждое нажатие стоило рендера с разбором.
   Future<bool> goToPage(int page, {int fragment = 0}) async {
     final int safe = clampPage(page, pageCount);
     final int request = ++_request;
+    final bool forward = safe >= (_pendingPage ?? _page);
     _pendingPage = safe;
     _pendingFragment = fragment < 0
         ? fragmentCountFor(mode: _settings.displayMode) - 1
         : fragment;
-    final PageFrame frame = await _loadSheetFrames(safe);
-    if (_closed || request != _request) {
-      return false;
+    PageFrame? frame = _readyFrame(safe);
+    if (frame == null) {
+      if (await _within(_loadSheetFrames(safe), _frameWait)) {
+        frame = _readyFrame(safe);
+      }
+      if (_closed || request != _request) {
+        return false;
+      }
     }
     _pendingPage = null;
     _page = safe;
-    _frame = frame;
+    // В развороте рамка самой страницы может быть готова, когда рамка
+    // её соседки ещё считается: своя берётся сразу, лист подрежется.
+    _frame = frame ?? _frames.cached(safe);
+    _forward = forward;
     final int count = fragmentCount;
     _fragment = fragment < 0 ? count - 1 : clampFragment(fragment, count);
     _dirty = true;
     _notify();
     _scheduleSave();
+    if (frame == null) {
+      // Подрезка: рамка досчитается и встанет сама, а за ней — рамки
+      // соседних листов.
+      unawaited(loadFrame());
+    } else {
+      _prepareFrames();
+    }
     return true;
   }
 
@@ -878,6 +1033,12 @@ class ReaderController extends ChangeNotifier {
       return;
     }
     _closed = true;
+    // Переходы, которые ещё ждут рамку, отпускаются сразу: ждать её
+    // больше некому, а таймер ожидания пережил бы закрытую книгу.
+    for (final _Wait wait in _waits.toList()) {
+      wait.stop();
+    }
+    _prepareRun++;
     await flush();
     await _document.close();
   }
