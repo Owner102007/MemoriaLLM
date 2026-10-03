@@ -108,6 +108,45 @@ List<CropBox> fragmentsFor({
   return _rows(content, count, blindOverlap, breaks);
 }
 
+/// Номер полосы листа, в которой лежит строка от [top] до [bottom].
+///
+/// BUG-10, ALG-READ-02. Переход к найденному и к цитате обязан привести
+/// туда, где они лежат, а не в начало страницы: в ½ и ⅓ найденное иначе
+/// остаётся в тени или за экраном. [top] и [bottom] — доли высоты листа,
+/// как и сами [fragments].
+///
+/// Выбирается полоса, которая накрывает строку больше других; при
+/// равенстве — первая по порядку чтения (на странице без просветов
+/// соседние полосы налезают друг на друга, и строка на стыке лежит в
+/// обеих). Строка вне всех полос — в поле за рамкой — относится к
+/// ближайшей.
+int fragmentShowing({
+  required List<CropBox> fragments,
+  required double top,
+  required double bottom,
+}) {
+  if (fragments.length < 2) {
+    return 0;
+  }
+  final double from = top < bottom ? top : bottom;
+  final double to = top < bottom ? bottom : top;
+  int best = 0;
+  // Положительное число — на сколько полоса накрывает строку;
+  // отрицательное — на сколько она от строки отстоит.
+  double bestCover = double.negativeInfinity;
+  for (int i = 0; i < fragments.length; i++) {
+    final CropBox strip = fragments[i];
+    final double low = from > strip.top ? from : strip.top;
+    final double high = to < strip.bottom ? to : strip.bottom;
+    final double cover = high - low;
+    if (cover > bestCover + 1e-9) {
+      bestCover = cover;
+      best = i;
+    }
+  }
+  return best;
+}
+
 /// Показывает ли режим сразу две страницы.
 bool isSpreadMode(PageDisplayMode mode) =>
     mode == PageDisplayMode.spread || mode == PageDisplayMode.spreadHalf;

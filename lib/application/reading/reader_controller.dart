@@ -992,7 +992,13 @@ class ReaderController extends ChangeNotifier {
   /// заранее. Своя рамка страницы приносит следом только просветы между
   /// строк. Прежде смена страницы ждала рамку всегда, и на скане каждое
   /// нажатие стоило рендера с разбором.
-  Future<bool> goToPage(int page, {int fragment = 0}) async {
+  ///
+  /// BUG-10: [reveal] — место на странице (в её долях), которое надо
+  /// показать: найденное поиском, открытая цитата. С ним полосу выбирает
+  /// не [fragment], а само место — та, в которой оно лежит. Выбор
+  /// делается после смены страницы: полосы режутся по её рамке и
+  /// просветам, а до перехода они ещё чужие.
+  Future<bool> goToPage(int page, {int fragment = 0, TextBox? reveal}) async {
     final int safe = clampPage(page, pageCount);
     final int request = ++_request;
     final bool forward = safe >= (_pendingPage ?? _page);
@@ -1018,7 +1024,9 @@ class ReaderController extends ChangeNotifier {
     _frame = frame ?? _frames.cached(safe);
     _forward = forward;
     final int count = fragmentCount;
-    _fragment = fragment < 0 ? count - 1 : clampFragment(fragment, count);
+    _fragment = reveal != null
+        ? _fragmentShowing(safe, reveal)
+        : (fragment < 0 ? count - 1 : clampFragment(fragment, count));
     _dirty = true;
     _notify();
     _scheduleSave();
@@ -1030,6 +1038,23 @@ class ReaderController extends ChangeNotifier {
       _prepareFrames();
     }
     return true;
+  }
+
+  /// Полоса текущего листа, в которой лежит [box] страницы [page].
+  ///
+  /// BUG-10. [box] — в долях страницы, полосы — в долях листа. Страницы
+  /// листа прижаты к его верхнему краю (`sheetContent`), поэтому доля
+  /// высоты страницы переводится в долю высоты листа отношением высот;
+  /// по горизонтали полосы идут через весь лист, и считать там нечего.
+  int _fragmentShowing(int page, TextBox box) {
+    final double sheet = _sheetSize(_settings.displayMode).height;
+    final double height = _document.geometry(page).height;
+    final double share = sheet > 0 && height > 0 ? height / sheet : 1;
+    return fragmentShowing(
+      fragments: fragments,
+      top: box.top * share,
+      bottom: box.bottom * share,
+    );
   }
 
   /// Следующий фрагмент; на последнем фрагменте последнего листа — ничего.

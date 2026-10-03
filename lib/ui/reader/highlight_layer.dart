@@ -10,6 +10,11 @@ import 'package:flutter/material.dart';
 /// Рисуется поверх страницы и **не** трогает файл: это тот же приём, что
 /// и у светофильтров. Цвет — акцент темы вполсилы: подсветка обязана
 /// оставаться читаемой поверх текста, а не закрашивать его.
+///
+/// **Подсветка — картинка, а не кнопка** (BUG-43, ALG-UI-17): нажатий
+/// слой не ловит нигде, ни мимо найденного, ни по нему самому. Он лежит
+/// во весь лист, и прежде, пока подсветка была на странице, забирал
+/// каждое нажатие: панели не показывались, края не листали.
 class HighlightLayer extends StatelessWidget {
   /// Создаёт слой подсветки.
   const HighlightLayer({required this.rects, required this.color, super.key});
@@ -55,6 +60,13 @@ class _HighlightPainter extends CustomPainter {
       );
     }
   }
+
+  /// BUG-43: `CustomPaint` с отрисовщиком считает попаданием любую
+  /// точку своей площади, пока отрисовщик не скажет обратного
+  /// (`RenderCustomPaint.hitTestSelf`). Слой подсветки лежит во весь лист
+  /// — отвечаем «нет» всегда.
+  @override
+  bool? hitTest(Offset position) => false;
 
   @override
   bool shouldRepaint(_HighlightPainter oldDelegate) {

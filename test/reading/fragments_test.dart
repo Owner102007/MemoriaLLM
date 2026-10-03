@@ -616,4 +616,87 @@ void main() {
       );
     });
   });
+
+  group('BUG-10: полоса, в которой лежит строка', () {
+    final List<CropBox> halves = fragmentsFor(
+      content: _content,
+      mode: PageDisplayMode.half,
+    );
+    final List<CropBox> thirds = fragmentsFor(
+      content: _content,
+      mode: PageDisplayMode.third,
+    );
+
+    test('страница целиком — полоса одна', () {
+      expect(
+        fragmentShowing(
+          fragments: const <CropBox>[_content],
+          top: 0.8,
+          bottom: 0.82,
+        ),
+        0,
+      );
+      expect(
+        fragmentShowing(fragments: const <CropBox>[], top: 0.8, bottom: 0.82),
+        0,
+      );
+    });
+
+    test('строка в верхней половине — первая полоса, в нижней — вторая', () {
+      expect(fragmentShowing(fragments: halves, top: 0.12, bottom: 0.14), 0);
+      expect(fragmentShowing(fragments: halves, top: 0.80, bottom: 0.82), 1);
+    });
+
+    test('в трети — каждая строка в своей полосе, сверху вниз', () {
+      expect(fragmentShowing(fragments: thirds, top: 0.12, bottom: 0.14), 0);
+      expect(fragmentShowing(fragments: thirds, top: 0.49, bottom: 0.51), 1);
+      expect(fragmentShowing(fragments: thirds, top: 0.86, bottom: 0.88), 2);
+    });
+
+    test('каждая строка страницы попадает в полосу, которая её накрывает', () {
+      for (final List<CropBox> strips in <List<CropBox>>[halves, thirds]) {
+        for (int step = 0; step < 80; step++) {
+          final double top = 0.1 + step * 0.01;
+          final double bottom = top + 0.008;
+          if (bottom > 0.9) {
+            break;
+          }
+          final int index = fragmentShowing(
+            fragments: strips,
+            top: top,
+            bottom: bottom,
+          );
+          final CropBox strip = strips[index];
+          final double middle = (top + bottom) / 2;
+          expect(
+            middle >= strip.top && middle <= strip.bottom,
+            isTrue,
+            reason: 'строка $top…$bottom, полоса $strip',
+          );
+        }
+      }
+    });
+
+    test('строка на стыке налезающих полос — в первой из них', () {
+      // Страница без просветов: полосы налезают друг на друга, и строка
+      // на стыке целиком лежит в обеих. Показывается та, что раньше по
+      // порядку чтения.
+      const List<CropBox> lapped = <CropBox>[
+        CropBox(left: 0, top: 0, right: 1, bottom: 0.52),
+        CropBox(left: 0, top: 0.48, right: 1, bottom: 1),
+      ];
+      expect(fragmentShowing(fragments: lapped, top: 0.49, bottom: 0.51), 0);
+      // Строка, которая в первую полосу уже не помещается, — во второй.
+      expect(fragmentShowing(fragments: lapped, top: 0.51, bottom: 0.54), 1);
+    });
+
+    test('строка в поле за рамкой относится к ближайшей полосе', () {
+      expect(fragmentShowing(fragments: halves, top: 0.02, bottom: 0.04), 0);
+      expect(fragmentShowing(fragments: halves, top: 0.95, bottom: 0.97), 1);
+    });
+
+    test('перевёрнутая строка считается так же', () {
+      expect(fragmentShowing(fragments: halves, top: 0.82, bottom: 0.80), 1);
+    });
+  });
 }

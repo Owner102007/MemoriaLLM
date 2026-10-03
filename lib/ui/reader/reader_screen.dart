@@ -180,6 +180,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   _PageMark? _mark;
   List<TextBox> _markRects = const <TextBox>[];
 
+  /// Счёт переходов к отмеченному месту: пока искались его
+  /// прямоугольники, читатель мог попросить другой переход — тогда этот
+  /// устарел и ничего не меняет.
+  int _markRun = 0;
+
   /// Язык, на который читатель просит переводить. Подставляется в
   /// `{{мой_язык}}`; настоящий выбор языка появится в S8 вместе с
   /// редактором промптов.
@@ -1010,28 +1015,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
+    final int run = ++_markRun;
+    final int? from = start;
+    final int? to = end;
+    final _PageMark? mark = from == null || to == null || to <= from
+        ? null
+        : _PageMark(pageNumber: page, start: from, end: to);
+    // BUG-10: прямоугольники отмеченного нужны до перехода — по первому
+    // из них выбирается полоса, в которой оно лежит. Прежде переход
+    // всегда вёл в первую полосу страницы: в ½ и ⅓ найденное оставалось
+    // в тени или за экраном, а читателя, уже стоявшего на этой странице,
+    // возвращало к её началу.
+    final List<TextBox> rects = mark == null
+        ? const <TextBox>[]
+        : await controller.highlightFor(
+            pageNumber: page,
+            start: mark.start,
+            end: mark.end,
+          );
+    if (!mounted || run != _markRun) {
+      return;
+    }
     // Переход обогнали — читатель уже ушёл дальше, и отмечать на
     // странице, которой нет на экране, нечего (BUG-11).
-    if (!await _goToPage(page) || !mounted) {
-      return;
-    }
-    if (start == null || end == null || end <= start) {
-      setState(() {
-        _mark = null;
-        _markRects = const <TextBox>[];
-      });
-      return;
-    }
-    final List<TextBox> rects = await controller.highlightFor(
-      pageNumber: page,
-      start: start,
-      end: end,
+    final bool arrived = await _goToPage(
+      page,
+      reveal: rects.isEmpty ? null : rects.first,
     );
-    if (!mounted) {
+    if (!arrived || !mounted || run != _markRun) {
       return;
     }
     setState(() {
-      _mark = _PageMark(pageNumber: page, start: start, end: end);
+      _mark = mark;
       _markRects = rects;
     });
   }
@@ -1066,12 +1081,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ///
   /// Ленту довозим только до страницы, на которую переход состоялся:
   /// иначе устаревший переход увёз бы её туда, откуда читатель уже ушёл.
-  Future<bool> _goToPage(int page) async {
+  ///
+  /// [reveal] — место на странице, которое надо показать: переход ведёт
+  /// в ту полосу, где оно лежит (BUG-10).
+  Future<bool> _goToPage(int page, {TextBox? reveal}) async {
     final ReaderController? controller = _controller;
     if (controller == null) {
       return false;
     }
-    if (!await controller.goToPage(page)) {
+    if (!await controller.goToPage(page, reveal: reveal)) {
       return false;
     }
     if (_flow == PageFlow.continuous && _viewer.isReady) {
