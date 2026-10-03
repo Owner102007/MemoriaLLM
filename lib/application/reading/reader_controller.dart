@@ -608,7 +608,13 @@ class ReaderController extends ChangeNotifier {
   Future<void> loadFrame() async {
     final int target = _page;
     final bool ready = _frame?.pageNumber == target && _sheetFramesReady;
-    if (_closed || ready) {
+    if (_closed) {
+      return;
+    }
+    if (ready) {
+      // Рамка листа на месте, но соседние могли остаться непосчитанными:
+      // так бывает после возврата из ленты, где рамки не готовятся.
+      _prepareFrames();
       return;
     }
     final PageFrame frame = await _loadSheetFrames(target);
@@ -910,6 +916,8 @@ class ReaderController extends ChangeNotifier {
       // Пока считалась рамка соседней, читатель мог уйти на другой лист.
       await loadFrame();
     }
+    // У разворота соседние листы другие, чем у страницы: готовим их.
+    _prepareFrames();
     return DisplayModeOutcome.applied;
   }
 

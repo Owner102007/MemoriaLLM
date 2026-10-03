@@ -107,16 +107,20 @@ class ReaderSheet extends StatefulWidget {
     super.key,
   });
 
-  /// Потолок кэша растров для страниц **за пределами запаса**.
+  /// Потолок кэша растров страницы.
   ///
-  /// Проверено по исходникам pdfrx 2.6.1: предел не трогает картинки
-  /// страниц, которые видны или лежат в запасе, — сколько их держать,
-  /// решают [reserve] и предел пикселей грубой картинки
-  /// (`kPreviewPixels`). Этим числом ограничено только то, что осталось
-  /// позади: страницы, с которых читатель уже ушёл дальше запаса. У
-  /// pdfrx по умолчанию сто мегабайт — он рассчитан на ленту; нам хватает
-  /// одной-двух пройденных страниц на случай возврата.
-  static const int imageCacheBytes = 32 * 1024 * 1024;
+  /// Проверено по исходникам pdfrx 2.6.1: когда все картинки вместе
+  /// весят больше этого числа, просмотрщик выбрасывает картинки страниц
+  /// **левее** запаса, начиная с дальних. Картинки страниц, которые видны
+  /// или лежат в запасе, он не трогает; картинки страниц правее запаса —
+  /// тоже (BUG-35), и на это число не влияет ничто.
+  ///
+  /// Девяносто шесть мегабайт — это страница на экране, запас в две
+  /// страницы с каждой стороны и резкие картинки к ним. Меньше нельзя:
+  /// на время смены листа запас придерживается ([kReserveHold]), и при
+  /// тесном потолке картинка только что пройденной страницы
+  /// выбрасывалась бы и тут же рисовалась заново.
+  static const int imageCacheBytes = 96 * 1024 * 1024;
 
   /// Открытый документ.
   final PdfDocument document;
@@ -199,6 +203,11 @@ class _ReaderSheetState extends State<ReaderSheet> {
   StreamSubscription<PdfDocumentEvent>? _documentEvents;
   PdfDocument? _eventsOf;
 
+  /// Придержан ли запас соседних страниц: лист только что сменился, и
+  /// первой в очередь на отрисовку обязана встать страница на экране.
+  bool _reserveHeld = true;
+  Timer? _reserveTimer;
+
   PdfDocument? _refFor;
   PdfDocumentRefDirect? _ref;
 
@@ -221,6 +230,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
     widget.sheetController?._attach(this);
     _viewer.addListener(_onMatrixChanged);
     _watchDocument();
+    _holdReserve();
   }
 
   @override
@@ -231,6 +241,9 @@ class _ReaderSheetState extends State<ReaderSheet> {
       widget.sheetController?._attach(this);
     }
     _watchDocument();
+    if (!_samePages(oldWidget.pages)) {
+      _holdReserve();
+    }
     // Замок захлопнулся — страница замирает как есть. Но если её только
     // сдвинули, не меняя масштаба, сдвиг снимается: смещённая на палец
     // страница выглядит не выбором читателя, а поломкой, и вернуть её при
@@ -246,7 +259,23 @@ class _ReaderSheetState extends State<ReaderSheet> {
     widget.sheetController?._detach(this);
     _viewer.removeListener(_onMatrixChanged);
     unawaited(_documentEvents?.cancel());
+    _reserveTimer?.cancel();
     super.dispose();
+  }
+
+  /// Убирает запас соседних страниц на время смены листа.
+  ///
+  /// F-READ-02: без этого грубая картинка страницы, только что попавшей
+  /// в запас, вставала в очередь движка раньше резкой картинки страницы
+  /// на экране — и читатель ждал резкости дольше, чем до запаса.
+  void _holdReserve() {
+    _reserveHeld = true;
+    _reserveTimer?.cancel();
+    _reserveTimer = Timer(kReserveHold, () {
+      if (mounted) {
+        setState(() => _reserveHeld = false);
+      }
+    });
   }
 
   /// Подписывается на сообщения открытого документа.
@@ -546,11 +575,15 @@ class _ReaderSheetState extends State<ReaderSheet> {
               Positioned.fill(
                 child: _buildViewer(
                   // Запас откладывается от видимой области, а она
-                  // меряется в точках PDF: экран, делённый на масштаб.
+                  // меряется в точках PDF: экран, делённый на масштаб —
+                  // вместе с тем, что читатель добавил щипком.
                   cacheExtent: neighbourCacheExtent(
                     sheetWidth: sheetWidth,
-                    visibleWidth: limits.maxWidth / placement.scale,
-                    sheets: widget.preview ? widget.reserve : 0,
+                    visibleWidth:
+                        limits.maxWidth / (placement.scale * _transform.scale),
+                    sheets: widget.preview && !_reserveHeld
+                        ? widget.reserve
+                        : 0,
                   ),
                 ),
               ),
@@ -679,8 +712,17 @@ class _ReaderSheetState extends State<ReaderSheet> {
           // Ступенька «грубо → резко» раздражает не всех одинаково, и
           // выключить её можно в настройках: тогда страница появляется
           // только резкой, как до F-READ-02.
+          //
+          // Размеры страниц просмотрщик меряет по мере надобности — тех,
+          // что попали в запас. Иначе он сам обходит всю книгу в фоне, и
+          // в pdfrx 2.6.1 этот обход идёт в том же потоке движка, что и
+          // отрисовка, кусками по четверти секунды: первые секунды после
+          // открытия толстой книги каждое нажатие ждало бы своей очереди.
+          // Поиску это не мешает: содержимое любой страницы документ
+          // домеряет сам (`PdfrxReaderDocument`).
           behaviorControlParams: PdfViewerBehaviorControlParams(
             enableLowResolutionPagePreview: widget.preview,
+            loadPageDimensionsOnDemand: true,
           ),
           layoutPages: _layoutPages,
           normalizeMatrix: _pin,

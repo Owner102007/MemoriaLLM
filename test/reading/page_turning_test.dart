@@ -204,9 +204,9 @@ void main() {
   });
 
   group('F-READ-02: масштаб грубой картинки', () {
-    test('предел пикселей: страница A4 — около четырёх на точку', () {
+    test('предел пикселей: страница A4 — около двух с половиной', () {
       final double cap = previewScaleCap(pageWidth: 595, pageHeight: 842);
-      expect(cap, closeTo(4.0, 0.05));
+      expect(cap, closeTo(2.45, 0.05));
       expect(595 * cap * 842 * cap, closeTo(kPreviewPixels, 1));
     });
 

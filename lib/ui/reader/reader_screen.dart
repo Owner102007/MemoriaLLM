@@ -331,8 +331,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       // F-READ-02: первый кадр лучше показать уже по рамке — иначе
       // страница встаёт целиком и тут же подрезается на глазах. Но и
       // держать ради рамки пустой экран нельзя: на скане это рендер с
-      // разбором. Поэтому рамку ждут недолго, а не до победного.
-      await controller.settleFrame();
+      // разбором. Поэтому рамку ждут недолго, а не до победного. Ленте
+      // рамка не нужна вовсе — там её не ждут.
+      if (_flow == PageFlow.paged) {
+        await controller.settleFrame();
+      } else {
+        unawaited(controller.loadFrame());
+      }
       if (!mounted) {
         await controller.close();
         controller.dispose();
@@ -1109,6 +1114,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
         margin: 6,
         pageDropShadow: null,
         enableKeyboardNavigation: true,
+        // F-READ-02: книга открыта, не измеряя все свои страницы, и лента
+        // меряет их по мере прокрутки, а не обходит всю книгу в фоне: в
+        // pdfrx 2.6.1 такой обход отнимает движок у отрисовки.
+        behaviorControlParams: const PdfViewerBehaviorControlParams(
+          loadPageDimensionsOnDemand: true,
+        ),
         onPageChanged: (int? page) {
           if (page != null) {
             controller.onPageChanged(page);
