@@ -56,9 +56,15 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 9: рамки обрезки книги тогда не было.
+  Future<void> undoBookFrames(AppData data) async {
+    await data.database.customStatement('DROP TABLE book_frames');
+  }
+
   /// Откатывает базу к версии 8: ни нахлёста полос, ни полоски соседней
   /// страницы в настройках книги тогда не было.
   Future<void> undoStripWindow(AppData data) async {
+    await undoBookFrames(data);
     await data.database.customStatement(
       'ALTER TABLE book_settings DROP COLUMN strip_overlap',
     );
@@ -129,11 +135,63 @@ void main() {
     expect(await columnsOf(data, 'books'), contains('category_id'));
     expect(await columnsOf(data, 'device_files'), contains('fingerprint'));
     expect(
+      await columnsOf(data, 'book_frames'),
+      containsAll(<String>['book_id', 'even_shift', 'algorithm_version']),
+    );
+    expect(
       await columnsOf(data, 'selection_prompts'),
       containsAll(<String>['book_id', 'is_primary', 'hlc', 'node_id']),
     );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('F-READ-15: база версии 9 доезжает до 10 с рамкой книги', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    const CropBox manual = CropBox(
+      left: 0.1,
+      top: 0.1,
+      right: 0.9,
+      bottom: 0.9,
+    );
+    await first.reading.saveSettings(
+      const BookReadingSettings(
+        bookId: 'book-1',
+        orientation: ScreenOrientation.portrait,
+        autoCrop: true,
+        manualCrop: manual,
+      ),
+    );
+    await undoBookFrames(first);
+    await first.database.customStatement('PRAGMA user_version = 9');
+    expect(await columnsOf(first, 'book_frames'), isEmpty);
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(await columnsOf(second, 'book_frames'), contains('sample_pages'));
+
+    // Таблица заводится пустой: рамку книги неоткуда перенести, она
+    // считается при первом открытии книги с обрезкой.
+    expect(await second.reading.bookFrame('book-1'), isNull);
+    // А рамка, выставленная руками до обновления, на месте: она живёт
+    // в настройках книги.
+    final BookReadingSettings loaded = await second.reading.settings(
+      'book-1',
+      ScreenOrientation.portrait,
+    );
+    expect(loaded.autoCrop, isTrue);
+    expect(loaded.manualCrop, manual);
+
+    // И после миграции рамка книги пишется и читается.
+    const BookFrame frame = BookFrame(
+      odd: CropBox(left: 0.14, top: 0.1, right: 0.86, bottom: 0.9),
+      samples: 16,
+    );
+    await second.reading.saveBookFrame('book-1', frame);
+    expect(await second.reading.bookFrame('book-1'), frame);
+    await second.close();
   });
 
   test('F-READ-12: база версии 8 доезжает до 9 и получает нахлёст', () async {

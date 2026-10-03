@@ -186,6 +186,11 @@ class FakeReadingRepository implements ReadingRepository {
   /// Сколько раз записывали настройки книги (BUG-12).
   int settingsSaveCount = 0;
 
+  final Map<String, BookFrame> _frames = <String, BookFrame>{};
+
+  /// Сколько раз записывали рамку книги (F-READ-15).
+  int frameSaveCount = 0;
+
   @override
   Future<ReadingPosition?> position(String bookId) async => _positions[bookId];
 
@@ -218,6 +223,15 @@ class FakeReadingRepository implements ReadingRepository {
   Future<void> saveSettings(BookReadingSettings settings) async {
     settingsSaveCount++;
     _settings['${settings.bookId}:${settings.orientation.name}'] = settings;
+  }
+
+  @override
+  Future<BookFrame?> bookFrame(String bookId) async => _frames[bookId];
+
+  @override
+  Future<void> saveBookFrame(String bookId, BookFrame frame) async {
+    frameSaveCount++;
+    _frames[bookId] = frame;
   }
 }
 

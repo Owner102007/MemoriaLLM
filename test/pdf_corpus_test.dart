@@ -9,6 +9,8 @@ import 'package:memoria/application/reading/page_frames.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/cover.dart';
+import 'package:memoria/domain/reading/book_frame.dart';
+import 'package:memoria/domain/reading/crop.dart';
 import 'package:memoria/domain/reading/fragments.dart';
 import 'package:memoria/domain/reading/page_turning.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
@@ -1266,5 +1268,170 @@ void main() {
         expect(engine.pages.every((PdfPage page) => page.isLoaded), isTrue);
       }
     }, timeout: const Timeout(Duration(minutes: 5)));
+  });
+
+  group('F-READ-15: рамка обрезки на книгу', () {
+    /// Рамка книги так, как её считает приложение: выборка страниц,
+    /// рамка каждой, устойчивый прямоугольник.
+    Future<BookFrame> bookFrameOf(
+      ReaderDocument document,
+      PageFrameSource frames,
+    ) async {
+      final List<FrameSample> samples = <FrameSample>[];
+      for (final int page in bookFrameSamplePages(document.pageCount)) {
+        final PageFrame frame = await frames.frameFor(page);
+        samples.add(FrameSample(page: page, content: frame.content));
+      }
+      return bookFrameFromSamples(
+        samples,
+        ignoreRunningHeads: frames.options.ignoreRunningHeads,
+      );
+    }
+
+    /// Файлы, где страницы точно несут текстовый слой.
+    const Set<String> withText = <String>{
+      'basic_text.pdf',
+      'two_columns.pdf',
+      'book_120_pages.pdf',
+    };
+
+    for (final String name in <String>[
+      'basic_text.pdf',
+      'outline_nested.pdf',
+      'two_columns.pdf',
+      'cjk.pdf',
+      'rtl.pdf',
+      'rotated_pages.pdf',
+      'mixed_page_sizes.pdf',
+      'broken_xref.pdf',
+      'book_120_pages.pdf',
+    ]) {
+      test('F-READ-15: $name — ни один символ не срезан', () async {
+        final ReaderDocument document = await open(name);
+        // Колонтитулы здесь считаются содержимым: так проверяется каждый
+        // символ страницы, а не только тело текста.
+        final PageFrameSource frames = PageFrameSource(
+          document: document,
+          options: const CropOptions(ignoreRunningHeads: false),
+          cacheSize: 200,
+        );
+        final BookFrame book = await bookFrameOf(document, frames);
+
+        int checked = 0;
+        for (int page = 1; page <= document.pageCount; page++) {
+          final PageFrame own = await frames.frameFor(page);
+          if (!own.fromText) {
+            // Страница без текстового слоя: срезать по тексту нечего.
+            continue;
+          }
+          final CropBox content = pageContentInBook(
+            book: book,
+            page: page,
+            ownText: own.content,
+          );
+          final List<TextBox> boxes = await document.pageTextBoxes(page);
+          double left = 1;
+          double top = 1;
+          double right = 0;
+          double bottom = 0;
+          for (final TextBox box in boxes) {
+            left = math.min(left, box.left);
+            top = math.min(top, box.top);
+            right = math.max(right, box.right);
+            bottom = math.max(bottom, box.bottom);
+          }
+          final String where = '$name, страница $page';
+          expect(left, greaterThanOrEqualTo(content.left), reason: where);
+          expect(top, greaterThanOrEqualTo(content.top), reason: where);
+          expect(right, lessThanOrEqualTo(content.right), reason: where);
+          expect(bottom, lessThanOrEqualTo(content.bottom), reason: where);
+          checked++;
+        }
+        // В остальных файлах корпуса на странице может быть меньше
+        // символов, чем нужно рамке по тексту, — там проверять нечего.
+        if (withText.contains(name)) {
+          expect(checked, greaterThan(0), reason: 'в файле есть текст');
+        }
+      }, timeout: const Timeout(Duration(minutes: 3)));
+    }
+
+    test('F-READ-15: у книги из переплёта ширина текста одна', () async {
+      final ReaderDocument document = await open('book_120_pages.pdf');
+      final PageFrameSource frames = PageFrameSource(
+        document: document,
+        cacheSize: 200,
+      );
+      final BookFrame book = await bookFrameOf(document, frames);
+      expect(book.hasContent, isTrue);
+      expect(book.samples, kBookFrameSample);
+      expect(book.isMirrored, isTrue, reason: 'поля в корпусе зеркальны');
+
+      // Было: рамка у каждой страницы своя, и ширина текста гуляет.
+      final Set<String> before = <String>{};
+      final Set<String> after = <String>{};
+      int widened = 0;
+      for (int page = 1; page <= document.pageCount; page++) {
+        final PageFrame own = await frames.frameFor(page);
+        before.add(own.content.width.toStringAsFixed(4));
+        final CropBox content = pageContentInBook(
+          book: book,
+          page: page,
+          ownText: own.fromText ? own.content : null,
+        );
+        if (content == book.forPage(page)) {
+          after.add(content.width.toStringAsFixed(4));
+        } else {
+          widened++;
+        }
+      }
+      stdout.writeln(
+        'ЗАМЕР F-READ-15 | book_120_pages.pdf | разных ширин рамки | '
+        'было ${before.length} | стало ${after.length} | '
+        'страниц с расширенной рамкой $widened из ${document.pageCount}',
+      );
+      expect(after.length, 1, reason: 'рамка одна — ширина одна');
+      // Страницы, чей текст выходит за рамку книги, получают свою рамку.
+      // Если таких много, рамка книги взята слишком узкой.
+      expect(widened, lessThanOrEqualTo(document.pageCount ~/ 4));
+    });
+
+    test('F-READ-15: выборка дешевле постраничного расчёта', () async {
+      // Числа уходят в журнал прогона строкой «ЗАМЕР»; с порогом здесь не
+      // сравниваются: раннер шумит.
+      final ReaderDocument cold = await open('book_120_pages.pdf');
+      final Stopwatch sampled = Stopwatch()..start();
+      final BookFrame book = await bookFrameOf(
+        cold,
+        PageFrameSource(document: cold),
+      );
+      sampled.stop();
+
+      final ReaderDocument whole = await open('book_120_pages.pdf');
+      final PageFrameSource every = PageFrameSource(document: whole);
+      final Stopwatch all = Stopwatch()..start();
+      for (int page = 1; page <= whole.pageCount; page++) {
+        await every.frameFor(page);
+      }
+      all.stop();
+      stdout.writeln(
+        'ЗАМЕР F-READ-15 | book_120_pages.pdf | рамка: вся книга '
+        'постранично против выборки из ${book.samples} страниц | '
+        'было ${(all.elapsedMicroseconds / 1000).toStringAsFixed(1)} мс | '
+        'стало ${(sampled.elapsedMicroseconds / 1000).toStringAsFixed(1)} мс',
+      );
+      expect(book.samples, kBookFrameSample);
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    test('F-READ-15: скан — рамка книги считается по пикселям', () async {
+      final ReaderDocument document = await open('scan_no_text.pdf');
+      final PageFrameSource frames = PageFrameSource(document: document);
+      final BookFrame book = await bookFrameOf(document, frames);
+      expect(book.hasContent, isTrue);
+      expect(book.odd.isValid, isTrue);
+      // Своей рамки по тексту у скана нет — рамка книги стоит твёрдо.
+      final PageFrame own = await frames.frameFor(1);
+      expect(own.fromText, isFalse);
+      expect(pageContentInBook(book: book, page: 1), book.forPage(1));
+    });
   });
 }

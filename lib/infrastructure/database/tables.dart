@@ -462,6 +462,48 @@ class DeviceFiles extends Table {
   Set<Column<Object>> get primaryKey => <Column<Object>>{path};
 }
 
+/// Рамка обрезки книги (F-READ-15, ALG-PDF-11).
+///
+/// **Без полей CRDT намеренно.** Рамка — производное: её посчитал наш
+/// код по выборке страниц, а не создал читатель. В облако она не уходит,
+/// на втором устройстве считается заново, а после смены алгоритма
+/// пересчитывается сама — по номеру версии в строке (ALG-DATA-09).
+/// Рамка, выставленная руками, живёт не здесь, а в настройках книги.
+@DataClassName('BookFrameRow')
+class BookFrames extends Table {
+  /// Книга — она же ключ: рамка у книги одна.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Левая граница рамки нечётных страниц, в долях страницы.
+  RealColumn get cropLeft => real()();
+
+  /// Верхняя граница рамки.
+  RealColumn get cropTop => real()();
+
+  /// Правая граница рамки нечётных страниц.
+  RealColumn get cropRight => real()();
+
+  /// Нижняя граница рамки.
+  RealColumn get cropBottom => real()();
+
+  /// На сколько рамка чётных страниц сдвинута вправо; ноль — поля не
+  /// зеркальны.
+  RealColumn get evenShift => real().withDefault(const Constant<double>(0))();
+
+  /// По скольким страницам рамка посчитана.
+  IntColumn get samplePages => integer()();
+
+  /// С какой настройкой колонтитулов рамка посчитана.
+  BoolColumn get ignoreRunningHeads => boolean()();
+
+  /// Версия алгоритма, которым рамка посчитана.
+  IntColumn get algorithmVersion => integer()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{bookId};
+}
+
 /// Локальные настройки приложения. Без полей CRDT: они не
 /// синхронизируются намеренно — см. `AppSettingsRepository`.
 @DataClassName('AppSettingRow')

@@ -16,8 +16,10 @@ part 'app_database.g.dart';
 /// (S6): своя синхронизируемая таблица на два уровня. 8 — место цитаты в
 /// тексте страницы (S6.1): из списка цитат книга открывается на нужном
 /// месте и подсвечивает его. 9 — нахлёст полос и ширина полоски соседней
-/// страницы в настройках книги (шаг 05, F-READ-12 и F-READ-13).
-const int appSchemaVersion = 9;
+/// страницы в настройках книги (шаг 05, F-READ-12 и F-READ-13). 10 — рамка
+/// обрезки книги (шаг 06, F-READ-15): своя таблица устройства, без полей
+/// CRDT.
+const int appSchemaVersion = 10;
 
 /// База данных приложения.
 ///
@@ -38,6 +40,7 @@ const int appSchemaVersion = 9;
     AppSettings,
     DeviceFiles,
     SelectionPrompts,
+    BookFrames,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -116,6 +119,12 @@ class AppDatabase extends _$AppDatabase {
           // нулём на ползунках.
           await m.addColumn(bookSettings, bookSettings.stripOverlap);
           await m.addColumn(bookSettings, bookSettings.neighbourShare);
+        }
+        if (from < 10) {
+          // Таблица заводится пустой: рамку книги неоткуда перенести, она
+          // считается при первом открытии книги с включённой обрезкой.
+          // Рамка, выставленная руками, остаётся в настройках книги.
+          await m.createTable(bookFrames);
         }
       },
       beforeOpen: (OpeningDetails details) async {

@@ -55,6 +55,11 @@ class ReaderSettingsSheet extends StatelessWidget {
         // BUG-12: ползунок меняет страницу вживую, а в базу пишет один
         // раз — когда его отпустили.
         void persist(double value) => unawaited(controller.persistSettings());
+        final String? cropStatus = cropStatusLabel(
+          settings: settings,
+          frame: controller.bookFrame,
+          loading: controller.isBookFrameLoading,
+        );
         return Material(
           color: theme.colorScheme.surface.withValues(alpha: 0.97),
           child: SafeArea(
@@ -221,7 +226,17 @@ class ReaderSettingsSheet extends StatelessWidget {
                           label: const Text('Поправить рамку'),
                         ),
                       ),
-                      if (settings.manualCrop != null) ...<Widget>[
+                      if (settings.autoCrop) ...<Widget>[
+                        const SizedBox(width: 8),
+                        // F-READ-15: рамка книги считается заново, а
+                        // выставленная руками при этом снимается.
+                        TextButton(
+                          key: const Key('reader-recompute-crop'),
+                          onPressed: () =>
+                              unawaited(controller.recomputeBookFrame()),
+                          child: const Text('Пересчитать'),
+                        ),
+                      ] else if (settings.manualCrop != null) ...<Widget>[
                         const SizedBox(width: 8),
                         TextButton(
                           key: const Key('reader-reset-crop'),
@@ -232,6 +247,14 @@ class ReaderSettingsSheet extends StatelessWidget {
                       ],
                     ],
                   ),
+                  if (cropStatus != null) ...<Widget>[
+                    const SizedBox(height: 6),
+                    Text(
+                      cropStatus,
+                      key: const Key('reader-crop-status'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   const _Title(text: 'Светофильтр'),
                   const SizedBox(height: 8),
@@ -425,6 +448,37 @@ class _ValueSlider extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Что сказать читателю о рамке книги (F-READ-15); `null` — нечего.
+///
+/// Рамка у книги одна, и читателю стоит знать, откуда она: выставлена
+/// руками, посчитана по выборке страниц или ещё считается. Без этой
+/// строки «Пересчитать» было бы кнопкой без видимого результата.
+String? cropStatusLabel({
+  required BookReadingSettings settings,
+  required BookFrame? frame,
+  required bool loading,
+}) {
+  if (settings.manualCrop != null) {
+    return 'Рамка выставлена руками — одна на всю книгу';
+  }
+  if (!settings.autoCrop) {
+    return null;
+  }
+  if (frame == null) {
+    return loading ? 'Рамка книги считается…' : null;
+  }
+  if (!frame.hasContent) {
+    return 'Содержимое не найдено — страница показывается целиком';
+  }
+  final int pages = frame.samples;
+  final String counted = pages % 10 == 1 && pages % 100 != 11
+      ? '$pages странице'
+      : '$pages страницам';
+  return frame.isMirrored
+      ? 'Рамка книги — по $counted, поля зеркальные'
+      : 'Рамка книги — по $counted';
 }
 
 /// Доля экрана — процентами: «7 %», а половины — «3,5 %».

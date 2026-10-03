@@ -192,6 +192,96 @@ class CropBox {
   String toString() => 'CropBox($left, $top, $right, $bottom)';
 }
 
+/// Версия алгоритма рамки книги (F-READ-15, ALG-DATA-09).
+///
+/// Рамка — производное: посчитана нашим кодом по книге и лежит в базе.
+/// Поменялся алгоритм — число растёт, и рамка с прежним числом
+/// пересчитывается при первом же открытии книги, без «очистить кэш».
+const int kBookFrameVersion = 1;
+
+/// Рамка обрезки книги — одна на все её страницы (F-READ-15).
+///
+/// Считается по выборке страниц (см. `book_frame.dart`) и лежит в базе
+/// устройства. Размер у рамки один; у книги из переплёта, где поля
+/// чётных и нечётных страниц зеркальны, рамка чётных страниц сдвинута
+/// вбок на [evenShift] — ширина текста от этого не меняется.
+class BookFrame {
+  /// Создаёт рамку книги.
+  const BookFrame({
+    required this.odd,
+    this.evenShift = 0,
+    this.samples = 0,
+    this.ignoreRunningHeads = true,
+    this.version = kBookFrameVersion,
+  });
+
+  /// Рамка нечётных страниц в долях страницы.
+  final CropBox odd;
+
+  /// На сколько рамка чётных страниц сдвинута вправо, в долях ширины
+  /// страницы. Ноль — поля не зеркальны, рамка у всех страниц одна.
+  final double evenShift;
+
+  /// По скольким страницам рамка посчитана. Ноль — содержимого не
+  /// нашлось ни на одной, и книга показывается без обрезки.
+  final int samples;
+
+  /// С какой настройкой колонтитулов рамка посчитана.
+  final bool ignoreRunningHeads;
+
+  /// Версия алгоритма, которым рамка посчитана.
+  final int version;
+
+  /// Нашлось ли в книге содержимое, по которому можно резать.
+  bool get hasContent => samples > 0;
+
+  /// Зеркальны ли поля чётных и нечётных страниц.
+  bool get isMirrored => evenShift != 0;
+
+  /// Рамка чётных страниц.
+  CropBox get even {
+    if (evenShift == 0) {
+      return odd;
+    }
+    final double left = odd.left + evenShift;
+    final double right = odd.right + evenShift;
+    return CropBox(
+      left: left < 0 ? 0 : left,
+      top: odd.top,
+      right: right > 1 ? 1 : right,
+      bottom: odd.bottom,
+    );
+  }
+
+  /// Рамка страницы [page], начиная с единицы.
+  CropBox forPage(int page) => page.isEven ? even : odd;
+
+  /// Годится ли рамка сейчас: посчитана нынешним алгоритмом и с той же
+  /// настройкой колонтитулов, что стоит у книги.
+  bool isCurrentFor({required bool ignoreRunningHeads}) {
+    return version == kBookFrameVersion &&
+        this.ignoreRunningHeads == ignoreRunningHeads;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is BookFrame &&
+        other.odd == odd &&
+        other.evenShift == evenShift &&
+        other.samples == samples &&
+        other.ignoreRunningHeads == ignoreRunningHeads &&
+        other.version == version;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(odd, evenShift, samples, ignoreRunningHeads, version);
+
+  @override
+  String toString() =>
+      'BookFrame($odd, сдвиг чётных: $evenShift, страниц: $samples)';
+}
+
 /// Позиция чтения.
 ///
 /// Хранится страницей и смещением, а не «номером экрана»: смена режима
@@ -475,4 +565,13 @@ abstract interface class ReadingRepository {
 
   /// Сохраняет настройки чтения.
   Future<void> saveSettings(BookReadingSettings settings);
+
+  /// Рамка обрезки книги или `null`, если её ещё не считали (F-READ-15).
+  ///
+  /// Рамка — производное: она лежит только на этом устройстве и в облако
+  /// не уходит никогда.
+  Future<BookFrame?> bookFrame(String bookId);
+
+  /// Сохраняет рамку обрезки книги.
+  Future<void> saveBookFrame(String bookId, BookFrame frame);
 }

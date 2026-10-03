@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — девятая: нахлёст и полоска соседней страницы', () {
+  test('версия схемы — десятая: рамка обрезки книги', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 9);
+    expect(appSchemaVersion, 10);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -61,6 +61,7 @@ void main() {
         'app_settings',
         'device_files',
         'selection_prompts',
+        'book_frames',
       ]),
     );
   });
@@ -97,6 +98,31 @@ void main() {
     );
     expect(columns, isNot(contains('hlc')));
     expect(columns, <String>['setting_key', 'setting_value']);
+  });
+
+  test('F-READ-15: рамка книги полей CRDT не несёт', () async {
+    // Рамка — производное: её посчитал наш код, а не создал читатель.
+    // В слияние она не идёт, и поля для него ей не нужны.
+    final List<String> columns = await _columnNames(
+      data.database,
+      'book_frames',
+    );
+    expect(columns, isNot(contains('hlc')));
+    expect(columns, isNot(contains('is_deleted')));
+    expect(
+      columns,
+      containsAll(<String>[
+        'book_id',
+        'crop_left',
+        'crop_top',
+        'crop_right',
+        'crop_bottom',
+        'even_shift',
+        'sample_pages',
+        'ignore_running_heads',
+        'algorithm_version',
+      ]),
+    );
   });
 
   test('цитата носит своё место в тексте страницы', () async {

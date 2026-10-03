@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show QueryRow;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/reading/reading.dart';
@@ -196,6 +197,53 @@ void main() {
     );
     expect(portrait.displayMode, PageDisplayMode.full);
     expect(landscape.displayMode, PageDisplayMode.spread);
+  });
+
+  test('F-READ-15: рамки книги нет, пока её не считали', () async {
+    expect(await data.reading.bookFrame('book-1'), isNull);
+  });
+
+  test('F-READ-15: рамка книги сохраняется и читается', () async {
+    const BookFrame frame = BookFrame(
+      odd: CropBox(left: 0.14, top: 0.1, right: 0.93, bottom: 0.9),
+      evenShift: -0.07,
+      samples: 16,
+      ignoreRunningHeads: false,
+    );
+    await data.reading.saveBookFrame('book-1', frame);
+
+    final BookFrame? loaded = await data.reading.bookFrame('book-1');
+    expect(loaded, frame);
+    expect(loaded?.version, kBookFrameVersion);
+    expect(loaded?.isMirrored, isTrue);
+  });
+
+  test('F-READ-15: новая рамка заменяет прежнюю, а не плодит строки', () async {
+    await data.reading.saveBookFrame(
+      'book-1',
+      const BookFrame(odd: CropBox.full, version: kBookFrameVersion - 1),
+    );
+    const BookFrame fresh = BookFrame(
+      odd: CropBox(left: 0.1, top: 0.1, right: 0.9, bottom: 0.9),
+      samples: 12,
+    );
+    await data.reading.saveBookFrame('book-1', fresh);
+
+    expect(await data.reading.bookFrame('book-1'), fresh);
+    final QueryRow count = await data.database
+        .customSelect('SELECT COUNT(*) AS c FROM book_frames')
+        .getSingle();
+    expect(count.read<int>('c'), 1);
+  });
+
+  test('F-READ-15: рамка книги уходит вместе с книгой', () async {
+    await data.reading.saveBookFrame(
+      'book-1',
+      const BookFrame(odd: CropBox.full),
+    );
+    await data.library.delete('book-1');
+    expect(await data.library.purgeDeleted(), 1);
+    expect(await data.reading.bookFrame('book-1'), isNull);
   });
 
   test('вывернутая рамка не считается валидной', () {

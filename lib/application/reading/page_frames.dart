@@ -2,12 +2,16 @@ import 'dart:collection';
 
 import '../../domain/reading/columns.dart';
 import '../../domain/reading/crop.dart';
-import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/text_geometry.dart';
 
 /// Рамка одной страницы: где на ней содержимое и как оно разложено.
+///
+/// С рамкой на книгу (F-READ-15) прямоугольник содержимого страницы на
+/// показ идёт редко: он нужен выборке, по которой считается рамка книги,
+/// и страницам, чей текст за рамку книги выходит. Просветы и колонки
+/// остаются постраничными всегда.
 class PageFrame {
   /// Создаёт рамку.
   const PageFrame({
@@ -96,18 +100,6 @@ class PageFrameSource {
   /// Нужна отрисовке: она обязана ответить за один кадр и ждать разбора
   /// страницы не может.
   PageFrame? cached(int pageNumber) => _cache[pageNumber];
-
-  /// Рамка взаймы для страницы, своя рамка которой ещё не посчитана.
-  ///
-  /// BUG-23: страница показывается, не дожидаясь своей рамки, — по рамке
-  /// ближайшей посчитанной. `null` — занять не у кого.
-  CropBox? borrowed(int pageNumber) {
-    return borrowedContent(
-      page: pageNumber,
-      pageCount: _document.pageCount,
-      known: (int page) => _cache[page]?.content,
-    );
-  }
 
   /// Рамка страницы. Повторные вызовы бесплатны.
   Future<PageFrame> frameFor(int pageNumber) {

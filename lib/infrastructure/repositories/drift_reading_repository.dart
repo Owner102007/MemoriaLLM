@@ -113,6 +113,46 @@ class DriftReadingRepository implements ReadingRepository {
     await _db.into(_db.bookSettings).insertOnConflictUpdate(row);
   }
 
+  @override
+  Future<BookFrame?> bookFrame(String bookId) async {
+    final query = _db.select(_db.bookFrames);
+    query.where((tbl) => tbl.bookId.equals(bookId));
+    final BookFrameRow? row = await query.getSingleOrNull();
+    if (row == null) {
+      return null;
+    }
+    return BookFrame(
+      odd: CropBox(
+        left: row.cropLeft,
+        top: row.cropTop,
+        right: row.cropRight,
+        bottom: row.cropBottom,
+      ),
+      evenShift: row.evenShift,
+      samples: row.samplePages,
+      ignoreRunningHeads: row.ignoreRunningHeads,
+      version: row.algorithmVersion,
+    );
+  }
+
+  @override
+  Future<void> saveBookFrame(String bookId, BookFrame frame) async {
+    // Меток HLC нет намеренно: рамка книги — производное и в слияние не
+    // идёт (F-READ-15).
+    final BookFramesCompanion row = BookFramesCompanion(
+      bookId: Value<String>(bookId),
+      cropLeft: Value<double>(frame.odd.left),
+      cropTop: Value<double>(frame.odd.top),
+      cropRight: Value<double>(frame.odd.right),
+      cropBottom: Value<double>(frame.odd.bottom),
+      evenShift: Value<double>(frame.evenShift),
+      samplePages: Value<int>(frame.samples),
+      ignoreRunningHeads: Value<bool>(frame.ignoreRunningHeads),
+      algorithmVersion: Value<int>(frame.version),
+    );
+    await _db.into(_db.bookFrames).insertOnConflictUpdate(row);
+  }
+
   ReadingPosition? _toPositionOrNull(ReadingProgressRow? row) {
     return row == null ? null : _toPosition(row);
   }

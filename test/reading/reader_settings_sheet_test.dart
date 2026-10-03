@@ -190,6 +190,126 @@ void main() {
     expect(controller.settings.manualCrop, isNull);
   });
 
+  testWidgets('F-READ-15: «Пересчитать» появляется с обрезкой и считает', (
+    WidgetTester tester,
+  ) async {
+    build(
+      boxes: <int, List<TextBox>>{
+        for (int page = 1; page <= 6; page++) page: textBlock(),
+      },
+    );
+    await pumpSheet(tester);
+    // Без обрезки считать нечего — и кнопки нет.
+    expect(find.byKey(const Key('reader-recompute-crop')), findsNothing);
+    expect(find.byKey(const Key('reader-crop-status')), findsNothing);
+
+    await controller.setAutoCrop(true);
+    await tester.pump();
+    expect(find.byKey(const Key('reader-recompute-crop')), findsOneWidget);
+    expect(find.text('Рамка книги — по 6 страницам'), findsOneWidget);
+    expect(reading.frameSaveCount, 1);
+
+    await tapKey(tester, 'reader-recompute-crop');
+    await tester.pump();
+    expect(reading.frameSaveCount, 2);
+    expect(controller.bookFrame, isNotNull);
+  });
+
+  testWidgets('F-READ-15: «Пересчитать» снимает ручную рамку', (
+    WidgetTester tester,
+  ) async {
+    build(
+      boxes: <int, List<TextBox>>{
+        for (int page = 1; page <= 6; page++) page: textBlock(),
+      },
+    );
+    await controller.setAutoCrop(true);
+    await controller.setManualCrop(
+      const CropBox(left: 0.2, top: 0.2, right: 0.8, bottom: 0.8),
+    );
+    await pumpSheet(tester);
+    expect(
+      find.text('Рамка выставлена руками — одна на всю книгу'),
+      findsOneWidget,
+    );
+    // С обрезкой кнопка одна: «Сбросить» остаётся книге без обрезки.
+    expect(find.byKey(const Key('reader-reset-crop')), findsNothing);
+
+    await tapKey(tester, 'reader-recompute-crop');
+    await tester.pump();
+    expect(controller.settings.manualCrop, isNull);
+    expect(find.text('Рамка книги — по 6 страницам'), findsOneWidget);
+  });
+
+  test('F-READ-15: строка о рамке говорит, откуда она', () {
+    const BookReadingSettings off = BookReadingSettings(
+      bookId: 'b',
+      orientation: ScreenOrientation.portrait,
+    );
+    final BookReadingSettings on = off.copyWith(autoCrop: true);
+    const BookFrame counted = BookFrame(
+      odd: CropBox(left: 0.1, top: 0.1, right: 0.9, bottom: 0.9),
+      samples: 16,
+    );
+
+    expect(
+      cropStatusLabel(settings: off, frame: counted, loading: false),
+      isNull,
+      reason: 'обрезка выключена — рамка не действует',
+    );
+    expect(
+      cropStatusLabel(settings: on, frame: null, loading: true),
+      'Рамка книги считается…',
+    );
+    expect(
+      cropStatusLabel(settings: on, frame: counted, loading: false),
+      'Рамка книги — по 16 страницам',
+    );
+    expect(
+      cropStatusLabel(
+        settings: on,
+        frame: const BookFrame(odd: CropBox.full, samples: 21),
+        loading: false,
+      ),
+      'Рамка книги — по 21 странице',
+    );
+    expect(
+      cropStatusLabel(
+        settings: on,
+        frame: const BookFrame(
+          odd: CropBox(left: 0.14, top: 0.1, right: 0.93, bottom: 0.9),
+          evenShift: -0.07,
+          samples: 11,
+        ),
+        loading: false,
+      ),
+      'Рамка книги — по 11 страницам, поля зеркальные',
+    );
+    expect(
+      cropStatusLabel(
+        settings: on,
+        frame: const BookFrame(odd: CropBox.full),
+        loading: false,
+      ),
+      'Содержимое не найдено — страница показывается целиком',
+    );
+    expect(
+      cropStatusLabel(
+        settings: on.copyWith(
+          manualCrop: const CropBox(
+            left: 0.2,
+            top: 0.2,
+            right: 0.8,
+            bottom: 0.8,
+          ),
+        ),
+        frame: counted,
+        loading: false,
+      ),
+      'Рамка выставлена руками — одна на всю книгу',
+    );
+  });
+
   testWidgets('BUG-13: шторка не обещает колонку вместо половины', (
     WidgetTester tester,
   ) async {

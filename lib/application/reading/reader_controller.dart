@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 
 import '../../domain/library/book.dart';
+import '../../domain/reading/book_frame.dart';
 import '../../domain/reading/columns.dart';
 import '../../domain/reading/context_paragraph.dart';
 import '../../domain/reading/crop.dart';
@@ -63,6 +64,7 @@ class ReaderController extends ChangeNotifier {
     BookReadingSettings? settings,
     ReadingPosition? position,
     PageFrameSource? frames,
+    BookFrame? bookFrame,
     Duration saveDelay = const Duration(seconds: 2),
     Duration frameWait = kFrameWait,
   }) : _document = document,
@@ -78,6 +80,15 @@ class ReaderController extends ChangeNotifier {
         PageFrameSource(document: document, options: _cropOptions(_settings));
     _initialPage = _page;
     _fragment = position?.fragment ?? 0;
+    // F-READ-15: рамка из базы годится, только если посчитана нынешним
+    // алгоритмом и с той же настройкой колонтитулов. Отставшая
+    // пересчитается сама, как только понадобится.
+    if (bookFrame != null &&
+        bookFrame.isCurrentFor(
+          ignoreRunningHeads: _settings.ignoreRunningHeads,
+        )) {
+      _bookFrame = bookFrame;
+    }
   }
 
   /// Открывает книгу и восстанавливает место, на котором её оставили.
@@ -105,12 +116,16 @@ class ReaderController extends ChangeNotifier {
       // по прикидочным.
       final int page = restorePage(position, document.pageCount);
       await document.measure(<int>[page - 1, page, page + 1]);
+      // F-READ-15: рамка книги, посчитанная в прошлый раз, лежит в базе —
+      // со второго открытия книга встаёт по ней с первого кадра.
+      final BookFrame? bookFrame = await reading.bookFrame(book.id);
       return ReaderController(
         book: book,
         document: document,
         reading: reading,
         settings: settings,
         position: position,
+        bookFrame: bookFrame,
         saveDelay: saveDelay,
         frameWait: frameWait,
       );
@@ -138,6 +153,17 @@ class ReaderController extends ChangeNotifier {
   late final int _initialPage;
   BookReadingSettings _settings;
   PageFrame? _frame;
+
+  /// Рамка обрезки книги; `null` — ещё не посчитана (F-READ-15).
+  BookFrame? _bookFrame;
+
+  /// Идущий расчёт рамки книги; `null` — сейчас не считается.
+  Future<void>? _bookFrameWork;
+
+  /// Номер последнего расчёта рамки книги. Расчёт, чей номер устарел
+  /// (сменилась настройка колонтитулов, попросили пересчитать, книгу
+  /// закрыли), свой результат выбрасывает.
+  int _bookFrameRun = 0;
   DisplayArea _area = DisplayArea.unknown;
   bool _canTurn = true;
   Timer? _saveTimer;
@@ -259,6 +285,12 @@ class ReaderController extends ChangeNotifier {
 
   /// Разобранная рамка текущей страницы; `null` — ещё считается.
   PageFrame? get frame => _frame;
+
+  /// Рамка обрезки книги; `null` — не посчитана или не нужна (F-READ-15).
+  BookFrame? get bookFrame => _bookFrame;
+
+  /// Считается ли рамка книги прямо сейчас.
+  bool get isBookFrameLoading => _bookFrameWork != null;
 
   /// Прямоугольник содержимого листа в долях листа, с учётом настроек.
   ///
@@ -389,16 +421,143 @@ class ReaderController extends ChangeNotifier {
 
   /// Рамка содержимого страницы [page] в долях страницы.
   ///
-  /// BUG-23: пока своя рамка не посчитана, берётся рамка ближайшей
-  /// посчитанной страницы — страница встаёт почти так, как встанет в
-  /// итоге, и подрезка следом почти не видна. Занять не у кого —
-  /// страница берётся целиком: лишнее поле лучше срезанного текста.
+  /// F-READ-15, ALG-PDF-11: рамка у книги одна. Прежде у каждой страницы
+  /// была своя, и ширина текста менялась от страницы к странице; пока
+  /// своя не досчиталась, страница занимала рамку у соседней (BUG-23) и
+  /// подрезалась следом. Теперь занимать нечего и не у кого: рамка книги
+  /// известна до прихода на страницу. Пока она сама ещё считается —
+  /// первое открытие книги с обрезкой — страница берётся целиком: лишнее
+  /// поле лучше срезанного текста.
   CropBox _pageContent(int page) {
     return effectiveCrop(
       settings: _settings,
-      automatic:
-          _frameOf(page)?.content ?? _frames.borrowed(page) ?? CropBox.full,
+      automatic: _automaticContent(page),
     );
+  }
+
+  /// Посчитанная рамка страницы [page]: рамка книги, а у страницы, чей
+  /// текст за неё выходит, — расширенная до этого текста.
+  CropBox _automaticContent(int page) {
+    final BookFrame? book = _bookFrame;
+    if (book == null) {
+      return CropBox.full;
+    }
+    final PageFrame? own = _frameOf(page);
+    return pageContentInBook(
+      book: book,
+      page: page,
+      // У скана своей рамки по тексту нет, и рамка книги там стоит
+      // твёрдо: за неё выходят пыль и тень переплёта.
+      ownText: own != null && own.fromText ? own.content : null,
+    );
+  }
+
+  /// Нужна ли сейчас рамка книги: обрезка включена, а рамки, выставленной
+  /// руками, нет.
+  bool get _wantsBookFrame =>
+      _settings.autoCrop && _settings.manualCrop == null;
+
+  /// Считает рамку книги, если она нужна и её ещё нет (F-READ-15).
+  ///
+  /// Считается один раз на книгу и в фоне: страница уже на экране, рамка
+  /// встаёт следом и ложится в базу. Повторный вызов во время расчёта
+  /// отдаёт тот же расчёт, а не начинает второй.
+  Future<void> ensureBookFrame() {
+    if (_closed || _bookFrame != null || !_wantsBookFrame) {
+      return Future<void>.value();
+    }
+    final Future<void>? running = _bookFrameWork;
+    if (running != null) {
+      return running;
+    }
+    final int run = ++_bookFrameRun;
+    final Future<void> work = _computeBookFrame(run).whenComplete(() {
+      if (run == _bookFrameRun) {
+        _bookFrameWork = null;
+      }
+    });
+    _bookFrameWork = work;
+    return work;
+  }
+
+  /// Считает рамку книги заново (F-READ-15).
+  ///
+  /// Рамка, выставленная руками, при этом снимается: кнопка возвращает
+  /// книге посчитанную рамку.
+  Future<void> recomputeBookFrame() async {
+    _dropBookFrame();
+    if (_settings.manualCrop != null) {
+      await setManualCrop(null);
+      return;
+    }
+    _notify();
+    await ensureBookFrame();
+  }
+
+  /// Забывает рамку книги и обрывает её расчёт, если он идёт.
+  void _dropBookFrame() {
+    _bookFrame = null;
+    _bookFrameRun++;
+    _bookFrameWork = null;
+  }
+
+  /// Начинает расчёт рамки книги, не дожидаясь его.
+  ///
+  /// В ленте рамка не нужна: полос там нет, и страница не обрезается.
+  void _kickBookFrame() {
+    if (_sheetModes) {
+      unawaited(ensureBookFrame());
+    }
+  }
+
+  /// Выборка страниц → рамка книги (ALG-PDF-11).
+  ///
+  /// Страницы выборки разбираются по одной: между ними движок успевает
+  /// обслужить страницу, на которую читатель перешёл. Ошибок расчёт
+  /// наружу не отдаёт — его никто не ждёт.
+  Future<void> _computeBookFrame(int run) async {
+    final bool heads = _settings.ignoreRunningHeads;
+    final List<FrameSample> samples = <FrameSample>[];
+    final Set<int> tried = <int>{};
+    // Нулевой проход — основная выборка. Второй — добор соседними
+    // страницами, если пригодных не набралось: выборка попала на пустые
+    // листы и шмуцтитулы.
+    for (int attempt = 0; attempt < 2; attempt++) {
+      final List<int> pages = bookFrameSamplePages(pageCount, attempt: attempt);
+      for (final int number in pages) {
+        if (_closed || run != _bookFrameRun) {
+          return;
+        }
+        if (!tried.add(number)) {
+          continue;
+        }
+        try {
+          final PageFrame frame = await _frames.frameFor(number);
+          samples.add(FrameSample(page: number, content: frame.content));
+        } on Object {
+          // Страница не разобралась — выборка обойдётся без неё.
+        }
+      }
+      if (usableSampleCount(samples) >= kBookFrameEnough) {
+        break;
+      }
+    }
+    if (_closed || run != _bookFrameRun) {
+      return;
+    }
+    final BookFrame frame = bookFrameFromSamples(
+      samples,
+      ignoreRunningHeads: heads,
+    );
+    _bookFrame = frame;
+    _fragment = clampFragment(_fragment, fragmentCount);
+    _notify();
+    try {
+      await _reading.saveBookFrame(book.id, frame);
+    } on Object {
+      // Рамка — производное: не записалась — посчитается при следующем
+      // открытии книги.
+    }
   }
 
   /// Страницы листа с размерами, рамками и просветами — для объединения.
@@ -610,7 +769,10 @@ class ReaderController extends ChangeNotifier {
   ///
   /// Это и есть «подрезка» из BUG-23: страница уже на экране, а рамка
   /// приходит следом. Рамка, досчитавшаяся после того, как читатель ушёл
-  /// на другую страницу, ничего не меняет.
+  /// на другую страницу, ничего не меняет. С рамкой на книгу (F-READ-15)
+  /// от рамки страницы зависят только просветы между строками, а
+  /// прямоугольник содержимого — лишь у страницы, чей текст выходит за
+  /// рамку книги.
   Future<void> loadFrame() async {
     final int target = _page;
     final bool ready = _frame?.pageNumber == target && _sheetFramesReady;
@@ -621,6 +783,7 @@ class ReaderController extends ChangeNotifier {
       // Рамка листа на месте, но соседние могли остаться непосчитанными:
       // так бывает после возврата из ленты, где рамки не готовятся.
       _prepareFrames();
+      _kickBookFrame();
       return;
     }
     final PageFrame frame = await _loadSheetFrames(target);
@@ -629,18 +792,29 @@ class ReaderController extends ChangeNotifier {
     }
     _frame = frame;
     // Число полос задаёт режим, а не рамка: читатель, пришедший назад в
-    // низ страницы по чужой рамке, после подрезки остаётся в её низу.
+    // низ страницы, после прихода рамки остаётся в её низу.
     _fragment = clampFragment(_fragment, fragmentCount);
     _notify();
     _prepareFrames();
+    // Рамка книги — после рамки страницы на экране: та нужнее.
+    _kickBookFrame();
   }
 
   /// Ждёт рамку открытой страницы, но не дольше [limit].
   ///
   /// Нужен открытию книги: первый кадр лучше показать уже по рамке, но
   /// держать ради неё пустой экран на скане нельзя (F-READ-02).
+  ///
+  /// F-READ-15: заодно ждёт и рамку книги, если она ещё не посчитана, —
+  /// в тот же срок. Не успела — страница встанет целиком и подрежется
+  /// один раз, когда рамка будет готова.
   Future<void> settleFrame({Duration limit = kOpenFrameWait}) async {
-    await _within(loadFrame(), limit);
+    await _within(_settle(), limit);
+  }
+
+  Future<void> _settle() async {
+    await loadFrame();
+    await ensureBookFrame();
   }
 
   /// Ждёт [work], но не дольше [limit]; `true` — работа успела.
@@ -793,9 +967,10 @@ class ReaderController extends ChangeNotifier {
   ///
   /// BUG-23: переход не ждёт рамку. Посчитанная берётся из кэша, и
   /// страница меняется сразу; непосчитанную ждут не дольше [_frameWait],
-  /// а потом показывают страницу по рамке ближайшей посчитанной и
-  /// подрезают, когда своя досчитается. Прежде смена страницы ждала
-  /// рамку всегда, и на скане каждое нажатие стоило рендера с разбором.
+  /// а потом показывают страницу по рамке книги (F-READ-15) — та известна
+  /// заранее. Своя рамка страницы приносит следом только просветы между
+  /// строк. Прежде смена страницы ждала рамку всегда, и на скане каждое
+  /// нажатие стоило рендера с разбором.
   Future<bool> goToPage(int page, {int fragment = 0}) async {
     final int safe = clampPage(page, pageCount);
     final int request = ++_request;
@@ -812,7 +987,7 @@ class ReaderController extends ChangeNotifier {
       }
       // Спрашиваем кэш заново, чем бы ни кончилось ожидание: рамка
       // страницы с текстом успевает досчитаться, даже когда её не ждали
-      // вовсе, и показывать такую страницу по чужой рамке незачем.
+      // вовсе, и показывать такую страницу без её просветов незачем.
       frame = _readyFrame(safe);
     }
     _pendingPage = null;
@@ -827,7 +1002,7 @@ class ReaderController extends ChangeNotifier {
     _notify();
     _scheduleSave();
     if (frame == null) {
-      // Подрезка: рамка досчитается и встанет сама, а за ней — рамки
+      // Рамка страницы досчитается и встанет сама, а за ней — рамки
       // соседних листов.
       unawaited(loadFrame());
     } else {
@@ -934,6 +1109,8 @@ class ReaderController extends ChangeNotifier {
     }
     _settings = _settings.copyWith(autoCrop: value);
     await _saveSettings();
+    // F-READ-15: обрезку включили впервые — рамки книги ещё нет.
+    await ensureBookFrame();
   }
 
   /// Считать ли колонтитулы содержимым.
@@ -944,13 +1121,16 @@ class ReaderController extends ChangeNotifier {
     _settings = _settings.copyWith(ignoreRunningHeads: value);
     _frames.options = _cropOptions(_settings);
     _frame = null;
+    // F-READ-15: рамка книги посчитана с прежней настройкой.
+    _dropBookFrame();
     await _saveSettings();
     await loadFrame();
+    await ensureBookFrame();
   }
 
   /// Ставит рамку, выставленную руками, сразу на всю книгу.
   ///
-  /// `null` возвращает автообрезку.
+  /// `null` возвращает автообрезку — рамку книги (F-READ-15).
   Future<void> setManualCrop(CropBox? box) async {
     _settings = BookReadingSettings(
       bookId: _settings.bookId,
@@ -971,6 +1151,9 @@ class ReaderController extends ChangeNotifier {
     );
     _fragment = clampFragment(_fragment, fragmentCount);
     await _saveSettings();
+    // F-READ-15: ручную рамку сняли — нужна посчитанная. Если она уже
+    // есть, считать нечего.
+    await ensureBookFrame();
   }
 
   /// Меняет запас по краям полосы.
@@ -1110,6 +1293,7 @@ class ReaderController extends ChangeNotifier {
       wait.stop();
     }
     _prepareRun++;
+    _bookFrameRun++;
     await flush();
     await _document.close();
   }

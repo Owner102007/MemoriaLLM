@@ -1,10 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/reading/page_turning.dart';
-import 'package:memoria/domain/reading/reading.dart';
-
-/// Рамка с заданными полями слева и справа; сверху и снизу — по десятой.
-CropBox _box(double left, double right) =>
-    CropBox(left: left, top: 0.1, right: right, bottom: 0.9);
 
 void main() {
   group('F-READ-02: какие рамки считать заранее', () {
@@ -47,74 +42,6 @@ void main() {
         framesAhead(page: 2, pageCount: 6, spread: true, forward: true),
         <int>[4, 5, 6, 1],
       );
-    });
-  });
-
-  group('BUG-23: рамка взаймы', () {
-    CropBox? Function(int) from(Map<int, CropBox> known) =>
-        (int page) => known[page];
-
-    test('берётся страница той же чётности, а не соседняя', () {
-      // Поля в книге из переплёта зеркальны: нечётной странице подходит
-      // рамка нечётной, хотя чётная ближе.
-      final CropBox odd = _box(0.15, 0.92);
-      final CropBox even = _box(0.08, 0.85);
-      expect(
-        borrowedContent(
-          page: 9,
-          pageCount: 100,
-          known: from(<int, CropBox>{7: odd, 8: even}),
-        ),
-        odd,
-      );
-    });
-
-    test('нет той же чётности — годится ближайшая любая', () {
-      final CropBox even = _box(0.08, 0.85);
-      expect(
-        borrowedContent(
-          page: 9,
-          pageCount: 100,
-          known: from(<int, CropBox>{8: even}),
-        ),
-        even,
-      );
-    });
-
-    test('рамка издалека не берётся: лучше страница целиком', () {
-      expect(
-        borrowedContent(
-          page: 50,
-          pageCount: 100,
-          known: from(<int, CropBox>{10: _box(0.1, 0.9)}),
-        ),
-        isNull,
-      );
-    });
-
-    test('вывернутая рамка взаймы не идёт', () {
-      const CropBox broken = CropBox(left: 0.8, top: 0, right: 0.2, bottom: 1);
-      expect(
-        borrowedContent(
-          page: 5,
-          pageCount: 10,
-          known: from(<int, CropBox>{3: broken}),
-        ),
-        isNull,
-      );
-    });
-
-    test('за край книги поиск не выходит', () {
-      final List<int> asked = <int>[];
-      borrowedContent(
-        page: 1,
-        pageCount: 3,
-        known: (int page) {
-          asked.add(page);
-          return null;
-        },
-      );
-      expect(asked, <int>[2, 3]);
     });
   });
 

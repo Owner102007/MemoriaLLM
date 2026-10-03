@@ -2,10 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
-import 'package:memoria/application/reading/page_frames.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
-import 'package:memoria/domain/reading/crop.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
 
@@ -64,8 +62,8 @@ void main() {
   FakeReaderDocument plain(int pages) =>
       FakeReaderDocument(pages: _texts(pages), boxes: _boxes(pages));
 
-  _GatedDocument gated(int pages, {Map<int, List<TextBox>>? boxes}) =>
-      _GatedDocument(pages: _texts(pages), boxes: boxes ?? _boxes(pages));
+  _GatedDocument gated(int pages) =>
+      _GatedDocument(pages: _texts(pages), boxes: _boxes(pages));
 
   /// Открывает книгу и ждёт рамку первой страницы и её соседей.
   ///
@@ -151,8 +149,8 @@ void main() {
     });
 
     test('BUG-23: рамка успела в срок — страница встаёт уже по ней', () async {
-      // Страница с текстом считается быстро, и показывать её по чужой
-      // рамке, чтобы тут же подрезать, незачем.
+      // Страница с текстом считается быстро, и показывать её без своих
+      // просветов, чтобы тут же переложить полосы, незачем.
       final ReaderController controller = await open(
         plain(12),
         frameWait: const Duration(seconds: 30),
@@ -163,59 +161,6 @@ void main() {
           .timeout(const Duration(seconds: 5));
       expect(moved, isTrue);
       expect(controller.frame?.pageNumber, 8);
-      await shut(controller);
-    });
-
-    test('BUG-23: незнакомая страница встаёт по рамке ближайшей', () async {
-      // На девятой странице текст стоит иначе, чем на остальных, — так
-      // видно, чья рамка действует: взятая взаймы или своя.
-      final Map<int, List<TextBox>> boxes = _boxes(12);
-      boxes[9] = textBlock(left: 0.3, top: 0.3, right: 0.7, bottom: 0.7);
-      final _GatedDocument document = gated(12, boxes: boxes);
-      final Completer<void> gate = Completer<void>();
-      document.gates[9] = gate;
-      final ReaderController controller = await open(document);
-      await controller.setAutoCrop(true);
-      await controller.goToPage(6);
-      await _idle();
-
-      // Эталон считается отдельным источником рамок с теми же
-      // настройками обрезки, что у книги.
-      final PageFrame seventh = await PageFrameSource(
-        document: document,
-        options: CropOptions(
-          ignoreRunningHeads: controller.settings.ignoreRunningHeads,
-        ),
-      ).frameFor(7);
-      await controller.goToPage(9);
-      expect(controller.frame, isNull);
-      expect(
-        controller.contentBox,
-        seventh.content,
-        reason: 'рамка седьмой: та же чётность, зеркальные поля совпадают',
-      );
-
-      gate.complete();
-      await _idle();
-      expect(controller.frame?.pageNumber, 9);
-      expect(controller.contentBox.top, greaterThan(seventh.content.top));
-      expect(controller.contentBox.left, greaterThan(seventh.content.left));
-      await shut(controller);
-    });
-
-    test('BUG-23: занять рамку не у кого — страница целиком', () async {
-      final _GatedDocument document = gated(40);
-      final Completer<void> gate = Completer<void>();
-      document.gates[30] = gate;
-      final ReaderController controller = await open(document);
-      await controller.setAutoCrop(true);
-
-      await controller.goToPage(30);
-      expect(controller.contentBox, CropBox.full);
-
-      gate.complete();
-      await _idle();
-      expect(controller.contentBox, isNot(CropBox.full));
       await shut(controller);
     });
 
