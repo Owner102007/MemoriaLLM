@@ -21,25 +21,30 @@ void main() {
   Widget sheet({required List<Rect> rects, required VoidCallback onTap}) {
     return MaterialApp(
       home: Scaffold(
-        body: ReaderLayers(
-          filter: const ReadingFilterPipeline(),
-          // Страница узнаёт нажатие слушателем указателя — как лист
-          // (`QuickTap`).
-          page: Listener(
-            key: const Key('page'),
-            behavior: HitTestBehavior.opaque,
-            onPointerUp: (PointerUpEvent event) => onTap(),
-            child: const SizedBox.expand(),
+        // Лист на экране чтения получает жёсткие размеры от своего места;
+        // без них стопка слоёв сжалась бы до нуля, и нажимать было бы не
+        // по чему.
+        body: SizedBox.expand(
+          child: ReaderLayers(
+            filter: const ReadingFilterPipeline(),
+            // Страница узнаёт нажатие слушателем указателя — как лист
+            // (`QuickTap`).
+            page: Listener(
+              key: const Key('page'),
+              behavior: HitTestBehavior.opaque,
+              onPointerUp: (PointerUpEvent event) => onTap(),
+              child: const SizedBox.expand(),
+            ),
+            mask: const SizedBox.expand(),
+            overlay: Stack(
+              children: <Widget>[
+                Positioned.fill(
+                  child: HighlightLayer(rects: rects, color: color),
+                ),
+              ],
+            ),
+            progress: const SizedBox.shrink(),
           ),
-          mask: const SizedBox.expand(),
-          overlay: Stack(
-            children: <Widget>[
-              Positioned.fill(
-                child: HighlightLayer(rects: rects, color: color),
-              ),
-            ],
-          ),
-          progress: const SizedBox.shrink(),
         ),
       ),
     );
