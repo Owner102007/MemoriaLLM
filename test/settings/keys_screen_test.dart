@@ -1,8 +1,9 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
+import 'package:memoria/ui/reader/key_bindings.dart';
 import 'package:memoria/ui/settings/keys_screen.dart';
 import 'package:memoria/ui/settings/settings_screen.dart';
 
@@ -34,8 +35,13 @@ class _MemorySettings implements AppSettingsRepository {
 const Key _switch = Key('volume-keys-switch');
 const Key _direction = Key('volume-down-direction');
 const Key _tile = Key('keys-tile');
+const Key _reset = Key('turn-keys-reset');
+const Key _addForward = Key('turn-key-add-forward');
+const Key _addBack = Key('turn-key-add-back');
+const Key _dialog = Key('key-capture-dialog');
 
-/// F-READ-26: раздел настроек «Клавиши и громкость».
+/// Раздел настроек «Клавиши и громкость»: на телефоне — листание
+/// кнопками громкости (F-READ-26), на ПК — таблица клавиш (F-READ-25).
 void main() {
   Future<void> pumpScreen(
     WidgetTester tester,
@@ -145,19 +151,254 @@ void main() {
     expect(find.byKey(_direction), findsOneWidget);
   });
 
-  testWidgets('F-READ-26: на ПК раздела нет', (WidgetTester tester) async {
-    // Кнопок громкости у читалки на ПК нет, а таблица клавиш ещё не
-    // сделана (F-READ-25): пустой раздел был бы обманом.
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    try {
-      await pumpSettings(tester);
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('build-label')),
-        200,
-      );
-      expect(find.byKey(_tile), findsNothing);
-    } finally {
-      debugDefaultTargetPlatformOverride = null;
+  testWidgets('F-READ-26: на телефоне таблицы клавиш нет', (
+    WidgetTester tester,
+  ) async {
+    // Тесты идут как на телефоне: у него кнопки громкости, а не клавиатура.
+    await pumpScreen(tester, _MemorySettings());
+
+    expect(find.byKey(_switch), findsOneWidget);
+    expect(find.byKey(_reset), findsNothing);
+    expect(find.byKey(_addForward), findsNothing);
+  });
+
+  group('F-READ-25: таблица клавиш на ПК', () {
+    final TestVariant<TargetPlatform> desktop = TargetPlatformVariant.only(
+      TargetPlatform.windows,
+    );
+    final int space = LogicalKeyboardKey.space.keyId;
+    final int letter = LogicalKeyboardKey.keyJ.keyId;
+
+    Finder chip(String turn, String code) => find.byKey(
+      Key('turn-key-$turn-$code'),
+    );
+
+    /// Открывает окно «нажмите клавишу» у действия.
+    Future<void> askKey(WidgetTester tester, Key add) async {
+      await tester.tap(find.byKey(add));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_dialog), findsOneWidget);
     }
+
+    testWidgets('раздел открывается из настроек и показывает таблицу', (
+      WidgetTester tester,
+    ) async {
+      await pumpSettings(tester);
+
+      final Finder tile = find.byKey(_tile);
+      await tester.scrollUntilVisible(tile, 200);
+      await tester.pump();
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(_reset), findsOneWidget);
+      expect(find.byKey(_addForward), findsOneWidget);
+      // Кнопок громкости у читалки на ПК нет.
+      expect(find.byKey(_switch), findsNothing);
+    }, variant: desktop);
+
+    testWidgets('из коробки: вперёд — пробел, PgDn, → и ↓; назад — '
+        'Shift+пробел, PgUp, ← и ↑', (WidgetTester tester) async {
+      await pumpScreen(tester, _MemorySettings());
+
+      for (final KeyStroke stroke in KeyBindings.standard.forward) {
+        expect(chip('forward', stroke.encode()), findsOneWidget);
+      }
+      for (final KeyStroke stroke in KeyBindings.standard.back) {
+        expect(chip('back', stroke.encode()), findsOneWidget);
+      }
+      for (final String label in <String>[
+        'Пробел',
+        'PgDn',
+        '→',
+        '↓',
+        'Shift+Пробел',
+        'PgUp',
+        '←',
+        '↑',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+      // Возвращать нечего — и кнопка это показывает.
+      expect(
+        tester.widget<TextButton>(find.byKey(_reset)).onPressed,
+        isNull,
+      );
+      expect(find.byKey(const Key('turn-keys-fixed')), findsOneWidget);
+    }, variant: desktop);
+
+    testWidgets('клавиша назначается нажатием и пишется в настройки', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+
+      await askKey(tester, _addForward);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyJ);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(_dialog), findsNothing);
+      expect(chip('forward', '$letter'), findsOneWidget);
+      expect(find.text('J'), findsOneWidget);
+      final KeyBindings saved = KeyBindings.parse(
+        settings.values[SettingsKeys.turnKeys],
+      );
+      expect(saved.turnFor(LogicalKeyboardKey.keyJ), TurnKey.forward);
+      // Прежние клавиши при этом на месте.
+      expect(saved.turnFor(LogicalKeyboardKey.space), TurnKey.forward);
+      expect(
+        tester.widget<TextButton>(find.byKey(_reset)).onPressed,
+        isNotNull,
+      );
+    }, variant: desktop);
+
+    testWidgets('Shift входит в клавишу', (WidgetTester tester) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+
+      await askKey(tester, _addBack);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      // Модификатор сам по себе окно не закрывает.
+      expect(find.byKey(_dialog), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyJ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+
+      expect(chip('back', 's$letter'), findsOneWidget);
+      expect(find.text('Shift+J'), findsOneWidget);
+      final KeyBindings saved = KeyBindings.parse(
+        settings.values[SettingsKeys.turnKeys],
+      );
+      expect(
+        saved.turnFor(LogicalKeyboardKey.keyJ, shift: true),
+        TurnKey.back,
+      );
+      expect(saved.turnFor(LogicalKeyboardKey.keyJ), isNull);
+    }, variant: desktop);
+
+    testWidgets('занятая клавиша переезжает, и об этом сказано', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+
+      await askKey(tester, _addBack);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+
+      expect(chip('back', '$space'), findsOneWidget);
+      expect(chip('forward', '$space'), findsNothing);
+      expect(find.byKey(const Key('turn-key-moved')), findsOneWidget);
+      final KeyBindings saved = KeyBindings.parse(
+        settings.values[SettingsKeys.turnKeys],
+      );
+      expect(saved.turnFor(LogicalKeyboardKey.space), TurnKey.back);
+    }, variant: desktop);
+
+    testWidgets('клавишу со своим делом назначить нельзя', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+
+      await askKey(tester, _addForward);
+      await tester.sendKeyEvent(LogicalKeyboardKey.f3);
+      await tester.pumpAndSettle();
+
+      // Окно объясняет отказ и ждёт другую клавишу.
+      expect(find.byKey(_dialog), findsOneWidget);
+      expect(find.byKey(const Key('key-capture-refusal')), findsOneWidget);
+      expect(settings.values.containsKey(SettingsKeys.turnKeys), isFalse);
+
+      // Esc закрывает окно, ничего не назначив.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(_dialog), findsNothing);
+      expect(settings.values.containsKey(SettingsKeys.turnKeys), isFalse);
+    }, variant: desktop);
+
+    testWidgets('сочетание с Ctrl назначить нельзя', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+
+      await askKey(tester, _addForward);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyJ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(_dialog), findsOneWidget);
+      expect(find.byKey(const Key('key-capture-refusal')), findsOneWidget);
+      expect(settings.values.containsKey(SettingsKeys.turnKeys), isFalse);
+
+      await tester.tap(find.byKey(const Key('key-capture-cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_dialog), findsNothing);
+    }, variant: desktop);
+
+    testWidgets('клавиша убирается крестиком', (WidgetTester tester) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+
+      await tester.tap(
+        find.descendant(
+          of: chip('forward', '$space'),
+          matching: find.byIcon(Icons.close),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(chip('forward', '$space'), findsNothing);
+      final KeyBindings saved = KeyBindings.parse(
+        settings.values[SettingsKeys.turnKeys],
+      );
+      expect(saved.turnFor(LogicalKeyboardKey.space), isNull);
+      expect(saved.turnFor(LogicalKeyboardKey.pageDown), TurnKey.forward);
+    }, variant: desktop);
+
+    testWidgets('сохранённая таблица показана как есть', (
+      WidgetTester tester,
+    ) async {
+      final KeyBindings custom = KeyBindings.standard
+          .assign(TurnKey.forward, const KeyStroke(LogicalKeyboardKey.keyJ))
+          .without(
+            TurnKey.forward,
+            const KeyStroke(LogicalKeyboardKey.space),
+          );
+      await pumpScreen(
+        tester,
+        _MemorySettings(<String, String>{
+          SettingsKeys.turnKeys: custom.encode(),
+        }),
+      );
+
+      expect(chip('forward', '$letter'), findsOneWidget);
+      expect(chip('forward', '$space'), findsNothing);
+    }, variant: desktop);
+
+    testWidgets('«Вернуть как было» убирает настройку', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings(<String, String>{
+        SettingsKeys.turnKeys: 'f:$letter;b:',
+      });
+      await pumpScreen(tester, settings);
+      expect(chip('forward', '$letter'), findsOneWidget);
+      expect(chip('forward', '$space'), findsNothing);
+
+      await tester.tap(find.byKey(_reset));
+      await tester.pumpAndSettle();
+
+      expect(settings.values.containsKey(SettingsKeys.turnKeys), isFalse);
+      expect(chip('forward', '$letter'), findsNothing);
+      expect(chip('forward', '$space'), findsOneWidget);
+      expect(
+        tester.widget<TextButton>(find.byKey(_reset)).onPressed,
+        isNull,
+      );
+    }, variant: desktop);
   });
 }

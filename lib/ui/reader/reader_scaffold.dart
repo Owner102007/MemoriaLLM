@@ -7,6 +7,7 @@ import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/reading/navigation.dart';
 import '../../domain/reading/text_search.dart';
+import 'key_bindings.dart';
 import 'outline_panel.dart';
 import 'reader_keys.dart';
 import 'search_panel.dart';
@@ -36,6 +37,7 @@ class ReaderScaffold extends StatefulWidget {
     this.selecting,
     this.fullScreen = false,
     this.onFullScreen,
+    this.keyBindings = KeyBindings.standard,
     this.extraActions = const <Widget>[],
     super.key,
   });
@@ -92,6 +94,10 @@ class ReaderScaffold extends StatefulWidget {
   /// и `Esc`. `null` — платформа окно не разворачивает, и клавиши не
   /// значат ничего.
   final ValueChanged<bool>? onFullScreen;
+
+  /// Какие клавиши листают вперёд и назад (F-READ-25). Настройка
+  /// устройства; без неё — таблица из коробки.
+  final KeyBindings keyBindings;
 
   @override
   State<ReaderScaffold> createState() => ReaderScaffoldState();
@@ -216,14 +222,14 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// По кругу потому, что упереться в конец списка и не понять, кончился
   /// он или сломалась клавиша, — худший из исходов. Панель поиска при
   /// этом не закрывается: `F3` для того и нужен, чтобы пройти совпадения
-  /// подряд, не трогая список.
+  /// подряд, не трогая список. Куда ведёт шаг, решает [stepSearchHit]
+  /// (BUG-08).
   Future<void> _stepHit(int step) async {
     final List<SearchHit> hits = widget.search.hits;
     if (hits.isEmpty) {
       return;
     }
-    final int next = (_hit + step) % hits.length;
-    _hit = next < 0 ? next + hits.length : next;
+    _hit = stepSearchHit(current: _hit, step: step, count: hits.length);
     await _goToHit(hits[_hit]);
   }
 
@@ -253,6 +259,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       hasHits: widget.search.hits.isNotEmpty,
       typing: isTypingInField(),
       canFullScreen: widget.onFullScreen != null,
+      bindings: widget.keyBindings,
     );
     if (action == null) {
       return KeyEventResult.ignored;

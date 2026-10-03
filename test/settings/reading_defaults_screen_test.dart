@@ -137,4 +137,103 @@ void main() {
     expect(find.byKey(_switch), findsOneWidget);
     expect(find.byKey(_reserve), findsOneWidget);
   });
+
+  group('F-READ-23: зоны листания', () {
+    const Key slider = Key('tap-zone-slider');
+    const Key value = Key('tap-zone-value');
+    const Key again = Key('tap-zone-hint-reset');
+
+    String shown(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(value)).data!;
+
+    /// Экран длиннее тестового окна: до нижних настроек надо домотать.
+    Future<void> reach(WidgetTester tester, Key key) async {
+      await tester.scrollUntilVisible(find.byKey(key), 200);
+      await tester.pump();
+    }
+
+    testWidgets('без сохранённого зона — тридцать процентов', (
+      WidgetTester tester,
+    ) async {
+      await pumpScreen(tester, _MemorySettings());
+      await reach(tester, slider);
+
+      expect(shown(tester), '30 %');
+      expect(tester.widget<Slider>(find.byKey(slider)).value, 30);
+      expect(find.byKey(const Key('tap-zone-preview')), findsOneWidget);
+    });
+
+    testWidgets('сохранённая ширина показана как есть', (
+      WidgetTester tester,
+    ) async {
+      await pumpScreen(
+        tester,
+        _MemorySettings(<String, String>{SettingsKeys.tapZone: '15'}),
+      );
+      await reach(tester, slider);
+
+      expect(shown(tester), '15 %');
+      expect(tester.widget<Slider>(find.byKey(slider)).value, 15);
+    });
+
+    testWidgets('ползунок пишет ширину зоны в настройки', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+      await reach(tester, slider);
+
+      await tester.drag(find.byKey(slider), const Offset(800, 0));
+      await tester.pumpAndSettle();
+      // Шире нельзя: между зонами обязана остаться середина.
+      expect(settings.values[SettingsKeys.tapZone], '45');
+      expect(shown(tester), '45 %');
+
+      await tester.drag(find.byKey(slider), const Offset(-800, 0));
+      await tester.pumpAndSettle();
+      expect(settings.values[SettingsKeys.tapZone], '10');
+      expect(shown(tester), '10 %');
+    });
+
+    testWidgets('пока ползунок тянут, в настройки не пишется', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings();
+      await pumpScreen(tester, settings);
+      await reach(tester, slider);
+
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(slider)),
+      );
+      await gesture.moveBy(const Offset(40, 0));
+      await gesture.moveBy(const Offset(400, 0));
+      await tester.pump();
+      // Образец уже показывает новую ширину, а запись — по отпусканию.
+      expect(shown(tester), '45 %');
+      expect(settings.values.containsKey(SettingsKeys.tapZone), isFalse);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(settings.values[SettingsKeys.tapZone], '45');
+    });
+
+    testWidgets('«Показать подсказку ещё раз» снимает отметку о показе', (
+      WidgetTester tester,
+    ) async {
+      final _MemorySettings settings = _MemorySettings(<String, String>{
+        SettingsKeys.tapZoneHintSeen: 'true',
+      });
+      await pumpScreen(tester, settings);
+      await reach(tester, again);
+
+      await tester.tap(find.byKey(again));
+      await tester.pumpAndSettle();
+
+      expect(
+        settings.values.containsKey(SettingsKeys.tapZoneHintSeen),
+        isFalse,
+      );
+      expect(find.byKey(const Key('tap-zone-hint-again')), findsOneWidget);
+    });
+  });
 }

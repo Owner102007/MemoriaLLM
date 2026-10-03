@@ -22,8 +22,46 @@ enum ReaderTap {
   toggleChrome,
 }
 
-/// Доля ширины экрана по краям, отданная переходу по фрагментам.
+/// Доля ширины экрана по краям, отданная переходу по фрагментам, — пока
+/// читатель не выбрал свою (F-READ-23).
 const double kReaderTapZone = 0.3;
+
+/// Самая узкая зона листания: уже неё в край экрана не попасть.
+const double kMinReaderTapZone = 0.1;
+
+/// Самая широкая зона листания.
+///
+/// Не половина: между зонами обязана остаться середина, которая
+/// показывает панели, — иначе до настроек было бы не добраться.
+const double kMaxReaderTapZone = 0.45;
+
+/// Шаг, которым зона меняется в настройках, в процентах ширины экрана.
+const int kReaderTapZoneStep = 5;
+
+/// Приводит ширину зоны листания к допустимой.
+double clampReaderTapZone(double zone) {
+  if (!zone.isFinite) {
+    return kReaderTapZone;
+  }
+  if (zone < kMinReaderTapZone) {
+    return kMinReaderTapZone;
+  }
+  return zone > kMaxReaderTapZone ? kMaxReaderTapZone : zone;
+}
+
+/// Ширина зоны листания из сохранённой настройки — целого числа
+/// процентов. Нет настройки или она не читается — [kReaderTapZone].
+double parseReaderTapZone(String? saved) {
+  final int? percent = saved == null ? null : int.tryParse(saved.trim());
+  if (percent == null) {
+    return kReaderTapZone;
+  }
+  return clampReaderTapZone(percent / 100);
+}
+
+/// Ширина зоны листания целым числом процентов — для настроек и подписи.
+int readerTapZonePercent(double zone) =>
+    (clampReaderTapZone(zone) * 100).round();
 
 /// Порог долгого нажатия, с которого начинается выделение пальцем.
 ///
@@ -42,6 +80,9 @@ const Duration kTouchSelectionDelay = Duration(milliseconds: 250);
 /// мимо панели, терял и выделение, и страницу разом. Стрелки панели,
 /// клавиши и кнопки громкости листают и при выделении: они про книгу, а
 /// не про место на экране.
+///
+/// [zone] — ширина зоны листания с каждой стороны, доля ширины экрана
+/// (F-READ-23). Сама граница зоны принадлежит середине.
 ReaderTap readerTapAt({
   required double share,
   required bool selecting,

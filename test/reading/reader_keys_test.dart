@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/ui/reader/key_bindings.dart';
 import 'package:memoria/ui/reader/reader_keys.dart';
 
 /// Раскладка клавиш чтения.
@@ -244,6 +245,144 @@ void main() {
           fullScreen: false,
         ),
         EscapeTarget.page,
+      );
+    });
+  });
+
+  group('BUG-08: шаг по совпадениям', () {
+    test('с «ни на каком» шаг назад ведёт на последнее совпадение', () {
+      // Прежде `(−1 − 1) mod n` давало предпоследнее, а при двух
+      // совпадениях — первое.
+      expect(stepSearchHit(current: -1, step: -1, count: 5), 4);
+      expect(stepSearchHit(current: -1, step: -1, count: 2), 1);
+      expect(stepSearchHit(current: -1, step: -1, count: 1), 0);
+    });
+
+    test('с «ни на каком» шаг вперёд ведёт на первое совпадение', () {
+      expect(stepSearchHit(current: -1, step: 1, count: 5), 0);
+      expect(stepSearchHit(current: -1, step: 1, count: 1), 0);
+    });
+
+    test('дальше шаг идёт по кругу в обе стороны', () {
+      expect(stepSearchHit(current: 2, step: 1, count: 5), 3);
+      expect(stepSearchHit(current: 4, step: 1, count: 5), 0);
+      expect(stepSearchHit(current: 2, step: -1, count: 5), 1);
+      expect(stepSearchHit(current: 0, step: -1, count: 5), 4);
+    });
+
+    test('совпадений нет — идти некуда', () {
+      expect(stepSearchHit(current: -1, step: 1, count: 0), -1);
+      expect(stepSearchHit(current: 3, step: -1, count: 0), -1);
+    });
+
+    test('устаревший номер считается «ни на каком»', () {
+      // Запрос сменился, и совпадений стало меньше, чем было.
+      expect(stepSearchHit(current: 7, step: 1, count: 3), 0);
+      expect(stepSearchHit(current: 7, step: -1, count: 3), 2);
+    });
+  });
+
+  group('F-READ-25: клавиши листания по таблице', () {
+    const KeyStroke j = KeyStroke(LogicalKeyboardKey.keyJ);
+    const KeyStroke space = KeyStroke(LogicalKeyboardKey.space);
+
+    test('переназначенная клавиша действует, прежняя — нет', () {
+      final KeyBindings bindings = KeyBindings.standard
+          .assign(TurnKey.forward, j)
+          .without(TurnKey.forward, space);
+
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.keyJ, bindings: bindings),
+        ReaderKeyAction.next,
+      );
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.space, bindings: bindings),
+        isNull,
+      );
+      // Из коробки эта буква не листает.
+      expect(readerKeyAction(key: LogicalKeyboardKey.keyJ), isNull);
+    });
+
+    test('клавиша, отданная другому действию, листает в другую сторону', () {
+      final KeyBindings bindings = KeyBindings.standard.assign(
+        TurnKey.back,
+        space,
+      );
+
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.space, bindings: bindings),
+        ReaderKeyAction.previous,
+      );
+    });
+
+    test('служебные клавиши таблица не перекрывает', () {
+      // Даже если бы такая таблица откуда-то взялась: клавиши поиска,
+      // `Esc` и `F11` разбираются раньше неё.
+      const KeyBindings rogue = KeyBindings(
+        forward: <KeyStroke>[
+          KeyStroke(LogicalKeyboardKey.escape),
+          KeyStroke(LogicalKeyboardKey.f3),
+          KeyStroke(LogicalKeyboardKey.f11),
+          KeyStroke(LogicalKeyboardKey.enter),
+        ],
+        back: <KeyStroke>[],
+      );
+
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.escape, bindings: rogue),
+        ReaderKeyAction.dismiss,
+      );
+      expect(
+        readerKeyAction(
+          key: LogicalKeyboardKey.f3,
+          hasHits: true,
+          bindings: rogue,
+        ),
+        ReaderKeyAction.nextHit,
+      );
+      expect(
+        readerKeyAction(
+          key: LogicalKeyboardKey.f11,
+          canFullScreen: true,
+          bindings: rogue,
+        ),
+        ReaderKeyAction.fullScreen,
+      );
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.enter, bindings: rogue),
+        isNull,
+      );
+    });
+
+    test('с Ctrl назначенная клавиша не листает', () {
+      final KeyBindings bindings = KeyBindings.standard.assign(
+        TurnKey.forward,
+        j,
+      );
+
+      expect(
+        readerKeyAction(
+          key: LogicalKeyboardKey.keyJ,
+          control: true,
+          bindings: bindings,
+        ),
+        isNull,
+      );
+    });
+
+    test('пока набирают текст, назначенная буква принадлежит полю', () {
+      final KeyBindings bindings = KeyBindings.standard.assign(
+        TurnKey.forward,
+        j,
+      );
+
+      expect(
+        readerKeyAction(
+          key: LogicalKeyboardKey.keyJ,
+          typing: true,
+          bindings: bindings,
+        ),
+        isNull,
       );
     });
   });

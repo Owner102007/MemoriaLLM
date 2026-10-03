@@ -524,23 +524,51 @@ void main() {
     expect(controller.settings.neighbourShare, 0);
   });
 
-  testWidgets('BUG-15: в ленте нахлёста и полоски соседа в шторке нет', (
+  testWidgets('BUG-15: в ленте в шторке нет того, что на неё не действует', (
     WidgetTester tester,
   ) async {
-    // На ленту они не действуют, и показывать их там значило бы
-    // добавлять ещё две кнопки, которые обманывают.
+    // Режимы листа, полоса и обрезка полей — про листание по страницам.
+    // В ленте они ничего не меняют, и настройка, которая ничего не
+    // меняет на экране, обманывает.
+    const List<String> pagedOnly = <String>[
+      'reader-mode-full',
+      'reader-mode-spread',
+      'reader-mode-hint',
+      'reader-strip-fit',
+      'reader-dim-outside',
+      'reader-strip-overlap',
+      'reader-neighbour-share',
+      'reader-autocrop-switch',
+      'reader-runningheads-switch',
+      'reader-edit-crop',
+    ];
+    // Способ листания и светофильтр действуют и в ленте.
+    const List<String> always = <String>[
+      'reader-flow-paged',
+      'reader-flow-continuous',
+      'reader-filter-none',
+      'reader-brightness',
+    ];
     build();
     flowNow.value = PageFlow.continuous;
     await pumpSheet(tester);
 
-    expect(find.byKey(const Key('reader-strip-overlap')), findsNothing);
-    expect(find.byKey(const Key('reader-neighbour-share')), findsNothing);
+    for (final String key in pagedOnly) {
+      expect(find.byKey(Key(key)), findsNothing, reason: key);
+    }
+    for (final String key in always) {
+      expect(find.byKey(Key(key)), findsOneWidget, reason: key);
+    }
+    // И сказано, куда всё делось.
+    expect(find.byKey(const Key('reader-ribbon-note')), findsOneWidget);
 
     flowNow.value = PageFlow.paged;
     await tester.pump();
 
-    expect(find.byKey(const Key('reader-strip-overlap')), findsOneWidget);
-    expect(find.byKey(const Key('reader-neighbour-share')), findsOneWidget);
+    for (final String key in <String>[...pagedOnly, ...always]) {
+      expect(find.byKey(Key(key)), findsOneWidget, reason: key);
+    }
+    expect(find.byKey(const Key('reader-ribbon-note')), findsNothing);
   });
 
   test('F-READ-12: доля экрана подписана процентами', () {

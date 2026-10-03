@@ -8,6 +8,78 @@ import 'package:memoria/domain/reading/reader_gestures.dart';
 /// Правила проверяются здесь числами, потому что в живом дереве виджетов
 /// слой выделения и сам просмотрщик требуют настоящего PDFium.
 void main() {
+  group('F-READ-23: ширина зоны листания', () {
+    test('без настройки зона — тридцать процентов', () {
+      expect(parseReaderTapZone(null), kReaderTapZone);
+      expect(readerTapZonePercent(kReaderTapZone), 30);
+    });
+
+    test('настройка читается целым числом процентов', () {
+      expect(parseReaderTapZone('15'), 0.15);
+      expect(parseReaderTapZone(' 40 '), 0.4);
+    });
+
+    test('нечитаемая настройка — зона из коробки', () {
+      expect(parseReaderTapZone('широкая'), kReaderTapZone);
+      expect(parseReaderTapZone(''), kReaderTapZone);
+    });
+
+    test('зона не уже десяти и не шире сорока пяти процентов', () {
+      expect(parseReaderTapZone('0'), kMinReaderTapZone);
+      expect(parseReaderTapZone('-20'), kMinReaderTapZone);
+      expect(parseReaderTapZone('90'), kMaxReaderTapZone);
+      expect(clampReaderTapZone(double.nan), kReaderTapZone);
+    });
+
+    test('каждый шаг ползунка переживает запись и чтение', () {
+      for (int percent = 10; percent <= 45; percent += kReaderTapZoneStep) {
+        expect(
+          readerTapZonePercent(parseReaderTapZone('$percent')),
+          percent,
+          reason: '$percent %',
+        );
+      }
+    });
+
+    test('новая ширина меняет разбор нажатий', () {
+      // Узкая зона: то, что листало, теперь показывает панели.
+      expect(
+        readerTapAt(share: 0.2, selecting: false),
+        ReaderTap.previousFragment,
+      );
+      expect(
+        readerTapAt(share: 0.2, selecting: false, zone: 0.15),
+        ReaderTap.toggleChrome,
+      );
+      // Широкая зона: то, что показывало панели, теперь листает.
+      expect(readerTapAt(share: 0.6, selecting: false), ReaderTap.toggleChrome);
+      expect(
+        readerTapAt(share: 0.6, selecting: false, zone: 0.45),
+        ReaderTap.nextFragment,
+      );
+    });
+
+    test('при любой допустимой ширине середина показывает панели', () {
+      // Иначе до настроек, где зону можно сузить обратно, было бы не
+      // добраться.
+      for (int percent = 0; percent <= 100; percent += kReaderTapZoneStep) {
+        final double zone = parseReaderTapZone('$percent');
+        expect(
+          readerTapAt(share: 0.5, selecting: false, zone: zone),
+          ReaderTap.toggleChrome,
+          reason: 'зона $percent %',
+        );
+      }
+    });
+
+    test('выделение сильнее любой ширины зоны', () {
+      expect(
+        readerTapAt(share: 0.02, selecting: true, zone: 0.45),
+        ReaderTap.dismissSelection,
+      );
+    });
+  });
+
   group('зоны листания', () {
     test('края листают, середина показывает панели', () {
       expect(

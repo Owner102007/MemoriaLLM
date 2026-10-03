@@ -26,18 +26,23 @@ import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_search.dart';
 import '../../domain/reading/volume_keys.dart';
+import '../../domain/reading/window_settle.dart';
 import '../../domain/settings/app_settings.dart';
 import '../annotations/annotations_screen.dart';
 import 'crop_editor_screen.dart';
 import 'display_mode_buttons.dart';
+import 'held_box.dart';
 import 'highlight_layer.dart';
+import 'key_bindings.dart';
 import 'note_dialog.dart';
 import 'prompt_preview_sheet.dart';
+import 'quick_tap.dart';
 import 'reader_scaffold.dart';
 import 'reader_settings_sheet.dart';
 import 'reader_sheet.dart';
 import 'reading_filter_layer.dart';
 import 'selection_panel.dart';
+import 'tap_zone_hint.dart';
 
 /// Экран чтения.
 ///
@@ -88,7 +93,36 @@ class _ReaderScreenState extends State<ReaderScreen> {
   AppLifecycleListener? _lifecycle;
   ScreenOrientation _rotation = ScreenOrientation.portrait;
   bool _zoomLocked = true;
-  DisplayArea _area = DisplayArea.unknown;
+
+  /// Форма окна и место под лист (F-DESK-02, ALG-UI-27).
+  ///
+  /// На ПК окно меняют протяжкой, и новый размер принимается не сразу,
+  /// а когда окно перестали тянуть: до того лист стоит в прежнем размере
+  /// и не перекладывается. На телефоне размер меняется один раз —
+  /// поворотом — и принимается сразу.
+  late final WindowSettle _window = WindowSettle(onSettled: _onWindowSettled);
+
+  /// Окно меняет размер по нашей же просьбе — разворот во весь экран.
+  /// Это не протяжка: новый размер принимается сразу.
+  bool _windowJump = false;
+  Timer? _jumpTimer;
+
+  /// Ширина зоны листания с каждой стороны, доля ширины экрана
+  /// (F-READ-23). Настройка устройства.
+  double _tapZone = kReaderTapZone;
+
+  /// Показана ли уже подсказка о зонах; `null` — настройка ещё не
+  /// прочитана, и решать рано.
+  bool? _zoneHintSeen;
+
+  /// Лежит ли подсказка о зонах поверх страницы прямо сейчас.
+  bool _zoneHintOn = false;
+
+  /// Какие клавиши листают (F-READ-25). Настройка устройства.
+  KeyBindings _keys = KeyBindings.standard;
+
+  /// Нажатие в ленте узнаём сами, как и на листе (BUG-38).
+  final TapWatch _ribbonTaps = TapWatch();
 
   /// Развёрнуто ли чтение во весь экран (F-READ-35): окно занимает весь
   /// монитор, а читаемая полоса вписана в него вплотную. Есть только
@@ -162,6 +196,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   PageFlow get _flow => _flowNow.value;
 
+  /// Действующая форма окна: по ней выбирается режим.
+  DisplayArea get _area => _window.area;
+
+  /// Держать ли прежний размер, пока окно меняют: только там, где у
+  /// приложения есть окно, и только если меняем его не мы сами.
+  bool get _holdsWindow => widget.services.window.available && !_windowJump;
+
   @override
   void initState() {
     super.initState();
@@ -197,13 +238,56 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final Size size = MediaQuery.sizeOf(context);
-    _area = DisplayArea(width: size.width, height: size.height);
-    _controller?.setDisplayArea(_area, canTurn: _canTurn);
+    // F-DESK-02: на ПК форма окна принимается, когда его перестали
+    // тянуть, — вместе с местом под лист.
+    final bool changed = _window.offerArea(
+      DisplayArea(width: size.width, height: size.height),
+      hold: _holdsWindow,
+    );
+    if (changed) {
+      _controller?.setDisplayArea(_area, canTurn: _canTurn);
+    }
     // Маршрут сообщает сюда же, когда поверх него что-то открыли или
     // закрыли: шторку, диалог, другой экран. Кнопки громкости листают,
     // только пока читатель смотрит на страницу (F-READ-26).
     _screenReader = MediaQuery.accessibleNavigationOf(context);
     _refreshOnTop();
+  }
+
+  /// Окно перестали менять: лист перекладывается под новый размер.
+  ///
+  /// F-DESK-02, ALG-UI-27. Один раз на всю серию изменений — и вместе с
+  /// формой окна, по которой выбирается режим. Место чтения при этом не
+  /// меняется: страница и полоса те же, меняется только раскладка.
+  void _onWindowSettled() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _controller?.setDisplayArea(_area, canTurn: _canTurn);
+    });
+  }
+
+  /// Окно сейчас сменит размер по нашей просьбе (F-READ-35).
+  void _beginWindowJump() {
+    _jumpTimer?.cancel();
+    _jumpTimer = null;
+    _windowJump = true;
+  }
+
+  /// Платформа ответила: ещё [kWindowJump] новый размер принимается
+  /// сразу — сообщение о нём может прийти следом за ответом.
+  void _endWindowJump() {
+    _jumpTimer?.cancel();
+    _jumpTimer = null;
+    if (!mounted) {
+      _windowJump = false;
+      return;
+    }
+    _jumpTimer = Timer(kWindowJump, () {
+      _jumpTimer = null;
+      _windowJump = false;
+    });
   }
 
   /// Перечитывает, лежит ли что-нибудь поверх экрана чтения.
@@ -291,6 +375,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final String? fullScreen = await settings.read(
       SettingsKeys.readingFullScreen,
     );
+    final String? tapZone = await settings.read(SettingsKeys.tapZone);
+    final String? hintSeen = await settings.read(SettingsKeys.tapZoneHintSeen);
+    final String? turnKeys = await settings.read(SettingsKeys.turnKeys);
     if (!mounted) {
       return;
     }
@@ -316,8 +403,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       // уехавшая от случайного движения двумя пальцами, читателю ничего
       // не даёт, а вернуть её он не догадается.
       _zoomLocked = locked != 'false';
+      _tapZone = parseReaderTapZone(tapZone);
+      _keys = KeyBindings.parse(turnKeys);
     });
     _syncVolumeKeys();
+    _zoneHintSeen = hintSeen == 'true';
+    _offerZoneHint();
     // Читали во весь экран — так и открываем: режим выбирают один раз,
     // а не при каждой книге.
     _fullScreenWanted = fullScreen == 'true';
@@ -327,6 +418,37 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Показана ли книга: открыта и не в ошибке.
   bool get _bookShown => _controller != null && !_loading && _failure == null;
+
+  /// Кладёт подсказку о зонах листания поверх страницы — один раз за
+  /// жизнь установки (F-READ-23).
+  ///
+  /// Зовётся трижды — когда прочитаны настройки, когда открылась книга и
+  /// когда читатель вернулся из ленты к листам: что случится раньше,
+  /// заранее неизвестно. В ленте зон нет, и подсказки там нет тоже.
+  ///
+  /// «Показана» записывается в тот же миг, а не по нажатию: подсказка,
+  /// которую читатель не закрыл, а закрыл вместе с книгой, второй раз
+  /// появиться не должна.
+  void _offerZoneHint() {
+    if (_zoneHintOn ||
+        _zoneHintSeen != false ||
+        !_bookShown ||
+        _flow != PageFlow.paged) {
+      return;
+    }
+    _zoneHintSeen = true;
+    setState(() => _zoneHintOn = true);
+    unawaited(
+      widget.services.data.settings.write(SettingsKeys.tapZoneHintSeen, 'true'),
+    );
+  }
+
+  /// Убирает подсказку о зонах: по нажатию и по первому же листанию.
+  void _dismissZoneHint() {
+    if (_zoneHintOn && mounted) {
+      setState(() => _zoneHintOn = false);
+    }
+  }
 
   /// Разворачивает окно, если читатель выбрал чтение во весь экран и
   /// книга уже на экране (F-READ-35).
@@ -358,12 +480,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     _switchingWindow = true;
+    // F-DESK-02: разворот — не протяжка окна, его размер принимается
+    // сразу, без отсчёта.
+    _beginWindowJump();
     setState(() => _fullScreen = value);
     bool done = false;
     try {
       done = await widget.services.window.setFullScreen(value);
     } finally {
       _switchingWindow = false;
+      _endWindowJump();
       // Платформа отказала или вызов сорвался — раскладка возвращается.
       if (!done && mounted) {
         setState(() => _fullScreen = !value);
@@ -447,7 +573,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // В ленте разворота нет: лист там — одна страница, и подпись со
     // стрелками обязаны считать так же (F-READ-06).
     _controller?.setSheetModes(enabled: flow == PageFlow.paged);
+    // Место под лист в ленте не меряется: к возвращению оно устарело.
+    _window.releaseBox();
     setState(() => _flowNow.value = flow);
+    _offerZoneHint();
     // Вернулись к листам в развороте — рамка соседней страницы могла
     // остаться непосчитанной, пока шла лента.
     unawaited(_controller?.loadFrame());
@@ -509,6 +638,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (_fullScreen) {
       unawaited(widget.services.window.setFullScreen(false));
     }
+    _jumpTimer?.cancel();
+    _window.dispose();
     _flowNow.dispose();
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
@@ -535,6 +666,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
         reading: widget.services.data.reading,
         password: password,
       );
+      // BUG-09: открытие засчитывается здесь и только здесь — когда
+      // книга действительно открылась. Полка его не считает: иначе одно
+      // открытие считалось дважды, а книга, которая не открылась,
+      // поднималась в «Сначала недавние».
       await widget.services.data.library.markOpened(_book.id, DateTime.now());
       controller.setDisplayArea(_area, canTurn: _canTurn);
       controller.setSheetModes(enabled: _flow == PageFlow.paged);
@@ -561,6 +696,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       });
       _syncVolumeKeys();
       _applyWantedFullScreen();
+      _offerZoneHint();
     } on DocumentOpenException catch (error) {
       if (!mounted) {
         return;
@@ -963,6 +1099,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final ReaderTap action = readerTapAt(
       share: position.dx / size.width,
       selecting: selecting || _selection != null,
+      // F-READ-23: ширину зоны выбирает читатель.
+      zone: _tapZone,
     );
     switch (action) {
       case ReaderTap.previousFragment:
@@ -988,6 +1126,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
+    // Читатель листает клавишей или кнопкой — подсказка о зонах ему уже
+    // не нужна (F-READ-23).
+    _dismissZoneHint();
     _dismissSelection();
     if (_flow == PageFlow.continuous) {
       // Цель считает контроллер: он знает, куда ведёт ещё не законченный
@@ -1089,6 +1230,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onFullScreen: widget.services.window.available
           ? (bool value) => unawaited(_setFullScreen(value))
           : null,
+      keyBindings: _keys,
       extraActions: <Widget>[
         IconButton(
           key: const Key('reader-annotations-button'),
@@ -1097,31 +1239,36 @@ class _ReaderScreenState extends State<ReaderScreen> {
           visualDensity: VisualDensity.compact,
           onPressed: () => unawaited(_openAnnotations()),
         ),
-        // Деление страницы стоит там, где им пользуются, — на странице, а
-        // не в панели настроек: это способ читать, а не настройка.
-        DisplayModeButtons(
-          mode: controller.settings.displayMode,
-          onMode: (PageDisplayMode mode) => unawaited(_setDisplayMode(mode)),
-          // Дробь, которая на этой книге не увеличит текст, показана
-          // погасшей: обещать увеличение и не дать его — хуже, чем
-          // честно сказать заранее.
-          gainless: <PageDisplayMode>{
-            for (final PageDisplayMode mode in <PageDisplayMode>[
-              PageDisplayMode.half,
-              PageDisplayMode.third,
-            ])
-              if (!controller.layoutFor(mode).isWorthwhile) mode,
-          },
-        ),
-        IconButton(
-          key: const Key('reader-zoom-lock-button'),
-          icon: Icon(_zoomLocked ? Icons.lock_outline : Icons.lock_open),
-          tooltip: _zoomLocked
-              ? 'Разрешить двигать и масштабировать страницу'
-              : 'Запереть масштаб',
-          visualDensity: VisualDensity.compact,
-          onPressed: () => unawaited(_setZoomLocked(!_zoomLocked)),
-        ),
+        // BUG-15: деление страницы и замок действуют только на листе. В
+        // ленте их нет вовсе: кнопка, которая ничего не делает, обманывает,
+        // а дробь там ещё и поворачивала телефон.
+        if (_flow == PageFlow.paged) ...<Widget>[
+          // Деление страницы стоит там, где им пользуются, — на странице,
+          // а не в панели настроек: это способ читать, а не настройка.
+          DisplayModeButtons(
+            mode: controller.settings.displayMode,
+            onMode: (PageDisplayMode mode) => unawaited(_setDisplayMode(mode)),
+            // Дробь, которая на этой книге не увеличит текст, показана
+            // погасшей: обещать увеличение и не дать его — хуже, чем
+            // честно сказать заранее.
+            gainless: <PageDisplayMode>{
+              for (final PageDisplayMode mode in <PageDisplayMode>[
+                PageDisplayMode.half,
+                PageDisplayMode.third,
+              ])
+                if (!controller.layoutFor(mode).isWorthwhile) mode,
+            },
+          ),
+          IconButton(
+            key: const Key('reader-zoom-lock-button'),
+            icon: Icon(_zoomLocked ? Icons.lock_outline : Icons.lock_open),
+            tooltip: _zoomLocked
+                ? 'Разрешить двигать и масштабировать страницу'
+                : 'Запереть масштаб',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => unawaited(_setZoomLocked(!_zoomLocked)),
+          ),
+        ],
         // Поворот есть только там, где он что-то делает. На ПК форму окна
         // выбирает человек, а `setPreferredOrientations` не делает ничего:
         // кнопка-обманка хуже её отсутствия.
@@ -1164,7 +1311,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
       ],
       viewerBuilder: (BuildContext context, VoidCallback onTap) {
-        return AnimatedBuilder(
+        final Widget page = AnimatedBuilder(
           animation: controller,
           builder: (BuildContext context, Widget? child) {
             // BUG-04: в постраничном чтении фильтр кладёт на страницу сам
@@ -1184,6 +1331,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
           child: _flow == PageFlow.continuous
               ? _buildRibbon(context, controller, onTap)
               : null,
+        );
+        // F-READ-23: подсказка о зонах лежит поверх страницы, но под
+        // панелями. Страница при этом стоит в дереве на одном и том же
+        // месте, с подсказкой и без неё.
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(child: page),
+            if (_zoneHintOn && _flow == PageFlow.paged)
+              Positioned.fill(
+                child: TapZoneHint(
+                  zone: _tapZone,
+                  keyboard: widget.services.window.available,
+                  onDismiss: _dismissZoneHint,
+                ),
+              ),
+          ],
         );
       },
     );
@@ -1208,7 +1371,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final Color background = Theme.of(context).colorScheme.surface;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints limits) {
-        final Size size = Size(limits.maxWidth, limits.maxHeight);
+        // F-DESK-02: пока окно на ПК тянут, лист раскладывается по
+        // прежнему размеру, а по новому — один раз, когда окно отпустили.
+        final Size size = _window.offerBox(
+          Size(limits.maxWidth, limits.maxHeight),
+          hold: _holdsWindow,
+        );
         // Рисуем тем же документом, который уже открыл контроллер:
         // второе открытие той же книги стоило вдвое больше памяти, а на
         // большой книге отдавало страницы не сразу — и вместо содержимого
@@ -1216,52 +1384,69 @@ class _ReaderScreenState extends State<ReaderScreen> {
         final Object? engine = controller.document.engineDocument;
         final PdfDocument? document = engine is PdfDocument ? engine : null;
         final List<int> pages = controller.sheetPages;
-        if (document == null) {
-          return ColoredBox(color: background, child: const SizedBox.expand());
-        }
-        final BookReadingSettings settings = controller.settings;
-        final PageDisplayMode mode = settings.displayMode;
-        return ReaderSheet(
-          document: document,
-          pages: pages,
-          fragment: controller.fragmentBox,
-          background: background,
-          // BUG-04: фильтр — только на картинку страницы.
-          filter: controller.filter,
-          // F-READ-12: в режимах с полосами листы лежат в столбик, и под
-          // последней полосой страницы виден верх следующей.
-          arrangement: arrangementFor(mode),
-          spread: isSpreadMode(mode),
-          overlap: stripOverlapFor(
-            overlap: settings.stripOverlap,
-            count: fragmentCountFor(mode: mode),
+        return ColoredBox(
+          color: background,
+          child: HeldBox(
+            key: const Key('reader-sheet-box'),
+            size: size,
+            child: document == null
+                ? const SizedBox.expand()
+                : _sheetOf(controller, document, pages, size, onTap),
           ),
-          // F-READ-13: соседняя страница видна полоской заданной ширины.
-          neighbourShare: settings.neighbourShare,
-          // Указатель места считает по правой странице разворота: она
-          // тоже открыта, и процент в панели считается так же.
-          page: controller.lastShownPage,
-          pageCount: controller.pageCount,
-          locked: _zoomLocked,
-          // F-READ-35: во весь экран полоса вписана вплотную, и
-          // указатель места поверх страницы не ложится.
-          stripFit: stripFitFor(
-            stripFit: settings.stripFit,
-            fullScreen: _fullScreen,
-          ),
-          progressOverPage: !_fullScreen,
-          dim: settings.dimOutside,
-          preview: _turning.preview,
-          reserve: _turning.effectiveReserve,
-          sheetController: _sheet,
-          onSelection: (List<PdfPageTextRange> ranges) =>
-              unawaited(_onSelectionRanges(ranges)),
-          onTap: (Offset at, {required bool selecting}) =>
-              _onTap(at, size, onTap, selecting: selecting),
-          overlay: (BuildContext context, SheetView view) =>
-              _buildOverlay(context, view, document, pages, size),
         );
       },
+    );
+  }
+
+  /// Сам лист — в размере, который держит [HeldBox].
+  Widget _sheetOf(
+    ReaderController controller,
+    PdfDocument document,
+    List<int> pages,
+    Size size,
+    VoidCallback onTap,
+  ) {
+    final BookReadingSettings settings = controller.settings;
+    final PageDisplayMode mode = settings.displayMode;
+    return ReaderSheet(
+      document: document,
+      pages: pages,
+      fragment: controller.fragmentBox,
+      background: Theme.of(context).colorScheme.surface,
+      // BUG-04: фильтр — только на картинку страницы.
+      filter: controller.filter,
+      // F-READ-12: в режимах с полосами листы лежат в столбик, и под
+      // последней полосой страницы виден верх следующей.
+      arrangement: arrangementFor(mode),
+      spread: isSpreadMode(mode),
+      overlap: stripOverlapFor(
+        overlap: settings.stripOverlap,
+        count: fragmentCountFor(mode: mode),
+      ),
+      // F-READ-13: соседняя страница видна полоской заданной ширины.
+      neighbourShare: settings.neighbourShare,
+      // Указатель места считает по правой странице разворота: она тоже
+      // открыта, и процент в панели считается так же.
+      page: controller.lastShownPage,
+      pageCount: controller.pageCount,
+      locked: _zoomLocked,
+      // F-READ-35: во весь экран полоса вписана вплотную, и указатель
+      // места поверх страницы не ложится.
+      stripFit: stripFitFor(
+        stripFit: settings.stripFit,
+        fullScreen: _fullScreen,
+      ),
+      progressOverPage: !_fullScreen,
+      dim: settings.dimOutside,
+      preview: _turning.preview,
+      reserve: _turning.effectiveReserve,
+      sheetController: _sheet,
+      onSelection: (List<PdfPageTextRange> ranges) =>
+          unawaited(_onSelectionRanges(ranges)),
+      onTap: (Offset at, {required bool selecting}) =>
+          _onTap(at, size, onTap, selecting: selecting),
+      overlay: (BuildContext context, SheetView view) =>
+          _buildOverlay(context, view, document, pages, size),
     );
   }
 
@@ -1380,6 +1565,37 @@ class _ReaderScreenState extends State<ReaderScreen> {
         child: const SizedBox.expand(),
       );
     }
+    // BUG-38: нажатие узнаём сами, в миг, когда указатель поднят, — как
+    // на листе (BUG-37). Слушатель только смотрит на указатель и ничего
+    // у просмотрщика не отбирает: прокрутка, щипок и выделение живут
+    // как жили.
+    return QuickTap(
+      watch: _ribbonTaps,
+      onTap: (Offset at) => _onRibbonTap(onTap),
+      child: _buildRibbonViewer(context, controller, document, onTap),
+    );
+  }
+
+  /// Нажатие в ленте, которое мы узнали сами: показать или спрятать
+  /// панели.
+  ///
+  /// Кроме одного случая: **пока текст выделен, решает просмотрщик** —
+  /// он снимает выделение сам и отличает нажатие по странице от толчка
+  /// ручки выделения, а слушателю указателя их не отличить.
+  void _onRibbonTap(VoidCallback toggleChrome) {
+    if (_viewer.isReady && _viewer.textSelectionDelegate.hasSelectedText) {
+      _ribbonTaps.leaveToViewer();
+      return;
+    }
+    toggleChrome();
+  }
+
+  Widget _buildRibbonViewer(
+    BuildContext context,
+    ReaderController controller,
+    PdfDocument document,
+    VoidCallback onTap,
+  ) {
     return PdfViewer(
       PdfDocumentRefDirect(document, autoDispose: false),
       controller: _viewer,
@@ -1409,15 +1625,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
               PdfViewerGeneralTapHandlerDetails details,
             ) {
               // Панели переключает только простое нажатие; долгое — это
-              // выделение текста, и отбирать его у просмотрщика нельзя.
-              // Двойное в pdfrx 2.6.1 не делает ничего, но одиночное из-за
-              // него приходит сюда на 300 мс позже (BUG-37). В ленте это
-              // пока так и оставлено: нажатием здесь не листают.
-              if (details.type != PdfViewerGeneralTapType.tap ||
-                  details.tapOn == PdfViewerPart.selectedText) {
+              // выделение текста, и отбирать его у просмотрщика нельзя:
+              // жест, которым оно сделано, нажатием уже не станет.
+              if (details.type == PdfViewerGeneralTapType.longPress) {
+                _ribbonTaps.spoil();
+              }
+              if (details.type != PdfViewerGeneralTapType.tap) {
                 return false;
               }
-              onTap();
+              // BUG-38: двойное нажатие в pdfrx 2.6.1 не делает ничего,
+              // но одиночное из-за него приходит сюда на 300 мс позже.
+              // Мы его уже исполнили — в миг, когда указатель был поднят,
+              // — и сюда оно доходит эхом. Не эхо — нажатие без указателя
+              // (средства доступности) и нажатие, оставленное
+              // просмотрщику, потому что текст был выделен.
+              final bool echo = _ribbonTaps.echoes();
+              if (details.tapOn == PdfViewerPart.selectedText) {
+                return false;
+              }
+              if (!echo) {
+                onTap();
+              }
               return true;
             },
       ),

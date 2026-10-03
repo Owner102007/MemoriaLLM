@@ -10,6 +10,7 @@ import 'package:memoria/domain/reading/navigation.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_search.dart';
+import 'package:memoria/ui/reader/key_bindings.dart';
 import 'package:memoria/ui/reader/reader_scaffold.dart';
 
 import '../support/fake_reading.dart';
@@ -65,6 +66,7 @@ void main() {
     bool selecting = false,
     bool fullScreen = false,
     bool hasWindow = false,
+    KeyBindings keyBindings = KeyBindings.standard,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -88,6 +90,7 @@ void main() {
             selecting: () => selecting,
             fullScreen: fullScreen,
             onFullScreen: hasWindow ? windows.add : null,
+            keyBindings: keyBindings,
             onGoToPage:
                 onGoToPage ??
                 (int page) async {
@@ -618,6 +621,39 @@ void main() {
       await press(tester, LogicalKeyboardKey.pageDown);
 
       expect(steps, <String>['вперёд', 'вперёд', 'назад', 'вперёд']);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-READ-25: листают клавиши из таблицы читателя', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      // Читатель назначил «J» вперёд, а пробел у листания отобрал.
+      await pumpReader(
+        tester,
+        controller,
+        keyBindings: KeyBindings.standard
+            .assign(
+              TurnKey.forward,
+              const KeyStroke(LogicalKeyboardKey.keyJ),
+            )
+            .without(
+              TurnKey.forward,
+              const KeyStroke(LogicalKeyboardKey.space),
+            ),
+      );
+
+      await press(tester, LogicalKeyboardKey.keyJ);
+      await press(tester, LogicalKeyboardKey.space);
+      await press(tester, LogicalKeyboardKey.arrowLeft);
+
+      expect(steps, <String>['вперёд', 'назад']);
+      // Пробел экран чтения не забрал: он ушёл дальше, как любая
+      // посторонняя клавиша.
+      expect(bubbled, contains(LogicalKeyboardKey.space));
+      expect(bubbled, isNot(contains(LogicalKeyboardKey.keyJ)));
 
       await controller.close();
       controller.dispose();

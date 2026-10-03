@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'key_bindings.dart';
+
 /// Набирает ли читатель текст прямо сейчас.
 ///
 /// Спрашивается у указателя ввода, а не у того, открыта ли панель поиска:
@@ -63,6 +65,11 @@ enum ReaderKeyAction {
 /// `F11` — чтение во весь экран (F-READ-35), и тоже из любого места: поле
 /// его не ждёт. Но только там, где окно умеет разворачиваться
 /// ([canFullScreen]): на телефоне клавиша не значит ничего.
+///
+/// **Какие клавиши листают, решает таблица** [bindings] (F-READ-25,
+/// ALG-READ-05): на ПК её правит читатель. Клавиши выше по списку — поиск,
+/// совпадения, `Esc`, `F11` — разбираются раньше таблицы и в неё не
+/// попадают, что бы в ней ни было записано.
 ReaderKeyAction? readerKeyAction({
   required LogicalKeyboardKey key,
   bool control = false,
@@ -71,6 +78,7 @@ ReaderKeyAction? readerKeyAction({
   bool hasHits = false,
   bool typing = false,
   bool canFullScreen = false,
+  KeyBindings bindings = KeyBindings.standard,
 }) {
   if (control) {
     return key == LogicalKeyboardKey.keyF ? ReaderKeyAction.openSearch : null;
@@ -95,22 +103,41 @@ ReaderKeyAction? readerKeyAction({
       key == LogicalKeyboardKey.numpadEnter) {
     return searching && hasHits ? ReaderKeyAction.nextHit : null;
   }
-  if (key == LogicalKeyboardKey.arrowLeft ||
-      key == LogicalKeyboardKey.arrowUp ||
-      key == LogicalKeyboardKey.pageUp ||
-      key == LogicalKeyboardKey.backspace) {
-    return ReaderKeyAction.previous;
+  // Листание — по таблице. Из коробки в ней стрелки, пробел, PgUp и
+  // PgDn, а Shift+пробел листает назад — привычка из просмотрщиков и
+  // браузеров.
+  switch (bindings.turnFor(key, shift: shift)) {
+    case TurnKey.forward:
+      return ReaderKeyAction.next;
+    case TurnKey.back:
+      return ReaderKeyAction.previous;
+    case null:
+      return null;
   }
-  if (key == LogicalKeyboardKey.arrowRight ||
-      key == LogicalKeyboardKey.arrowDown ||
-      key == LogicalKeyboardKey.pageDown ||
-      key == LogicalKeyboardKey.space) {
-    // Shift+пробел листает назад — привычка из просмотрщиков и браузеров.
-    return shift && key == LogicalKeyboardKey.space
-        ? ReaderKeyAction.previous
-        : ReaderKeyAction.next;
+}
+
+/// На какое совпадение ведёт шаг [step] от совпадения [current].
+///
+/// ALG-READ-05. По кругу: упереться в конец списка и не понять, кончился
+/// он или сломалась клавиша, — худший из исходов. [current] меньше нуля
+/// значит «ещё ни на каком»: шаг вперёд ведёт тогда на первое совпадение,
+/// шаг назад — на последнее (BUG-08: прежде `(−1 − 1) mod n` давало
+/// предпоследнее, а при двух совпадениях — первое).
+///
+/// Возвращает `-1`, если совпадений нет.
+int stepSearchHit({
+  required int current,
+  required int step,
+  required int count,
+}) {
+  if (count <= 0) {
+    return -1;
   }
-  return null;
+  if (current < 0 || current >= count) {
+    return step < 0 ? count - 1 : 0;
+  }
+  final int next = (current + step) % count;
+  return next < 0 ? next + count : next;
 }
 
 /// Что закрывает `Esc`.

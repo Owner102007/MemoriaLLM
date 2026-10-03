@@ -52,9 +52,15 @@ class ReaderSettingsSheet extends StatelessWidget {
         final ThemeData theme = Theme.of(context);
         final BookReadingSettings settings = controller.settings;
         final PageFlow current = flow.value;
+        // BUG-15: режимы листа, полоса и обрезка полей действуют только
+        // при листании по страницам. В ленте их в шторке нет: настройка,
+        // которая ничего не меняет на экране, обманывает.
+        final bool paged = current == PageFlow.paged;
         // BUG-12: ползунок меняет страницу вживую, а в базу пишет один
         // раз — когда его отпустили.
         void persist(double value) => unawaited(controller.persistSettings());
+        void setRunningHeads(bool value) =>
+            unawaited(controller.setIgnoreRunningHeads(value));
         final String? cropStatus = cropStatusLabel(
           settings: settings,
           frame: controller.bookFrame,
@@ -70,24 +76,27 @@ class ReaderSettingsSheet extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  const _Title(text: 'Режим отображения'),
-                  const SizedBox(height: 8),
-                  _ModeSelector(
-                    controller: controller,
-                    onDisplayMode: onDisplayMode,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Половина и треть переключаются кнопками ½ и ⅓ прямо '
-                    'в чтении. Деление увеличивает текст только на широком '
-                    'экране, поэтому чтение поворачивается само.',
-                    key: const Key('reader-mode-hint'),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  // BUG-13: подсказки «половина — это колонка» здесь больше
-                  // нет. Страница режется поперёк в любой книге (решение
-                  // владельца 23.08.2026), и обещать колонку было неправдой.
-                  const SizedBox(height: 16),
+                  if (paged) ...<Widget>[
+                    const _Title(text: 'Режим отображения'),
+                    const SizedBox(height: 8),
+                    _ModeSelector(
+                      controller: controller,
+                      onDisplayMode: onDisplayMode,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Половина и треть переключаются кнопками ½ и ⅓ прямо '
+                      'в чтении. Деление увеличивает текст только на '
+                      'широком экране, поэтому чтение поворачивается само.',
+                      key: const Key('reader-mode-hint'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    // BUG-13: подсказки «половина — это колонка» здесь
+                    // больше нет. Страница режется поперёк в любой книге
+                    // (решение владельца 23.08.2026), и обещать колонку
+                    // было неправдой.
+                    const SizedBox(height: 16),
+                  ],
                   const _Title(text: 'Листание'),
                   const SizedBox(height: 8),
                   Wrap(
@@ -106,50 +115,49 @@ class ReaderSettingsSheet extends StatelessWidget {
                         ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  const _Title(text: 'Полоса на экране'),
-                  _ValueSlider(
-                    valueKey: const Key('reader-strip-fit'),
-                    label: 'Запас по краям',
-                    value: settings.stripFit,
-                    min: kMinStripFit,
-                    max: 1,
-                    onChanged: (double value) => unawaited(
-                      controller.setStripFit(value, persist: false),
+                  if (paged) ...<Widget>[
+                    const SizedBox(height: 16),
+                    const _Title(text: 'Полоса на экране'),
+                    _ValueSlider(
+                      valueKey: const Key('reader-strip-fit'),
+                      label: 'Запас по краям',
+                      value: settings.stripFit,
+                      min: kMinStripFit,
+                      max: 1,
+                      onChanged: (double value) => unawaited(
+                        controller.setStripFit(value, persist: false),
+                      ),
+                      onChangeEnd: persist,
                     ),
-                    onChangeEnd: persist,
-                  ),
-                  Text(
-                    'Полоса вписана в экран вплотную, и её крайняя строка '
-                    'приходится на самый край — там, где у телефона '
-                    'закруглённый угол и вырез камеры. Запас отодвигает её '
-                    'от границы; страница при этом перерисовывается мельче, '
-                    'поэтому текст остаётся резким.',
-                    key: const Key('reader-strip-fit-hint'),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  _ValueSlider(
-                    valueKey: const Key('reader-dim-outside'),
-                    label: 'Затемнение',
-                    value: settings.dimOutside,
-                    min: 0,
-                    max: kMaxDimOutside,
-                    onChanged: (double value) => unawaited(
-                      controller.setDimOutside(value, persist: false),
+                    Text(
+                      'Полоса вписана в экран вплотную, и её крайняя строка '
+                      'приходится на самый край — там, где у телефона '
+                      'закруглённый угол и вырез камеры. Запас отодвигает её '
+                      'от границы; страница при этом перерисовывается мельче, '
+                      'поэтому текст остаётся резким.',
+                      key: const Key('reader-strip-fit-hint'),
+                      style: theme.textTheme.bodySmall,
                     ),
-                    onChangeEnd: persist,
-                  ),
-                  Text(
-                    'В половине и трети страница видна целиком, а всё, что '
-                    'сейчас не читается, уходит в тень. Ноль гасить '
-                    'перестаёт — страница показывается как есть.',
-                    key: const Key('reader-dim-hint'),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  // Нахлёст и полоска соседней страницы — про листы. В
-                  // ленте они не действуют, и показывать их там значило
-                  // бы обманывать (BUG-15).
-                  if (current == PageFlow.paged) ...<Widget>[
+                    _ValueSlider(
+                      valueKey: const Key('reader-dim-outside'),
+                      label: 'Затемнение',
+                      value: settings.dimOutside,
+                      min: 0,
+                      max: kMaxDimOutside,
+                      onChanged: (double value) => unawaited(
+                        controller.setDimOutside(value, persist: false),
+                      ),
+                      onChangeEnd: persist,
+                    ),
+                    Text(
+                      'В половине и трети страница видна целиком, а всё, что '
+                      'сейчас не читается, уходит в тень. Ноль гасить '
+                      'перестаёт — страница показывается как есть.',
+                      key: const Key('reader-dim-hint'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    // Нахлёст и полоска соседней страницы — про листы,
+                    // как и всё в этом разделе.
                     _ValueSlider(
                       valueKey: const Key('reader-strip-overlap'),
                       label: 'Нахлёст',
@@ -188,70 +196,76 @@ class ReaderSettingsSheet extends StatelessWidget {
                       key: const Key('reader-neighbour-hint'),
                       style: theme.textTheme.bodySmall,
                     ),
-                  ],
-                  const SizedBox(height: 16),
-                  const _Title(text: 'Поля'),
-                  SwitchListTile(
-                    key: const Key('reader-autocrop-switch'),
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Обрезать белые поля'),
-                    subtitle: const Text(
-                      'Страница займёт больше экрана, но её края будут '
-                      'подрезаны автоматически',
-                    ),
-                    value: settings.autoCrop,
-                    onChanged: (bool value) =>
-                        unawaited(controller.setAutoCrop(value)),
-                  ),
-                  SwitchListTile(
-                    key: const Key('reader-runningheads-switch'),
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Не считать колонтитулы'),
-                    subtitle: const Text(
-                      'Номера страниц и заголовки не мешают обрезке',
-                    ),
-                    value: settings.ignoreRunningHeads,
-                    onChanged: settings.autoCrop
-                        ? (bool value) =>
-                              unawaited(controller.setIgnoreRunningHeads(value))
-                        : null,
-                  ),
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          key: const Key('reader-edit-crop'),
-                          onPressed: onEditCrop,
-                          icon: const Icon(Icons.crop),
-                          label: const Text('Поправить рамку'),
-                        ),
+                    const SizedBox(height: 16),
+                    const _Title(text: 'Поля'),
+                    SwitchListTile(
+                      key: const Key('reader-autocrop-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Обрезать белые поля'),
+                      subtitle: const Text(
+                        'Страница займёт больше экрана, но её края будут '
+                        'подрезаны автоматически',
                       ),
-                      if (settings.autoCrop) ...<Widget>[
-                        const SizedBox(width: 8),
-                        // F-READ-15: рамка книги считается заново, а
-                        // выставленная руками при этом снимается.
-                        TextButton(
-                          key: const Key('reader-recompute-crop'),
-                          onPressed: () =>
-                              unawaited(controller.recomputeBookFrame()),
-                          child: const Text('Пересчитать'),
+                      value: settings.autoCrop,
+                      onChanged: (bool value) =>
+                          unawaited(controller.setAutoCrop(value)),
+                    ),
+                    SwitchListTile(
+                      key: const Key('reader-runningheads-switch'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Не считать колонтитулы'),
+                      subtitle: const Text(
+                        'Номера страниц и заголовки не мешают обрезке',
+                      ),
+                      value: settings.ignoreRunningHeads,
+                      onChanged: settings.autoCrop ? setRunningHeads : null,
+                    ),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            key: const Key('reader-edit-crop'),
+                            onPressed: onEditCrop,
+                            icon: const Icon(Icons.crop),
+                            label: const Text('Поправить рамку'),
+                          ),
                         ),
-                      ] else if (settings.manualCrop != null) ...<Widget>[
-                        const SizedBox(width: 8),
-                        TextButton(
-                          key: const Key('reader-reset-crop'),
-                          onPressed: () =>
-                              unawaited(controller.setManualCrop(null)),
-                          child: const Text('Сбросить'),
-                        ),
+                        if (settings.autoCrop) ...<Widget>[
+                          const SizedBox(width: 8),
+                          // F-READ-15: рамка книги считается заново, а
+                          // выставленная руками при этом снимается.
+                          TextButton(
+                            key: const Key('reader-recompute-crop'),
+                            onPressed: () =>
+                                unawaited(controller.recomputeBookFrame()),
+                            child: const Text('Пересчитать'),
+                          ),
+                        ] else if (settings.manualCrop != null) ...<Widget>[
+                          const SizedBox(width: 8),
+                          TextButton(
+                            key: const Key('reader-reset-crop'),
+                            onPressed: () =>
+                                unawaited(controller.setManualCrop(null)),
+                            child: const Text('Сбросить'),
+                          ),
+                        ],
                       ],
+                    ),
+                    if (cropStatus != null) ...<Widget>[
+                      const SizedBox(height: 6),
+                      Text(
+                        cropStatus,
+                        key: const Key('reader-crop-status'),
+                        style: theme.textTheme.bodySmall,
+                      ),
                     ],
-                  ),
-                  if (cropStatus != null) ...<Widget>[
-                    const SizedBox(height: 6),
+                  ] else ...<Widget>[
+                    const SizedBox(height: 8),
                     Text(
-                      cropStatus,
-                      key: const Key('reader-crop-status'),
+                      'В ленте страница показывается целиком, как в обычном '
+                      'просмотрщике. Режимы, полоса и обрезка полей вернутся '
+                      'вместе с листанием по страницам.',
+                      key: const Key('reader-ribbon-note'),
                       style: theme.textTheme.bodySmall,
                     ),
                   ],

@@ -165,4 +165,101 @@ void main() {
 
     await tester.pump(kDoubleTapTimeout);
   });
+
+  testWidgets('BUG-38: в ленте панели переключаются в миг нажатия и один '
+      'раз', (WidgetTester tester) async {
+    // Лента слушает нажатие так же, как лист: слушатель исполняет его
+    // сразу, а сообщение просмотрщика через 300 мс — только эхо.
+    bool panels = false;
+    final Widget ribbon = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: (TapUpDetails details) {
+        final bool echo = watch.echoes();
+        if (!echo) {
+          panels = !panels;
+        }
+      },
+      onDoubleTapDown: (TapDownDetails details) {},
+      child: const SizedBox.expand(),
+    );
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: QuickTap(
+          watch: watch,
+          onTap: (Offset at) => panels = !panels,
+          child: ribbon,
+        ),
+      ),
+    );
+
+    await tester.tapAt(const Offset(400, 300));
+    expect(panels, isTrue, reason: 'панели показаны сразу');
+
+    await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 20));
+    expect(panels, isTrue, reason: 'эхо просмотрщика их не спрятало');
+
+    await tester.tapAt(const Offset(400, 300));
+    expect(panels, isFalse);
+    await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 20));
+    expect(panels, isFalse);
+  });
+
+  testWidgets('BUG-38: нажатие, оставленное просмотрщику, исполняет он — '
+      'и следующее эхо остаётся эхом', (WidgetTester tester) async {
+    // Пока в ленте выделен текст, нажатие исполняет просмотрщик: только
+    // он отличает страницу от ручки выделения. О выделенном тексте он
+    // сообщает так же, как о странице, — и это сообщение обязано снять
+    // отметку «оставлено», иначе эхо следующего нажатия исполнилось бы
+    // второй раз.
+    bool selected = true;
+    int toggles = 0;
+    int cleared = 0;
+    final Widget ribbon = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: (TapUpDetails details) {
+        final bool echo = watch.echoes();
+        if (selected) {
+          // Нажатие по выделенному: просмотрщик снимает выделение сам.
+          selected = false;
+          cleared++;
+          return;
+        }
+        if (!echo) {
+          toggles++;
+        }
+      },
+      onDoubleTapDown: (TapDownDetails details) {},
+      child: const SizedBox.expand(),
+    );
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: QuickTap(
+          watch: watch,
+          onTap: (Offset at) {
+            if (selected) {
+              watch.leaveToViewer();
+              return;
+            }
+            toggles++;
+          },
+          child: ribbon,
+        ),
+      ),
+    );
+
+    await tester.tapAt(const Offset(400, 300));
+    expect(toggles, 0, reason: 'текст выделен — решает просмотрщик');
+    await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 20));
+    expect(cleared, 1);
+    expect(toggles, 0);
+
+    // Выделения больше нет: нажатие исполняем сами, и его эхо — эхо.
+    await tester.pump(const Duration(seconds: 2));
+    await tester.tapAt(const Offset(400, 300));
+    expect(toggles, 1);
+    await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 20));
+    expect(toggles, 1);
+  });
 }

@@ -358,11 +358,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  /// Открывает книгу в чтении.
+  ///
+  /// BUG-09: открытие здесь не засчитывается. Его считает экран чтения —
+  /// один раз и только когда книга действительно открылась. Прежде оно
+  /// записывалось и тут, до открытия: одно открытие считалось дважды, а
+  /// книга с потерянным файлом поднималась в «Сначала недавние».
   Future<void> _openBook(Book book) async {
-    await widget.services.data.library.markOpened(book.id, DateTime.now());
-    if (!mounted) {
-      return;
-    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) =>

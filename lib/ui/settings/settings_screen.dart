@@ -62,7 +62,7 @@ class SettingsScreen extends StatelessWidget {
               ListTile(
                 key: const Key('reading-defaults-tile'),
                 title: const Text('Чтение по умолчанию'),
-                subtitle: const Text('Как появляется страница при листании'),
+                subtitle: const Text('Как появляется страница, зоны листания'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () {
                   unawaited(
@@ -75,26 +75,28 @@ class SettingsScreen extends StatelessWidget {
                   );
                 },
               ),
-              // Кнопки громкости есть только у телефона. Раздел появится
-              // и на ПК — вместе с таблицей клавиш (F-READ-25); до того
-              // пустой экран там был бы обманом.
-              if (defaultTargetPlatform == TargetPlatform.android)
-                ListTile(
-                  key: const Key('keys-tile'),
-                  title: const Text('Клавиши и громкость'),
-                  subtitle: const Text('Листание кнопками громкости'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    unawaited(
-                      Navigator.of(context).push<void>(
-                        MaterialPageRoute<void>(
-                          builder: (BuildContext context) =>
-                              KeysScreen(settings: settings),
-                        ),
-                      ),
-                    );
-                  },
+              // На телефоне раздел про кнопки громкости (F-READ-26), на
+              // ПК — про таблицу клавиш листания (F-READ-25).
+              ListTile(
+                key: const Key('keys-tile'),
+                title: const Text('Клавиши и громкость'),
+                subtitle: Text(
+                  defaultTargetPlatform == TargetPlatform.android
+                      ? 'Листание кнопками громкости'
+                      : 'Какие клавиши листают книгу',
                 ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  unawaited(
+                    Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (BuildContext context) =>
+                            KeysScreen(settings: settings),
+                      ),
+                    ),
+                  );
+                },
+              ),
               const Divider(),
               ListTile(
                 key: const Key('build-label'),
