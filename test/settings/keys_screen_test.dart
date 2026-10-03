@@ -169,9 +169,8 @@ void main() {
     final int space = LogicalKeyboardKey.space.keyId;
     final int letter = LogicalKeyboardKey.keyJ.keyId;
 
-    Finder chip(String turn, String code) => find.byKey(
-      Key('turn-key-$turn-$code'),
-    );
+    Finder chip(String turn, String code) =>
+        find.byKey(Key('turn-key-$turn-$code'));
 
     /// Открывает окно «нажмите клавишу» у действия.
     Future<void> askKey(WidgetTester tester, Key add) async {
@@ -220,10 +219,7 @@ void main() {
         expect(find.text(label), findsOneWidget, reason: label);
       }
       // Возвращать нечего — и кнопка это показывает.
-      expect(
-        tester.widget<TextButton>(find.byKey(_reset)).onPressed,
-        isNull,
-      );
+      expect(tester.widget<TextButton>(find.byKey(_reset)).onPressed, isNull);
       expect(find.byKey(const Key('turn-keys-fixed')), findsOneWidget);
     }, variant: desktop);
 
@@ -270,10 +266,7 @@ void main() {
       final KeyBindings saved = KeyBindings.parse(
         settings.values[SettingsKeys.turnKeys],
       );
-      expect(
-        saved.turnFor(LogicalKeyboardKey.keyJ, shift: true),
-        TurnKey.back,
-      );
+      expect(saved.turnFor(LogicalKeyboardKey.keyJ, shift: true), TurnKey.back);
       expect(saved.turnFor(LogicalKeyboardKey.keyJ), isNull);
     }, variant: desktop);
 
@@ -364,10 +357,7 @@ void main() {
     ) async {
       final KeyBindings custom = KeyBindings.standard
           .assign(TurnKey.forward, const KeyStroke(LogicalKeyboardKey.keyJ))
-          .without(
-            TurnKey.forward,
-            const KeyStroke(LogicalKeyboardKey.space),
-          );
+          .without(TurnKey.forward, const KeyStroke(LogicalKeyboardKey.space));
       await pumpScreen(
         tester,
         _MemorySettings(<String, String>{
@@ -395,10 +385,7 @@ void main() {
       expect(settings.values.containsKey(SettingsKeys.turnKeys), isFalse);
       expect(chip('forward', '$letter'), findsNothing);
       expect(chip('forward', '$space'), findsOneWidget);
-      expect(
-        tester.widget<TextButton>(find.byKey(_reset)).onPressed,
-        isNull,
-      );
+      expect(tester.widget<TextButton>(find.byKey(_reset)).onPressed, isNull);
     }, variant: desktop);
   });
 }

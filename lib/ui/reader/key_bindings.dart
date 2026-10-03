@@ -279,8 +279,7 @@ final Set<int> _modifierKeys = <int>{
 ///
 /// Окно «нажмите клавишу» на них не отвечает: читатель, зажавший `Shift`,
 /// ещё не закончил сочетание.
-bool isModifierKey(LogicalKeyboardKey key) =>
-    _modifierKeys.contains(key.keyId);
+bool isModifierKey(LogicalKeyboardKey key) => _modifierKeys.contains(key.keyId);
 
 /// Можно ли назначить клавишу листанию (F-READ-25).
 ///

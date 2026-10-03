@@ -92,10 +92,7 @@ void main() {
       expect(next.turnFor(LogicalKeyboardKey.space), isNull);
       expect(next.turnFor(LogicalKeyboardKey.pageDown), TurnKey.forward);
       // Shift+пробел — другая клавиша, и она на месте.
-      expect(
-        next.turnFor(LogicalKeyboardKey.space, shift: true),
-        TurnKey.back,
-      );
+      expect(next.turnFor(LogicalKeyboardKey.space, shift: true), TurnKey.back);
     });
 
     test('у действия можно убрать все клавиши', () {

@@ -635,10 +635,7 @@ void main() {
         tester,
         controller,
         keyBindings: KeyBindings.standard
-            .assign(
-              TurnKey.forward,
-              const KeyStroke(LogicalKeyboardKey.keyJ),
-            )
+            .assign(TurnKey.forward, const KeyStroke(LogicalKeyboardKey.keyJ))
             .without(
               TurnKey.forward,
               const KeyStroke(LogicalKeyboardKey.space),

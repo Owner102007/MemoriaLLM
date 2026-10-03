@@ -443,7 +443,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  /// Убирает подсказку о зонах: по нажатию и по первому же листанию.
+  /// Убирает подсказку о зонах: по нажатию, по `Esc` и по первому же
+  /// листанию.
   void _dismissZoneHint() {
     if (_zoneHintOn && mounted) {
       setState(() => _zoneHintOn = false);
@@ -775,6 +776,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     setState(() => _selection = null);
+  }
+
+  /// `Esc`, когда закрывать больше нечего: уходит подсказка о зонах и
+  /// снимается выделение.
+  void _onDismissKey() {
+    _dismissZoneHint();
+    _dismissSelection();
   }
 
   Future<void> _onSelectionRanges(List<PdfPageTextRange> ranges) async {
@@ -1223,7 +1231,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onGoToHit: _goToHit,
       onPreviousFragment: () => _stepFragment(forward: false),
       onNextFragment: () => _stepFragment(forward: true),
-      onDismiss: _dismissSelection,
+      onDismiss: _onDismissKey,
       onPanelsChanged: _onPanels,
       selecting: () => _selection != null || _sheet.selecting,
       fullScreen: _fullScreen,
@@ -1579,15 +1587,65 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Нажатие в ленте, которое мы узнали сами: показать или спрятать
   /// панели.
   ///
-  /// Кроме одного случая: **пока текст выделен, решает просмотрщик** —
-  /// он снимает выделение сам и отличает нажатие по странице от толчка
-  /// ручки выделения, а слушателю указателя их не отличить.
+  /// Кроме одного случая: **пока текст выделен, нажатие разбирает
+  /// просмотрщик** — только он знает, пришлось ли оно на выделенный
+  /// текст, на ручку выделения или мимо, а слушателю указателя этого не
+  /// отличить. По выделенному тексту он снимает выделение сам, ручку
+  /// двигает молча, а о нажатии мимо сообщает нам — и панели тогда
+  /// переключаются по его сообщению, через 300 мс, как и до BUG-38.
   void _onRibbonTap(VoidCallback toggleChrome) {
     if (_viewer.isReady && _viewer.textSelectionDelegate.hasSelectedText) {
       _ribbonTaps.leaveToViewer();
       return;
     }
     toggleChrome();
+  }
+
+  /// Меню просмотрщика в ленте: «Копировать» и «Выделить всё».
+  ///
+  /// То же меню, что pdfrx 2.6.1 строит сам (`pdf_viewer.dart`,
+  /// `_buildContextMenu`), — в ленте это единственный способ унести
+  /// текст. Отличие одно: нажатие по кнопке меню — не нажатие по
+  /// странице (BUG-38). Меню лежит внутри просмотрщика, и слушатель
+  /// поверх него видит его нажатия тоже; свой слушатель у меню
+  /// срабатывает раньше и говорит, что этот жест нажатием по странице не
+  /// станет. Иначе «Выделить всё» заодно показывало бы панели.
+  ///
+  /// Поднимая версию pdfrx, меню сверяют с его собственным.
+  Widget? _buildRibbonMenu(
+    BuildContext context,
+    PdfViewerContextMenuBuilderParams params,
+  ) {
+    final PdfTextSelectionDelegate text = params.textSelectionDelegate;
+    final bool selectable = params.isTextSelectionEnabled;
+    final List<ContextMenuButtonItem> items = <ContextMenuButtonItem>[
+      if (selectable && text.isCopyAllowed && text.hasSelectedText)
+        ContextMenuButtonItem(
+          type: ContextMenuButtonType.copy,
+          onPressed: () => unawaited(text.copyTextSelection()),
+        ),
+      if (selectable && !text.isSelectingAllText)
+        ContextMenuButtonItem(
+          type: ContextMenuButtonType.selectAll,
+          onPressed: () => unawaited(text.selectAllText()),
+        ),
+    ];
+    if (items.isEmpty) {
+      return null;
+    }
+    return Listener(
+      onPointerUp: (PointerUpEvent event) => _ribbonTaps.spoil(),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: AdaptiveTextSelectionToolbar.buttonItems(
+          anchors: TextSelectionToolbarAnchors(
+            primaryAnchor: params.anchorA,
+            secondaryAnchor: params.anchorB,
+          ),
+          buttonItems: items,
+        ),
+      ),
+    );
   }
 
   Widget _buildRibbonViewer(
@@ -1618,6 +1676,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             controller.onPageChanged(page);
           }
         },
+        buildContextMenu: _buildRibbonMenu,
         onGeneralTap:
             (
               BuildContext context,

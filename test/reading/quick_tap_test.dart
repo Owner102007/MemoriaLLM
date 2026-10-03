@@ -205,13 +205,15 @@ void main() {
     expect(panels, isFalse);
   });
 
-  testWidgets('BUG-38: нажатие, оставленное просмотрщику, исполняет он — '
-      'и следующее эхо остаётся эхом', (WidgetTester tester) async {
-    // Пока в ленте выделен текст, нажатие исполняет просмотрщик: только
-    // он отличает страницу от ручки выделения. О выделенном тексте он
-    // сообщает так же, как о странице, — и это сообщение обязано снять
-    // отметку «оставлено», иначе эхо следующего нажатия исполнилось бы
-    // второй раз.
+  testWidgets('BUG-38: нажатие по выделенному тексту исполняет '
+      'просмотрщик — и следующее эхо остаётся эхом', (
+    WidgetTester tester,
+  ) async {
+    // Пока в ленте выделен текст, нажатие разбирает просмотрщик: только
+    // он знает, пришлось ли оно на выделенный текст, на ручку или мимо.
+    // О нажатии по выделенному он сообщает так же, как о любом другом, —
+    // и это сообщение обязано снять отметку «оставлено», иначе эхо
+    // следующего нажатия исполнилось бы второй раз.
     bool selected = true;
     int toggles = 0;
     int cleared = 0;
@@ -260,6 +262,88 @@ void main() {
     await tester.tapAt(const Offset(400, 300));
     expect(toggles, 1);
     await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 20));
+    expect(toggles, 1);
+  });
+
+  testWidgets('BUG-38: при выделенном тексте нажатие мимо него '
+      'переключает панели один раз', (WidgetTester tester) async {
+    // Выделение при этом остаётся: так лента вела себя и прежде. Панели
+    // переключает сообщение просмотрщика — мы своё нажатие оставили ему.
+    int toggles = 0;
+    final Widget ribbon = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: (TapUpDetails details) {
+        final bool echo = watch.echoes();
+        if (!echo) {
+          toggles++;
+        }
+      },
+      onDoubleTapDown: (TapDownDetails details) {},
+      child: const SizedBox.expand(),
+    );
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: QuickTap(
+          watch: watch,
+          // Текст выделен: исполнять нажатие самим нельзя.
+          onTap: (Offset at) => watch.leaveToViewer(),
+          child: ribbon,
+        ),
+      ),
+    );
+
+    await tester.tapAt(const Offset(400, 300));
+    expect(toggles, 0);
+    await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 20));
+    expect(toggles, 1);
+  });
+
+  testWidgets('BUG-38: нажатие по кнопке меню — не нажатие по странице', (
+    WidgetTester tester,
+  ) async {
+    // Меню «Копировать / Выделить всё» лежит внутри просмотрщика, и наш
+    // слушатель видит его нажатия. Свой слушатель у меню срабатывает
+    // раньше и портит жест: панели от кнопки меню не переключаются.
+    int toggles = 0;
+    int pressed = 0;
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: QuickTap(
+          watch: watch,
+          onTap: (Offset at) => toggles++,
+          child: Stack(
+            children: <Widget>[
+              const Positioned.fill(
+                child: ColoredBox(color: Color(0xFF101010)),
+              ),
+              Positioned(
+                left: 100,
+                top: 100,
+                width: 120,
+                height: 40,
+                child: Listener(
+                  onPointerUp: (PointerUpEvent event) => watch.spoil(),
+                  child: GestureDetector(
+                    key: const Key('menu-button'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => pressed++,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('menu-button')));
+    expect(pressed, 1);
+    expect(toggles, 0, reason: 'кнопка меню панели не трогает');
+
+    // А нажатие мимо меню — по-прежнему нажатие по странице.
+    await tester.tapAt(const Offset(500, 400));
     expect(toggles, 1);
   });
 }

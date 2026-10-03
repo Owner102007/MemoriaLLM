@@ -164,6 +164,20 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('Esc убирает подсказку, страница на месте', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester);
+      expect(hint, findsOneWidget);
+
+      await press(tester, LogicalKeyboardKey.escape);
+
+      expect(hint, findsNothing);
+      expect(label(tester), '1 / 6');
+
+      await unmount(tester);
+    });
+
     testWidgets('в ленте подсказки нет, и показанной она не считается', (
       WidgetTester tester,
     ) async {
@@ -209,10 +223,7 @@ void main() {
     ) async {
       final KeyBindings bindings = KeyBindings.standard
           .assign(TurnKey.forward, const KeyStroke(LogicalKeyboardKey.keyJ))
-          .without(
-            TurnKey.forward,
-            const KeyStroke(LogicalKeyboardKey.space),
-          );
+          .without(TurnKey.forward, const KeyStroke(LogicalKeyboardKey.space));
       await pumpReader(
         tester,
         settings: <String, String>{
