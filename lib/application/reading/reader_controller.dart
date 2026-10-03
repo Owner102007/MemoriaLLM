@@ -1079,27 +1079,23 @@ class ReaderController extends ChangeNotifier {
   Future<void> flush() async {
     _saveTimer?.cancel();
     _saveTimer = null;
+    if (_dirty) {
+      _dirty = false;
+      // Место — страница, а прогресс — лист: в развороте правая страница
+      // тоже открыта, и полка обязана показывать то же, что экран чтения.
+      await _reading.savePosition(
+        positionForPage(
+          bookId: book.id,
+          page: _page,
+          pageCount: pageCount,
+          fragment: fragment,
+        ).copyWith(progress: progress),
+      );
+    }
     // Ползунок шторки могли не отпустить: книгу закрыли или приложение
-    // свернули раньше (BUG-12). Настройки уходят в базу вместе с местом.
-    // Когда писать нечего, ожидания нет вовсе: место пишется в тот же
-    // миг, что и прежде.
-    if (_settingsUnsaved) {
-      await persistSettings();
-    }
-    if (!_dirty) {
-      return;
-    }
-    _dirty = false;
-    // Место — страница, а прогресс — лист: в развороте правая страница
-    // тоже открыта, и полка обязана показывать то же, что экран чтения.
-    await _reading.savePosition(
-      positionForPage(
-        bookId: book.id,
-        page: _page,
-        pageCount: pageCount,
-        fragment: fragment,
-      ).copyWith(progress: progress),
-    );
+    // свернули раньше (BUG-12). Настройки уходят в базу следом за местом:
+    // место дороже, и ждать их оно не должно.
+    await persistSettings();
   }
 
   /// Записывает позицию и закрывает документ.
