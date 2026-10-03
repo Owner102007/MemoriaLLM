@@ -128,4 +128,54 @@ void main() {
       );
     }
   });
+
+  group('F-READ-35: указатель места в чтении во весь экран', () {
+    // Страница совпала с экраном: свободного поля нет ни сбоку, ни снизу.
+    final SheetPlacement tight = placeFragment(
+      sheetWidth: 360,
+      sheetHeight: 800,
+      fragment: CropBox.full,
+      screenWidth: 360,
+      screenHeight: 800,
+    );
+
+    test('F-READ-35: в окне указатель ложится поверх страницы', () {
+      final ProgressSlot slot = progressSlotFor(
+        placement: tight,
+        screenWidth: 360,
+        screenHeight: 800,
+      );
+      expect(slot.overlaps, isTrue);
+      expect(slot.isVisible, isTrue);
+    });
+
+    test('F-READ-35: во весь экран поверх страницы он не ложится', () {
+      final ProgressSlot slot = progressSlotFor(
+        placement: tight,
+        screenWidth: 360,
+        screenHeight: 800,
+        overPage: false,
+      );
+      expect(slot, ProgressSlot.none);
+      expect(slot.isVisible, isFalse);
+    });
+
+    test('F-READ-35: свободное поле указатель занимает и во весь экран', () {
+      final SheetPlacement placement = placeFragment(
+        sheetWidth: 595,
+        sheetHeight: 842,
+        fragment: CropBox.full,
+        screenWidth: 360,
+        screenHeight: 800,
+      );
+      final ProgressSlot slot = progressSlotFor(
+        placement: placement,
+        screenWidth: 360,
+        screenHeight: 800,
+        overPage: false,
+      );
+      expect(slot.isVisible, isTrue);
+      expect(slot.overlaps, isFalse);
+    });
+  });
 }

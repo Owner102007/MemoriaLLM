@@ -151,4 +151,72 @@ void main() {
       expect(position.progress, 1.0);
     });
   });
+
+  group('BUG-39: протяжка ползунка страниц', () {
+    test('BUG-39: пока бегунок тянут, переходить некуда', () {
+      final SliderDrag drag = SliderDrag();
+      expect(drag.held, isNull);
+      expect(drag.rest(current: 10), isNull, reason: 'бегунок не трогали');
+
+      // Протяжка через полкниги: под бегунком побывали десятки страниц,
+      // и ни одна из них сама по себе переходом не становится.
+      for (int page = 11; page <= 400; page++) {
+        drag.move(page);
+      }
+      expect(drag.held, 400);
+    });
+
+    test('BUG-39: переход один — туда, где бегунок остановился', () {
+      final SliderDrag drag = SliderDrag();
+      for (int page = 11; page <= 400; page++) {
+        drag.move(page);
+      }
+      expect(drag.rest(current: 10), 400);
+      // Отпустили там же, где он уже простоял: второй раз не переходим.
+      expect(drag.rest(current: 10), isNull);
+      expect(drag.rest(current: 400), isNull);
+    });
+
+    test('BUG-39: остановка посреди протяжки и продолжение — два перехода', () {
+      final SliderDrag drag = SliderDrag();
+      drag.move(120);
+      expect(drag.rest(current: 10), 120);
+      drag.move(260);
+      expect(drag.rest(current: 120), 260);
+    });
+
+    test('BUG-39: вернули бегунок на место — книга не трогается', () {
+      final SliderDrag drag = SliderDrag();
+      drag.move(55);
+      drag.move(10);
+      expect(drag.rest(current: 10), isNull);
+    });
+
+    test('BUG-39: вернули бегунок после остановки — переход обратно', () {
+      // Переход на сто двадцатую уже отправлен и мог ещё не закончиться:
+      // книга по-прежнему на десятой, но читатель просит именно её.
+      final SliderDrag drag = SliderDrag();
+      drag.move(120);
+      expect(drag.rest(current: 10), 120);
+      drag.move(10);
+      expect(drag.rest(current: 10), 10);
+    });
+
+    test('BUG-39: отпущенный бегунок снова следует за книгой', () {
+      final SliderDrag drag = SliderDrag();
+      drag.move(120);
+      expect(drag.rest(current: 10), 120);
+      drag.release();
+      expect(drag.held, isNull);
+      // Новая протяжка на ту же страницу — снова переход: прошлая
+      // протяжка её не «помнит».
+      drag.move(120);
+      expect(drag.rest(current: 10), 120);
+    });
+
+    test('BUG-39: срок остановки короче заметной паузы', () {
+      expect(kSliderRest, lessThanOrEqualTo(const Duration(milliseconds: 200)));
+      expect(kSliderRest, greaterThan(const Duration(milliseconds: 50)));
+    });
+  });
 }

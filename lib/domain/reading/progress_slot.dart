@@ -34,6 +34,16 @@ class ProgressSlot {
     required this.overlaps,
   });
 
+  /// Указателю некуда встать: рисовать нечего.
+  static const ProgressSlot none = ProgressSlot(
+    side: ProgressSlotSide.bottom,
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    overlaps: false,
+  );
+
   /// С какой стороны стоит указатель.
   final ProgressSlotSide side;
 
@@ -87,11 +97,17 @@ class ProgressSlot {
 /// Толщина по умолчанию подобрана так, чтобы под рисунком книги
 /// помещалась подпись «страница из скольких»: указатель без неё
 /// показывает долю, но не отвечает на вопрос «а сколько осталось».
+///
+/// [overPage] — можно ли класть указатель поверх страницы, когда поля
+/// нет. В чтении во весь экран нельзя (F-READ-35): там экран отдан
+/// читаемой полосе целиком, и указатель остаётся только в свободном
+/// поле.
 ProgressSlot progressSlotFor({
   required SheetPlacement placement,
   required double screenWidth,
   required double screenHeight,
   double thickness = 44,
+  bool overPage = true,
 }) {
   final double rightField = placement.isVisible
       ? screenWidth - (placement.left + placement.sheetWidth)
@@ -119,6 +135,9 @@ ProgressSlot progressSlotFor({
       height: bottomField,
       overlaps: false,
     );
+  }
+  if (!overPage) {
+    return ProgressSlot.none;
   }
   return ProgressSlot(
     side: ProgressSlotSide.bottom,

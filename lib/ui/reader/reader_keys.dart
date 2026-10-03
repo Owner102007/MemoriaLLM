@@ -36,6 +36,9 @@ enum ReaderKeyAction {
 
   /// Закрыть то, что открыто: выделение, поиск, панели.
   dismiss,
+
+  /// Развернуть чтение во весь экран или вернуть окно (F-READ-35).
+  fullScreen,
 }
 
 /// Что означает нажатая клавиша.
@@ -56,6 +59,10 @@ enum ReaderKeyAction {
 /// спросив, не набирает ли читатель текст прямо сейчас. Исключение —
 /// клавиши, которых поле не ждёт никогда: `Ctrl+F` и `F3`. `Esc` в
 /// исключения **не** входит: его разбирает сама панель поиска, ей ближе.
+///
+/// `F11` — чтение во весь экран (F-READ-35), и тоже из любого места: поле
+/// его не ждёт. Но только там, где окно умеет разворачиваться
+/// ([canFullScreen]): на телефоне клавиша не значит ничего.
 ReaderKeyAction? readerKeyAction({
   required LogicalKeyboardKey key,
   bool control = false,
@@ -63,9 +70,13 @@ ReaderKeyAction? readerKeyAction({
   bool searching = false,
   bool hasHits = false,
   bool typing = false,
+  bool canFullScreen = false,
 }) {
   if (control) {
     return key == LogicalKeyboardKey.keyF ? ReaderKeyAction.openSearch : null;
+  }
+  if (key == LogicalKeyboardKey.f11) {
+    return canFullScreen ? ReaderKeyAction.fullScreen : null;
   }
   if (key == LogicalKeyboardKey.f3) {
     return hasHits
@@ -100,4 +111,45 @@ ReaderKeyAction? readerKeyAction({
         : ReaderKeyAction.next;
   }
   return null;
+}
+
+/// Что закрывает `Esc`.
+enum EscapeTarget {
+  /// Панель поиска.
+  search,
+
+  /// Оглавление.
+  outline,
+
+  /// То, что лежит на странице: выделение и панели чтения.
+  page,
+
+  /// Чтение во весь экран: окно возвращается к обычному виду.
+  fullScreen,
+}
+
+/// Что закроет `Esc` прямо сейчас.
+///
+/// Закрывается то, что открыто ближе всего к читателю, по одному за
+/// нажатие: поиск, оглавление, выделение с панелями. **Из чтения во весь
+/// экран `Esc` выводит последним** (F-READ-35) — когда закрывать больше
+/// нечего. Иначе клавиша, которой привыкли снимать выделение, каждый раз
+/// заодно сворачивала бы окно.
+EscapeTarget escapeTarget({
+  required bool searching,
+  required bool outline,
+  required bool selecting,
+  required bool panels,
+  required bool fullScreen,
+}) {
+  if (searching) {
+    return EscapeTarget.search;
+  }
+  if (outline) {
+    return EscapeTarget.outline;
+  }
+  if (fullScreen && !selecting && !panels) {
+    return EscapeTarget.fullScreen;
+  }
+  return EscapeTarget.page;
 }

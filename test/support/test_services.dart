@@ -7,6 +7,7 @@ import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
+import 'package:memoria/domain/reading/full_screen.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/volume_keys.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
@@ -31,6 +32,7 @@ AppServices testServices({
   MemoryCoverStore? coverStore,
   StorageAccess? access,
   VolumeKeys volumeKeys = const NoVolumeKeys(),
+  FullScreenWindow window = const NoFullScreenWindow(),
   List<ScannedFile> onDevice = const <ScannedFile>[],
 }) {
   final ReaderDocument doc =
@@ -46,6 +48,7 @@ AppServices testServices({
     coverStore: covers,
     access: grant,
     volumeKeys: volumeKeys,
+    window: window,
     covers: CoverService(
       opener: FakeDocumentOpener(
         doc,
@@ -175,5 +178,35 @@ class FakeVolumeKeys implements VolumeKeys {
   VolumeKeyOutcome? click(VolumeKey key) {
     send(VolumeKeyEvent(key: key, pressed: true));
     return send(VolumeKeyEvent(key: key, pressed: false));
+  }
+}
+
+/// Окно, которое разворачивает тест (F-READ-35).
+///
+/// Запоминает всё, о чём экран просил платформу, и отвечает так, как
+/// велено: [works] — развернулось ли окно в самом деле.
+class FakeFullScreenWindow implements FullScreenWindow {
+  /// Создаёт заглушку.
+  FakeFullScreenWindow({this.works = true});
+
+  /// Слушается ли окно: `false` — платформа отказывает.
+  bool works;
+
+  /// О чём экран просил платформу, по порядку.
+  final List<bool> requests = <bool>[];
+
+  /// Развёрнуто ли окно сейчас.
+  bool full = false;
+
+  @override
+  bool get available => true;
+
+  @override
+  Future<bool> setFullScreen(bool on) async {
+    requests.add(on);
+    if (works) {
+      full = on;
+    }
+    return works;
   }
 }

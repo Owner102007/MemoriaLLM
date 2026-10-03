@@ -21,6 +21,7 @@ import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
+import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_search.dart';
 import '../../domain/reading/volume_keys.dart';
@@ -87,6 +88,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
   ScreenOrientation _rotation = ScreenOrientation.portrait;
   bool _zoomLocked = true;
   DisplayArea _area = DisplayArea.unknown;
+
+  /// Развёрнуто ли чтение во весь экран (F-READ-35): окно занимает весь
+  /// монитор, а читаемая полоса вписана в него вплотную. Настройка
+  /// устройства; есть только там, где у приложения есть окно.
+  bool _fullScreen = false;
+
+  /// Идёт ли прямо сейчас разворот окна: второе нажатие, пришедшее
+  /// раньше ответа платформы, не должно запросить то же самое ещё раз.
+  bool _switchingWindow = false;
 
   /// Как показывать страницу при листании: сразу ли и с каким запасом
   /// соседних страниц (F-READ-02). Настройка устройства.
@@ -270,6 +280,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final String? volumeDown = await settings.read(
       SettingsKeys.volumeDownForward,
     );
+    final String? fullScreen = await settings.read(
+      SettingsKeys.readingFullScreen,
+    );
     if (!mounted) {
       return;
     }
@@ -297,7 +310,48 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _zoomLocked = locked != 'false';
     });
     _syncVolumeKeys();
+    // Читали во весь экран — так и открываем: режим выбирают один раз,
+    // а не при каждой книге.
+    if (fullScreen == 'true') {
+      unawaited(_setFullScreen(true, remember: false));
+    }
     await _applyRotation();
+  }
+
+  /// Разворачивает чтение во весь экран и возвращает окно.
+  ///
+  /// F-READ-35. Во весь экран открывается именно область чтения: окно
+  /// занимает монитор целиком — без заголовка и панели задач, — а полоса
+  /// вписывается в него вплотную, каким бы ни был запас по краям у
+  /// книги. Режим включён, только если окно в самом деле развернулось:
+  /// полоса вплотную в обычном окне — это уже другая настройка.
+  Future<void> _setFullScreen(bool value, {bool remember = true}) async {
+    if (!widget.services.window.available ||
+        _switchingWindow ||
+        value == _fullScreen) {
+      return;
+    }
+    _switchingWindow = true;
+    final bool done = await widget.services.window.setFullScreen(value);
+    _switchingWindow = false;
+    if (!mounted) {
+      // Книгу закрыли раньше, чем окно развернулось: оставлять его во
+      // весь экран на полке некому.
+      if (done && value) {
+        unawaited(widget.services.window.setFullScreen(false));
+      }
+      return;
+    }
+    if (!done) {
+      return;
+    }
+    setState(() => _fullScreen = value);
+    if (remember) {
+      await widget.services.data.settings.write(
+        SettingsKeys.readingFullScreen,
+        value.toString(),
+      );
+    }
   }
 
   /// Поворачивает экран сам, не спрашивая систему.
@@ -414,6 +468,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
     // Книга закрыта — кнопки громкости снова только про громкость.
     widget.services.volumeKeys.detach(_volumeHandler);
+    // И окно снова обычное: во весь экран разворачивается чтение, а не
+    // полка (F-READ-35). Сама настройка при этом остаётся.
+    if (_fullScreen) {
+      unawaited(widget.services.window.setFullScreen(false));
+    }
     _flowNow.dispose();
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
@@ -979,6 +1038,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onNextFragment: () => _stepFragment(forward: true),
       onDismiss: _dismissSelection,
       onPanelsChanged: _onPanels,
+      selecting: _selection != null,
+      fullScreen: _fullScreen,
+      onFullScreen: widget.services.window.available
+          ? (bool value) => unawaited(_setFullScreen(value))
+          : null,
       extraActions: <Widget>[
         IconButton(
           key: const Key('reader-annotations-button'),
@@ -1034,6 +1098,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     : ScreenOrientation.landscape,
               ),
             ),
+          ),
+        // Во весь экран — только там, где у приложения есть окно: на
+        // телефоне страница и так занимает экран целиком (F-READ-35).
+        if (widget.services.window.available)
+          IconButton(
+            key: const Key('reader-full-screen-button'),
+            icon: Icon(_fullScreen ? Icons.fullscreen_exit : Icons.fullscreen),
+            tooltip: _fullScreen ? 'Вернуть окно (F11)' : 'Во весь экран (F11)',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => unawaited(_setFullScreen(!_fullScreen)),
           ),
         IconButton(
           key: const Key('reader-settings-button'),
@@ -1103,7 +1177,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
           page: controller.lastShownPage,
           pageCount: controller.pageCount,
           locked: _zoomLocked,
-          stripFit: controller.settings.stripFit,
+          // F-READ-35: во весь экран полоса вписана вплотную, и
+          // указатель места поверх страницы не ложится.
+          stripFit: stripFitFor(
+            stripFit: controller.settings.stripFit,
+            fullScreen: _fullScreen,
+          ),
+          progressOverPage: !_fullScreen,
           dim: controller.settings.dimOutside,
           preview: _turning.preview,
           reserve: _turning.effectiveReserve,

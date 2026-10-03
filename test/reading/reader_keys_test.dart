@@ -183,4 +183,68 @@ void main() {
       );
     });
   });
+
+  group('F-READ-35: чтение во весь экран', () {
+    test('F-READ-35: F11 разворачивает чтение там, где есть окно', () {
+      expect(
+        readerKeyAction(key: LogicalKeyboardKey.f11, canFullScreen: true),
+        ReaderKeyAction.fullScreen,
+      );
+    });
+
+    test('F-READ-35: без окна F11 не значит ничего', () {
+      expect(readerKeyAction(key: LogicalKeyboardKey.f11), isNull);
+    });
+
+    test('F-READ-35: F11 работает и из поля поиска — поле его не ждёт', () {
+      expect(
+        readerKeyAction(
+          key: LogicalKeyboardKey.f11,
+          typing: true,
+          searching: true,
+          canFullScreen: true,
+        ),
+        ReaderKeyAction.fullScreen,
+      );
+    });
+
+    test('F-READ-35: Esc выводит из полного экрана последним', () {
+      EscapeTarget target({
+        bool searching = false,
+        bool outline = false,
+        bool selecting = false,
+        bool panels = false,
+        bool fullScreen = true,
+      }) {
+        return escapeTarget(
+          searching: searching,
+          outline: outline,
+          selecting: selecting,
+          panels: panels,
+          fullScreen: fullScreen,
+        );
+      }
+
+      expect(target(searching: true), EscapeTarget.search);
+      expect(target(outline: true), EscapeTarget.outline);
+      // Поиск ближе оглавления: он открыт поверх.
+      expect(target(searching: true, outline: true), EscapeTarget.search);
+      expect(target(selecting: true), EscapeTarget.page);
+      expect(target(panels: true), EscapeTarget.page);
+      expect(target(), EscapeTarget.fullScreen);
+    });
+
+    test('F-READ-35: в обычном окне Esc делает то же, что раньше', () {
+      expect(
+        escapeTarget(
+          searching: false,
+          outline: false,
+          selecting: false,
+          panels: false,
+          fullScreen: false,
+        ),
+        EscapeTarget.page,
+      );
+    });
+  });
 }

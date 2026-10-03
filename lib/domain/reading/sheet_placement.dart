@@ -30,6 +30,16 @@ double clampStripFit(double value) {
   return value < kMinStripFit ? kMinStripFit : value;
 }
 
+/// С каким запасом по краям вписывать полосу.
+///
+/// В чтении во весь экран (F-READ-35) — вплотную, каким бы ни был запас
+/// у книги: режим затем и включают, чтобы экран занимала именно
+/// читаемая полоса. Запас книги при этом не теряется — он вернётся
+/// вместе с окном.
+double stripFitFor({required double stripFit, required bool fullScreen}) {
+  return fullScreen ? 1 : clampStripFit(stripFit);
+}
+
 /// Не трогал ли читатель масштаб страницы пальцами.
 ///
 /// Пальцы почти никогда не оставляют ровную единицу, поэтому «не трогал»

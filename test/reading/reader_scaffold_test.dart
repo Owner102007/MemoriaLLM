@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/reading/navigation.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_search.dart';
@@ -26,6 +29,7 @@ void main() {
   late List<String> steps;
   late List<LogicalKeyboardKey> bubbled;
   late int dismissals;
+  late List<bool> windows;
 
   setUp(() {
     reading = FakeReadingRepository();
@@ -33,6 +37,7 @@ void main() {
     steps = <String>[];
     bubbled = <LogicalKeyboardKey>[];
     dismissals = 0;
+    windows = <bool>[];
   });
 
   Future<ReaderController> makeController({
@@ -56,6 +61,10 @@ void main() {
     ReaderController controller, {
     DocumentSearch? search,
     Future<void> Function(SearchHit hit)? onGoToHit,
+    Future<void> Function(int page)? onGoToPage,
+    bool selecting = false,
+    bool fullScreen = false,
+    bool hasWindow = false,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -76,10 +85,15 @@ void main() {
             onPreviousFragment: () => steps.add('назад'),
             onNextFragment: () => steps.add('вперёд'),
             onDismiss: () => dismissals++,
-            onGoToPage: (int page) async {
-              jumps.add(page);
-              controller.onPageChanged(page);
-            },
+            selecting: selecting,
+            fullScreen: fullScreen,
+            onFullScreen: hasWindow ? windows.add : null,
+            onGoToPage:
+                onGoToPage ??
+                (int page) async {
+                  jumps.add(page);
+                  controller.onPageChanged(page);
+                },
             viewerBuilder: (BuildContext context, VoidCallback onTap) {
               return GestureDetector(
                 key: const Key('fake-viewer'),
@@ -239,6 +253,128 @@ void main() {
 
       expect(jumps, isNotEmpty);
       expect(jumps.last, greaterThan(1));
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('BUG-39: протяжка ползунка открывает одну страницу', (
+      WidgetTester tester,
+    ) async {
+      // Прежде переход шёл на каждое промежуточное значение: протяжка
+      // через полкниги ставила в очередь движка десятки страниц, и та,
+      // где читатель остановился, ждала за ними белым листом.
+      final ReaderController controller = await makeController(pages: 100);
+      await pumpReader(tester, controller);
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+
+      final Finder slider = find.byKey(const Key('reader-progress-slider'));
+      final Rect box = tester.getRect(slider);
+      final TestGesture gesture = await tester.startGesture(
+        Offset(box.left + 40, box.center.dy),
+      );
+      // Между движениями проходит меньше срока остановки: бегунок едет
+      // без пауз.
+      for (int i = 0; i < 8; i++) {
+        await gesture.moveBy(const Offset(30, 0));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(jumps, isEmpty, reason: 'пока бегунок тянут, книга стоит');
+      expect(
+        tester.widget<Slider>(slider).value,
+        greaterThan(20),
+        reason: 'а бегунок и подпись над ним едут за пальцем',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(jumps, hasLength(1), reason: 'переход один');
+      expect(jumps.single, greaterThan(20));
+      expect(controller.page, jumps.single);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('BUG-39: бегунок остановили, не отпуская, — страница открыта', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController(pages: 100);
+      await pumpReader(tester, controller);
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+
+      final Finder slider = find.byKey(const Key('reader-progress-slider'));
+      final Rect box = tester.getRect(slider);
+      final TestGesture gesture = await tester.startGesture(
+        Offset(box.left + 40, box.center.dy),
+      );
+      for (int i = 0; i < 4; i++) {
+        await gesture.moveBy(const Offset(30, 0));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(jumps, isEmpty);
+
+      // Палец на месте: срок вышел — открывается страница под бегунком.
+      await tester.pump(kSliderRest + const Duration(milliseconds: 20));
+      expect(jumps, hasLength(1));
+      final int rested = jumps.single;
+
+      // Держит дальше, не двигая: второй раз та же страница не зовётся.
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(jumps, hasLength(1));
+
+      // Потянул дальше и отпустил — открывается страница, где отпустил.
+      await gesture.moveBy(const Offset(90, 0));
+      await tester.pump(const Duration(milliseconds: 20));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(jumps, hasLength(2));
+      expect(jumps.last, greaterThan(rested));
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-READ-28: бегунок ждёт конца перехода и не отскакивает', (
+      WidgetTester tester,
+    ) async {
+      // Страница меняется не в тот же миг, что отпущен бегунок. Пока
+      // переход идёт, бегунок стоит там, где его оставили, а не
+      // возвращается на прежнюю страницу.
+      final ReaderController controller = await makeController(pages: 100);
+      final List<Completer<void>> arrivals = <Completer<void>>[];
+      await pumpReader(
+        tester,
+        controller,
+        onGoToPage: (int page) async {
+          jumps.add(page);
+          final Completer<void> arrival = Completer<void>();
+          arrivals.add(arrival);
+          await arrival.future;
+          controller.onPageChanged(page);
+        },
+      );
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+
+      final Finder slider = find.byKey(const Key('reader-progress-slider'));
+      await tester.drag(slider, const Offset(200, 0));
+      await tester.pump();
+      expect(jumps, hasLength(1));
+      expect(controller.page, 1, reason: 'переход ещё идёт');
+      expect(tester.widget<Slider>(slider).value, jumps.single.toDouble());
+
+      arrivals.single.complete();
+      await tester.pumpAndSettle();
+      expect(controller.page, jumps.single);
+      expect(tester.widget<Slider>(slider).value, jumps.single.toDouble());
+
+      // Книга ушла дальше стрелкой — бегунок снова следует за ней.
+      controller.onPageChanged(7);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 7);
 
       await controller.close();
       controller.dispose();
@@ -656,6 +792,96 @@ void main() {
       expect(visited, <int>[1]);
 
       search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-READ-35: F11 разворачивает чтение и возвращает окно', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller, hasWindow: true);
+      await press(tester, LogicalKeyboardKey.f11);
+      expect(windows, <bool>[true]);
+
+      await pumpReader(tester, controller, hasWindow: true, fullScreen: true);
+      await press(tester, LogicalKeyboardKey.f11);
+      expect(windows, <bool>[true, false]);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-READ-35: без окна F11 уходит мимо экрана чтения', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller);
+      await press(tester, LogicalKeyboardKey.f11);
+      expect(windows, isEmpty);
+      expect(bubbled, contains(LogicalKeyboardKey.f11));
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-READ-35: Esc возвращает окно, когда закрывать нечего', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller, hasWindow: true, fullScreen: true);
+
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(windows, <bool>[false]);
+      expect(dismissals, 0);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-READ-35: Esc сначала прячет панели и снимает выделение', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller, hasWindow: true, fullScreen: true);
+
+      // Панели на экране — Esc прячет их, окно остаётся во весь экран.
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+      expect(chromeOpacity(tester), 1);
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(chromeOpacity(tester), 0);
+      expect(windows, isEmpty);
+
+      // Текст выделен — Esc снимает выделение, окно остаётся.
+      await pumpReader(
+        tester,
+        controller,
+        hasWindow: true,
+        fullScreen: true,
+        selecting: true,
+      );
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(dismissals, 2);
+      expect(windows, isEmpty);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-READ-35: Esc при открытом поиске закрывает поиск', (
+      WidgetTester tester,
+    ) async {
+      final ReaderController controller = await makeController();
+      await pumpReader(tester, controller, hasWindow: true, fullScreen: true);
+
+      await press(tester, LogicalKeyboardKey.keyF, control: true);
+      expect(find.byKey(const Key('search-panel')), findsOneWidget);
+      // Курсор стоит в поле поиска, и Esc там разбирает сама панель.
+      await press(tester, LogicalKeyboardKey.escape);
+      expect(find.byKey(const Key('search-panel')), findsNothing);
+      expect(windows, isEmpty);
+
       await controller.close();
       controller.dispose();
     });

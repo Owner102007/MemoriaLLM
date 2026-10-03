@@ -1,6 +1,9 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+
 #include <optional>
+#include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -27,6 +30,28 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // F-READ-35: окно во весь экран по слову Dart. Плагина ради этого нет:
+  // вся работа — снять рамку и занять монитор.
+  window_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "memoria/window",
+          &flutter::StandardMethodCodec::GetInstance());
+  window_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() != "setFullScreen") {
+          result->NotImplemented();
+          return;
+        }
+        const bool* on = std::get_if<bool>(call.arguments());
+        if (on == nullptr) {
+          result->Error("bad_arguments", "setFullScreen expects a bool");
+          return;
+        }
+        result->Success(flutter::EncodableValue(SetFullScreen(*on)));
+      });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -40,11 +65,55 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Канал держит указатель на это окно — уходит первым.
+  window_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
 
   Win32Window::OnDestroy();
+}
+
+bool FlutterWindow::SetFullScreen(bool on) {
+  HWND window = GetHandle();
+  if (window == nullptr) {
+    return false;
+  }
+  if (on == full_screen_) {
+    return true;
+  }
+  if (on) {
+    // Запоминаем окно как есть — рамку, место, размер и развёрнутость, —
+    // чтобы вернуть его ровно таким же.
+    WINDOWPLACEMENT placement = {};
+    placement.length = sizeof(WINDOWPLACEMENT);
+    MONITORINFO monitor = {};
+    monitor.cbSize = sizeof(MONITORINFO);
+    if (!GetWindowPlacement(window, &placement) ||
+        !GetMonitorInfo(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
+                        &monitor)) {
+      return false;
+    }
+    windowed_placement_ = placement;
+    windowed_style_ = GetWindowLongPtr(window, GWL_STYLE);
+    // Весь монитор, а не рабочая область: панель задач тоже уходит.
+    const LONG_PTR frame = static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW);
+    SetWindowLongPtr(window, GWL_STYLE, windowed_style_ & ~frame);
+    SetWindowPos(window, HWND_TOP, monitor.rcMonitor.left,
+                 monitor.rcMonitor.top,
+                 monitor.rcMonitor.right - monitor.rcMonitor.left,
+                 monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    full_screen_ = true;
+    return true;
+  }
+  SetWindowLongPtr(window, GWL_STYLE, windowed_style_);
+  SetWindowPlacement(window, &windowed_placement_);
+  SetWindowPos(window, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+                   SWP_FRAMECHANGED);
+  full_screen_ = false;
+  return true;
 }
 
 LRESULT

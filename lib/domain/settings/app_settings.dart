@@ -57,6 +57,12 @@ abstract final class SettingsKeys {
   /// лежит под пальцем, зависит от телефона и руки.
   static const String volumeDownForward = 'reading.volume_down_forward';
 
+  /// Развёрнуто ли чтение во весь экран: `true`/`false` (F-READ-35).
+  ///
+  /// Настройка устройства: окно есть только у ПК, и разворачивать его
+  /// или нет, читатель решает за этим монитором, а не за книгой.
+  static const String readingFullScreen = 'reading.full_screen';
+
   /// Идентификатор этого устройства для меток HLC.
   static const String nodeId = 'sync.node_id';
 

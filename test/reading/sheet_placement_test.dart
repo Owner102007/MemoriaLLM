@@ -334,4 +334,56 @@ void main() {
       expect(isSheetZoomNeutral(double.nan), isFalse);
     });
   });
+
+  group('F-READ-35: чтение во весь экран', () {
+    test('F-READ-35: во весь экран полоса вписана вплотную', () {
+      // Каким бы ни был запас по краям у книги: режим затем и включают,
+      // чтобы экран занимала именно читаемая полоса.
+      expect(stripFitFor(stripFit: 0.85, fullScreen: true), 1);
+      expect(stripFitFor(stripFit: kMinStripFit, fullScreen: true), 1);
+    });
+
+    test('F-READ-35: в окне запас книги остаётся прежним', () {
+      expect(stripFitFor(stripFit: 0.85, fullScreen: false), 0.85);
+      expect(stripFitFor(stripFit: 1, fullScreen: false), 1);
+      expect(stripFitFor(stripFit: 0.1, fullScreen: false), kMinStripFit);
+    });
+
+    test('F-READ-35: полоса с запасом занимает монитор целиком', () {
+      // Разворот на мониторе 16:10: в окне полоса с запасом 0,87 не
+      // доходит до краёв, во весь экран — упирается в оба края той
+      // стороной, которой не хватает.
+      const CropBox strip = CropBox(
+        left: 0.05,
+        top: 0.04,
+        right: 0.95,
+        bottom: 0.96,
+      );
+      SheetViewport window({required bool fullScreen}) {
+        return fragmentBounds(
+          placement: placeFragment(
+            sheetWidth: 1190,
+            sheetHeight: 842,
+            fragment: strip,
+            screenWidth: 2000,
+            screenHeight: 1250,
+            fit: stripFitFor(stripFit: 0.87, fullScreen: fullScreen),
+          ),
+          fragment: strip,
+        );
+      }
+
+      final SheetViewport framed = window(fullScreen: false);
+      expect(framed.left, greaterThan(1));
+      expect(framed.top, greaterThan(1));
+
+      final SheetViewport full = window(fullScreen: true);
+      final bool touchesWidth =
+          full.left.abs() < 1e-6 && (full.width - 2000).abs() < 1e-6;
+      final bool touchesHeight =
+          full.top.abs() < 1e-6 && (full.height - 1250).abs() < 1e-6;
+      expect(touchesWidth || touchesHeight, isTrue);
+      expect(full.width, greaterThan(framed.width));
+    });
+  });
 }

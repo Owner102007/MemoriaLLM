@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -92,6 +93,13 @@ class ReaderSheetController {
 /// нажатие на 300 мс позже, чем оно случилось, — ждёт, не окажется ли
 /// оно двойным. Поверх него стоит [QuickTap], который только смотрит на
 /// указатель и сообщает о нажатии сразу; замок на это не влияет.
+///
+/// **Движение читателя — только пока раскладка стоит** (BUG-40). Когда
+/// меняется лист, область показа или домеряются страницы книги,
+/// просмотрщик перекладывает страницы и сам возвращает вид «туда, где он
+/// был». На это время предложенные им матрицы не принимаются и при
+/// отпертом замке — иначе его возврат читался как сдвиг страницы
+/// читателем.
 class ReaderSheet extends StatefulWidget {
   /// Создаёт лист.
   const ReaderSheet({
@@ -106,6 +114,7 @@ class ReaderSheet extends StatefulWidget {
     this.dim = kDefaultDimOutside,
     this.preview = true,
     this.reserve = 1,
+    this.progressOverPage = true,
     this.sheetController,
     this.onSelection,
     this.onTap,
@@ -162,6 +171,10 @@ class ReaderSheet extends StatefulWidget {
   /// Сколько соседних листов держать наготове с каждой стороны.
   final int reserve;
 
+  /// Можно ли класть указатель места поверх страницы, когда свободного
+  /// поля под него нет. В чтении во весь экран — нельзя (F-READ-35).
+  final bool progressOverPage;
+
   /// Рычаги к листу снаружи.
   final ReaderSheetController? sheetController;
 
@@ -206,6 +219,14 @@ class _ReaderSheetState extends State<ReaderSheet> {
   /// Раскладка и страницы, до которых просмотрщик уже доехал.
   SheetPlacement? _appliedPlacement;
   List<int> _appliedPages = const <int>[];
+  Size _appliedScreen = Size.zero;
+
+  /// Страницы документа, как мы их разложили для просмотрщика в прошлый
+  /// раз. Сменились — он перекладывает их у себя.
+  List<Rect>? _laidOut;
+
+  /// Сколько перекладок просмотрщика ещё не закончено (BUG-40).
+  int _relays = 0;
 
   /// Масштаб, в котором держатся грубые картинки страниц, в пикселях
   /// на точку PDF. Ноль — раскладки ещё не было.
@@ -259,10 +280,13 @@ class _ReaderSheetState extends State<ReaderSheet> {
     // Замок захлопнулся — страница замирает как есть. Но если её только
     // сдвинули, не меняя масштаба, сдвиг снимается: смещённая на палец
     // страница выглядит не выбором читателя, а поломкой, и вернуть её при
-    // запертом замке было бы нечем.
-    if (widget.locked && !oldWidget.locked && _transform.isNeutral) {
-      _transform = SheetTransform.none;
-      _sync();
+    // запертом замке было бы нечем (BUG-26).
+    if (widget.locked && !oldWidget.locked) {
+      final SheetTransform kept = sheetTransformOnLock(_transform);
+      if (kept != _transform) {
+        _transform = kept;
+        _sync();
+      }
     }
   }
 
@@ -349,6 +373,11 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (!mounted || widget.locked || !_ready || !_placement.isVisible) {
       return;
     }
+    // Пока просмотрщик перекладывает страницы, матрицу двигает он, а не
+    // читатель (BUG-40): запоминать нечего.
+    if (_relaying) {
+      return;
+    }
     final SheetTransform next = sheetTransformOf(
       matrix: _viewer.value,
       placement: _placement,
@@ -399,13 +428,51 @@ class _ReaderSheetState extends State<ReaderSheet> {
     );
   }
 
+  /// Перекладывает ли просмотрщик страницы прямо сейчас.
+  bool get _relaying => _relays > 0;
+
+  /// Раскладка сменилась: до конца перекладки матрицы просмотрщика — не
+  /// движение читателя.
+  ///
+  /// BUG-40, ALG-PDF-21; проверено по исходникам pdfrx 2.6.1
+  /// (`_updateLayout`, `onLayoutUpdate`). Переложив страницы или получив
+  /// область показа другого размера, просмотрщик возвращает вид «туда,
+  /// где он был», и делает это микрозадачей, поставленной во время
+  /// построения кадра. Если в том же кадре сменился лист, «где был» —
+  /// это прежний лист. При отпертом замке мы принимали такой возврат за
+  /// жест, и страница уезжала к краю экрана на всех следующих листах.
+  ///
+  /// Окно закрывается своей микрозадачей, поставленной после кадра: в
+  /// очереди она стоит за микрозадачей просмотрщика, и к её началу его
+  /// возврат уже отработал — и был отклонён в [_pin]. Зовётся только во
+  /// время построения кадра; на случай, если кадра нет, он
+  /// запрашивается.
+  void _beginRelay() {
+    _relays++;
+    SchedulerBinding.instance.ensureVisualUpdate();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      scheduleMicrotask(_endRelay);
+    });
+  }
+
+  void _endRelay() {
+    if (_relays > 0) {
+      _relays--;
+    }
+    if (mounted && !_relaying) {
+      // Просмотрщик мог оставить матрицу своей — ставим лист на место.
+      _sync();
+    }
+  }
+
   /// Матрица, приколоченная к раскладке листа.
   ///
   /// Просмотрщик зовёт это на каждое изменение матрицы и берёт ответ как
   /// есть. Заперт замок — возвращается наша матрица, и страница не уезжает
   /// ни от инерции, ни от случайного жеста. Отперт — берётся предложенная,
   /// но в разумных пределах: страницу нельзя ни увести с экрана целиком,
-  /// ни уменьшить до точки.
+  /// ни уменьшить до точки. Пока просмотрщик перекладывает страницы,
+  /// предложенное не берётся и при отпертом замке (BUG-40): это не жест.
   Matrix4 _pin(
     Matrix4 matrix,
     Size viewSize,
@@ -415,23 +482,23 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (!_placement.isVisible) {
       return matrix;
     }
-    if (widget.locked) {
-      return _target();
-    }
     final double documentLeft = _documentLeft();
-    final SheetTransform clamped = clampSheetTransform(
-      transform: sheetTransformOf(
+    final SheetTransform kept = sheetTransformAfterMove(
+      current: _transform,
+      proposed: sheetTransformOf(
         matrix: matrix,
         placement: _placement,
         documentLeft: documentLeft,
       ),
       placement: _placement,
       screen: viewSize,
+      locked: widget.locked,
+      relaying: _relaying,
     );
     return sheetMatrix(
       placement: _placement,
       documentLeft: documentLeft,
-      transform: clamped,
+      transform: kept,
     );
   }
 
@@ -453,6 +520,10 @@ class _ReaderSheetState extends State<ReaderSheet> {
   /// Соседние страницы при этом остаются в раскладке — их закрывает
   /// маска, а не отсутствие. Убрать их из раскладки нельзя: номера
   /// страниц и места в тексте считаются по всему документу.
+  ///
+  /// Просмотрщик зовёт это при каждом своём построении. Если страницы
+  /// легли иначе, чем в прошлый раз, — домерены их размеры, — он
+  /// переложит их и вернёт вид сам: открывается окно перекладки (BUG-40).
   PdfPageLayout _layoutPages(List<PdfPage> pages, PdfViewerParams params) {
     final List<Rect> rects = <Rect>[];
     double x = 0;
@@ -463,6 +534,10 @@ class _ReaderSheetState extends State<ReaderSheet> {
       if (page.height > height) {
         height = page.height;
       }
+    }
+    if (!listEquals(_laidOut, rects)) {
+      _laidOut = rects;
+      _beginRelay();
     }
     return PdfPageLayout(
       pageLayouts: rects,
@@ -670,6 +745,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
                   placement: placement,
                   screenWidth: _screen.width,
                   screenHeight: _screen.height,
+                  overPage: widget.progressOverPage,
                 ),
                 page: widget.page,
                 pageCount: widget.pageCount,
@@ -682,12 +758,20 @@ class _ReaderSheetState extends State<ReaderSheet> {
   }
 
   /// Довозит просмотрщик до новой раскладки — но не во время построения.
+  ///
+  /// Новый лист, новая раскладка или область показа другого размера —
+  /// это ещё и перекладка у просмотрщика: до её конца его матрицы не
+  /// принимаются за движение читателя (BUG-40).
   void _scheduleSync(SheetPlacement placement) {
-    if (placement == _appliedPlacement && _samePages(_appliedPages)) {
+    if (placement == _appliedPlacement &&
+        _screen == _appliedScreen &&
+        _samePages(_appliedPages)) {
       return;
     }
     _appliedPlacement = placement;
+    _appliedScreen = _screen;
     _appliedPages = List<int>.of(widget.pages);
+    _beginRelay();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _sync();

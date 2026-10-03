@@ -4,6 +4,7 @@ import '../domain/library/book_file_picker.dart';
 import '../domain/library/book_storage.dart';
 import '../domain/library/cover.dart';
 import '../domain/library/storage_access.dart';
+import '../domain/reading/full_screen.dart';
 import '../domain/reading/reader_document.dart';
 import '../domain/reading/volume_keys.dart';
 import '../infrastructure/files/android_book_storage.dart';
@@ -13,6 +14,7 @@ import '../infrastructure/files/local_book_storage.dart';
 import '../infrastructure/files/platform_storage_access.dart';
 import '../infrastructure/pdf/pdfrx_document.dart';
 import '../infrastructure/platform/android_volume_keys.dart';
+import '../infrastructure/platform/windows_full_screen.dart';
 import 'data/app_data.dart';
 import 'library/cover_service.dart';
 import 'library/device_library.dart';
@@ -33,6 +35,7 @@ class AppServices {
     required this.coverStore,
     required this.access,
     this.volumeKeys = const NoVolumeKeys(),
+    this.window = const NoFullScreenWindow(),
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -71,6 +74,10 @@ class AppServices {
       volumeKeys: Platform.isAndroid
           ? AndroidVolumeKeys()
           : const NoVolumeKeys(),
+      // Окно есть только у ПК; на телефоне страница и так во весь экран.
+      window: Platform.isWindows
+          ? WindowsFullScreen()
+          : const NoFullScreenWindow(),
     );
   }
 
@@ -100,4 +107,8 @@ class AppServices {
 
   /// Кнопки громкости: ими листают на телефоне (F-READ-26).
   final VolumeKeys volumeKeys;
+
+  /// Окно приложения: на ПК чтение разворачивается во весь экран
+  /// (F-READ-35).
+  final FullScreenWindow window;
 }

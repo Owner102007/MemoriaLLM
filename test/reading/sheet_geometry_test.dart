@@ -363,4 +363,151 @@ void main() {
       );
     });
   });
+
+  group('BUG-40: движение читателя — только пока раскладка стоит', () {
+    // Книга из одинаковых страниц 400×800, экран в размер страницы.
+    const Size screen = Size(400, 800);
+    const SheetPlacement page = SheetPlacement(
+      scale: 1,
+      left: 0,
+      top: 0,
+      sheetWidth: 400,
+      sheetHeight: 800,
+    );
+
+    /// Что просмотрщик предлагает после перекладки: вернуть вид к листу,
+    /// на котором он стоял, — сороковой странице. А лист уже сменился на
+    /// семисотую.
+    SheetTransform viewerReturn() {
+      final Matrix4 previousSheet = sheetMatrix(
+        placement: page,
+        documentLeft: 39 * 400,
+      );
+      return sheetTransformOf(
+        matrix: previousSheet,
+        placement: page,
+        documentLeft: 699 * 400,
+      );
+    }
+
+    test('BUG-40: возврат просмотрщика похож на сдвиг через полкниги', () {
+      // Так дефект и выглядел: расстояние между листами читалось как
+      // сдвиг страницы читателем, обрезалось до края экрана и
+      // запоминалось.
+      final SheetTransform proposed = viewerReturn();
+      expect(proposed.scale, closeTo(1, 1e-9));
+      expect(proposed.dx, closeTo((699 - 39) * 400, 1e-6));
+
+      final SheetTransform taken = sheetTransformAfterMove(
+        current: SheetTransform.none,
+        proposed: proposed,
+        placement: page,
+        screen: screen,
+        locked: false,
+        relaying: false,
+      );
+      final Rect sheet = sheetRectOnScreen(placement: page, transform: taken);
+      expect(
+        sheet.left,
+        closeTo(screen.width - kSheetKeepOnScreen, 1e-6),
+        reason: 'от страницы осталась полоска у края экрана',
+      );
+    });
+
+    test('BUG-40: пока страницы перекладываются, возврат не принимается', () {
+      final SheetTransform kept = sheetTransformAfterMove(
+        current: SheetTransform.none,
+        proposed: viewerReturn(),
+        placement: page,
+        screen: screen,
+        locked: false,
+        relaying: true,
+      );
+      expect(kept, SheetTransform.none);
+      expect(
+        sheetRectOnScreen(placement: page, transform: kept),
+        const Rect.fromLTWH(0, 0, 400, 800),
+        reason: 'страница стоит там, где её положила раскладка',
+      );
+    });
+
+    test('BUG-40: то, что читатель выставил сам, перекладка не трогает', () {
+      const SheetTransform mine = SheetTransform(scale: 1.6, dx: -90, dy: -40);
+      final SheetTransform kept = sheetTransformAfterMove(
+        current: mine,
+        proposed: viewerReturn(),
+        placement: page,
+        screen: screen,
+        locked: false,
+        relaying: true,
+      );
+      expect(kept, mine);
+    });
+
+    test('BUG-40: раскладка встала — жест читателя принимается', () {
+      const SheetTransform pinch = SheetTransform(scale: 1.4, dx: -20, dy: -30);
+      final SheetTransform taken = sheetTransformAfterMove(
+        current: SheetTransform.none,
+        proposed: pinch,
+        placement: page,
+        screen: screen,
+        locked: false,
+        relaying: false,
+      );
+      expect(taken.scale, 1.4);
+      expect(taken.dx, -20);
+      expect(taken.dy, -30);
+    });
+
+    test('BUG-40: при запертом замке страницу не двигает никто', () {
+      for (final bool relaying in <bool>[false, true]) {
+        final SheetTransform kept = sheetTransformAfterMove(
+          current: SheetTransform.none,
+          proposed: const SheetTransform(scale: 2, dx: 50, dy: 50),
+          placement: page,
+          screen: screen,
+          locked: true,
+          relaying: relaying,
+        );
+        expect(kept, SheetTransform.none);
+      }
+    });
+  });
+
+  group('BUG-26: замок возвращает сдвинутую страницу', () {
+    test('BUG-26: сдвинутая без масштаба страница встаёт на место', () {
+      // Прежде условие требовало ещё и сдвига меньше полуточки — то есть
+      // срабатывало только тогда, когда возвращать было нечего.
+      const SheetTransform nudged = SheetTransform(dx: 37, dy: -12);
+      expect(nudged.isNeutral, isFalse);
+      expect(sheetTransformOnLock(nudged), SheetTransform.none);
+    });
+
+    test('BUG-26: страница, уехавшая к краю экрана, тоже возвращается', () {
+      const SheetTransform edge = SheetTransform(scale: 1.002, dx: 352);
+      expect(sheetTransformOnLock(edge), SheetTransform.none);
+    });
+
+    test('BUG-26: осознанный масштаб замок сохраняет вместе со сдвигом', () {
+      const SheetTransform zoomed = SheetTransform(
+        scale: 1.8,
+        dx: -120,
+        dy: 40,
+      );
+      expect(sheetTransformOnLock(zoomed), zoomed);
+      const SheetTransform small = SheetTransform(scale: 0.6, dx: 15);
+      expect(sheetTransformOnLock(small), small);
+    });
+
+    test('BUG-26: нетронутая страница остаётся нетронутой', () {
+      expect(sheetTransformOnLock(SheetTransform.none), SheetTransform.none);
+    });
+
+    test('BUG-26: мусор на входе даёт нетронутый лист', () {
+      expect(
+        sheetTransformOnLock(const SheetTransform(scale: double.nan)),
+        SheetTransform.none,
+      );
+    });
+  });
 }

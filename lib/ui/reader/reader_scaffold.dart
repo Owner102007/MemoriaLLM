@@ -33,6 +33,9 @@ class ReaderScaffold extends StatefulWidget {
     this.onNextFragment,
     this.onDismiss,
     this.onPanelsChanged,
+    this.selecting = false,
+    this.fullScreen = false,
+    this.onFullScreen,
     this.extraActions = const <Widget>[],
     super.key,
   });
@@ -75,6 +78,18 @@ class ReaderScaffold extends StatefulWidget {
   /// чтобы не листать кнопками громкости книгу, которую закрыла панель
   /// (F-READ-26): панель — не маршрут, и навигатор о ней не знает.
   final ValueChanged<bool>? onPanelsChanged;
+
+  /// Выделен ли текст на странице. Нужно `Esc`: выделение он снимает
+  /// раньше, чем выводит из чтения во весь экран.
+  final bool selecting;
+
+  /// Развёрнуто ли чтение во весь экран (F-READ-35).
+  final bool fullScreen;
+
+  /// Развернуть чтение во весь экран или вернуть окно — клавишей `F11`
+  /// и `Esc`. `null` — платформа окно не разворачивает, и клавиши не
+  /// значат ничего.
+  final ValueChanged<bool>? onFullScreen;
 
   @override
   State<ReaderScaffold> createState() => ReaderScaffoldState();
@@ -235,6 +250,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       searching: searching,
       hasHits: widget.search.hits.isNotEmpty,
       typing: isTypingInField(),
+      canFullScreen: widget.onFullScreen != null,
     );
     if (action == null) {
       return KeyEventResult.ignored;
@@ -250,14 +266,30 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         unawaited(_stepHit(1));
       case ReaderKeyAction.previousHit:
         unawaited(_stepHit(-1));
+      case ReaderKeyAction.fullScreen:
+        // Только по нажатию: удержанная клавиша иначе гоняла бы окно
+        // туда-сюда с частотой автоповтора.
+        if (event is KeyDownEvent) {
+          widget.onFullScreen?.call(!widget.fullScreen);
+        }
       case ReaderKeyAction.dismiss:
-        if (searching) {
-          scaffold?.closeEndDrawer();
-        } else if (scaffold?.isDrawerOpen ?? false) {
-          scaffold?.closeDrawer();
-        } else {
-          widget.onDismiss?.call();
-          hideChrome();
+        final EscapeTarget target = escapeTarget(
+          searching: searching,
+          outline: scaffold?.isDrawerOpen ?? false,
+          selecting: widget.selecting,
+          panels: _chromeVisible,
+          fullScreen: widget.fullScreen && widget.onFullScreen != null,
+        );
+        switch (target) {
+          case EscapeTarget.search:
+            scaffold?.closeEndDrawer();
+          case EscapeTarget.outline:
+            scaffold?.closeDrawer();
+          case EscapeTarget.fullScreen:
+            widget.onFullScreen?.call(false);
+          case EscapeTarget.page:
+            widget.onDismiss?.call();
+            hideChrome();
         }
     }
     return KeyEventResult.handled;
@@ -323,7 +355,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
               canGoForward: controller.nextSheetStart != null,
               progress: controller.progress,
               onStep: _stepSheet,
-              onPage: (int page) => unawaited(_goTo(page)),
+              onPage: _goTo,
               onOutline: () {
                 unawaited(controller.loadOutline());
                 _scaffoldKey.currentState?.openDrawer();
@@ -448,7 +480,9 @@ class _BottomBar extends StatelessWidget {
 
   /// Шаг стрелкой на соседний лист.
   final void Function({required bool forward}) onStep;
-  final void Function(int page) onPage;
+
+  /// Переход ползунком; будущее завершается, когда переход закончен.
+  final Future<void> Function(int page) onPage;
   final VoidCallback onOutline;
 
   @override
@@ -480,14 +514,10 @@ class _BottomBar extends StatelessWidget {
                     // Ползунок нужен только там, где есть куда его тянуть:
                     // на книге в одну страницу Slider с min == max падает.
                     child: pageCount > 1
-                        ? Slider(
-                            key: const Key('reader-progress-slider'),
-                            min: 1,
-                            max: pageCount.toDouble(),
-                            divisions: pageCount - 1,
-                            value: clampPage(page, pageCount).toDouble(),
-                            label: '$page',
-                            onChanged: (double value) => onPage(value.round()),
+                        ? _PageSlider(
+                            page: page,
+                            pageCount: pageCount,
+                            onPage: onPage,
                           )
                         : const SizedBox(height: 48),
                   ),
@@ -522,6 +552,118 @@ class _BottomBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Ползунок страниц нижней панели.
+///
+/// BUG-39, F-READ-28: пока бегунок тянут, книга стоит, а меняется только
+/// подпись над ним. Переход один — туда, где бегунок простоял
+/// [kSliderRest] или был отпущен; страницы по пути не открываются.
+/// Нужен ли переход, решает [SliderDrag]; здесь — срок и сам ползунок.
+class _PageSlider extends StatefulWidget {
+  const _PageSlider({
+    required this.page,
+    required this.pageCount,
+    required this.onPage,
+  });
+
+  final int page;
+  final int pageCount;
+  final Future<void> Function(int page) onPage;
+
+  @override
+  State<_PageSlider> createState() => _PageSliderState();
+}
+
+class _PageSliderState extends State<_PageSlider> {
+  final SliderDrag _drag = SliderDrag();
+
+  /// Срок, который бегунок обязан простоять.
+  Timer? _rest;
+
+  /// Держит ли читатель бегунок прямо сейчас.
+  bool _touching = false;
+
+  /// Сколько отправленных переходов ещё не закончено.
+  int _going = 0;
+
+  @override
+  void dispose() {
+    _rest?.cancel();
+    super.dispose();
+  }
+
+  void _onChanged(double value) {
+    setState(() => _drag.move(value.round()));
+    // Срок идёт заново с каждым движением: переход — только когда
+    // бегунок остановился. Он же закрывает случай, когда бегунок двигают
+    // без пальца — клавишами или средствами доступности: отпускания там
+    // не бывает вовсе.
+    _rest?.cancel();
+    _rest = Timer(kSliderRest, _settle);
+  }
+
+  void _onChangeEnd(double value) {
+    _touching = false;
+    _rest?.cancel();
+    _rest = null;
+    _drag.move(value.round());
+    _settle();
+  }
+
+  /// Бегунок остановился или отпущен.
+  void _settle() {
+    _rest = null;
+    if (!mounted) {
+      return;
+    }
+    final int? page = _drag.rest(current: widget.page);
+    if (page != null) {
+      unawaited(_go(page));
+      return;
+    }
+    _follow();
+  }
+
+  Future<void> _go(int page) async {
+    _going++;
+    try {
+      await widget.onPage(page);
+    } finally {
+      _going--;
+      _follow();
+    }
+  }
+
+  /// Возвращает бегунок книге, когда держать его больше нечем.
+  ///
+  /// До конца перехода бегунок стоит там, где его оставили: страница
+  /// меняется не в тот же миг, и без этого он на мгновение отскакивал бы
+  /// на прежнее место.
+  void _follow() {
+    if (!mounted || _touching || _going > 0 || _rest != null) {
+      return;
+    }
+    if (_drag.held != null) {
+      setState(_drag.release);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final int shown = clampPage(_drag.held ?? widget.page, widget.pageCount);
+    return Slider(
+      key: const Key('reader-progress-slider'),
+      min: 1,
+      max: widget.pageCount.toDouble(),
+      divisions: widget.pageCount - 1,
+      value: shown.toDouble(),
+      label: '$shown',
+      onChangeStart: (double value) => _touching = true,
+      onChanged: _onChanged,
+      onChangeEnd: _onChangeEnd,
     );
   }
 }
