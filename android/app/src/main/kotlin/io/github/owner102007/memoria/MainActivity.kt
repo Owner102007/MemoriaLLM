@@ -159,11 +159,16 @@ class MainActivity : FlutterActivity() {
     private fun adjustVolume(direction: Int) {
         val audio =
             getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-        audio.adjustSuggestedStreamVolume(
-            direction,
-            AudioManager.USE_DEFAULT_STREAM_TYPE,
-            AudioManager.FLAG_SHOW_UI,
-        )
+        try {
+            audio.adjustSuggestedStreamVolume(
+                direction,
+                AudioManager.USE_DEFAULT_STREAM_TYPE,
+                AudioManager.FLAG_SHOW_UI,
+            )
+        } catch (error: SecurityException) {
+            // Система не дала увести звонок в беззвучный режим: на этой
+            // границе кнопка ничего не делает, а падать из-за неё нельзя.
+        }
     }
 
     /** Включён ли экранный диктор (TalkBack). */

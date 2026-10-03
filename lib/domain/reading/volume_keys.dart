@@ -70,10 +70,7 @@ enum VolumeKeyOutcome {
 /// Настройки листания кнопками громкости. Настройка устройства.
 class VolumeKeySettings {
   /// Создаёт настройки.
-  const VolumeKeySettings({
-    this.enabled = true,
-    this.downIsForward = true,
-  });
+  const VolumeKeySettings({this.enabled = true, this.downIsForward = true});
 
   /// Настройки из сохранённых строк; чего нет — берётся по умолчанию.
   ///

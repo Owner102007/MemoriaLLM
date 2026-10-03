@@ -98,7 +98,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Листание кнопками громкости (F-READ-26): настройка устройства и
   /// правило «короткое нажатие листает, удержание меняет громкость».
-  VolumeKeySettings _volume = const VolumeKeySettings();
+  ///
+  /// Пока настройка не прочитана, перехвата нет: книга открывается
+  /// раньше, чем дочитываются настройки устройства, и читатель,
+  /// выключивший листание, на миг получал бы его обратно.
+  VolumeKeySettings _volume = const VolumeKeySettings(enabled: false);
   final VolumeKeyTurner _volumeTurner = VolumeKeyTurner();
   late final VolumeKeyHandler _volumeHandler = _onVolumeKey;
 
@@ -143,7 +147,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void initState() {
     super.initState();
-    widget.services.volumeKeys.attach(_volumeHandler);
     // Чтение во весь экран: системные панели уходят и возвращаются по
     // жесту от края. Страница — это вся поверхность, а не окно в ней.
     unawaited(
@@ -217,7 +220,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     _volumeSent = active;
-    if (!active) {
+    if (active) {
+      // Получатель у платформы один. Подключаемся каждый раз, когда
+      // страница снова на экране: пока поверх лежала другая книга, им
+      // была она.
+      widget.services.volumeKeys.attach(_volumeHandler);
+    } else {
       _volumeTurner.reset();
     }
     unawaited(widget.services.volumeKeys.setActive(active));

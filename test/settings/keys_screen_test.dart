@@ -135,6 +135,9 @@ void main() {
 
     final Finder tile = find.byKey(_tile);
     await tester.scrollUntilVisible(tile, 200);
+    // Нажатие считает место по последнему кадру: без него оно ушло бы
+    // туда, где плитка была до прокрутки.
+    await tester.pump();
     await tester.tap(tile);
     await tester.pumpAndSettle();
 

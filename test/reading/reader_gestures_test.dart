@@ -116,33 +116,30 @@ void main() {
       );
     });
 
-    test('BUG-37: удержание пальца — не нажатие', () {
-      // С порога удержания начинается выделение слова.
+    test('BUG-37: на пороге удержания решает распознаватель', () {
+      // Он живёт по таймеру, а метки времени события с таймером
+      // расходятся на миллисекунды. Сверяй мы порог ещё и по меткам,
+      // касание на самой границе не стало бы ни нажатием, ни выделением.
       final TapWatch watch = build().watch;
-      expect(tap(watch, held: kTouchSelectionDelay), isNull);
-      expect(
-        tap(
-          watch,
-          held: kTouchSelectionDelay - const Duration(milliseconds: 1),
-        ),
-        at,
-      );
+      expect(tap(watch, held: kTouchSelectionDelay), at);
+    });
+
+    test('BUG-37: заведомое удержание — не нажатие и без распознавателя', () {
+      // Страховка: вдвое дольше порога — уже точно не нажатие.
+      final TapWatch watch = build().watch;
+      final Duration long = kTouchSelectionDelay * kHoldBackstop;
+      expect(tap(watch, held: long), isNull);
+      expect(tap(watch, held: long - const Duration(milliseconds: 1)), at);
     });
 
     test('BUG-37: мышь можно держать дольше пальца', () {
       // У мыши удержание — полсекунды: раньше просмотрщик слово не
       // выделяет, и неторопливый щелчок обязан остаться щелчком.
       final TapWatch watch = build().watch;
+      const PointerDeviceKind mouse = PointerDeviceKind.mouse;
+      expect(tap(watch, kind: mouse, held: kMouseHoldDelay), at);
       expect(
-        tap(
-          watch,
-          kind: PointerDeviceKind.mouse,
-          held: const Duration(milliseconds: 400),
-        ),
-        at,
-      );
-      expect(
-        tap(watch, kind: PointerDeviceKind.mouse, held: kMouseHoldDelay),
+        tap(watch, kind: mouse, held: kMouseHoldDelay * kHoldBackstop),
         isNull,
       );
     });
@@ -200,10 +197,7 @@ void main() {
 
     test('BUG-37: правая кнопка мыши — не нажатие', () {
       final TapWatch watch = build().watch;
-      expect(
-        tap(watch, kind: PointerDeviceKind.mouse, primary: false),
-        isNull,
-      );
+      expect(tap(watch, kind: PointerDeviceKind.mouse, primary: false), isNull);
     });
 
     test('BUG-37: началось выделение — жест нажатием уже не станет', () {
@@ -254,7 +248,8 @@ void main() {
       // Жест решён нами, чем бы ни кончился: если просмотрщик счёл
       // нажатием то, что мы отвергли, листать по его слову нельзя.
       final ({TapWatch watch, void Function(Duration) wait}) kit = build();
-      expect(tap(kit.watch, held: kTouchSelectionDelay), isNull);
+      final Duration long = kTouchSelectionDelay * kHoldBackstop;
+      expect(tap(kit.watch, held: long), isNull);
       kit.wait(const Duration(milliseconds: 300));
       expect(kit.watch.echoes(), isTrue);
     });
@@ -274,6 +269,30 @@ void main() {
       // сообщение просмотрщика — единственное, что о нажатии известно.
       final ({TapWatch watch, void Function(Duration) wait}) kit = build();
       expect(kit.watch.echoes(), isFalse);
+    });
+
+    test('BUG-37: нажатие, оставленное просмотрщику, — не эхо', () {
+      // Пока текст выделен, нажатие исполняет просмотрщик: только он
+      // отличает страницу от ручки выделения. Его сообщение обязано
+      // дойти до дела — и ровно один раз.
+      final ({TapWatch watch, void Function(Duration) wait}) kit = build();
+      expect(tap(kit.watch), at);
+      kit.watch.leaveToViewer();
+      kit.wait(const Duration(milliseconds: 300));
+      expect(kit.watch.echoes(), isFalse);
+      expect(kit.watch.echoes(), isTrue);
+    });
+
+    test('BUG-37: следующее нажатие забывает оставленное', () {
+      // Просмотрщик мог и не сообщить: нажали по ручке выделения или
+      // дважды подряд. Следующее нажатие, исполненное сразу, не должно
+      // исполниться ещё раз из-за старой пометки.
+      final ({TapWatch watch, void Function(Duration) wait}) kit = build();
+      expect(tap(kit.watch), at);
+      kit.watch.leaveToViewer();
+      expect(tap(kit.watch, pointer: 2), at);
+      kit.wait(const Duration(milliseconds: 300));
+      expect(kit.watch.echoes(), isTrue);
     });
 
     test('BUG-37: допуск и порог зависят от указателя', () {

@@ -85,6 +85,10 @@ void main() {
     expect(ours, <Offset>[const Offset(700, 300)]);
     expect(executed, 1);
     expect(viewers, isEmpty);
+
+    // Таймеры распознавателя двойного нажатия обязаны догореть до конца
+    // теста.
+    await tester.pump(kDoubleTapTimeout);
   });
 
   testWidgets('BUG-37: эхо просмотрщика второй раз не исполняется', (
@@ -149,10 +153,7 @@ void main() {
   ) async {
     await pumpPage(tester);
 
-    await tester.tapAt(
-      const Offset(700, 300),
-      kind: PointerDeviceKind.mouse,
-    );
+    await tester.tapAt(const Offset(700, 300), kind: PointerDeviceKind.mouse);
     expect(ours, <Offset>[const Offset(700, 300)]);
 
     await tester.tapAt(
@@ -161,5 +162,7 @@ void main() {
       buttons: kSecondaryButton,
     );
     expect(ours, hasLength(1));
+
+    await tester.pump(kDoubleTapTimeout);
   });
 }

@@ -48,9 +48,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         builder: (BuildContext context, Widget? child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(accessibleNavigation: screenReader),
+          data: MediaQuery.of(context)
+              .copyWith(accessibleNavigation: screenReader),
           child: child!,
         ),
         home: ReaderScreen(
