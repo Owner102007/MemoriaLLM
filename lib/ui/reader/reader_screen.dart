@@ -165,7 +165,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late final VolumeKeyHandler _volumeHandler = _onVolumeKey;
 
   /// На экране ли страница: поверх нет ни шторки, ни диалога, ни другого
-  /// экрана ([_onTop]) и не открыты оглавление с поиском ([_panelOpen]).
+  /// экрана ([_onTop]), и её не закрыла панель ([_panelOpen]) —
+  /// оглавление или поиск, пока в нём набирают запрос на узком экране.
   bool _onTop = true;
   bool _panelOpen = false;
 
@@ -190,6 +191,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// прямоугольники, читатель мог попросить другой переход — тогда этот
   /// устарел и ничего не меняет.
   int _markRun = 0;
+
+  /// Запрос, по которому отмечено найденное; `null` — отмечена цитата
+  /// или не отмечено ничего. Запрос сменился — отметка прежнего уходит.
+  String? _markQuery;
 
   /// Открыта ли панель поиска. Пока она открыта, на странице подсвечены
   /// все совпадения запроса, а текущее — ярче (F-TEXT-11).
@@ -381,8 +386,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Говорит платформе, перехватывать ли кнопки громкости.
   ///
   /// Пока перехват выключен, `MainActivity` кнопки не трогает вовсе, и
-  /// громкость меняет система своим путём — в шторке, в поиске, на
-  /// экране цитат и везде, где читатель не смотрит на страницу.
+  /// громкость меняет система своим путём — в шторке, в оглавлении, на
+  /// экране цитат и везде, где читатель не смотрит на страницу. Поиск,
+  /// который страницу не закрывает, перехвату не мешает: там кнопки
+  /// ведут по совпадениям (F-TEXT-11).
   void _syncVolumeKeys() {
     final bool active = _volumeKeysActive;
     if (active == _volumeSent) {
@@ -865,6 +872,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!mounted || controller == null || search == null) {
       return;
     }
+    // Запрос сменился — отметка найденного по прежнему запросу уходит:
+    // яркая подсветка слова, которое уже не ищут, только путала бы.
+    final String? marked = _markQuery;
+    if (marked != null && marked != search.query) {
+      _markQuery = null;
+      setState(() {
+        _mark = null;
+        _markRects = const <TextBox>[];
+      });
+    }
     final List<int> pages = controller.sheetPages;
     final bool shown = _searchShown && _flow == PageFlow.paged;
     final List<SearchHit> hits = <SearchHit>[
@@ -1167,7 +1184,26 @@ class _ReaderScreenState extends State<ReaderScreen> {
       page: hit.pageNumber,
       start: hit.sourceStart,
       end: hit.sourceEnd,
+      query: _search?.query,
     );
+  }
+
+  /// Прямоугольники отмеченного места; пусто, если их нет или страницу
+  /// не удалось разобрать. Не бросает: подсветка — не то, ради чего
+  /// стоит срывать переход.
+  Future<List<TextBox>> _markRectsOf(
+    ReaderController controller,
+    _PageMark mark,
+  ) async {
+    try {
+      return await controller.highlightFor(
+        pageNumber: mark.pageNumber,
+        start: mark.start,
+        end: mark.end,
+      );
+    } on Object {
+      return const <TextBox>[];
+    }
   }
 
   /// Открывает страницу и подсвечивает на ней кусок текста.
@@ -1180,10 +1216,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Без координат — просто переход на страницу. Так открываются старые
   /// цитаты, сохранённые до схемы 8: подсвечивать у них нечего, и делать
   /// вид, что есть, нечестно.
+  ///
+  /// [query] — запрос, по которому место найдено; у цитаты его нет.
   Future<void> _showMark({
     required int page,
     required int? start,
     required int? end,
+    String? query,
   }) async {
     final ReaderController? controller = _controller;
     if (controller == null) {
@@ -1200,13 +1239,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // всегда вёл в первую полосу страницы: в ½ и ⅓ найденное оставалось
     // в тени или за экраном, а читателя, уже стоявшего на этой странице,
     // возвращало к её началу.
-    final List<TextBox> rects = mark == null
-        ? const <TextBox>[]
-        : await controller.highlightFor(
-            pageNumber: page,
-            start: mark.start,
-            end: mark.end,
-          );
+    //
+    // Ждут их недолго ([_revealWait]): разбор тяжёлой страницы не должен
+    // держать читателя на прежней (BUG-23). Не успели — переход идёт в
+    // начало страницы, а полоса и подсветка встают, когда досчитаются.
+    final Future<List<TextBox>> loading = mark == null
+        ? Future<List<TextBox>>.value(const <TextBox>[])
+        : _markRectsOf(controller, mark);
+    List<TextBox> rects = await loading.timeout(
+      _revealWait,
+      onTimeout: () => const <TextBox>[],
+    );
     if (!mounted || run != _markRun) {
       return;
     }
@@ -1219,11 +1262,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!arrived || !mounted || run != _markRun) {
       return;
     }
+    if (rects.isEmpty) {
+      rects = await loading;
+      if (!mounted || run != _markRun || controller.page != page) {
+        return;
+      }
+      // Досчитались уже после перехода: полоса выбирается теперь.
+      if (rects.isNotEmpty) {
+        final bool shown = await _goToPage(page, reveal: rects.first);
+        if (!shown || !mounted || run != _markRun) {
+          return;
+        }
+      }
+    }
     setState(() {
       _mark = mark;
       _markRects = rects;
+      _markQuery = mark == null ? null : query;
     });
   }
+
+  /// Сколько переход к найденному ждёт его прямоугольники, прежде чем
+  /// открыть страницу без них. Четверть секунды читатель не замечает, а
+  /// страница с текстом за это время разбирается почти всегда.
+  static const Duration _revealWait = Duration(milliseconds: 250);
 
   /// Экран «Цитаты и заметки» и возвращение из него в книгу.
   ///
@@ -1705,6 +1767,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             child: HighlightLayer(
               rects: others,
               color: theme.colorScheme.tertiary.withValues(alpha: 0.15),
+              others: true,
             ),
           ),
         if (found.isNotEmpty)

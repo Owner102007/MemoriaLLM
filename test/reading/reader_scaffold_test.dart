@@ -1045,6 +1045,74 @@ void main() {
       await controller.close();
       controller.dispose();
     });
+
+    testWidgets(
+      'ПК: поле отдало указатель ввода — клавиши чтения живы',
+      (WidgetTester tester) async {
+        // Найдено независимой проверкой шага 08. `Enter` в поле запускает
+        // поиск и отбирает у поля указатель ввода. Панель стоит прямо в
+        // теле экрана, и без своей области фокуса указатель уходил бы к
+        // маршруту — выше узла клавиш чтения: `Esc`, `F3` и стрелки
+        // замолкали до следующего нажатия по полю.
+        resize(tester, const Size(1280, 800));
+        final _Searched book = await threes();
+        final ReaderController controller = book.controller;
+        final DocumentSearch search = book.search;
+        await pumpReader(tester, controller, search: search);
+        await openSearch(tester);
+
+        await tester.enterText(field, 'семёрка');
+        await tester.testTextInput.receiveAction(TextInputAction.search);
+        await tester.pumpAndSettle();
+        expect(search.query, 'семёрка');
+        expect(count(tester), 'из 1');
+
+        // Стрелка листает страницу рядом с панелью…
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pumpAndSettle();
+        expect(steps, <String>['вперёд']);
+
+        // …`F3` ведёт к найденному…
+        await tester.sendKeyEvent(LogicalKeyboardKey.f3);
+        await tester.pumpAndSettle();
+        expect(jumps, <int>[4]);
+
+        // …а `Esc` закрывает поиск.
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(panel, findsNothing);
+
+        search.dispose();
+        await controller.close();
+        controller.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.windows),
+    );
+
+    testWidgets('Esc рядом с панелью сначала снимает выделение', (
+      WidgetTester tester,
+    ) async {
+      // Панель стоит рядом со страницей подолгу: закрывать её раньше,
+      // чем снято выделение на видимой странице, значило бы отбирать у
+      // `Esc` привычное дело.
+      resize(tester, const Size(1280, 800));
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search, selecting: true);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(dismissals, 1, reason: 'Esc ушёл на страницу');
+      expect(panel, findsOneWidget, reason: 'поиск остался открытым');
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
   });
 
   group('клавиатура', () {

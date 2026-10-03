@@ -17,7 +17,12 @@ import 'package:flutter/material.dart';
 /// каждое нажатие: панели не показывались, края не листали.
 class HighlightLayer extends StatelessWidget {
   /// Создаёт слой подсветки.
-  const HighlightLayer({required this.rects, required this.color, super.key});
+  const HighlightLayer({
+    required this.rects,
+    required this.color,
+    this.others = false,
+    super.key,
+  });
 
   /// Прямоугольники в координатах экрана.
   final List<Rect> rects;
@@ -25,13 +30,17 @@ class HighlightLayer extends StatelessWidget {
   /// Цвет подсветки.
   final Color color;
 
+  /// Слой остальных совпадений запроса, а не текущего (F-TEXT-11): на
+  /// листе их два, и по ключу один от другого надо отличать.
+  final bool others;
+
   @override
   Widget build(BuildContext context) {
     if (rects.isEmpty) {
       return const SizedBox.expand();
     }
     return CustomPaint(
-      key: const Key('reader-highlight'),
+      key: Key(others ? 'reader-highlight-others' : 'reader-highlight'),
       painter: _HighlightPainter(rects: rects, color: color),
       size: Size.infinite,
     );

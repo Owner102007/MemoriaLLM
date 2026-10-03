@@ -18,12 +18,7 @@ void main() {
 
   /// Строка текста на экране: во всю ширину колонки, у высоты [top].
   Rect line(Size screen, double top, {double height = 24}) {
-    return Rect.fromLTWH(
-      screen.width * 0.1,
-      top,
-      screen.width * 0.8,
-      height,
-    );
+    return Rect.fromLTWH(screen.width * 0.1, top, screen.width * 0.8, height);
   }
 
   SearchDock place(
@@ -185,18 +180,11 @@ void main() {
     });
 
     test('строка через всю полосу — панель сжимается до строки', () {
-      final SearchDock dock = place(
-        phoneTurned,
-        found: const Rect.fromLTWH(40, 100, 680, 20),
-      );
+      const Rect found = Rect.fromLTWH(40, 100, 680, 20);
+      final SearchDock dock = place(phoneTurned, found: found);
       expect(dock.compact, isTrue);
       expect(dock.side, SearchDockSide.bottom);
-      expect(
-        dock.rectIn(phoneTurned).overlaps(
-          const Rect.fromLTWH(40, 100, 680, 20),
-        ),
-        isFalse,
-      );
+      expect(dock.rectIn(phoneTurned).overlaps(found), isFalse);
     });
 
     test('поворот экрана выбирает сторону заново', () {

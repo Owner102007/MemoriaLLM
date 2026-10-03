@@ -37,6 +37,7 @@ class SearchPanel extends StatefulWidget {
     this.compact = false,
     this.translucent = false,
     this.edged = false,
+    this.side,
     this.fieldFocus,
     this.onStep,
     this.onEdit,
@@ -65,6 +66,13 @@ class SearchPanel extends StatefulWidget {
 
   /// Стоит ли панель рядом со страницей: тогда их разделяет линия.
   final bool edged;
+
+  /// У какого края панель лежит полосой; `null` — она занимает экран
+  /// целиком или стоит рядом со страницей.
+  ///
+  /// От вырезов экрана полоса отступает только там, где она его краёв
+  /// касается: нижней полосе верхний вырез не сосед.
+  final SearchDockSide? side;
 
   /// Узел поля ввода: экран чтения ставит в него указатель, когда
   /// открывает поиск.
@@ -200,21 +208,29 @@ class _SearchPanelState extends State<SearchPanel> {
     final DocumentSearch search = widget.search;
     final Color surface = theme.colorScheme.surface;
     final bool list = !widget.compact && search.hits.isNotEmpty;
-    return Material(
-      key: const Key('search-panel'),
-      // Поверх страницы панель полупрозрачна: сквозь неё видно, что под
-      // ней. Рядом со страницей прозрачность ни к чему.
-      color: widget.translucent
-          ? surface.withValues(alpha: kSearchPanelOpacity)
-          : surface,
-      child: DecoratedBox(
-        position: DecorationPosition.foreground,
-        decoration: BoxDecoration(
-          border: widget.edged
-              ? Border(left: BorderSide(color: theme.dividerColor))
-              : null,
+    // Своя область фокуса, как была у боковой шторки. Поле, потеряв
+    // указатель ввода — по `Enter` или по нажатию мышью мимо него, —
+    // отдаёт его своей области, а она лежит ниже узла клавиш чтения:
+    // `Esc`, `F3` и стрелки продолжают до него доходить. Без области
+    // указатель уходил бы к маршруту, выше узла, и клавиши чтения
+    // замолкали до следующего нажатия по полю.
+    return FocusScope(
+      child: Material(
+        key: const Key('search-panel'),
+        // Поверх страницы панель полупрозрачна: сквозь неё видно, что
+        // под ней. Рядом со страницей прозрачность ни к чему.
+        color: widget.translucent
+            ? surface.withValues(alpha: kSearchPanelOpacity)
+            : surface,
+        child: DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(
+            border: widget.edged
+                ? Border(left: BorderSide(color: theme.dividerColor))
+                : null,
+          ),
+          child: _content(context, theme, search, list: list),
         ),
-        child: _content(context, theme, search, list: list),
       ),
     );
   }
@@ -225,7 +241,12 @@ class _SearchPanelState extends State<SearchPanel> {
     DocumentSearch search, {
     required bool list,
   }) {
+    final SearchDockSide? side = widget.side;
     return SafeArea(
+      left: side != SearchDockSide.right,
+      top: side != SearchDockSide.bottom,
+      right: side != SearchDockSide.left,
+      bottom: side != SearchDockSide.top,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -403,17 +424,14 @@ class _SearchPanelState extends State<SearchPanel> {
     // Строки одной высоты: место любой из них в списке известно без
     // раскладки, и текущий результат докручивается в видимое счётом.
     // Две строки отрывка — столько помещается при любом кегле системы.
-    final double line = MediaQuery.textScalerOf(
-      context,
-    ).scale((style.fontSize ?? 12) * (style.height ?? 1.4));
+    final double line = MediaQuery.textScalerOf(context)
+        .scale((style.fontSize ?? 12) * (style.height ?? 1.4));
     _rowExtent = line * 2 + 20;
     // На полупрозрачной панели пишут только основным цветом текста:
     // вторичный и акцентный над чужой страницей не держат контраст
     // (`kSearchPanelOpacity`).
     final Color ink = theme.colorScheme.onSurface;
-    final Color accent = widget.translucent
-        ? ink
-        : theme.colorScheme.secondary;
+    final Color accent = widget.translucent ? ink : theme.colorScheme.secondary;
     return ListView.builder(
       key: const Key('search-results'),
       controller: _scroll,
