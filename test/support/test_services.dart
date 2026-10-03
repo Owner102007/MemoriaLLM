@@ -23,9 +23,14 @@ import 'fake_reading.dart';
 /// пути превратил бы `pumpAndSettle` в ожидание до таймаута. Полка при
 /// этом проверяется в том виде, в каком читатель видит её первые
 /// мгновения после запуска: с заглушками вместо картинок.
+///
+/// [opener] подменяет открывателя книги для чтения — когда тесту надо
+/// решать самому, откроется ли книга и когда. Обложек и обхода устройства
+/// это не касается.
 AppServices testServices({
   required AppData data,
   ReaderDocument? document,
+  DocumentOpener? opener,
   PickedFile? picked,
   List<PickedFile>? batch,
   BookStorage? storage,
@@ -42,7 +47,7 @@ AppServices testServices({
   final StorageAccess grant = access ?? FakeStorageAccess();
   return AppServices(
     data: data,
-    opener: FakeDocumentOpener(doc),
+    opener: opener ?? FakeDocumentOpener(doc),
     picker: FakeBookFilePicker(picked, batch: batch),
     storage: books,
     coverStore: covers,

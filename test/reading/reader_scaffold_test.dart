@@ -695,6 +695,74 @@ void main() {
       controller.dispose();
     });
 
+    testWidgets('BUG-08: первое Shift+F3 ведёт на последнее совпадение', (
+      WidgetTester tester,
+    ) async {
+      // Счёт начинается с «ни на каком»: шаг назад оттуда — это последнее
+      // совпадение, а не предпоследнее, как выходило из `(−2) mod n`.
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>['тройка', 'тройка', 'ничего', 'тройка'],
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: fakeBook(pageCount: 4),
+        opener: FakeDocumentOpener(document),
+        reading: reading,
+      );
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start('тройка');
+
+      final List<int> visited = <int>[];
+      await pumpReader(
+        tester,
+        controller,
+        search: search,
+        onGoToHit: (SearchHit hit) async => visited.add(hit.pageNumber),
+      );
+
+      await press(tester, LogicalKeyboardKey.f3, shift: true);
+      expect(visited, <int>[4], reason: 'последнее совпадение');
+
+      // Дальше — назад по кругу, как и прежде.
+      await press(tester, LogicalKeyboardKey.f3, shift: true);
+      await press(tester, LogicalKeyboardKey.f3, shift: true);
+      await press(tester, LogicalKeyboardKey.f3, shift: true);
+      expect(visited, <int>[4, 2, 1, 4]);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('BUG-08: при двух совпадениях первое Shift+F3 — на второе', (
+      WidgetTester tester,
+    ) async {
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>['тройка', 'ничего', 'тройка'],
+      );
+      final ReaderController controller = await ReaderController.open(
+        book: fakeBook(pageCount: 3),
+        opener: FakeDocumentOpener(document),
+        reading: reading,
+      );
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start('тройка');
+
+      final List<int> visited = <int>[];
+      await pumpReader(
+        tester,
+        controller,
+        search: search,
+        onGoToHit: (SearchHit hit) async => visited.add(hit.pageNumber),
+      );
+
+      await press(tester, LogicalKeyboardKey.f3, shift: true);
+      expect(visited, <int>[3]);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
     testWidgets('новый запрос начинает счёт совпадений заново', (
       WidgetTester tester,
     ) async {
