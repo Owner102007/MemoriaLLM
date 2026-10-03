@@ -1,13 +1,12 @@
-import 'dart:ui' show PointerDeviceKind;
+import 'dart:ui' show Offset, PointerDeviceKind;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/reading/reader_gestures.dart';
 
-/// Жесты чтения: главное замечание владельца по проверке S6.
+/// Жесты чтения: что считать нажатием и что оно значит.
 ///
-/// «Нельзя листать книгу, пока текст выделен» — и это не мелкая помеха, а
-/// отобранная у читателя книга. Правило проверяется здесь числами, потому
-/// что в живом дереве виджетов слой выделения требует настоящего PDFium.
+/// Правила проверяются здесь числами, потому что в живом дереве виджетов
+/// слой выделения и сам просмотрщик требуют настоящего PDFium.
 void main() {
   group('зоны листания', () {
     test('края листают, середина показывает панели', () {
@@ -19,22 +18,28 @@ void main() {
       expect(readerTapAt(share: 0.5, selecting: false), ReaderTap.toggleChrome);
     });
 
-    test('выделенный текст зоны не отменяет', () {
-      // То самое замечание: книга не перестаёт быть книгой оттого, что в
-      // ней что-то выделено.
-      expect(
-        readerTapAt(share: 0.05, selecting: true),
-        ReaderTap.previousFragment,
-      );
-      expect(readerTapAt(share: 0.95, selecting: true), ReaderTap.nextFragment);
+    test('F-READ-22: при выделении нажатие в любой зоне снимает '
+        'выделение и не листает', () {
+      // Решение владельца 03.10.2026, отменяет решение 06.09.2026:
+      // читатель, промахнувшийся мимо панели над выделением, терял и
+      // выделение, и страницу разом.
+      for (final double share in <double>[-0.2, 0.05, 0.3, 0.5, 0.7, 0.95]) {
+        expect(
+          readerTapAt(share: share, selecting: true),
+          ReaderTap.dismissSelection,
+          reason: 'доля ширины $share',
+        );
+      }
     });
 
-    test('в середине при выделении нажатие снимает выделение', () {
-      // Панели при этом не появляются: читатель просил убрать выделение,
-      // а не открыть настройки.
+    test('F-READ-22: без выделения зоны листают как прежде', () {
       expect(
-        readerTapAt(share: 0.5, selecting: true),
-        ReaderTap.dismissSelection,
+        readerTapAt(share: 0.05, selecting: false),
+        ReaderTap.previousFragment,
+      );
+      expect(
+        readerTapAt(share: 0.95, selecting: false),
+        ReaderTap.nextFragment,
       );
     });
 
@@ -57,6 +62,228 @@ void main() {
         ReaderTap.previousFragment,
       );
       expect(readerTapAt(share: 1.2, selecting: false), ReaderTap.nextFragment);
+    });
+  });
+
+  group('BUG-37: нажатие узнаём сами', () {
+    const Offset at = Offset(300, 200);
+    const Duration quick = Duration(milliseconds: 80);
+
+    /// Наблюдатель с часами, которые переводит тест.
+    ({TapWatch watch, void Function(Duration) wait}) build() {
+      Duration now = const Duration(seconds: 10);
+      final TapWatch watch = TapWatch(clock: () => now);
+      return (watch: watch, wait: (Duration by) => now += by);
+    }
+
+    Offset? tap(
+      TapWatch watch, {
+      int pointer = 1,
+      Offset down = at,
+      Offset? up,
+      Duration held = quick,
+      Duration start = Duration.zero,
+      PointerDeviceKind kind = PointerDeviceKind.touch,
+      bool primary = true,
+    }) {
+      watch.down(
+        pointer: pointer,
+        position: down,
+        time: start,
+        kind: kind,
+        primary: primary,
+      );
+      return watch.up(
+        pointer: pointer,
+        position: up ?? down,
+        time: start + held,
+      );
+    }
+
+    test('BUG-37: короткое касание — нажатие, и известно оно сразу', () {
+      // Сразу — значит в тот же вызов, которым поднят палец: ждать
+      // трети секунды, не окажется ли нажатие двойным, незачем.
+      final TapWatch watch = build().watch;
+      expect(tap(watch), at);
+    });
+
+    test('BUG-37: два быстрых нажатия — два нажатия', () {
+      final TapWatch watch = build().watch;
+      expect(tap(watch), at);
+      expect(
+        tap(watch, pointer: 2, start: const Duration(milliseconds: 150)),
+        at,
+      );
+    });
+
+    test('BUG-37: удержание пальца — не нажатие', () {
+      // С порога удержания начинается выделение слова.
+      final TapWatch watch = build().watch;
+      expect(tap(watch, held: kTouchSelectionDelay), isNull);
+      expect(
+        tap(
+          watch,
+          held: kTouchSelectionDelay - const Duration(milliseconds: 1),
+        ),
+        at,
+      );
+    });
+
+    test('BUG-37: мышь можно держать дольше пальца', () {
+      // У мыши удержание — полсекунды: раньше просмотрщик слово не
+      // выделяет, и неторопливый щелчок обязан остаться щелчком.
+      final TapWatch watch = build().watch;
+      expect(
+        tap(
+          watch,
+          kind: PointerDeviceKind.mouse,
+          held: const Duration(milliseconds: 400),
+        ),
+        at,
+      );
+      expect(
+        tap(watch, kind: PointerDeviceKind.mouse, held: kMouseHoldDelay),
+        isNull,
+      );
+    });
+
+    test('BUG-37: сдвиг дальше допуска — не нажатие', () {
+      final TapWatch watch = build().watch;
+      expect(tap(watch, up: at + const Offset(kTouchTapSlop + 1, 0)), isNull);
+      // В пределах допуска палец дрожит, а не тянет.
+      const Offset near = Offset(300 + kTouchTapSlop - 1, 200);
+      expect(tap(watch, up: near), near);
+    });
+
+    test('BUG-37: у мыши допуск мал — дальше начинается выделение', () {
+      final TapWatch watch = build().watch;
+      expect(
+        tap(
+          watch,
+          kind: PointerDeviceKind.mouse,
+          up: at + const Offset(kPreciseTapSlop + 1, 0),
+        ),
+        isNull,
+      );
+      expect(tap(watch, kind: PointerDeviceKind.mouse), at);
+    });
+
+    test('BUG-37: ушёл и вернулся — всё равно не нажатие', () {
+      // Палец, который съездил в сторону и вернулся, что-то тянул.
+      final TapWatch watch = build().watch;
+      watch.down(
+        pointer: 1,
+        position: at,
+        time: Duration.zero,
+        kind: PointerDeviceKind.touch,
+      );
+      watch.move(pointer: 1, position: at + const Offset(60, 0));
+      watch.move(pointer: 1, position: at);
+      expect(watch.up(pointer: 1, position: at, time: quick), isNull);
+    });
+
+    test('BUG-37: второй палец — щипок, а не два нажатия', () {
+      final TapWatch watch = build().watch;
+      for (final int pointer in <int>[1, 2]) {
+        watch.down(
+          pointer: pointer,
+          position: at,
+          time: Duration.zero,
+          kind: PointerDeviceKind.touch,
+        );
+      }
+      expect(watch.up(pointer: 1, position: at, time: quick), isNull);
+      expect(watch.up(pointer: 2, position: at, time: quick), isNull);
+      // Пальцы убраны — следующее касание снова обычное.
+      expect(tap(watch, pointer: 3), at);
+    });
+
+    test('BUG-37: правая кнопка мыши — не нажатие', () {
+      final TapWatch watch = build().watch;
+      expect(
+        tap(watch, kind: PointerDeviceKind.mouse, primary: false),
+        isNull,
+      );
+    });
+
+    test('BUG-37: началось выделение — жест нажатием уже не станет', () {
+      // Распознаватель удержания живёт по таймеру, и его слово —
+      // последнее: иначе одно касание и выделило бы слово, и листнуло.
+      final TapWatch watch = build().watch;
+      watch.down(
+        pointer: 1,
+        position: at,
+        time: Duration.zero,
+        kind: PointerDeviceKind.touch,
+      );
+      watch.spoil();
+      expect(watch.up(pointer: 1, position: at, time: quick), isNull);
+      // Испорчен один жест, а не все последующие.
+      expect(tap(watch, pointer: 2), at);
+    });
+
+    test('BUG-37: выделение без касания ничего не портит', () {
+      final TapWatch watch = build().watch;
+      watch.spoil();
+      expect(tap(watch), at);
+    });
+
+    test('BUG-37: отобранный системой указатель — не нажатие', () {
+      final TapWatch watch = build().watch;
+      watch.down(
+        pointer: 1,
+        position: at,
+        time: Duration.zero,
+        kind: PointerDeviceKind.touch,
+      );
+      watch.cancel(pointer: 1);
+      expect(watch.up(pointer: 1, position: at, time: quick), isNull);
+      expect(tap(watch, pointer: 2), at);
+    });
+
+    test('BUG-37: сообщение просмотрщика о том же нажатии — эхо', () {
+      // Он пришлёт его через 300 мс; исполнять второй раз нельзя —
+      // страница перелистнулась бы дважды.
+      final ({TapWatch watch, void Function(Duration) wait}) kit = build();
+      expect(tap(kit.watch), at);
+      kit.wait(const Duration(milliseconds: 300));
+      expect(kit.watch.echoes(), isTrue);
+    });
+
+    test('BUG-37: эхо отвергнутого жеста тоже эхо', () {
+      // Жест решён нами, чем бы ни кончился: если просмотрщик счёл
+      // нажатием то, что мы отвергли, листать по его слову нельзя.
+      final ({TapWatch watch, void Function(Duration) wait}) kit = build();
+      expect(tap(kit.watch, held: kTouchSelectionDelay), isNull);
+      kit.wait(const Duration(milliseconds: 300));
+      expect(kit.watch.echoes(), isTrue);
+    });
+
+    test('BUG-37: после двух быстрых нажатий эхо не копится', () {
+      // О двойном нажатии просмотрщик одиночным не сообщает вовсе.
+      // Счётчик «жду два сообщения» проглотил бы следующее настоящее.
+      final ({TapWatch watch, void Function(Duration) wait}) kit = build();
+      expect(tap(kit.watch), at);
+      expect(tap(kit.watch, pointer: 2), at);
+      kit.wait(kViewerTapEcho + const Duration(milliseconds: 1));
+      expect(kit.watch.echoes(), isFalse);
+    });
+
+    test('BUG-37: нажатие без указателя — не эхо', () {
+      // Так нажимают средства доступности: событий указателя нет, и
+      // сообщение просмотрщика — единственное, что о нажатии известно.
+      final ({TapWatch watch, void Function(Duration) wait}) kit = build();
+      expect(kit.watch.echoes(), isFalse);
+    });
+
+    test('BUG-37: допуск и порог зависят от указателя', () {
+      expect(tapSlopFor(PointerDeviceKind.touch), kTouchTapSlop);
+      expect(tapSlopFor(PointerDeviceKind.stylus), kTouchTapSlop);
+      expect(tapSlopFor(PointerDeviceKind.mouse), kPreciseTapSlop);
+      expect(tapHoldLimitFor(PointerDeviceKind.touch), kTouchSelectionDelay);
+      expect(tapHoldLimitFor(PointerDeviceKind.mouse), kMouseHoldDelay);
+      // Эхо обязано пережить ожидание двойного нажатия с запасом.
+      expect(kViewerTapEcho.inMilliseconds, greaterThan(300 * 2));
     });
   });
 

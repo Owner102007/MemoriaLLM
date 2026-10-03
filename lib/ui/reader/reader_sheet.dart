@@ -11,6 +11,7 @@ import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/sheet_transform.dart';
+import 'quick_tap.dart';
 import 'reader_mask.dart';
 import 'reading_progress_book.dart';
 
@@ -86,6 +87,11 @@ class ReaderSheetController {
 /// протяжка мимо текста двигает страницу; пальцем протяжка двигает,
 /// удержание выделяет. Проверено по исходникам pdfrx 2.6.1: так работает
 /// `enableSelectionHandles`, оставленный по умолчанию.
+///
+/// **Нажатие узнаём сами** (BUG-37): просмотрщик объявляет одиночное
+/// нажатие на 300 мс позже, чем оно случилось, — ждёт, не окажется ли
+/// оно двойным. Поверх него стоит [QuickTap], который только смотрит на
+/// указатель и сообщает о нажатии сразу; замок на это не влияет.
 class ReaderSheet extends StatefulWidget {
   /// Создаёт лист.
   const ReaderSheet({
@@ -162,9 +168,11 @@ class ReaderSheet extends StatefulWidget {
   /// Выделение изменилось. Пустой список означает, что выделения нет.
   final void Function(List<PdfPageTextRange> ranges)? onSelection;
 
-  /// Нажатие по странице мимо выделенного текста: экран чтения решает,
-  /// листать, снять выделение или показать панели.
-  final void Function(Offset localPosition)? onTap;
+  /// Нажатие по странице: экран чтения решает, листать, снять выделение
+  /// или показать панели. `selecting` — есть ли сейчас выделение у
+  /// просмотрщика: он узнаёт о нём раньше, чем экран успевает его
+  /// разобрать.
+  final void Function(Offset localPosition, {required bool selecting})? onTap;
 
   /// Что нарисовать поверх листа: подсветка найденного, панель действий.
   final Widget Function(BuildContext context, SheetView view)? overlay;
@@ -181,6 +189,10 @@ class _ReaderSheetState extends State<ReaderSheet> {
   };
 
   final PdfViewerController _viewer = PdfViewerController();
+
+  /// Нажатие узнаём сами, по сырым событиям указателя, а не от
+  /// просмотрщика: тот объявляет его на 300 мс позже (BUG-37).
+  final TapWatch _taps = TapWatch();
 
   /// Раскладка последнего построения: её же спрашивает [_pin].
   SheetPlacement _placement = SheetPlacement.none;
@@ -458,15 +470,45 @@ class _ReaderSheetState extends State<ReaderSheet> {
     );
   }
 
+  /// Выделено ли что-нибудь прямо сейчас — по словам самого просмотрщика.
+  bool get _selecting =>
+      _ready && _viewer.textSelectionDelegate.hasSelectedText;
+
+  /// Нажатие, которое мы узнали сами, — исполняется сразу.
+  void _onQuickTap(Offset position) {
+    widget.onTap?.call(position, selecting: _selecting);
+  }
+
+  /// Что о нажатии сообщил просмотрщик.
+  ///
+  /// BUG-37, проверено по исходникам pdfrx 2.6.1 (`pdf_viewer.dart`,
+  /// `GestureDetector` страниц): одиночное, двойное и долгое нажатие
+  /// стоят на одном распознавателе, и одиночное объявляется, только когда
+  /// истёк срок ожидания двойного, — через 300 мс. Двойное при этом не
+  /// делает ничего. Поэтому нажатие исполняет [_onQuickTap], в миг, когда
+  /// указатель поднят, а сюда оно доходит эхом — и второй раз не
+  /// исполняется, иначе страница перелистнулась бы дважды.
+  ///
+  /// Не эхо — нажатие без указателя: так нажимают средства доступности.
+  ///
+  /// Одиночное нажатие просмотрщику не отдаётся никогда, в том числе по
+  /// выделенному тексту: снять выделение или листать, решает экран
+  /// чтения (F-READ-22), а не просмотрщик.
   bool _onGeneralTap(
     BuildContext context,
     PdfViewerController controller,
     PdfViewerGeneralTapHandlerDetails details,
   ) {
-    if (details.type == PdfViewerGeneralTapType.tap &&
-        details.tapOn != PdfViewerPart.selectedText) {
-      widget.onTap?.call(details.localPosition);
+    if (details.type == PdfViewerGeneralTapType.tap) {
+      if (!_taps.echoes()) {
+        widget.onTap?.call(details.localPosition, selecting: _selecting);
+      }
       return true;
+    }
+    if (details.type == PdfViewerGeneralTapType.longPress) {
+      // Мышью удержание узнаёт сам просмотрщик — и выделяет слово.
+      // Жест, которым оно сделано, нажатием уже не станет.
+      _taps.spoil();
     }
     return false;
   }
@@ -653,6 +695,17 @@ class _ReaderSheetState extends State<ReaderSheet> {
   }
 
   Widget _buildViewer({required double cacheExtent}) {
+    // Слушатель нажатий стоит снаружи и в арене жестов не участвует
+    // вовсе: он только смотрит на указатель и узнаёт нажатие раньше
+    // просмотрщика (BUG-37).
+    return QuickTap(
+      watch: _taps,
+      onTap: _onQuickTap,
+      child: _buildSelectingViewer(cacheExtent: cacheExtent),
+    );
+  }
+
+  Widget _buildSelectingViewer({required double cacheExtent}) {
     // Своё долгое нажатие поверх просмотрщика: порог у него стандартный,
     // полсекунды, а нужно «почти моментально». Распознаватель спорит в
     // общей арене на равных — быстрое касание он проигрывает, и зоны
@@ -666,8 +719,12 @@ class _ReaderSheetState extends State<ReaderSheet> {
                 supportedDevices: _holdDevices,
               ),
               (LongPressGestureRecognizer instance) {
-                instance.onLongPressStart = (LongPressStartDetails details) =>
-                    _selectWordAt(details.localPosition);
+                instance.onLongPressStart = (LongPressStartDetails details) {
+                  // Удержание победило: этот жест — выделение, и нажатием
+                  // он уже не станет, когда бы ни подняли палец.
+                  _taps.spoil();
+                  _selectWordAt(details.localPosition);
+                };
               },
             ),
       },

@@ -1,15 +1,17 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../application/build_info.dart';
 import '../../application/theme/theme_controller.dart';
 import '../../domain/settings/app_settings.dart';
 import '../../domain/theme/app_palette.dart';
+import 'keys_screen.dart';
 import 'reading_defaults_screen.dart';
 
-/// Настройки: оформление и чтение по умолчанию. Остальные разделы
-/// появляются по мере роста приложения.
+/// Настройки: оформление, чтение по умолчанию, клавиши и громкость.
+/// Остальные разделы появляются по мере роста приложения.
 class SettingsScreen extends StatelessWidget {
   /// Создаёт экран настроек.
   const SettingsScreen({
@@ -73,6 +75,26 @@ class SettingsScreen extends StatelessWidget {
                   );
                 },
               ),
+              // Кнопки громкости есть только у телефона. Раздел появится
+              // и на ПК — вместе с таблицей клавиш (F-READ-25); до того
+              // пустой экран там был бы обманом.
+              if (defaultTargetPlatform == TargetPlatform.android)
+                ListTile(
+                  key: const Key('keys-tile'),
+                  title: const Text('Клавиши и громкость'),
+                  subtitle: const Text('Листание кнопками громкости'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    unawaited(
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (BuildContext context) =>
+                              KeysScreen(settings: settings),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               const Divider(),
               ListTile(
                 key: const Key('build-label'),

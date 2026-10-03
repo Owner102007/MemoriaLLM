@@ -45,6 +45,18 @@ abstract final class SettingsKeys {
   /// платформы.
   static const String pageReserve = 'reading.page_reserve';
 
+  /// Листать ли кнопками громкости: `true`/`false` (F-READ-26).
+  ///
+  /// Настройка устройства: кнопки громкости есть у телефона, и привычка
+  /// листать ими — у того, кто держит его в руке.
+  static const String volumeKeys = 'reading.volume_keys';
+
+  /// Листает ли кнопка «тише» вперёд: `true`/`false` (F-READ-26).
+  ///
+  /// Иначе вперёд листает «громче». Настройка устройства: какая кнопка
+  /// лежит под пальцем, зависит от телефона и руки.
+  static const String volumeDownForward = 'reading.volume_down_forward';
+
   /// Идентификатор этого устройства для меток HLC.
   static const String nodeId = 'sync.node_id';
 

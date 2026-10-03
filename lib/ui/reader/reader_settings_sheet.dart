@@ -25,8 +25,12 @@ class ReaderSettingsSheet extends StatelessWidget {
   /// Состояние книги.
   final ReaderController controller;
 
-  /// Как листается книга сейчас.
-  final PageFlow flow;
+  /// Как листается книга сейчас — живое значение, а не снимок.
+  ///
+  /// BUG-36: способ листания хранит экран чтения, а не контроллер книги,
+  /// и шторка, получавшая его значением при открытии, не узнавала о
+  /// смене: книга переключалась, а выбранной оставалась прежняя кнопка.
+  final ValueNotifier<PageFlow> flow;
 
   /// Сменить способ листания.
   final ValueChanged<PageFlow> onFlow;
@@ -43,10 +47,11 @@ class ReaderSettingsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: Listenable.merge(<Listenable>[controller, flow]),
       builder: (BuildContext context, Widget? child) {
         final ThemeData theme = Theme.of(context);
         final BookReadingSettings settings = controller.settings;
+        final PageFlow current = flow.value;
         return Material(
           color: theme.colorScheme.surface.withValues(alpha: 0.97),
           child: SafeArea(
@@ -89,7 +94,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                         ChoiceChip(
                           key: Key('reader-flow-${value.name}'),
                           label: Text(pageFlowName(value)),
-                          selected: flow == value,
+                          selected: current == value,
                           onSelected: (bool selected) {
                             if (selected) {
                               onFlow(value);

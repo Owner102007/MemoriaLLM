@@ -8,6 +8,7 @@ import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/domain/reading/volume_keys.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
 
 import 'fake_reading.dart';
@@ -29,6 +30,7 @@ AppServices testServices({
   BookStorage? storage,
   MemoryCoverStore? coverStore,
   StorageAccess? access,
+  VolumeKeys volumeKeys = const NoVolumeKeys(),
   List<ScannedFile> onDevice = const <ScannedFile>[],
 }) {
   final ReaderDocument doc =
@@ -43,6 +45,7 @@ AppServices testServices({
     storage: books,
     coverStore: covers,
     access: grant,
+    volumeKeys: volumeKeys,
     covers: CoverService(
       opener: FakeDocumentOpener(
         doc,
@@ -133,4 +136,44 @@ class FakeStorageAccess implements StorageAccess {
   @override
   Future<List<String>> roots() async =>
       current.allowsScan ? paths : const <String>[];
+}
+
+/// Кнопки громкости, которые нажимает тест (F-READ-26).
+///
+/// Запоминает всё, что экран говорил платформе о перехвате, и отдаёт
+/// получателю события так же, как это делает `MainActivity`.
+class FakeVolumeKeys implements VolumeKeys {
+  VolumeKeyHandler? _handler;
+
+  /// Что экран говорил о перехвате, по порядку.
+  final List<bool> switches = <bool>[];
+
+  /// Перехватываются ли кнопки сейчас.
+  bool get active => switches.isNotEmpty && switches.last;
+
+  /// Подключён ли получатель.
+  bool get attached => _handler != null;
+
+  @override
+  void attach(VolumeKeyHandler handler) => _handler = handler;
+
+  @override
+  void detach(VolumeKeyHandler handler) {
+    if (_handler == handler) {
+      _handler = null;
+      switches.add(false);
+    }
+  }
+
+  @override
+  Future<void> setActive(bool active) async => switches.add(active);
+
+  /// Событие кнопки; `null` — получателя нет.
+  VolumeKeyOutcome? send(VolumeKeyEvent event) => _handler?.call(event);
+
+  /// Короткое нажатие: нажали и отпустили. Возвращает ответ на отпускание.
+  VolumeKeyOutcome? click(VolumeKey key) {
+    send(VolumeKeyEvent(key: key, pressed: true));
+    return send(VolumeKeyEvent(key: key, pressed: false));
+  }
 }

@@ -23,6 +23,7 @@ import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_search.dart';
+import '../../domain/reading/volume_keys.dart';
 import '../../domain/settings/app_settings.dart';
 import '../annotations/annotations_screen.dart';
 import 'crop_editor_screen.dart';
@@ -76,7 +77,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   DocumentSearch? _search;
   DocumentOpenException? _failure;
   bool _loading = true;
-  PageFlow _flow = PageFlow.paged;
+
+  /// Как листается книга. Живое значение: его слушает шторка настроек,
+  /// которая открыта поверх экрана и сама не перестраивается (BUG-36).
+  final ValueNotifier<PageFlow> _flowNow = ValueNotifier<PageFlow>(
+    PageFlow.paged,
+  );
   AppLifecycleListener? _lifecycle;
   ScreenOrientation _rotation = ScreenOrientation.portrait;
   bool _zoomLocked = true;
@@ -89,6 +95,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
     reserve: null,
     desktop: !_canTurn,
   );
+
+  /// Листание кнопками громкости (F-READ-26): настройка устройства и
+  /// правило «короткое нажатие листает, удержание меняет громкость».
+  VolumeKeySettings _volume = const VolumeKeySettings();
+  final VolumeKeyTurner _volumeTurner = VolumeKeyTurner();
+  late final VolumeKeyHandler _volumeHandler = _onVolumeKey;
+
+  /// На экране ли страница: поверх нет ни шторки, ни диалога, ни другого
+  /// экрана ([_onTop]) и не открыты оглавление с поиском ([_panelOpen]).
+  bool _onTop = true;
+  bool _panelOpen = false;
+
+  /// Включён ли экранный диктор.
+  bool _screenReader = false;
+
+  /// Что о перехвате кнопок сказано платформе в последний раз.
+  bool? _volumeSent;
 
   /// Что выделено сейчас.
   BookSelection? _selection;
@@ -115,9 +138,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
 
+  PageFlow get _flow => _flowNow.value;
+
   @override
   void initState() {
     super.initState();
+    widget.services.volumeKeys.attach(_volumeHandler);
     // Чтение во весь экран: системные панели уходят и возвращаются по
     // жесту от края. Страница — это вся поверхность, а не окно в ней.
     unawaited(
@@ -152,6 +178,74 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final Size size = MediaQuery.sizeOf(context);
     _area = DisplayArea(width: size.width, height: size.height);
     _controller?.setDisplayArea(_area, canTurn: _canTurn);
+    // Маршрут сообщает сюда же, когда поверх него что-то открыли или
+    // закрыли: шторку, диалог, другой экран. Кнопки громкости листают,
+    // только пока читатель смотрит на страницу (F-READ-26).
+    _screenReader = MediaQuery.accessibleNavigationOf(context);
+    _refreshOnTop();
+  }
+
+  /// Перечитывает, лежит ли что-нибудь поверх экрана чтения.
+  ///
+  /// Зовётся и по сообщению маршрута, и после каждого окна, которое
+  /// экран открывал сам, и перед разбором события кнопки: пропустить
+  /// смену нельзя — кнопки громкости листали бы книгу из-под шторки.
+  void _refreshOnTop() {
+    if (!mounted) {
+      return;
+    }
+    _onTop = ModalRoute.of(context)?.isCurrent ?? true;
+    _syncVolumeKeys();
+  }
+
+  /// Листают ли кнопки громкости прямо сейчас.
+  bool get _volumeKeysActive => volumeKeysActive(
+    settings: _volume,
+    bookOpen: _controller != null && !_loading && _failure == null,
+    onTop: _onTop && !_panelOpen,
+    screenReader: _screenReader,
+  );
+
+  /// Говорит платформе, перехватывать ли кнопки громкости.
+  ///
+  /// Пока перехват выключен, `MainActivity` кнопки не трогает вовсе, и
+  /// громкость меняет система своим путём — в шторке, в поиске, на
+  /// экране цитат и везде, где читатель не смотрит на страницу.
+  void _syncVolumeKeys() {
+    final bool active = _volumeKeysActive;
+    if (active == _volumeSent) {
+      return;
+    }
+    _volumeSent = active;
+    if (!active) {
+      _volumeTurner.reset();
+    }
+    unawaited(widget.services.volumeKeys.setActive(active));
+  }
+
+  /// Кнопка громкости: листнуть или сказать платформе поменять громкость.
+  ///
+  /// F-READ-26, ALG-READ-06. Листается так же, как клавишами: в
+  /// постраничном чтении — на полосу, в ленте — на страницу; выделение
+  /// при этом снимается.
+  VolumeKeyOutcome _onVolumeKey(VolumeKeyEvent event) {
+    _refreshOnTop();
+    final VolumeKeyOutcome outcome = _volumeTurner.handle(
+      event,
+      active: mounted && _volumeKeysActive,
+      downIsForward: _volume.downIsForward,
+    );
+    if (outcome == VolumeKeyOutcome.forward) {
+      _stepFragment(forward: true);
+    } else if (outcome == VolumeKeyOutcome.back) {
+      _stepFragment(forward: false);
+    }
+    return outcome;
+  }
+
+  void _onPanels(bool open) {
+    _panelOpen = open;
+    _syncVolumeKeys();
   }
 
   /// Положение экрана и способ листания — настройки устройства, а не
@@ -164,10 +258,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final String? language = await settings.read(SettingsKeys.targetLanguage);
     final String? preview = await settings.read(SettingsKeys.pagePreview);
     final String? reserve = await settings.read(SettingsKeys.pageReserve);
+    final String? volume = await settings.read(SettingsKeys.volumeKeys);
+    final String? volumeDown = await settings.read(
+      SettingsKeys.volumeDownForward,
+    );
     if (!mounted) {
       return;
     }
     _myLanguage = language ?? _myLanguage;
+    _volume = VolumeKeySettings.parse(
+      enabled: volume,
+      downIsForward: volumeDown,
+    );
     setState(() {
       _turning = PageTurnSettings.parse(
         preview: preview,
@@ -177,7 +279,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _rotation = rotation == ScreenOrientation.landscape.name
           ? ScreenOrientation.landscape
           : ScreenOrientation.portrait;
-      _flow = flow == PageFlow.continuous.name
+      _flowNow.value = flow == PageFlow.continuous.name
           ? PageFlow.continuous
           : PageFlow.paged;
       _controller?.setSheetModes(enabled: _flow == PageFlow.paged);
@@ -186,6 +288,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       // не даёт, а вернуть её он не догадается.
       _zoomLocked = locked != 'false';
     });
+    _syncVolumeKeys();
     await _applyRotation();
   }
 
@@ -247,7 +350,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // В ленте разворота нет: лист там — одна страница, и подпись со
     // стрелками обязаны считать так же (F-READ-06).
     _controller?.setSheetModes(enabled: flow == PageFlow.paged);
-    setState(() => _flow = flow);
+    setState(() => _flowNow.value = flow);
     // Вернулись к листам в развороте — рамка соседней страницы могла
     // остаться непосчитанной, пока шла лента.
     unawaited(_controller?.loadFrame());
@@ -301,6 +404,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void dispose() {
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     unawaited(SystemChrome.setPreferredOrientations(DeviceOrientation.values));
+    // Книга закрыта — кнопки громкости снова только про громкость.
+    widget.services.volumeKeys.detach(_volumeHandler);
+    _flowNow.dispose();
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
     _search?.dispose();
@@ -318,6 +424,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _loading = true;
       _failure = null;
     });
+    _syncVolumeKeys();
     try {
       final ReaderController controller = await ReaderController.open(
         book: _book,
@@ -349,6 +456,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _search = DocumentSearch(document: controller.document);
         _loading = false;
       });
+      _syncVolumeKeys();
     } on DocumentOpenException catch (error) {
       if (!mounted) {
         return;
@@ -357,6 +465,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _failure = error;
         _loading = false;
       });
+      _syncVolumeKeys();
     }
   }
 
@@ -507,6 +616,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       builder: (BuildContext context) =>
           PromptPreviewSheet(prompt: prompt, request: request),
     );
+    _refreshOnTop();
   }
 
   /// Сохраняет выделенное цитатой.
@@ -568,6 +678,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       context: context,
       builder: (BuildContext context) => NoteDialog(quote: selection.text),
     );
+    _refreshOnTop();
     if (body == null || !mounted) {
       return;
     }
@@ -685,6 +796,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             ),
           ),
         );
+    _refreshOnTop();
     if (target == null || !mounted) {
       return;
     }
@@ -721,11 +833,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// каждый раз вспоминал, куда нажимать в этом режиме. Привычка «вправо
   /// значит дальше» сильнее любой логики раскладки.
   ///
-  /// **Зоны работают и при выделенном тексте** (главное замечание
-  /// владельца по проверке S6): книга не перестаёт быть книгой оттого,
-  /// что в ней что-то выделено. Переход снимает выделение вместе с
-  /// панелью — текста, к которому оно относилось, на экране больше нет.
-  void _onTap(Offset position, Size size, VoidCallback toggleChrome) {
+  /// **Пока текст выделен, нажатие не листает**, а снимает выделение —
+  /// где бы ни пришлось (F-READ-22, решение владельца 03.10.2026;
+  /// отменяет решение 06.09.2026). Выделено ли что-нибудь, спрашивается
+  /// и у просмотрщика ([selecting]), и у себя: просмотрщик узнаёт о
+  /// выделении раньше, чем экран успевает его разобрать. Стрелки панели,
+  /// клавиши и кнопки громкости листают и при выделении.
+  void _onTap(
+    Offset position,
+    Size size,
+    VoidCallback toggleChrome, {
+    required bool selecting,
+  }) {
     final ReaderController? controller = _controller;
     if (controller == null || _flow != PageFlow.paged || size.width <= 0) {
       toggleChrome();
@@ -733,7 +852,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     final ReaderTap action = readerTapAt(
       share: position.dx / size.width,
-      selecting: _selection != null,
+      selecting: selecting || _selection != null,
     );
     switch (action) {
       case ReaderTap.previousFragment:
@@ -788,7 +907,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       builder: (BuildContext context) {
         return ReaderSettingsSheet(
           controller: controller,
-          flow: _flow,
+          flow: _flowNow,
           onFlow: (PageFlow value) => unawaited(_setFlow(value)),
           onDisplayMode: (PageDisplayMode mode) =>
               unawaited(_setDisplayMode(mode)),
@@ -799,6 +918,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         );
       },
     );
+    _refreshOnTop();
   }
 
   Future<void> _editCrop() async {
@@ -817,6 +937,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
       ),
     );
+    _refreshOnTop();
     if (box != null) {
       await controller.setManualCrop(box);
     }
@@ -849,6 +970,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onPreviousFragment: () => _stepFragment(forward: false),
       onNextFragment: () => _stepFragment(forward: true),
       onDismiss: _dismissSelection,
+      onPanelsChanged: _onPanels,
       extraActions: <Widget>[
         IconButton(
           key: const Key('reader-annotations-button'),
@@ -941,9 +1063,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// масштабирует страницу как в обычном просмотрщике, и она остаётся в
   /// том виде, в каком он её оставил.
   ///
-  /// Жестов здесь больше нет: страницу рисует просмотрщик, он же ловит
-  /// нажатия и разводит выделение с перемещением. Нам он отдаёт готовое —
-  /// нажатие мимо выделения и сам выделенный диапазон.
+  /// Жестов здесь больше нет: страницу рисует просмотрщик, он же
+  /// разводит выделение с перемещением и отдаёт выделенный диапазон.
+  /// Нажатие лист узнаёт сам, не дожидаясь просмотрщика (BUG-37).
   Widget _buildSheet(
     BuildContext context,
     ReaderController controller,
@@ -980,7 +1102,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
           sheetController: _sheet,
           onSelection: (List<PdfPageTextRange> ranges) =>
               unawaited(_onSelectionRanges(ranges)),
-          onTap: (Offset at) => _onTap(at, size, onTap),
+          onTap: (Offset at, {required bool selecting}) =>
+              _onTap(at, size, onTap, selecting: selecting),
           overlay: (BuildContext context, SheetView view) =>
               _buildOverlay(context, view, document, pages, size),
         );
@@ -1131,9 +1254,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
               PdfViewerController viewerController,
               PdfViewerGeneralTapHandlerDetails details,
             ) {
-              // Панели переключает только простое нажатие. Двойное — это
-              // масштаб, долгое — выделение текста; отбирать их у
-              // просмотрщика нельзя.
+              // Панели переключает только простое нажатие; долгое — это
+              // выделение текста, и отбирать его у просмотрщика нельзя.
+              // Двойное в pdfrx 2.6.1 не делает ничего, но одиночное из-за
+              // него приходит сюда на 300 мс позже (BUG-37). В ленте это
+              // пока так и оставлено: нажатием здесь не листают.
               if (details.type != PdfViewerGeneralTapType.tap ||
                   details.tapOn == PdfViewerPart.selectedText) {
                 return false;

@@ -17,6 +17,7 @@ void main() {
   late FakeReadingRepository reading;
   late FakeReaderDocument document;
   late ReaderController controller;
+  late ValueNotifier<PageFlow> flowNow;
   PageFlow? pickedFlow;
   PageDisplayMode? pickedMode;
 
@@ -35,23 +36,30 @@ void main() {
     );
   }
 
+  setUp(() => flowNow = ValueNotifier<PageFlow>(PageFlow.paged));
+
   tearDown(() async {
     await controller.close();
     controller.dispose();
+    flowNow.dispose();
   });
 
+  /// Шторка получает способ листания так же, как от экрана чтения:
+  /// живым значением, которое экран меняет в ответ на `onFlow`.
   Future<void> pumpSheet(
     WidgetTester tester, {
     VoidCallback? onEditCrop,
-    PageFlow flow = PageFlow.paged,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: ReaderSettingsSheet(
             controller: controller,
-            flow: flow,
-            onFlow: (PageFlow value) => pickedFlow = value,
+            flow: flowNow,
+            onFlow: (PageFlow value) {
+              pickedFlow = value;
+              flowNow.value = value;
+            },
             onDisplayMode: (PageDisplayMode mode) {
               pickedMode = mode;
               unawaited(controller.setDisplayMode(mode));
@@ -222,6 +230,48 @@ void main() {
     await tapKey(tester, 'reader-flow-continuous');
 
     expect(pickedFlow, PageFlow.continuous);
+  });
+
+  testWidgets('BUG-36: выбранной становится нажатая кнопка листания', (
+    WidgetTester tester,
+  ) async {
+    // Способ листания хранит экран чтения, а не контроллер книги. Шторка
+    // получала его значением при открытии и о смене не узнавала: книга
+    // переключалась, а отмеченной оставалась прежняя кнопка.
+    build();
+    await pumpSheet(tester);
+
+    bool selected(PageFlow flow) => tester
+        .widget<ChoiceChip>(find.byKey(Key('reader-flow-${flow.name}')))
+        .selected;
+
+    expect(selected(PageFlow.paged), isTrue);
+    expect(selected(PageFlow.continuous), isFalse);
+
+    await tapKey(tester, 'reader-flow-continuous');
+    expect(selected(PageFlow.continuous), isTrue);
+    expect(selected(PageFlow.paged), isFalse);
+
+    await tapKey(tester, 'reader-flow-paged');
+    expect(selected(PageFlow.paged), isTrue);
+    expect(selected(PageFlow.continuous), isFalse);
+  });
+
+  testWidgets('BUG-36: шторка видит смену, сделанную не ею', (
+    WidgetTester tester,
+  ) async {
+    // Экран чтения меняет способ листания и сам — при восстановлении
+    // настроек устройства. Открытая шторка обязана это показать.
+    build();
+    await pumpSheet(tester);
+
+    flowNow.value = PageFlow.continuous;
+    await tester.pump();
+
+    final ChoiceChip chip = tester.widget<ChoiceChip>(
+      find.byKey(const Key('reader-flow-continuous')),
+    );
+    expect(chip.selected, isTrue);
   });
 
   testWidgets('затемнение есть в панели и меняется ползунком', (

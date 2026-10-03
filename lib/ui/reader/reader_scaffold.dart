@@ -32,6 +32,7 @@ class ReaderScaffold extends StatefulWidget {
     this.onPreviousFragment,
     this.onNextFragment,
     this.onDismiss,
+    this.onPanelsChanged,
     this.extraActions = const <Widget>[],
     super.key,
   });
@@ -68,6 +69,13 @@ class ReaderScaffold extends StatefulWidget {
   /// `Esc`, когда закрывать нечего: снять выделение, спрятать панели.
   final VoidCallback? onDismiss;
 
+  /// Открылась или закрылась боковая панель — оглавление или поиск.
+  ///
+  /// `true`, пока открыта хотя бы одна. Экрану чтения это нужно затем,
+  /// чтобы не листать кнопками громкости книгу, которую закрыла панель
+  /// (F-READ-26): панель — не маршрут, и навигатор о ней не знает.
+  final ValueChanged<bool>? onPanelsChanged;
+
   @override
   State<ReaderScaffold> createState() => ReaderScaffoldState();
 }
@@ -77,6 +85,10 @@ class ReaderScaffold extends StatefulWidget {
 class ReaderScaffoldState extends State<ReaderScaffold> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _chromeVisible = false;
+
+  /// Открыты ли оглавление и поиск.
+  bool _outlineOpen = false;
+  bool _searchOpen = false;
 
   /// На каком совпадении читатель стоит сейчас.
   ///
@@ -122,6 +134,16 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     }
     if (_hit >= widget.search.hits.length) {
       _hit = -1;
+    }
+  }
+
+  void _onPanel({bool? outline, bool? search}) {
+    final bool before = _outlineOpen || _searchOpen;
+    _outlineOpen = outline ?? _outlineOpen;
+    _searchOpen = search ?? _searchOpen;
+    final bool after = _outlineOpen || _searchOpen;
+    if (after != before) {
+      widget.onPanelsChanged?.call(after);
     }
   }
 
@@ -258,6 +280,8 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         // экране чтения принадлежит странице.
         drawerEnableOpenDragGesture: false,
         endDrawerEnableOpenDragGesture: false,
+        onDrawerChanged: (bool open) => _onPanel(outline: open),
+        onEndDrawerChanged: (bool open) => _onPanel(search: open),
         drawer: OutlinePanel(
           controller: controller,
           onSelect: (int page) async {

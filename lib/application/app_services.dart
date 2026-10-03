@@ -5,12 +5,14 @@ import '../domain/library/book_storage.dart';
 import '../domain/library/cover.dart';
 import '../domain/library/storage_access.dart';
 import '../domain/reading/reader_document.dart';
+import '../domain/reading/volume_keys.dart';
 import '../infrastructure/files/android_book_storage.dart';
 import '../infrastructure/files/cover_cache.dart';
 import '../infrastructure/files/fast_book_picker.dart';
 import '../infrastructure/files/local_book_storage.dart';
 import '../infrastructure/files/platform_storage_access.dart';
 import '../infrastructure/pdf/pdfrx_document.dart';
+import '../infrastructure/platform/android_volume_keys.dart';
 import 'data/app_data.dart';
 import 'library/cover_service.dart';
 import 'library/device_library.dart';
@@ -30,6 +32,7 @@ class AppServices {
     required this.storage,
     required this.coverStore,
     required this.access,
+    this.volumeKeys = const NoVolumeKeys(),
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -63,6 +66,11 @@ class AppServices {
       picker: const FastBookPicker(),
       coverStore: FileCoverStore(),
       access: platformStorageAccess(),
+      // Кнопки громкости есть только у телефона; на ПК ту же роль
+      // играют клавиши, и их Flutter видит сам.
+      volumeKeys: Platform.isAndroid
+          ? AndroidVolumeKeys()
+          : const NoVolumeKeys(),
     );
   }
 
@@ -89,4 +97,7 @@ class AppServices {
 
   /// Книги, лежащие на устройстве: обход, разборка и поиск.
   final DeviceLibrary deviceLibrary;
+
+  /// Кнопки громкости: ими листают на телефоне (F-READ-26).
+  final VolumeKeys volumeKeys;
 }

@@ -5,7 +5,7 @@
 /// то, что здесь решено.
 library;
 
-import 'dart:ui' show PointerDeviceKind;
+import 'dart:ui' show Offset, PointerDeviceKind;
 
 /// Что делает нажатие по странице.
 enum ReaderTap {
@@ -35,22 +35,209 @@ const Duration kTouchSelectionDelay = Duration(milliseconds: 250);
 
 /// Что означает нажатие в точке с долей [share] по ширине экрана.
 ///
-/// **Зоны листания работают всегда**, выделен текст или нет (решение
-/// владельца по проверке S6, 06.09.2026): выделение не имеет права
-/// отобрать у читателя книгу. Разница только в середине — там нажатие
-/// снимает выделение, если оно есть, и переключает панели, если его нет.
+/// F-READ-22, ALG-READ-04. **Пока текст выделен, нажатие не листает** —
+/// оно снимает выделение, где бы ни пришлось (решение владельца
+/// 03.10.2026; отменяет решение 06.09.2026 «зоны работают и при
+/// выделенном тексте»). Читатель, который выделил слово и промахнулся
+/// мимо панели, терял и выделение, и страницу разом. Стрелки панели,
+/// клавиши и кнопки громкости листают и при выделении: они про книгу, а
+/// не про место на экране.
 ReaderTap readerTapAt({
   required double share,
   required bool selecting,
   double zone = kReaderTapZone,
 }) {
+  if (selecting) {
+    return ReaderTap.dismissSelection;
+  }
   if (share < zone) {
     return ReaderTap.previousFragment;
   }
   if (share > 1 - zone) {
     return ReaderTap.nextFragment;
   }
-  return selecting ? ReaderTap.dismissSelection : ReaderTap.toggleChrome;
+  return ReaderTap.toggleChrome;
+}
+
+/// На сколько палец или перо могут сдвинуться, оставаясь нажатием, в
+/// логических точках. То же число, что у распознавателя нажатий Flutter.
+const double kTouchTapSlop = 18;
+
+/// То же для мыши и трекпада: с двух точек сдвига у них начинается
+/// протяжка — выделение текста или перенос страницы.
+const double kPreciseTapSlop = 2;
+
+/// Порог удержания мышью: с него просмотрщик выделяет слово под курсором.
+const Duration kMouseHoldDelay = Duration(milliseconds: 500);
+
+/// Сколько сообщение просмотрщика о нажатии может идти следом за самим
+/// нажатием. Обычно это 300 мс ожидания двойного нажатия; запас — на
+/// кадры, занятые отрисовкой новой страницы.
+const Duration kViewerTapEcho = Duration(seconds: 1);
+
+/// На сколько указателю [kind] разрешено сдвинуться, оставаясь нажатием.
+double tapSlopFor(PointerDeviceKind kind) =>
+    selectionStartsOnDrag(kind) ? kPreciseTapSlop : kTouchTapSlop;
+
+/// Сколько указатель [kind] можно держать, чтобы это осталось нажатием.
+///
+/// Дольше — уже удержание: пальцем с него начинается выделение, мышью
+/// просмотрщик выделяет слово.
+Duration tapHoldLimitFor(PointerDeviceKind kind) =>
+    selectionStartsOnDrag(kind) ? kMouseHoldDelay : kTouchSelectionDelay;
+
+/// Узнаёт одиночное нажатие по сырым событиям указателя (BUG-37).
+///
+/// Просмотрщик pdfrx 2.6.1 держит одиночное и двойное нажатие на одном
+/// распознавателе, и одиночное объявляется, только когда истёк срок
+/// ожидания второго — 300 мс. Двойное нажатие у нас при этом не делает
+/// ничего, так что ждали его зря: каждое нажатие по краю экрана листало
+/// на треть секунды позже стрелки панели.
+///
+/// Поэтому нажатие узнаётся здесь, в момент, когда указатель поднят:
+/// один указатель, основная кнопка, поднят раньше порога удержания, без
+/// сдвига. Просмотрщик сообщит о том же нажатии следом — такое сообщение
+/// опознаётся через [echoes] и второй раз не исполняется.
+///
+/// Виджетов класс не знает: события ему подаёт слушатель указателя, а
+/// проверяется он числами.
+class TapWatch {
+  /// Создаёт наблюдателя. [clock] — монотонные часы; в тестах свои.
+  TapWatch({Duration Function()? clock}) : _clock = clock ?? _stopwatchClock();
+
+  final Duration Function() _clock;
+
+  /// Указатели, которые сейчас опущены.
+  final Map<int, _Press> _presses = <int, _Press>{};
+
+  /// Жест испорчен целиком: второй палец или начавшееся выделение.
+  bool _spoiled = false;
+
+  /// Когда по нашим часам был поднят последний указатель.
+  Duration? _released;
+
+  static Duration Function() _stopwatchClock() {
+    final Stopwatch watch = Stopwatch()..start();
+    return () => watch.elapsed;
+  }
+
+  /// Указатель опущен. [time] — метка времени самого события.
+  ///
+  /// [primary] — основная ли это кнопка: правая кнопка мыши и боковая
+  /// кнопка пера нажатием не считаются.
+  void down({
+    required int pointer,
+    required Offset position,
+    required Duration time,
+    required PointerDeviceKind kind,
+    bool primary = true,
+  }) {
+    // Второй палец — это щипок, а не два нажатия.
+    if (_presses.isNotEmpty) {
+      _spoiled = true;
+    }
+    _presses[pointer] = _Press(
+      start: position,
+      time: time,
+      kind: kind,
+      primary: primary,
+    );
+  }
+
+  /// Указатель сдвинулся.
+  void move({required int pointer, required Offset position}) {
+    final _Press? press = _presses[pointer];
+    if (press != null && press.isFar(position)) {
+      press.moved = true;
+    }
+  }
+
+  /// Указатель поднят. Возвращает место нажатия или `null`, если это
+  /// было не нажатие: удержание, протяжка, щипок, не та кнопка.
+  Offset? up({
+    required int pointer,
+    required Offset position,
+    required Duration time,
+  }) {
+    final _Press? press = _presses.remove(pointer);
+    _released = _clock();
+    final bool spoiled = _spoiled;
+    if (_presses.isEmpty) {
+      _spoiled = false;
+    }
+    if (press == null || spoiled || !press.primary || press.moved) {
+      return null;
+    }
+    if (press.isFar(position)) {
+      return null;
+    }
+    if (time - press.time >= tapHoldLimitFor(press.kind)) {
+      return null;
+    }
+    return position;
+  }
+
+  /// Система отобрала указатель: нажатия не было.
+  void cancel({required int pointer}) {
+    _presses.remove(pointer);
+    _released = _clock();
+    if (_presses.isEmpty) {
+      _spoiled = false;
+    }
+  }
+
+  /// Жест, который идёт сейчас, нажатием уже не станет: распознаватель
+  /// удержания победил и началось выделение.
+  ///
+  /// Порог удержания проверяется и по меткам времени, но распознаватель
+  /// живёт по таймеру, а таймер может опоздать или поспешить на кадр.
+  /// Его слово — последнее: иначе одно касание и выделило бы слово, и
+  /// перелистнуло страницу.
+  void spoil() {
+    if (_presses.isNotEmpty) {
+      _spoiled = true;
+    }
+  }
+
+  /// Сообщил ли просмотрщик о нажатии, которое мы уже разобрали сами.
+  ///
+  /// Всякое нажатие указателем проходит через [up] — исполненное или
+  /// отвергнутое, оно уже решено, и сообщение просмотрщика о нём только
+  /// повторяет пройденное. Совпадение ищется по времени, а не счётчиком:
+  /// о двойном нажатии просмотрщик одиночным не сообщает вовсе, и
+  /// счётчик после двух быстрых нажатий проглотил бы чужое сообщение.
+  ///
+  /// Не эхо — нажатие, которому не предшествовал указатель: его присылают
+  /// средства доступности. Такое исполняется как раньше.
+  bool echoes() {
+    final Duration? released = _released;
+    if (released == null) {
+      return false;
+    }
+    final Duration since = _clock() - released;
+    return since >= Duration.zero && since <= kViewerTapEcho;
+  }
+}
+
+/// Одно касание от опускания до подъёма.
+class _Press {
+  _Press({
+    required this.start,
+    required this.time,
+    required this.kind,
+    required this.primary,
+  });
+
+  final Offset start;
+  final Duration time;
+  final PointerDeviceKind kind;
+  final bool primary;
+
+  /// Уходил ли указатель дальше допуска — хотя бы раз.
+  bool moved = false;
+
+  bool isFar(Offset position) =>
+      (position - start).distance > tapSlopFor(kind);
 }
 
 /// Начинается ли выделение протяжкой указателя [kind].

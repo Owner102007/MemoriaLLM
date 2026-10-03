@@ -1,11 +1,15 @@
 package io.github.owner102007.memoria
 
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import android.view.KeyEvent
+import android.view.accessibility.AccessibilityManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -23,8 +27,20 @@ import java.io.File
  * Поэтому здесь ровно один канал и ровно два действия. Своего плагина
  * ради этого не заводится: плагин — это отдельный пакет, свой pubspec,
  * своя сборка и своя жизнь, а работы тут на два вызова системного API.
+ *
+ * По той же причине здесь живут доступ ко всем файлам (S5.4) и перехват
+ * кнопок громкости (F-READ-26): Flutter этих кнопок не видит вовсе.
  */
 class MainActivity : FlutterActivity() {
+    /** Канал кнопок громкости; `null`, пока движок не поднят. */
+    private var volumeChannel: MethodChannel? = null
+
+    /**
+     * Перехватывать ли кнопки громкости. Решает Dart: он знает, открыта
+     * ли книга и не лежит ли поверх неё шторка или диалог.
+     */
+    private var volumeKeysActive = false
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
@@ -54,6 +70,107 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        val volume = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            VOLUME_CHANNEL,
+        )
+        volume.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "active" -> {
+                    volumeKeysActive =
+                        call.argument<Boolean>("active") ?: false
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        volumeChannel = volume
+    }
+
+    /**
+     * Перехват кнопок громкости (F-READ-26, ALG-READ-06).
+     *
+     * Здесь нет ни одного решения, кроме «перехватывать ли»: событие
+     * целиком пересылается в Dart, и что с ним делать — листать или
+     * менять громкость — отвечает он. Правило написано там, потому что
+     * там оно под тестами, а тестов Android в проекте нет.
+     *
+     * Перехваченное событие система уже не обработает, поэтому громкость
+     * по слову Dart меняем сами. Если Dart не ответил вовсе, кнопка
+     * ведёт себя как обычная кнопка громкости: молчать она не должна
+     * ни при каком сбое.
+     *
+     * При включённом экранном дикторе перехвата нет: кнопками громкости
+     * управляют им самим.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val channel = volumeChannel
+        val code = event.keyCode
+        val lower = code == KeyEvent.KEYCODE_VOLUME_DOWN
+        val raise = code == KeyEvent.KEYCODE_VOLUME_UP
+        val pressed = event.action == KeyEvent.ACTION_DOWN
+        val released = event.action == KeyEvent.ACTION_UP
+        if (!volumeKeysActive || channel == null || !(lower || raise) ||
+            !(pressed || released) || screenReaderOn()
+        ) {
+            return super.dispatchKeyEvent(event)
+        }
+        val fallback =
+            if (lower) AudioManager.ADJUST_LOWER else AudioManager.ADJUST_RAISE
+        val arguments = HashMap<String, Any>()
+        arguments["key"] = if (lower) "down" else "up"
+        arguments["pressed"] = pressed
+        arguments["repeat"] = event.repeatCount
+        arguments["canceled"] = event.isCanceled
+        channel.invokeMethod(
+            "key",
+            arguments,
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    if (result == "raise") {
+                        adjustVolume(AudioManager.ADJUST_RAISE)
+                    } else if (result == "lower") {
+                        adjustVolume(AudioManager.ADJUST_LOWER)
+                    }
+                }
+
+                override fun error(
+                    errorCode: String,
+                    errorMessage: String?,
+                    errorDetails: Any?,
+                ) {
+                    if (pressed) {
+                        adjustVolume(fallback)
+                    }
+                }
+
+                override fun notImplemented() {
+                    if (pressed) {
+                        adjustVolume(fallback)
+                    }
+                }
+            },
+        )
+        return true
+    }
+
+    /** Меняет громкость так, как это сделала бы кнопка: со шкалой. */
+    private fun adjustVolume(direction: Int) {
+        val audio =
+            getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        audio.adjustSuggestedStreamVolume(
+            direction,
+            AudioManager.USE_DEFAULT_STREAM_TYPE,
+            AudioManager.FLAG_SHOW_UI,
+        )
+    }
+
+    /** Включён ли экранный диктор (TalkBack). */
+    private fun screenReaderOn(): Boolean {
+        val service = getSystemService(Context.ACCESSIBILITY_SERVICE)
+        val manager = service as? AccessibilityManager
+        return manager?.isTouchExplorationEnabled == true
     }
 
     /**
@@ -175,6 +292,7 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val CHANNEL = "memoria/uri_permissions"
         const val STORAGE_CHANNEL = "memoria/storage_access"
+        const val VOLUME_CHANNEL = "memoria/volume_keys"
         const val READ_STORAGE = android.Manifest.permission.READ_EXTERNAL_STORAGE
         const val STORAGE_REQUEST = 4201
     }
