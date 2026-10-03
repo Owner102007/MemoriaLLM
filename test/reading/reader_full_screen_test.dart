@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/book_file_picker.dart';
+import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/reading/full_screen.dart';
+import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/infrastructure/platform/windows_full_screen.dart';
 import 'package:memoria/ui/reader/reader_scaffold.dart';
@@ -12,6 +16,15 @@ import 'package:memoria/ui/reader/reader_screen.dart';
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
 import '../support/test_services.dart';
+
+/// Файл, который переехал: книга ведёт на несуществующий путь.
+const BookSource _gone = FilePathSource('/нет/такой/книги.pdf');
+
+/// Файл, который читатель показывает заново.
+const PickedFile _found = PickedFile(
+  name: 'Онегин.pdf',
+  path: '/книги/Онегин.pdf',
+);
 
 /// F-READ-35: чтение во весь экран на ПК.
 ///
@@ -202,6 +215,44 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('F-READ-35: книга не открылась — окно остаётся обычным', (
+    WidgetTester tester,
+  ) async {
+    // Сообщение об ошибке во весь монитор ни к чему, а выйти из режима
+    // оттуда было бы нечем: клавиши чтения живут на странице.
+    await data.settings.write(SettingsKeys.readingFullScreen, 'true');
+    final Book book = testBook().copyWith(source: _gone);
+    await data.library.save(book);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderScreen(
+          book: book,
+          services: AppServices(
+            data: data,
+            opener: _MissingThenFound(),
+            picker: FakeBookFilePicker(_found),
+            storage: MemoryBookStorage(),
+            coverStore: MemoryCoverStore(),
+            access: FakeStorageAccess(),
+            window: window,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('reader-failure-message')), findsOneWidget);
+    expect(window.requests, isEmpty);
+
+    // Файл показали заново, книга открылась — и выбор читателя в силе.
+    await tester.tap(find.byKey(const Key('reader-relink')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('reader-relink')), findsNothing);
+    expect(window.requests, <bool>[true]);
+    expect(window.full, isTrue);
+
+    await unmount(tester);
+  });
+
   testWidgets('F-READ-35: без окна нет ни кнопки, ни клавиши', (
     WidgetTester tester,
   ) async {
@@ -256,4 +307,18 @@ void main() {
       expect(await WindowsFullScreen().setFullScreen(true), isFalse);
     });
   });
+}
+
+/// Открыватель, который в первый раз не находит файл, а потом находит.
+class _MissingThenFound implements DocumentOpener {
+  int _calls = 0;
+
+  @override
+  Future<ReaderDocument> open(BookSource source, {String? password}) async {
+    _calls++;
+    if (_calls == 1) {
+      throw const DocumentOpenException(DocumentProblem.missing, _gone);
+    }
+    return FakeReaderDocument(pages: <String>['страница один']);
+  }
 }

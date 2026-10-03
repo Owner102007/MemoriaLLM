@@ -33,7 +33,7 @@ class ReaderScaffold extends StatefulWidget {
     this.onNextFragment,
     this.onDismiss,
     this.onPanelsChanged,
-    this.selecting = false,
+    this.selecting,
     this.fullScreen = false,
     this.onFullScreen,
     this.extraActions = const <Widget>[],
@@ -80,8 +80,10 @@ class ReaderScaffold extends StatefulWidget {
   final ValueChanged<bool>? onPanelsChanged;
 
   /// Выделен ли текст на странице. Нужно `Esc`: выделение он снимает
-  /// раньше, чем выводит из чтения во весь экран.
-  final bool selecting;
+  /// раньше, чем выводит из чтения во весь экран. Спрашивается в миг
+  /// нажатия, а не при построении: о выделении просмотрщик узнаёт
+  /// раньше, чем экран успевает перестроиться.
+  final ValueGetter<bool>? selecting;
 
   /// Развёрнуто ли чтение во весь экран (F-READ-35).
   final bool fullScreen;
@@ -276,7 +278,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         final EscapeTarget target = escapeTarget(
           searching: searching,
           outline: scaffold?.isDrawerOpen ?? false,
-          selecting: widget.selecting,
+          selecting: widget.selecting?.call() ?? false,
           panels: _chromeVisible,
           fullScreen: widget.fullScreen && widget.onFullScreen != null,
         );

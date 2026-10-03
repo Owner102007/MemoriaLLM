@@ -24,10 +24,7 @@ class WindowsFullScreen implements FullScreenWindow {
   @override
   Future<bool> setFullScreen(bool on) async {
     try {
-      final bool? done = await _channel.invokeMethod<bool>(
-        'setFullScreen',
-        on,
-      );
+      final bool? done = await _channel.invokeMethod<bool>('setFullScreen', on);
       return done ?? false;
     } on PlatformException {
       // Окно не развернулось. Чтение от этого не страдает: страница

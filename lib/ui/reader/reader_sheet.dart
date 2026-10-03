@@ -53,6 +53,10 @@ class ReaderSheetController {
   /// Снять выделение.
   void clearSelection() => _sheet?._clearSelection();
 
+  /// Выделено ли что-нибудь прямо сейчас — по словам просмотрщика. Он
+  /// узнаёт о выделении раньше, чем экран чтения успевает его разобрать.
+  bool get selecting => _sheet?._selecting ?? false;
+
   void _attach(_ReaderSheetState sheet) => _sheet = sheet;
 
   void _detach(_ReaderSheetState sheet) {
@@ -414,10 +418,22 @@ class _ReaderSheetState extends State<ReaderSheet> {
   /// ограничения границами при этом не применяет вовсе — матрица встаёт
   /// ровно нашей.
   void _sync() {
-    if (!_ready || !_placement.isVisible) {
+    if (!_ready || !_viewer.isReady || !_placement.isVisible) {
       return;
     }
     unawaited(_viewer.goTo(_target(), duration: Duration.zero));
+  }
+
+  /// Просмотрщика на экране нет — и всё, что мы о нём знали, устарело.
+  ///
+  /// Свёрнутое окно ПК раскладывается в ноль на ноль: показывать нечего,
+  /// и просмотрщик уходит из дерева. Вернётся он уже новым — заново
+  /// разложит страницы и сам встанет на первую. Если помнить прежнего
+  /// «готовым», при отпертом замке эта его расстановка читалась бы как
+  /// движение читателя — тот же дефект, что BUG-40, с другого входа.
+  void _viewerGone() {
+    _ready = false;
+    _laidOut = null;
   }
 
   Matrix4 _target() {
@@ -445,8 +461,14 @@ class _ReaderSheetState extends State<ReaderSheet> {
   /// Окно закрывается своей микрозадачей, поставленной после кадра: в
   /// очереди она стоит за микрозадачей просмотрщика, и к её началу его
   /// возврат уже отработал — и был отклонён в [_pin]. Зовётся только во
-  /// время построения кадра; на случай, если кадра нет, он
-  /// запрашивается.
+  /// время построения кадра; запрос кадра — страховка на случай, если
+  /// это когда-нибудь перестанет быть так, иначе окно осталось бы
+  /// открытым, а страница — неподвижной.
+  ///
+  /// **Держится на порядке внутри pdfrx**: возврат ставится микрозадачей
+  /// из построения. Поднимая версию pdfrx, это проверяют первым — тестом
+  /// порядок не закреплён: просмотрщик с настоящим PDFium в widget-тестах
+  /// не строится.
   void _beginRelay() {
     _relays++;
     SchedulerBinding.instance.ensureVisualUpdate();
@@ -651,6 +673,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
           widget.document.pages[number - 1],
     ];
     if (sheet.isEmpty) {
+      _viewerGone();
       // Молчаливый чёрный прямоугольник — худший из возможных ответов:
       // по нему не отличить «страница ещё грузится» от «книга сломана».
       return ColoredBox(
@@ -688,6 +711,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
           _placement = placement;
           _screen = Size(limits.maxWidth, limits.maxHeight);
           if (!placement.isVisible) {
+            _viewerGone();
             return const SizedBox.expand();
           }
           _scheduleSync(placement);

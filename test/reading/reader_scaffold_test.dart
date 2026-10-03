@@ -85,7 +85,7 @@ void main() {
             onPreviousFragment: () => steps.add('назад'),
             onNextFragment: () => steps.add('вперёд'),
             onDismiss: () => dismissals++,
-            selecting: selecting,
+            selecting: () => selecting,
             fullScreen: fullScreen,
             onFullScreen: hasWindow ? windows.add : null,
             onGoToPage:

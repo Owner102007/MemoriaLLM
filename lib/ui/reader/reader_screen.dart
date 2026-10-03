@@ -90,9 +90,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
   DisplayArea _area = DisplayArea.unknown;
 
   /// Развёрнуто ли чтение во весь экран (F-READ-35): окно занимает весь
-  /// монитор, а читаемая полоса вписана в него вплотную. Настройка
-  /// устройства; есть только там, где у приложения есть окно.
+  /// монитор, а читаемая полоса вписана в него вплотную. Есть только
+  /// там, где у приложения есть окно.
   bool _fullScreen = false;
+
+  /// Выбрал ли читатель чтение во весь экран — настройка устройства.
+  ///
+  /// Отличается от [_fullScreen] тем, что книга может быть ещё не
+  /// открыта или не открыться вовсе: разворачивать во весь монитор экран
+  /// загрузки или сообщение об ошибке незачем.
+  bool _fullScreenWanted = false;
 
   /// Идёт ли прямо сейчас разворот окна: второе нажатие, пришедшее
   /// раньше ответа платформы, не должно запросить то же самое ещё раз.
@@ -312,10 +319,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _syncVolumeKeys();
     // Читали во весь экран — так и открываем: режим выбирают один раз,
     // а не при каждой книге.
-    if (fullScreen == 'true') {
+    _fullScreenWanted = fullScreen == 'true';
+    _applyWantedFullScreen();
+    await _applyRotation();
+  }
+
+  /// Показана ли книга: открыта и не в ошибке.
+  bool get _bookShown => _controller != null && !_loading && _failure == null;
+
+  /// Разворачивает окно, если читатель выбрал чтение во весь экран и
+  /// книга уже на экране (F-READ-35).
+  ///
+  /// Зовётся дважды — когда прочитаны настройки и когда открылась книга:
+  /// что из двух случится раньше, заранее неизвестно.
+  void _applyWantedFullScreen() {
+    if (_fullScreenWanted && _bookShown) {
       unawaited(_setFullScreen(true, remember: false));
     }
-    await _applyRotation();
   }
 
   /// Разворачивает чтение во весь экран и возвращает окно.
@@ -325,6 +345,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// вписывается в него вплотную, каким бы ни был запас по краям у
   /// книги. Режим включён, только если окно в самом деле развернулось:
   /// полоса вплотную в обычном окне — это уже другая настройка.
+  ///
+  /// Полоса перекладывается сразу, не дожидаясь ответа платформы: окно
+  /// меняет размер раньше, чем приходит ответ, и иначе читатель успевал
+  /// бы увидеть страницу в новом окне с прежним запасом по краям. Если
+  /// платформа отказала, раскладка возвращается.
   Future<void> _setFullScreen(bool value, {bool remember = true}) async {
     if (!widget.services.window.available ||
         _switchingWindow ||
@@ -332,8 +357,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     _switchingWindow = true;
-    final bool done = await widget.services.window.setFullScreen(value);
-    _switchingWindow = false;
+    setState(() => _fullScreen = value);
+    bool done = false;
+    try {
+      done = await widget.services.window.setFullScreen(value);
+    } finally {
+      _switchingWindow = false;
+    }
     if (!mounted) {
       // Книгу закрыли раньше, чем окно развернулось: оставлять его во
       // весь экран на полке некому.
@@ -343,10 +373,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     if (!done) {
+      setState(() => _fullScreen = !value);
       return;
     }
-    setState(() => _fullScreen = value);
     if (remember) {
+      _fullScreenWanted = value;
       await widget.services.data.settings.write(
         SettingsKeys.readingFullScreen,
         value.toString(),
@@ -524,6 +555,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _loading = false;
       });
       _syncVolumeKeys();
+      _applyWantedFullScreen();
     } on DocumentOpenException catch (error) {
       if (!mounted) {
         return;
@@ -533,6 +565,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _loading = false;
       });
       _syncVolumeKeys();
+      // Книга не открылась: сообщение об этом во весь монитор ни к чему,
+      // а выйти из режима оттуда было бы нечем — клавиши чтения живут на
+      // странице. Выбор читателя при этом остаётся в силе.
+      if (_fullScreen) {
+        unawaited(_setFullScreen(false, remember: false));
+      }
     }
   }
 
@@ -1038,7 +1076,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onNextFragment: () => _stepFragment(forward: true),
       onDismiss: _dismissSelection,
       onPanelsChanged: _onPanels,
-      selecting: _selection != null,
+      selecting: () => _selection != null || _sheet.selecting,
       fullScreen: _fullScreen,
       onFullScreen: widget.services.window.available
           ? (bool value) => unawaited(_setFullScreen(value))

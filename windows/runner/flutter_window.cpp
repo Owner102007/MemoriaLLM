@@ -65,8 +65,12 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  // Канал держит указатель на это окно — уходит первым.
-  window_channel_ = nullptr;
+  // Обработчик канала держит указатель на это окно: снимаем его раньше,
+  // чем окно начнёт разбираться.
+  if (window_channel_) {
+    window_channel_->SetMethodCallHandler(nullptr);
+    window_channel_ = nullptr;
+  }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -83,8 +87,9 @@ bool FlutterWindow::SetFullScreen(bool on) {
     return true;
   }
   if (on) {
-    // Запоминаем окно как есть — рамку, место, размер и развёрнутость, —
-    // чтобы вернуть его ровно таким же.
+    // Запоминаем окно как есть — место, размер и развёрнутость, — чтобы
+    // вернуть его ровно таким же. Монитор берём тот, на котором окно
+    // стоит сейчас.
     WINDOWPLACEMENT placement = {};
     placement.length = sizeof(WINDOWPLACEMENT);
     MONITORINFO monitor = {};
@@ -93,6 +98,12 @@ bool FlutterWindow::SetFullScreen(bool on) {
         !GetMonitorInfo(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
                         &monitor)) {
       return false;
+    }
+    // Развёрнутое окно сначала возвращаем к обычному: над развёрнутым
+    // Windows панель задач не прячет, а его рамка после возврата легла бы
+    // не туда. Развёрнутость записана в `placement` и вернётся с ним.
+    if (IsZoomed(window)) {
+      SendMessage(window, WM_SYSCOMMAND, SC_RESTORE, 0);
     }
     windowed_placement_ = placement;
     windowed_style_ = GetWindowLongPtr(window, GWL_STYLE);
