@@ -147,12 +147,16 @@ String describeZipProblem(ZipProblem problem) {
 /// Нехватка места названа прямо: это единственный отказ записи, с
 /// которым экспериментатор может что-то сделать сам.
 String describeWriteFailure(FileSystemException error) {
-  final int? code = error.osError?.errorCode;
-  // 28 — ENOSPC у Android и Linux; 112 и 39 — «диск полон» у Windows.
-  final bool full = Platform.isWindows ? code == 112 || code == 39 : code == 28;
-  return full
+  return isDiskFull(error)
       ? 'на устройстве кончилось место'
       : 'не удалось записать на устройство';
+}
+
+/// Отказала ли запись потому, что на устройстве кончилось место.
+bool isDiskFull(FileSystemException error) {
+  final int? code = error.osError?.errorCode;
+  // 28 — ENOSPC у Android и Linux; 112 и 39 — «диск полон» у Windows.
+  return Platform.isWindows ? code == 112 || code == 39 : code == 28;
 }
 
 /// Имя, под которым лежит архив, перенесённый в приложение.
@@ -216,10 +220,13 @@ class LiteratureArchive {
         refusal: describeZipProblem(error.problem),
       );
     } on FileSystemException catch (error) {
-      // Архив пришлось переносить в приложение, и записать его не вышло.
+      // Архив пришлось переносить в приложение, и перенос не удался:
+      // кончилось место — или оборвалось чтение там, откуда он шёл.
       return ArchiveReport(
         archive: file.name,
-        refusal: describeWriteFailure(error),
+        refusal: isDiskFull(error)
+            ? describeWriteFailure(error)
+            : 'архив не удалось перенести в приложение',
       );
     } on Object {
       return ArchiveReport(
@@ -297,9 +304,15 @@ class LiteratureArchive {
     if (copy is! FilePathSource || !copy.owned || await _usedByBook(copy)) {
       return copy;
     }
-    final File moved = await File(copy.path)
-        .rename(p.join(p.dirname(copy.path), _borrowedName));
-    return FilePathSource(moved.path, owned: true);
+    try {
+      final File moved = await File(copy.path)
+          .rename(p.join(p.dirname(copy.path), _borrowedName));
+      return FilePathSource(moved.path, owned: true);
+    } on Object {
+      // Переименовать не вышло — копия под именем книги не остаётся.
+      await _dropBorrowed(copy);
+      rethrow;
+    }
   }
 
   Future<bool> _usedByBook(BookSource source) async {
