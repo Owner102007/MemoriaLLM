@@ -124,6 +124,71 @@ void main() {
     });
   });
 
+  group('BUG-05: изометрическая сетка доходит до низа участка', () {
+    /// Сколько точек закрашено узором в полосе строк [from]…[to].
+    ///
+    /// Узор спокойный, без свечения: размытый ореол залил бы полосу
+    /// целиком, и считать было бы нечего.
+    Future<({int top, int bottom})> inkInBands(Size size, int band) async {
+      final ShelfPatternPainter painter = painterFor(ShelfPattern.isoGrid);
+      final int width = size.width.round();
+      final int height = size.height.round();
+      final ui.PictureRecorder recorder = ui.PictureRecorder();
+      painter.paint(Canvas(recorder), size);
+      final ui.Picture picture = recorder.endRecording();
+      final ui.Image image = await picture.toImage(width, height);
+      final ByteData? data = await image.toByteData();
+      picture.dispose();
+      image.dispose();
+      final Uint8List bytes = data!.buffer.asUint8List();
+      final int ground = painter.background.toARGB32();
+      final int red = (ground >> 16) & 0xFF;
+      final int green = (ground >> 8) & 0xFF;
+      final int blue = ground & 0xFF;
+
+      int count(int from, int to) {
+        int inked = 0;
+        for (int y = from; y < to; y++) {
+          for (int x = 0; x < width; x++) {
+            final int at = (y * width + x) * 4;
+            final int distance =
+                (bytes[at] - red).abs() +
+                (bytes[at + 1] - green).abs() +
+                (bytes[at + 2] - blue).abs();
+            if (distance > 6) {
+              inked++;
+            }
+          }
+        }
+        return inked;
+      }
+
+      return (top: count(0, band), bottom: count(height - band, height));
+    }
+
+    test('BUG-05: низ высокого участка закрашен, как верх', () async {
+      // Раздел «Без категории» у всех рисуется этим узором, и участок в
+      // несколько рядов книг заметно выше своей ширины. Наклонные идут
+      // под 30° к горизонтали и уходят вбок на 1,73 высоты — начал у
+      // верхнего края должно хватать, чтобы обе дошли до нижнего.
+      for (final Size size in <Size>[
+        const Size(120, 600),
+        const Size(200, 900),
+        const Size(360, 1400),
+      ]) {
+        final ({int top, int bottom}) ink = await inkInBands(size, 100);
+        expect(ink.top, greaterThan(0), reason: 'узор нарисован, $size');
+        expect(
+          ink.bottom,
+          greaterThan(ink.top * 0.7),
+          reason:
+              'внизу участка $size закрашено ${ink.bottom} точек против '
+              '${ink.top} вверху',
+        );
+      }
+    });
+  });
+
   group('художник перерисовывает только когда надо', () {
     test('тот же вид — не перерисовывать', () {
       expect(

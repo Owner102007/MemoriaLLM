@@ -6,12 +6,15 @@ import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
+import 'package:memoria/domain/library/category_style.dart';
 import 'package:memoria/domain/library/drag_scroll.dart';
 import 'package:memoria/domain/library/shelf.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
+import 'package:memoria/domain/theme/contrast.dart';
 import 'package:memoria/ui/library/book_card.dart';
 import 'package:memoria/ui/library/device_books_screen.dart';
 import 'package:memoria/ui/library/library_screen.dart';
+import 'package:memoria/ui/library/shelf_pattern.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
@@ -698,6 +701,164 @@ void main() {
       expect(find.byType(BookCard), findsNWidgets(2));
       expect(find.text('скан'), findsNothing);
 
+      await unmount(tester);
+    });
+  });
+
+  group('BUG-14: подписи полки лежат на своей подложке', () {
+    /// Название категории, которая на тёмной теме светится неоном.
+    ///
+    /// Против неоновой линии основной текст темы даёт контраст около
+    /// единицы — на такой категории дефект виден сильнее всего.
+    String acidTitle() {
+      for (int i = 0; i < 500; i++) {
+        final String title = 'Категория $i';
+        if (categoryStyleFor(title).acid) {
+          return title;
+        }
+      }
+      throw StateError('кислотной категории не нашлось за 500 названий');
+    }
+
+    /// Подпись блока: текст в 11 пунктов под обложкой.
+    ///
+    /// Название книги бывает на экране дважды — ещё и на месте обложки,
+    /// пока та не готова; там кегль другой.
+    Finder captionOf(String text) {
+      return find.byWidgetPredicate(
+        (Widget widget) =>
+            widget is Text &&
+            widget.data == text &&
+            widget.style?.fontSize == 11,
+      );
+    }
+
+    /// Непрозрачная подложка между подписью и узором участка.
+    ///
+    /// `null` — подписи не на чем лежать, кроме самого узора: под буквами
+    /// проходят его линии.
+    Color? plateUnder(WidgetTester tester, Finder caption) {
+      Color? plate;
+      tester.element(caption).visitAncestorElements((Element element) {
+        final Widget widget = element.widget;
+        if (widget is CustomPaint && widget.painter is ShelfPatternPainter) {
+          return false;
+        }
+        Color? colour;
+        if (widget is ColoredBox) {
+          colour = widget.color;
+        } else if (widget is DecoratedBox) {
+          final Decoration decoration = widget.decoration;
+          if (decoration is BoxDecoration) {
+            colour = decoration.color;
+          }
+        }
+        if (colour != null && colour.a == 1.0) {
+          plate = colour;
+          return false;
+        }
+        return true;
+      });
+      return plate;
+    }
+
+    void expectReadable(WidgetTester tester, Finder caption) {
+      expect(caption, findsOneWidget);
+      final Color? plate = plateUnder(tester, caption);
+      expect(
+        plate,
+        isNotNull,
+        reason: 'подпись лежит прямо на узоре категории',
+      );
+      final Color? ink = tester.widget<Text>(caption).style?.color;
+      expect(ink, isNotNull, reason: 'цвет подписи задан явно');
+      expect(
+        contrastRatio(ink!.toARGB32(), plate!.toARGB32()),
+        greaterThanOrEqualTo(wcagAaNormalText),
+      );
+    }
+
+    testWidgets('BUG-14: подпись книги не лежит на узоре', (
+      WidgetTester tester,
+    ) async {
+      await data.categories.save(_category('acid', acidTitle()));
+      await data.library.save(testBook());
+      await placeBook(data, 'book-1', 'acid');
+      await pumpShelf(tester, testServices(data: data));
+
+      expectReadable(tester, captionOf('Пиковая дама'));
+
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-14: подпись «Добавить книги» не лежит на узоре', (
+      WidgetTester tester,
+    ) async {
+      await data.categories.save(_category('acid', acidTitle()));
+      await pumpShelf(tester, testServices(data: data));
+
+      expectReadable(tester, captionOf('Добавить книги'));
+
+      await unmount(tester);
+    });
+  });
+
+  group('BUG-33: кружок категории одного цвета', () {
+    /// Цвет кружка категории внутри [scope].
+    Color circleIn(WidgetTester tester, Finder scope) {
+      final Finder circle = find.descendant(
+        of: scope,
+        matching: find.byWidgetPredicate((Widget widget) {
+          if (widget is! Container) {
+            return false;
+          }
+          final Decoration? decoration = widget.decoration;
+          return decoration is BoxDecoration &&
+              decoration.shape == BoxShape.circle;
+        }),
+      );
+      final Container found = tester.widget<Container>(circle.first);
+      return (found.decoration! as BoxDecoration).color!;
+    }
+
+    /// Шапка участка: ближайший ряд вокруг заголовка категории.
+    Finder headerOf(String sectionId) {
+      return find
+          .ancestor(
+            of: find.byKey(Key('shelf-title-$sectionId')),
+            matching: find.byType(Row),
+          )
+          .first;
+    }
+
+    testWidgets('BUG-33: кружок в диалоге переноса — как на полке', (
+      WidgetTester tester,
+    ) async {
+      await data.categories.save(_category('study', 'Учёба'));
+      await data.library.save(testBook());
+      await pumpShelf(tester, testServices(data: data));
+
+      final Color study = circleIn(tester, headerOf('study'));
+      final Color loose = circleIn(tester, headerOf(''));
+
+      await tester.tap(find.byKey(const Key('library-menu-book-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('book-action-move')));
+      await tester.pumpAndSettle();
+
+      expect(
+        circleIn(tester, find.byKey(const Key('move-to-study'))),
+        study,
+        reason: 'категория в диалоге и в шапке полки',
+      );
+      expect(
+        circleIn(tester, find.byKey(const Key('move-to-loose'))),
+        loose,
+        reason: '«Без категории» в диалоге и в шапке полки',
+      );
+
+      await tester.tap(find.byKey(const Key('move-to-study')));
+      await tester.pumpAndSettle();
       await unmount(tester);
     });
   });
