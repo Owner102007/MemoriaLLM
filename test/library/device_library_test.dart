@@ -230,8 +230,7 @@ void main() {
       // Поток хода зовёт `onCancel` и когда закрывается сам. Прежде это
       // останавливало обход, который шёл в ту минуту, — то есть новый.
       final StreamController<ScanEvent> first = StreamController<ScanEvent>();
-      final StreamController<ScanEvent> second =
-          StreamController<ScanEvent>();
+      final StreamController<ScanEvent> second = StreamController<ScanEvent>();
       final List<Stream<ScanEvent>> runs = <Stream<ScanEvent>>[
         first.stream,
         second.stream,
