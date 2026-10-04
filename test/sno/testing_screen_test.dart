@@ -444,9 +444,7 @@ void main() {
       // И кнопка не осталась занятой.
       await tester.tap(find.text('Понятно'));
       await tester.pumpAndSettle();
-      final ListTile tile = tester.widget(
-        find.byKey(const Key('sno-add-pdf')),
-      );
+      final ListTile tile = tester.widget(find.byKey(const Key('sno-add-pdf')));
       expect(tile.enabled, isTrue);
 
       await unmount(tester);

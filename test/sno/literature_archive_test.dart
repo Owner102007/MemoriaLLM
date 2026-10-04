@@ -576,12 +576,9 @@ void main() {
       expect(storage.adopted, <String>['Литература.zip']);
       // Перенесённый архив лежал под своим именем, а не как книга, и
       // после распаковки убран: в папке только книги.
-      expect(
-        storage.released,
-        <BookSource>[
-          FilePathSource('${books.path}/archive-borrowed.tmp', owned: true),
-        ],
-      );
+      expect(storage.released, <BookSource>[
+        FilePathSource('${books.path}/archive-borrowed.tmp', owned: true),
+      ]);
       expect(copies(), hasLength(4));
       expect(copies().every((String name) => name.endsWith('.pdf')), isTrue);
     });
@@ -617,9 +614,8 @@ void main() {
       final String path = (shelved.source as FilePathSource).path;
       expect(File(path).existsSync(), isTrue);
 
-      final ArchiveReport report = await archiveOn(storage: storage).add(
-        const PickedFile(name: 'Анатомия.zip', uri: 'content://a'),
-      );
+      final ArchiveReport report = await archiveOn(storage: storage)
+          .add(const PickedFile(name: 'Анатомия.zip', uri: 'content://a'));
 
       expect(report.refusal, contains('не ZIP-архив'));
       expect(File(path).existsSync(), isTrue, reason: 'файл книги цел');

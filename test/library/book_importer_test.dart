@@ -461,9 +461,8 @@ void main() {
       expect(book.shelfPosition, 4);
 
       // Стоящую на полке книгу не переставляют — и не спрашивают куда.
-      await importer(
-        FakeReaderDocument(pages: <String>['раз']),
-      ).registerSource(source, title: 'Анатомия', categoryFor: category);
+      await importer(FakeReaderDocument(pages: <String>['раз']))
+          .registerSource(source, title: 'Анатомия', categoryFor: category);
       expect(asked, 1);
     });
 

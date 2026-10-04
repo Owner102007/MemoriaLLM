@@ -297,9 +297,8 @@ class LiteratureArchive {
     if (copy is! FilePathSource || !copy.owned || await _usedByBook(copy)) {
       return copy;
     }
-    final File moved = await File(
-      copy.path,
-    ).rename(p.join(p.dirname(copy.path), _borrowedName));
+    final File moved = await File(copy.path)
+        .rename(p.join(p.dirname(copy.path), _borrowedName));
     return FilePathSource(moved.path, owned: true);
   }
 
