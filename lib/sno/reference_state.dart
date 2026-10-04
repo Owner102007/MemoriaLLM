@@ -21,8 +21,8 @@
 ///
 /// Эталон лежит в общей таблице настроек одной записью — тем же JSON,
 /// что задуман для пакета литературы (`sno2026-reference/1`). В базе, а
-/// не файлом: сброс и эталон меняются одной транзакцией, а раздел
-/// «Тестирование» проверяется без диска.
+/// не файлом: эталон живёт и пропадает вместе с полкой, которую
+/// описывает, а раздел «Тестирование» проверяется без диска.
 library;
 
 import 'dart:convert';
@@ -392,6 +392,7 @@ class ResetReport {
     required this.at,
     required this.matches,
     this.missing = const <String>[],
+    this.extra = const <String>[],
   });
 
   /// Когда сброшено.
@@ -403,6 +404,10 @@ class ResetReport {
   /// Книги эталона, у которых нет файла: их возвращает повторное
   /// добавление архива с литературой.
   final List<String> missing;
+
+  /// Книги на полке, которых в эталоне нет: они пришли не из архива с
+  /// литературой. Сброс их не снимает — ставит в «Без категории».
+  final List<String> extra;
 }
 
 /// Сколько книг без файла названо в итоге сброса поимённо.
@@ -410,20 +415,36 @@ const int kNamedMissing = 3;
 
 /// Что сказать экспериментатору после сброса.
 String describeReset(ResetReport report) {
-  if (report.missing.isEmpty) {
+  if (report.missing.isEmpty && report.extra.isEmpty) {
     return report.matches
         ? 'Сброшено. Состояние совпадает с эталоном.'
-        : 'Сброшено, но состояние отличается от эталона: добавьте архив '
-              'с литературой ещё раз.';
+        : 'Сброшено, но сверить состояние с эталоном не удалось.';
   }
-  final String named = report.missing
+  final List<String> lines = <String>['Сброшено.'];
+  if (report.missing.isNotEmpty) {
+    lines.add(
+      'Нет файла у книг: ${report.missing.length} — '
+      '${_named(report.missing)}. Добавьте архив с литературой ещё раз.',
+    );
+  }
+  if (report.extra.isNotEmpty) {
+    lines.add(
+      'Книг не из архива с литературой: ${report.extra.length} — '
+      '${_named(report.extra)}. Они стоят в «Без категории»; снимите '
+      'их с полки, чтобы она совпала с эталоном.',
+    );
+  }
+  return lines.join(' ');
+}
+
+/// Первые книги поимённо, остальные числом.
+String _named(List<String> titles) {
+  final String named = titles
       .take(kNamedMissing)
       .map((String title) => '«$title»')
       .join(', ');
-  final int rest = report.missing.length - kNamedMissing;
-  final String all = rest > 0 ? '$named и ещё $rest' : named;
-  return 'Сброшено. Нет файла у книг: ${report.missing.length} — $all. '
-      'Добавьте архив с литературой ещё раз.';
+  final int rest = titles.length - kNamedMissing;
+  return rest > 0 ? '$named и ещё $rest' : named;
 }
 
 /// Время словами для раздела «Тестирование»: «04.10 в 18:20».
@@ -726,7 +747,12 @@ class ReferenceKeeper {
     } on Object {
       // Сверка не удалась — сказано «отличается», а не «не сброшено».
     }
-    return ResetReport(at: moment, matches: matches, missing: missing);
+    return ResetReport(
+      at: moment,
+      matches: matches,
+      missing: missing,
+      extra: <String>[for (final BookRow row in loose) row.title],
+    );
   }
 
   Future<bool> _available(BookRow row) async {

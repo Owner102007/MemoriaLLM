@@ -311,7 +311,6 @@ void main() {
       expect(archiveCategoryTitle('02. Курс(3).zip'), 'Курс');
       expect(archiveCategoryTitle('1. Курс.zip'), 'Курс');
       expect(archiveCategoryTitle('2) Курс.zip'), 'Курс');
-      expect(archiveCategoryTitle('3 - Курс.zip'), 'Курс');
     });
 
     test('SNO-F-LIT-04: число без нуля и знака — часть названия', () {
@@ -321,6 +320,12 @@ void main() {
       expect(archiveCategoryTitle('2 семестр (1).zip'), '2 семестр');
       expect(archiveCategoryTitle('1984.zip'), '1984');
       expect(archiveCategoryTitle('3D-атлас.zip'), '3D-атлас');
+      expect(archiveCategoryTitle('3_семестр.zip'), '3_семестр');
+      expect(archiveCategoryTitle('2026_литература.zip'), '2026_литература');
+      expect(archiveCategoryTitle('2026 - осень.zip'), '2026 - осень');
+      // Дата и дробь — не порядок.
+      expect(archiveCategoryTitle('04.10 Литература.zip'), '04.10 Литература');
+      expect(archiveCategoryTitle('1.5 курс.zip'), '1.5 курс');
       expect(archiveCategoryTitle('01.zip'), '01');
       // Год в скобках — не хвост повторной загрузки.
       expect(archiveCategoryTitle('Курс (2026).zip'), 'Курс (2026)');

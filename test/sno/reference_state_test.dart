@@ -698,6 +698,9 @@ void main() {
         'Анатомия: hash-a1, hash-a2, hash-a3',
       ]);
       expect(report.matches, isFalse, reason: 'на полке лишняя книга');
+      // И сказано, что с этим делать: архив тут не поможет.
+      expect(report.extra, <String>['Книга x1']);
+      expect(describeReset(report), contains('снимите их с полки'));
     });
 
     test('SNO-F-CFG-04: надгробие книги не из эталона стирается', () async {
@@ -735,7 +738,15 @@ void main() {
       );
       expect(
         describeReset(ResetReport(at: at, matches: false)),
-        contains('отличается от эталона'),
+        contains('сверить состояние с эталоном не удалось'),
+      );
+      expect(
+        describeReset(
+          ResetReport(at: at, matches: false, extra: const <String>['Своя']),
+        ),
+        'Сброшено. Книг не из архива с литературой: 1 — «Своя». Они стоят '
+        'в «Без категории»; снимите их с полки, чтобы она совпала с '
+        'эталоном.',
       );
       expect(
         describeReset(
