@@ -108,11 +108,10 @@ class ArchiveReport {
 ///
 /// Отдельным типом — чтобы widget-тест раздела подставлял своё: в нём
 /// не должно быть настоящего файлового ввода-вывода.
-typedef ArchiveUnpack =
-    Future<ArchiveReport> Function(
-      PickedFile archive, {
-      void Function(ArchiveProgress progress)? onProgress,
-    });
+typedef ArchiveUnpack = Future<ArchiveReport> Function(
+  PickedFile archive, {
+  void Function(ArchiveProgress progress)? onProgress,
+});
 
 /// Причина отказа архива — словами для экспериментатора.
 ///
@@ -121,8 +120,7 @@ typedef ArchiveUnpack =
 String describeZipProblem(ZipProblem problem) {
   return switch (problem) {
     ZipProblem.notZip => 'это не ZIP-архив',
-    ZipProblem.truncated =>
-      'архив оборван — перешлите или скачайте его заново',
+    ZipProblem.truncated => 'архив оборван — перешлите или скачайте его заново',
     ZipProblem.damaged => 'архив повреждён',
     ZipProblem.encrypted =>
       'архив защищён паролем — пересоберите его без пароля',
@@ -143,9 +141,7 @@ String describeZipProblem(ZipProblem problem) {
 String describeWriteFailure(FileSystemException error) {
   final int? code = error.osError?.errorCode;
   // 28 — ENOSPC у Android и Linux; 112 и 39 — «диск полон» у Windows.
-  final bool full = Platform.isWindows
-      ? code == 112 || code == 39
-      : code == 28;
+  final bool full = Platform.isWindows ? code == 112 || code == 39 : code == 28;
   return full
       ? 'на устройстве кончилось место'
       : 'книгу не удалось записать на устройство';

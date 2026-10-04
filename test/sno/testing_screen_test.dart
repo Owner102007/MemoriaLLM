@@ -327,9 +327,7 @@ void main() {
       );
       expect(bar.value, closeTo(11 / 34, 1e-9));
       // Второй раз кнопка не нажимается, пока идёт первая распаковка.
-      final ListTile tile = tester.widget(
-        find.byKey(const Key('sno-add-pdf')),
-      );
+      final ListTile tile = tester.widget(find.byKey(const Key('sno-add-pdf')));
       expect(tile.enabled, isFalse);
 
       gate.complete();

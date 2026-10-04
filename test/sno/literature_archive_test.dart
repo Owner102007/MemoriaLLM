@@ -120,7 +120,12 @@ void main() {
   late Directory temp;
   late Directory books;
 
+  /// Счётчик идентификаторов — один на тест, а не на сценарий: второй
+  /// архив в том же тесте не должен выдать книге занятый идентификатор.
+  int seen = 0;
+
   setUp(() async {
+    seen = 0;
     data = await openTestData();
     temp = await Directory.systemTemp.createTemp('memoria-archive');
     books = Directory('${temp.path}/books');
@@ -131,7 +136,6 @@ void main() {
   });
 
   LiteratureArchive archiveOn({BookStorage? storage, DocumentOpener? opener}) {
-    int seen = 0;
     return LiteratureArchive(
       library: data.library,
       categories: data.categories,
@@ -445,10 +449,9 @@ void main() {
     test('SNO-F-LIT-01: папка из одних отказов — не категория', () async {
       // Категория заводится под книгу, которая открылась.
       final Directory scratch = Directory('${temp.path}/scratch')..createSync();
-      final File probe = File('${scratch.path}/probe.pdf')
-        ..writeAsBytesSync(
-          contentOf('02 Физиология/Нормальная физиология.pdf'),
-        );
+      final File probe = File(
+        '${scratch.path}/probe.pdf',
+      )..writeAsBytesSync(contentOf('02 Физиология/Нормальная физиология.pdf'));
       await archiveOn(
         opener: _RefusingOpener(<String>{
           await fileFingerprint(probe.path),
@@ -489,9 +492,8 @@ void main() {
         books,
       );
 
-      final ArchiveReport report = await archiveOn(
-        storage: storage,
-      ).add(picked);
+      final ArchiveReport report = await archiveOn(storage: storage)
+          .add(picked);
 
       expect(report.added, hasLength(4));
       expect(await shelf(), fullShelf);
@@ -506,9 +508,8 @@ void main() {
         seekable: false,
       );
 
-      final ArchiveReport report = await archiveOn(
-        storage: storage,
-      ).add(picked);
+      final ArchiveReport report = await archiveOn(storage: storage)
+          .add(picked);
 
       expect(report.added, hasLength(4));
       expect(storage.adopted, <String>['Литература.zip']);

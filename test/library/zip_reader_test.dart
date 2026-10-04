@@ -102,10 +102,11 @@ void main() {
 
     test('SNO-ALG-LIT-01: без сжатия — имена в UTF-8 и записи-папки', () async {
       await withArchive('shelf_stored.zip', (ZipArchive archive) async {
-        expect(
-          archive.entries.map((ZipEntry entry) => entry.name),
-          <String>['01 Анатомия/', '02 Физиология/', ..._books],
-        );
+        expect(archive.entries.map((ZipEntry entry) => entry.name), <String>[
+          '01 Анатомия/',
+          '02 Физиология/',
+          ..._books,
+        ]);
         expect(archive.entries.first.isDirectory, isTrue);
         expect(archive.entries.last.isStored, isTrue);
         expect(archive.entries.last.size, contentOf(_books.last).length);
@@ -278,9 +279,8 @@ void main() {
     });
 
     test('SNO-ALG-LIT-01: оглавление указывает мимо файла', () async {
-      final Uint8List bytes = File(
-        '$_fixtures/shelf_stored.zip',
-      ).readAsBytesSync();
+      final Uint8List bytes = File('$_fixtures/shelf_stored.zip')
+          .readAsBytesSync();
       // Смещение оглавления — четыре байта перед длиной комментария.
       final int offset = bytes.length - 6;
       bytes.setRange(offset, offset + 4, <int>[0x00, 0xff, 0xff, 0x7f]);
@@ -332,9 +332,8 @@ void main() {
     });
 
     test('SNO-ALG-LIT-01: испорченный Deflate — отказ, а не мусор', () async {
-      final Uint8List bytes = File(
-        '$_fixtures/descriptor_python.zip',
-      ).readAsBytesSync();
+      final Uint8List bytes = File('$_fixtures/descriptor_python.zip')
+          .readAsBytesSync();
       final ZipArchive intact = await readBytes(bytes);
       final ZipEntry entry = intact.entries.first;
       // Данные первой записи идут сразу за её заголовком и именем.

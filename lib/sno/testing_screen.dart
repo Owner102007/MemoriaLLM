@@ -316,9 +316,7 @@ class _TestingScreenState extends State<TestingScreen> {
       key: const Key('sno-archive-progress'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          'Распаковываю архив: ${unpacking.number} из ${unpacking.total}',
-        ),
+        Text('Распаковываю архив: ${unpacking.number} из ${unpacking.total}'),
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: LinearProgressIndicator(
@@ -326,9 +324,7 @@ class _TestingScreenState extends State<TestingScreen> {
           ),
         ),
         Text(
-          category == null
-              ? unpacking.title
-              : '$category · ${unpacking.title}',
+          category == null ? unpacking.title : '$category · ${unpacking.title}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
