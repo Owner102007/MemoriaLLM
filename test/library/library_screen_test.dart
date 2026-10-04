@@ -542,6 +542,36 @@ void main() {
 
       await unmount(tester);
     });
+
+    testWidgets('BUG-45: общий файл остаётся, пока жива вторая книга', (
+      WidgetTester tester,
+    ) async {
+      // Две книги на одном файле: одну привязали к файлу другой.
+      await data.library.save(testBook());
+      await data.library.save(
+        testBook(
+          id: 'book-2',
+          title: 'Дубровский',
+          hash: 'hash-2',
+        ).copyWith(source: testBook().source),
+      );
+      final MemoryBookStorage storage = MemoryBookStorage();
+      await pumpShelf(tester, testServices(data: data, storage: storage));
+
+      await tester.tap(find.byKey(const Key('library-menu-book-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('book-action-remove')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pumpAndSettle();
+
+      // Первая снята, но файл нужен второй: отпустить его — значит
+      // удалить копию у книги, которая стоит на полке.
+      expect((await data.library.books()).single.id, 'book-2');
+      expect(storage.released, isEmpty);
+
+      await unmount(tester);
+    });
   });
 
   group('категории', () {

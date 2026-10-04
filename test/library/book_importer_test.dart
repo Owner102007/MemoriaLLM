@@ -191,6 +191,42 @@ void main() {
       final Book? still = await data.library.bookById(shelved.id);
       expect(still?.source, shelved.source);
     });
+
+    test('BUG-17: книга переехала — прежний источник отпущен', () async {
+      final RecordingStorage storage = RecordingStorage();
+      final Book shelved = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(_picked);
+
+      // Ту же книгу (отпечаток тот же) выбрали из другого места.
+      const PickedFile moved = PickedFile(
+        path: 'test/fixtures/two_columns.pdf',
+        name: 'переехала.pdf',
+      );
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(moved);
+
+      expect(again.id, shelved.id, reason: 'книга та же, второй не завелось');
+      expect(again.source, FilePathSource(moved.path!));
+      // Прежняя копия и прежняя закреплённая ссылка больше ничьи: не
+      // отпустить их — значит копить мусор и ссылки в никуда.
+      expect(storage.released, <BookSource>[shelved.source]);
+    });
+
+    test('BUG-17: тот же источник повторно — отпускать нечего', () async {
+      final RecordingStorage storage = RecordingStorage();
+      for (int i = 0; i < 2; i++) {
+        await importer(
+          FakeReaderDocument(pages: <String>['текст']),
+          storage: storage,
+        ).register(_picked);
+      }
+      expect(storage.released, isEmpty);
+      expect(await data.library.books(), hasLength(1));
+    });
   });
 
   group('импорт пачкой', () {
@@ -358,6 +394,76 @@ void main() {
       );
 
       expect(storage.released, <BookSource>[FilePathSource(_picked.path!)]);
+    });
+  });
+
+  group('BUG-45: источник другой книги при перепривязке', () {
+    const PickedFile other = PickedFile(
+      path: 'test/fixtures/two_columns.pdf',
+      name: 'чужая.pdf',
+    );
+
+    test('BUG-45: отказ не отнимает файл у другой книги', () async {
+      final RecordingStorage storage = RecordingStorage();
+      // На полке две книги, у каждой свой файл.
+      final Book mine = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(_picked);
+      final Book theirs = await importer(
+        FakeReaderDocument(pages: <String>['чужой', 'текст']),
+        hash: 'hash-чужой',
+        id: 'id-2',
+        storage: storage,
+      ).register(other);
+      expect(storage.released, isEmpty);
+
+      // Свою книгу по ошибке привязывают к файлу чужой — и отказываются.
+      await expectLater(
+        importer(
+          FakeReaderDocument(pages: <String>['чужой', 'текст']),
+          hash: 'hash-чужой',
+          storage: storage,
+        ).relink(mine, other),
+        throwsA(isA<RelinkRefused>()),
+      );
+
+      // Принятый файл — источник второй книги: отпустить его значило
+      // бы удалить её копию или отозвать её ссылку.
+      expect(storage.released, isEmpty);
+      final Book? still = await data.library.bookById(theirs.id);
+      expect(still?.source, theirs.source);
+    });
+
+    test('BUG-45: общий файл остаётся у книги, к которой привязан', () async {
+      final RecordingStorage storage = RecordingStorage();
+      final Book mine = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(_picked);
+      final Book theirs = await importer(
+        FakeReaderDocument(pages: <String>['чужой', 'текст']),
+        hash: 'hash-чужой',
+        id: 'id-2',
+        storage: storage,
+      ).register(other);
+
+      // Читатель согласился: теперь у двух книг один файл.
+      final Book shared = await importer(
+        FakeReaderDocument(pages: <String>['чужой', 'текст']),
+        hash: 'hash-чужой',
+        storage: storage,
+      ).relink(mine, other, onMismatch: (RelinkMismatch _) async => true);
+      expect(shared.source, theirs.source);
+      // Отпущен прежний файл первой книги — он больше ничей.
+      expect(storage.released, <BookSource>[mine.source]);
+
+      // Первую привязывают обратно: общий файл нужен второй книге.
+      await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).relink(shared, _picked, onMismatch: (RelinkMismatch _) async => true);
+      expect(storage.released, <BookSource>[mine.source]);
     });
   });
 
