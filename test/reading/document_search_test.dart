@@ -198,10 +198,12 @@ void main() {
       expect(search.hits.length, 7);
       expect(search.reachedLimit, isTrue);
       // На странице найденное идёт вперемешку, как в тексте.
-      expect(
-        search.hits.take(4).map((SearchHit h) => h.sourceStart),
-        <int>[0, 4, 8, 12],
-      );
+      expect(search.hits.take(4).map((SearchHit h) => h.sourceStart), <int>[
+        0,
+        4,
+        8,
+        12,
+      ]);
       search.dispose();
     });
   });

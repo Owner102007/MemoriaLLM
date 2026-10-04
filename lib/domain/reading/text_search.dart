@@ -301,8 +301,7 @@ List<SearchHit> findInPageText({
   // BUG-50: знак переноса читается и как дефис. Второй проход нужен
   // только запросу с дефисом на странице, где такой знак есть: иначе он
   // нашёл бы то же самое.
-  if (!needle.contains('-') ||
-      !pageText.codeUnits.contains(kLineBreakHyphen)) {
+  if (!needle.contains('-') || !pageText.codeUnits.contains(kLineBreakHyphen)) {
     return hits;
   }
   final List<SearchHit> hyphened = _findPrepared(
@@ -313,10 +312,12 @@ List<SearchHit> findInPageText({
     snippetRadius: snippetRadius,
     limit: limit,
   );
+  // Место, найденное обоими чтениями, берётся из второго: в запросе
+  // дефис есть, и отрывки одной страницы показаны одинаково — с ним.
   final List<SearchHit> all = <SearchHit>[
-    ...hits,
-    for (final SearchHit hit in hyphened)
-      if (!hits.contains(hit)) hit,
+    ...hyphened,
+    for (final SearchHit hit in hits)
+      if (!hyphened.contains(hit)) hit,
   ]..sort(compareSearchHits);
   return all.length > limit ? all.sublist(0, limit) : all;
 }

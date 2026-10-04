@@ -106,7 +106,9 @@ void main() {
       final Book any = book('any', 'Любая книга');
       expect(matchShelfTitle(any, const <String>[]), isNull);
       expect(matchShelfTitle(any, const <String>['']), isNull);
-      expect(matchShelfTitle(any, const <String>['', 'кни'])!.rank, 3);
+      // Слова приходят уже свёрнутыми — как их отдаёт `titleQueryWords`.
+      final List<String> words = <String>['', ...titleQueryWords('кни')];
+      expect(matchShelfTitle(any, words)!.rank, kTitleWordStartRank);
     });
 
     test('SNO-ALG-LIB-01: окончания не снимаются', () {
