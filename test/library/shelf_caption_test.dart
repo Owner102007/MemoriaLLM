@@ -51,9 +51,7 @@ void main() {
   group('BUG-14: подпись на своей подложке читается везде', () {
     for (final AppPalette palette in appPalettes.values) {
       test('BUG-14: ${palette.title} — не ниже 4,5:1', () {
-        final ({int background, int text}) colors = shelfCaptionColors(
-          palette,
-        );
+        final ({int background, int text}) colors = shelfCaptionColors(palette);
         final double ratio = contrastRatio(colors.text, colors.background);
         expect(
           ratio,
@@ -69,9 +67,7 @@ void main() {
       // Оттенок категории к подложке подписи не подмешивается: иначе
       // читаемость снова зависела бы от того, как категорию назвали.
       for (final AppPalette palette in appPalettes.values) {
-        final ({int background, int text}) colors = shelfCaptionColors(
-          palette,
-        );
+        final ({int background, int text}) colors = shelfCaptionColors(palette);
         expect(colors.background, palette.surface);
         expect(colors.text, palette.text);
       }

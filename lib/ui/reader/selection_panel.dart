@@ -161,9 +161,7 @@ class _PanelPlace extends SingleChildLayoutDelegate {
     // прокручивается внутри неё, — но и не уже своего минимума.
     final double room = constraints.maxWidth - SelectionPanel.margin * 2;
     return BoxConstraints(
-      maxWidth: room < SelectionPanel.minWidth
-          ? SelectionPanel.minWidth
-          : room,
+      maxWidth: room < SelectionPanel.minWidth ? SelectionPanel.minWidth : room,
       maxHeight: constraints.maxHeight,
     );
   }
@@ -257,12 +255,15 @@ Offset panelOffset({
 ///
 /// Обычно это объединение прямоугольников выделения по строкам. Если их
 /// нет вовсе — ни наших, ни от просмотрщика, — панель всё равно
-/// показывается: привязка уходит к нижнему краю области, по её середине.
-/// Выделено, а сделать с выделенным ничего нельзя — хуже, чем панель не
-/// на своём месте.
+/// показывается: привязка уходит в середину области. Выделено, а сделать
+/// с выделенным ничего нельзя — хуже, чем панель не на своём месте.
+///
+/// Именно в середину, а не к краю: у верхнего и у нижнего края поверх
+/// листа ложатся панели чтения и полоса поиска, и панель под ними была
+/// бы видна, но недоступна нажатию.
 Rect panelAnchor({required List<Rect> rects, required Size area}) {
   if (rects.isEmpty) {
-    return Rect.fromLTWH(area.width / 2, area.height, 0, 0);
+    return Rect.fromLTWH(area.width / 2, area.height / 2, 0, 0);
   }
   return rects.reduce((Rect a, Rect b) => a.expandToInclude(b));
 }

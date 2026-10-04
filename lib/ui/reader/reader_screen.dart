@@ -1882,7 +1882,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             ),
           ),
         // BUG-25: выделение на этом листе есть — панель есть. Нет
-        // прямоугольников — она встаёт у нижнего края, а не пропадает.
+        // прямоугольников — она встаёт посередине листа, а не пропадает.
         if (selection != null && pages.contains(selection.pageNumber))
           SelectionPanel(
             anchor: panelAnchor(rects: selected, area: size),

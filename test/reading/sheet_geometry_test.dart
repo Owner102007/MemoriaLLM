@@ -304,11 +304,7 @@ void main() {
         Rect.fromLTWH(380, 400, 20, 20),
       ];
       for (final Rect anchor in corners) {
-        final Offset at = panelOffset(
-          anchor: anchor,
-          area: area,
-          width: width,
-        );
+        final Offset at = panelOffset(anchor: anchor, area: area, width: width);
         expect(at.dx, greaterThanOrEqualTo(SelectionPanel.margin));
         expect(
           at.dx + width,
@@ -383,17 +379,20 @@ void main() {
       expect(anchor, const Rect.fromLTRB(40, 300, 350, 342));
     });
 
-    test('BUG-25: прямоугольников нет — панель у нижнего края', () {
+    test('BUG-25: прямоугольников нет — панель посередине области', () {
       // Выделено, а показать место нечем: панель всё равно обязана
-      // появиться — у нижнего края области, по её середине.
+      // появиться. Посередине, а не у края: у краёв поверх листа лежат
+      // панели чтения и полоса поиска.
       final Rect anchor = panelAnchor(rects: const <Rect>[], area: area);
       final Offset at = panelOffset(anchor: anchor, area: area, width: width);
 
       expect(at.dx + width / 2, area.width / 2);
       expect(
-        at.dy,
-        area.height - SelectionPanel.gap - SelectionPanel.height,
+        at.dy + SelectionPanel.height,
+        area.height / 2 - SelectionPanel.gap,
       );
+      // Полоса поиска занимает не больше 40 % экрана снизу.
+      expect(at.dy + SelectionPanel.height, lessThan(area.height * 0.6));
     });
   });
 

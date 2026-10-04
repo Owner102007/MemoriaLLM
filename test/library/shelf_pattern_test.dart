@@ -230,10 +230,7 @@ void main() {
     });
 
     test('BUG-05: вырожденный участок начал не даёт', () {
-      expect(
-        isoGridStarts(width: 0, height: 100, step: 30, shift: 0),
-        isEmpty,
-      );
+      expect(isoGridStarts(width: 0, height: 100, step: 30, shift: 0), isEmpty);
       expect(
         isoGridStarts(width: 100, height: 100, step: 0, shift: 0),
         isEmpty,

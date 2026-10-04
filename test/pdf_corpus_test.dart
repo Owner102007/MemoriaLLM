@@ -842,12 +842,9 @@ void main() {
       final int length = first.text.fullText.length;
       expect(length, greaterThan(20), reason: 'на странице есть текст');
 
-      final List<TextBox> boxes = viewerSelectionBoxes(
-        <PdfPageTextRange>[
-          PdfPageTextRange(pageText: first.text, start: 0, end: 20),
-        ],
-        first.page,
-      );
+      final List<TextBox> boxes = viewerSelectionBoxes(<PdfPageTextRange>[
+        PdfPageTextRange(pageText: first.text, start: 0, end: 20),
+      ], first.page);
 
       expect(boxes, isNotEmpty);
       for (final TextBox box in boxes) {
@@ -901,12 +898,9 @@ void main() {
       if (length == 0) {
         return;
       }
-      final List<TextBox> boxes = viewerSelectionBoxes(
-        <PdfPageTextRange>[
-          PdfPageTextRange(pageText: turned.text, start: 0, end: length),
-        ],
-        turned.page,
-      );
+      final List<TextBox> boxes = viewerSelectionBoxes(<PdfPageTextRange>[
+        PdfPageTextRange(pageText: turned.text, start: 0, end: length),
+      ], turned.page);
       for (final TextBox box in boxes) {
         expect(box.isValid, isTrue, reason: '$box');
         expect(box.right, lessThanOrEqualTo(1));
