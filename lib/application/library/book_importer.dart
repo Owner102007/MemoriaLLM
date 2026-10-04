@@ -201,10 +201,17 @@ class BookImporter {
   /// её ещё раз значило бы копировать дважды. Всё остальное — как у
   /// выбранного файла: та же книга второй раз не заводится, а источник,
   /// который не открылся, отпускается, если он ничей.
+  ///
+  /// [categoryFor] — категория, которую называют не заранее, а по
+  /// требованию: её спрашивают, только когда книга новая и уже
+  /// открылась. Архиву это нужно, чтобы заводить категорию под книгу,
+  /// которая действительно встаёт на полку, и ставить книгу в неё одной
+  /// записью.
   Future<Book> registerSource(
     BookSource source, {
     required String title,
     String? categoryId,
+    Future<String?> Function()? categoryFor,
   }) async {
     try {
       return await _save(
@@ -212,6 +219,7 @@ class BookImporter {
         title,
         null,
         categoryId: categoryId,
+        categoryFor: categoryFor,
         releaseReplaced: true,
       );
     } on Object {
@@ -361,6 +369,7 @@ class BookImporter {
     String title,
     Book? known, {
     String? categoryId,
+    Future<String?> Function()? categoryFor,
     Future<void> Function(String hash, int pageCount)? check,
     bool releaseReplaced = false,
   }) async {
@@ -387,6 +396,12 @@ class BookImporter {
     }
     await check?.call(hash, pageCount);
 
+    // Категория новой книги. Названная по требованию спрашивается
+    // здесь: файл уже прочитан и открылся, дальше только запись.
+    final String? place = existing != null || categoryFor == null
+        ? categoryId
+        : await categoryFor();
+
     final DateTime moment = _now();
     final Book book = existing == null
         ? Book(
@@ -399,13 +414,10 @@ class BookImporter {
             pageCount: pageCount,
             hasTextLayer: textLayer,
             openedAt: moment,
-            categoryId: categoryId,
+            categoryId: place,
             // BUG-20: новая книга встаёт за последней книгой своей
             // категории, а не на место 0.
-            shelfPosition: shelfPlaceAfterLast(
-              await _library.books(),
-              categoryId,
-            ),
+            shelfPosition: shelfPlaceAfterLast(await _library.books(), place),
           )
         : existing.copyWith(
             source: source,

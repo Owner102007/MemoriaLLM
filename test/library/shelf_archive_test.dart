@@ -83,6 +83,22 @@ void main() {
       ]);
     });
 
+    test('SNO-ALG-LIT-01: папка «Без категории» — это она и есть', () {
+      final ArchiveLayout layout = layoutShelfArchive(<String>[
+        'Без категории/Словарь.pdf',
+        '00 без категории/Атлас.pdf',
+        'Анатомия/А.pdf',
+      ]);
+      // Второй категории с этим названием рядом с постоянным разделом
+      // не заводится.
+      expect(layout.categories, <String>['Анатомия']);
+      expect(shelfOf(layout), <String>[
+        '— · Атлас',
+        'Анатомия · А',
+        '— · Словарь',
+      ]);
+    });
+
     test('SNO-ALG-LIT-01: обратная черта — тоже разделитель', () {
       final ArchiveLayout layout = layoutShelfArchive(<String>[
         r'Папка\Книга.pdf',

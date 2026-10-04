@@ -208,6 +208,23 @@ def backslash() -> bytes:
     return buffer.getvalue()
 
 
+def twins() -> bytes:
+    """Одна и та же книга в двух папках: один раз без сжатия, второй —
+    в Deflate. Содержимое у обеих выведено из одного пути."""
+    same = content("Анатомия.pdf")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(info("Блок 1/Анатомия.pdf", zipfile.ZIP_STORED), same)
+        archive.writestr(
+            info("Блок 2/Анатомия.pdf", zipfile.ZIP_DEFLATED),
+            same,
+            compresslevel=6,
+        )
+        path = "Блок 2/Гистология.pdf"
+        archive.writestr(info(path, zipfile.ZIP_STORED), content(path))
+    return buffer.getvalue()
+
+
 def empty() -> bytes:
     """Архив без единой записи."""
     buffer = io.BytesIO()
@@ -303,6 +320,7 @@ def main() -> None:
         "bzip2_python.zip": bzip2(),
         "unicode_extra.zip": unicode_extra(),
         "backslash.zip": backslash(),
+        "twins_python.zip": twins(),
         "empty.zip": empty(),
         "truncated.zip": stored[: len(stored) * 6 // 10],
         "bad_crc.zip": bad_crc(stored),

@@ -102,6 +102,12 @@ String describeArchiveReport(ArchiveReport report) {
       'и функции.',
     );
   }
+  if (report.repeats > 0) {
+    lines.add(
+      'Одинаковых файлов в архиве: ${report.repeats} — такая книга '
+      'стоит на полке один раз.',
+    );
+  }
   if (report.skipped > 0) {
     lines.add('Пропущено не-PDF: ${report.skipped}.');
   }
@@ -166,7 +172,15 @@ class _TestingScreenState extends State<TestingScreen> {
   int _done = 0;
   int _total = 0;
 
-  /// Какая книга архива распаковывается; `null` — архив не идёт.
+  /// Открыт ли диалог выбора: второе нажатие, пока он открыт, не должно
+  /// начать второе добавление.
+  bool _picking = false;
+
+  /// Имя архива, который добавляется сейчас; `null` — архив не идёт.
+  String? _archiveName;
+
+  /// Какая книга архива распаковывается; `null` — архив ещё открывается
+  /// или не идёт вовсе.
   ArchiveProgress? _unpacking;
 
   /// Добавляет выбранные книги и архивы на полку (SNO-F-LIT-02,
@@ -178,11 +192,16 @@ class _TestingScreenState extends State<TestingScreen> {
   /// (`AppServices.production`), а не этот экран. Архив распаковывается
   /// туда же, и его книги встают по своим папкам (`LiteratureArchive`).
   Future<void> _addBooks() async {
-    if (_busy) {
+    if (_busy || _picking) {
       return;
     }
-    final List<PickedFile> files = await widget.services.picker
-        .pickBooksOrArchives();
+    final List<PickedFile> files;
+    _picking = true;
+    try {
+      files = await widget.services.picker.pickBooksOrArchives();
+    } finally {
+      _picking = false;
+    }
     if (files.isEmpty || !mounted) {
       return;
     }
@@ -198,6 +217,7 @@ class _TestingScreenState extends State<TestingScreen> {
       _busy = true;
       _done = 0;
       _total = pdfs.length;
+      _archiveName = null;
       _unpacking = null;
     });
     ImportReport? report;
@@ -221,22 +241,40 @@ class _TestingScreenState extends State<TestingScreen> {
       if (archives.isNotEmpty) {
         final ArchiveUnpack unpack = widget.unpack ?? _archive().add;
         for (final PickedFile archive in archives) {
-          unpacked.add(
-            await unpack(
-              archive,
-              onProgress: (ArchiveProgress progress) {
-                if (mounted) {
-                  setState(() => _unpacking = progress);
-                }
-              },
-            ),
-          );
+          if (mounted) {
+            setState(() {
+              _archiveName = archive.name;
+              _unpacking = null;
+            });
+          }
+          try {
+            unpacked.add(
+              await unpack(
+                archive,
+                onProgress: (ArchiveProgress progress) {
+                  if (mounted) {
+                    setState(() => _unpacking = progress);
+                  }
+                },
+              ),
+            );
+          } on Object {
+            // Распаковка обещает не бросать; если всё же бросила, итог
+            // остальных файлов не должен пропасть вместе с ней.
+            unpacked.add(
+              ArchiveReport(
+                archive: archive.name,
+                stopped: 'распаковка прервалась из-за ошибки приложения',
+              ),
+            );
+          }
         }
       }
     } finally {
       if (mounted) {
         setState(() {
           _busy = false;
+          _archiveName = null;
           _unpacking = null;
         });
       }
@@ -309,7 +347,14 @@ class _TestingScreenState extends State<TestingScreen> {
   Widget _progress() {
     final ArchiveProgress? unpacking = _unpacking;
     if (unpacking == null) {
-      return Text('Добавляю: $_done из $_total');
+      // Оглавление архива читается до первой книги, а на телефоне архив
+      // из облака сначала переносится в приложение — это не миг.
+      final String? archive = _archiveName;
+      return Text(
+        archive == null
+            ? 'Добавляю: $_done из $_total'
+            : 'Открываю архив «$archive»…',
+      );
     }
     final String? category = unpacking.category;
     return Column(

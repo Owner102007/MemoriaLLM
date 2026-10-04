@@ -115,9 +115,7 @@ ArchiveLayout layoutShelfArchive(List<String> names) {
   final Set<String> seen = <String>{};
   final List<ArchiveBook> result = <ArchiveBook>[];
   for (final _Item book in books) {
-    final String? category = book.folder == null
-        ? null
-        : normalizeCategoryTitle(stripOrderPrefix(book.folder!));
+    final String? category = _categoryOf(book.folder);
     if (category != null && seen.add(category.toLowerCase())) {
       categories.add(category);
     }
@@ -136,6 +134,20 @@ ArchiveLayout layoutShelfArchive(List<String> names) {
     );
   }
   return ArchiveLayout(books: result, categories: categories, skipped: skipped);
+}
+
+/// Название категории по имени папки; `null` — «Без категории».
+///
+/// Папка, названная «Без категории», — это она и есть, а не вторая
+/// категория с тем же названием рядом с постоянным разделом.
+String? _categoryOf(String? folder) {
+  if (folder == null) {
+    return null;
+  }
+  final String title = normalizeCategoryTitle(stripOrderPrefix(folder));
+  return title.toLowerCase() == kUncategorizedTitle.toLowerCase()
+      ? null
+      : title;
 }
 
 /// Убирает из начала имени цифры порядка: «01 Анатомия» → «Анатомия».

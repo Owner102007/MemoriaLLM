@@ -98,6 +98,40 @@ class _UriArchiveStorage implements BookStorage {
   }
 }
 
+/// Хранилище, где выбранное по ссылке всегда переносится в папку книг
+/// и называется по содержимому — как в сборке ветви на телефоне, когда
+/// по ссылке нельзя перескакивать.
+class _SameFileStorage implements BookStorage {
+  _SameFileStorage(this.bytes, this.books);
+
+  final List<int> bytes;
+  final Directory books;
+  final LocalBookStorage _files = const LocalBookStorage();
+
+  @override
+  Future<BookSource> adopt(PickedFile file) async {
+    await books.create(recursive: true);
+    final File scratch = File('${books.path}/incoming-scratch.part');
+    await scratch.writeAsBytes(bytes);
+    final String hash = await fileFingerprint(scratch.path);
+    final File copy = await scratch.rename('${books.path}/$hash.pdf');
+    return FilePathSource(copy.path, owned: true);
+  }
+
+  @override
+  Future<BookHandle> open(BookSource source) async {
+    return source is DocumentUriSource
+        ? _Pipe(bytes.length)
+        : await _files.open(source);
+  }
+
+  @override
+  Future<bool> available(BookSource source) => _files.available(source);
+
+  @override
+  Future<void> release(BookSource source) => _files.release(source);
+}
+
 /// Документ, по которому нельзя перескакивать: чтение отказывает.
 class _Pipe implements BookHandle {
   _Pipe(this.length);
@@ -281,6 +315,23 @@ void main() {
         'Биохимия: Биохимия',
         'Гистология: Гистология',
       ]);
+    });
+
+    test('SNO-F-LIT-01: та же книга в двух папках встаёт один раз', () async {
+      final ArchiveReport report = await archiveOn().add(
+        fixture('twins_python.zip'),
+      );
+
+      expect(report.total, 3);
+      expect(report.added, hasLength(2));
+      expect(report.repeats, 1);
+      expect(report.already, 0, reason: 'на полке до архива не было ничего');
+      expect(await shelf(), <String>[
+        '—: ',
+        'Блок 1: Анатомия',
+        'Блок 2: Гистология',
+      ]);
+      expect(copies(), hasLength(2));
     });
 
     test('SNO-F-LIT-01: категория с таким названием не дублируется', () async {
@@ -523,10 +574,56 @@ void main() {
 
       expect(report.added, hasLength(4));
       expect(storage.adopted, <String>['Литература.zip']);
-      // Перенесённый архив после распаковки убран: в папке только книги.
-      expect(storage.released, hasLength(1));
+      // Перенесённый архив лежал под своим именем, а не как книга, и
+      // после распаковки убран: в папке только книги.
+      expect(
+        storage.released,
+        <BookSource>[
+          FilePathSource('${books.path}/archive-borrowed.tmp', owned: true),
+        ],
+      );
       expect(copies(), hasLength(4));
       expect(copies().every((String name) => name.endsWith('.pdf')), isTrue);
+    });
+  });
+
+  group('SNO-F-LIT-01: архив, оставшийся с прошлого раза', () {
+    test('SNO-F-LIT-01: перенесённый и не убранный архив выметается', () async {
+      // Приложение закрыли посреди распаковки архива, перенесённого из
+      // облака: файл размером с весь архив остался в папке книг.
+      final File orphan = File('${books.path}/archive-borrowed.tmp')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(List<int>.filled(1024, 7));
+
+      final ArchiveReport report = await archiveOn().add(
+        fixture('shelf_stored.zip'),
+      );
+
+      expect(report.added, hasLength(4));
+      expect(orphan.existsSync(), isFalse);
+      expect(copies(), hasLength(4));
+    });
+
+    test('SNO-F-LIT-01: книга под видом архива файла не теряет', () async {
+      // По потоку без перескоков «архивом» выбрали PDF, который уже
+      // стоит на полке: перенос кладёт его в тот же файл, что у книги.
+      final List<int> bytes = contentOf('Анатомия.pdf');
+      final _SameFileStorage storage = _SameFileStorage(bytes, books);
+      final Book shelved = await BookImporter(
+        library: data.library,
+        storage: storage,
+        opener: FakeDocumentOpener(FakeReaderDocument(pages: <String>['т'])),
+      ).register(const PickedFile(name: 'Анатомия.pdf', uri: 'content://a'));
+      final String path = (shelved.source as FilePathSource).path;
+      expect(File(path).existsSync(), isTrue);
+
+      final ArchiveReport report = await archiveOn(storage: storage).add(
+        const PickedFile(name: 'Анатомия.zip', uri: 'content://a'),
+      );
+
+      expect(report.refusal, contains('не ZIP-архив'));
+      expect(File(path).existsSync(), isTrue, reason: 'файл книги цел');
+      expect(await data.library.books(), hasLength(1));
     });
   });
 

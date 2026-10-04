@@ -320,6 +320,7 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const Key('sno-archive-progress')), findsOneWidget);
+      expect(find.textContaining('Добавляю'), findsNothing);
       expect(find.text('Распаковываю архив: 12 из 34'), findsOneWidget);
       expect(find.text('Анатомия · Анатомия человека'), findsOneWidget);
       final LinearProgressIndicator bar = tester.widget(
@@ -335,6 +336,118 @@ void main() {
       expect(find.byKey(const Key('sno-archive-progress')), findsNothing);
       await tester.tap(find.text('Понятно'));
       await tester.pumpAndSettle();
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-01: пока архив открывается, это и сказано', (
+      WidgetTester tester,
+    ) async {
+      final Completer<void> gate = Completer<void>();
+      await pumpTesting(
+        tester,
+        testServices(data: data, picked: archive),
+        unpack:
+            (
+              PickedFile file, {
+              void Function(ArchiveProgress progress)? onProgress,
+            }) async {
+              await gate.future;
+              return ArchiveReport(archive: file.name);
+            },
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.pump();
+      await tester.pump();
+
+      // До первой книги — не «Добавляю: 0 из 0».
+      expect(find.text('Открываю архив «Литература.zip»…'), findsOneWidget);
+      expect(find.textContaining('Добавляю'), findsNothing);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-02: второе нажатие второй диалог не открывает', (
+      WidgetTester tester,
+    ) async {
+      final AppServices base = testServices(data: data);
+      final _HeldPicker picker = _HeldPicker();
+      await pumpTesting(
+        tester,
+        AppServices(
+          data: base.data,
+          opener: base.opener,
+          picker: picker,
+          storage: base.storage,
+          coverStore: base.coverStore,
+          access: base.access,
+          covers: base.covers,
+          deviceLibrary: base.deviceLibrary,
+        ),
+      );
+      await openExperimenter(tester);
+
+      // Диалог ещё открыт, а кнопку нажали снова.
+      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.pump();
+      expect(picker.dialogs, hasLength(1));
+
+      // Диалог закрыли — кнопка снова отвечает.
+      picker.dialogs.single.complete(const <PickedFile>[]);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.pump();
+      expect(picker.dialogs, hasLength(2));
+      picker.dialogs.last.complete(const <PickedFile>[]);
+      await tester.pumpAndSettle();
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-01: сбой распаковки итога не съедает', (
+      WidgetTester tester,
+    ) async {
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          batch: const <PickedFile>[
+            PickedFile(name: 'Гистология.pdf', path: '/picked/Гистология.pdf'),
+            archive,
+          ],
+          storage: const PathBytesStorage(),
+        ),
+        unpack:
+            (
+              PickedFile file, {
+              void Function(ArchiveProgress progress)? onProgress,
+            }) async {
+              throw StateError('непредвиденное');
+            },
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.pumpAndSettle();
+
+      // Книга, добавленная до архива, названа; сбой — тоже.
+      expect(find.textContaining('Книга добавлена'), findsOneWidget);
+      expect(find.textContaining('Распаковка остановлена'), findsOneWidget);
+      // И кнопка не осталась занятой.
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+      final ListTile tile = tester.widget(
+        find.byKey(const Key('sno-add-pdf')),
+      );
+      expect(tile.enabled, isTrue);
 
       await unmount(tester);
     });
@@ -433,6 +546,7 @@ void main() {
           shelved('s', categoryId: 'c1', text: false),
         ],
         already: 2,
+        repeats: 1,
         skipped: 1,
         failed: const <ImportFailure>[
           ImportFailure(
@@ -450,6 +564,7 @@ void main() {
         'Добавлено книг: 2, категорий: 1.',
         'Уже стояло на полке: 2.',
         'Сканов без текста: 1 — в них не работают выделение, поиск и функции.',
+        'Одинаковых файлов в архиве: 1 — такая книга стоит на полке один раз.',
         'Пропущено не-PDF: 1.',
         'Не открылось: 2',
         '«Атлас.pdf» — защищён паролем',
@@ -562,4 +677,24 @@ void main() {
       expect(deviceCodeOf(''), '');
     });
   });
+}
+
+/// Диалог выбора, который остаётся открытым, пока тест его не закроет.
+class _HeldPicker implements BookFilePicker {
+  /// Открытые диалоги «книги и архивы», по порядку.
+  final List<Completer<List<PickedFile>>> dialogs =
+      <Completer<List<PickedFile>>>[];
+
+  @override
+  Future<PickedFile?> pickPdf() async => null;
+
+  @override
+  Future<List<PickedFile>> pickPdfs() async => const <PickedFile>[];
+
+  @override
+  Future<List<PickedFile>> pickBooksOrArchives() {
+    final Completer<List<PickedFile>> dialog = Completer<List<PickedFile>>();
+    dialogs.add(dialog);
+    return dialog.future;
+  }
 }

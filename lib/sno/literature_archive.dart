@@ -18,14 +18,16 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:path/path.dart' as p;
+
 import '../application/library/book_importer.dart';
+import '../application/library/source_release.dart';
 import '../domain/library/book.dart';
 import '../domain/library/book_category.dart';
 import '../domain/library/book_file_picker.dart';
 import '../domain/library/book_source.dart';
 import '../domain/library/book_storage.dart';
 import '../domain/library/ids.dart';
-import '../domain/library/shelf.dart';
 import '../domain/library/shelf_archive.dart';
 import '../domain/reading/reader_document.dart';
 import '../infrastructure/files/book_copy.dart';
@@ -63,6 +65,7 @@ class ArchiveReport {
     this.total = 0,
     this.added = const <Book>[],
     this.already = 0,
+    this.repeats = 0,
     this.skipped = 0,
     this.failed = const <ImportFailure>[],
     this.refusal,
@@ -81,6 +84,11 @@ class ArchiveReport {
   /// Сколько книг архива уже стояло на полке: они не дублируются и с
   /// места не сдвигаются.
   final int already;
+
+  /// Сколько книг лежит в архиве повторно: тот же файл в другой папке.
+  /// Книга стоит на полке один раз — в той категории, куда встала
+  /// первой.
+  final int repeats;
 
   /// Сколько файлов архива пропущено, потому что это не PDF.
   final int skipped;
@@ -134,7 +142,7 @@ String describeZipProblem(ZipProblem problem) {
   };
 }
 
-/// Почему книгу не удалось записать — словами.
+/// Почему записать на устройство не удалось — словами.
 ///
 /// Нехватка места названа прямо: это единственный отказ записи, с
 /// которым экспериментатор может что-то сделать сам.
@@ -144,7 +152,14 @@ String describeWriteFailure(FileSystemException error) {
   final bool full = Platform.isWindows ? code == 112 || code == 39 : code == 28;
   return full
       ? 'на устройстве кончилось место'
-      : 'книгу не удалось записать на устройство';
+      : 'не удалось записать на устройство';
+}
+
+/// Имя, под которым лежит архив, перенесённый в приложение.
+const String _borrowedName = 'archive-borrowed.tmp';
+
+bool _isBorrowedName(String name) {
+  return name.startsWith('archive-') && name.endsWith('.tmp');
 }
 
 /// Раскладывает архив с книгами по полке (SNO-F-LIT-01).
@@ -193,11 +208,18 @@ class LiteratureArchive {
   }) async {
     final _Opened opened;
     try {
+      await _sweepBorrowed();
       opened = await _open(file);
     } on ZipException catch (error) {
       return ArchiveReport(
         archive: file.name,
         refusal: describeZipProblem(error.problem),
+      );
+    } on FileSystemException catch (error) {
+      // Архив пришлось переносить в приложение, и записать его не вышло.
+      return ArchiveReport(
+        archive: file.name,
+        refusal: describeWriteFailure(error),
       );
     } on Object {
       return ArchiveReport(
@@ -207,12 +229,16 @@ class LiteratureArchive {
     }
     try {
       return await _unpack(file.name, opened.archive, onProgress);
+    } on Object {
+      // Сюда доходит только непредвиденное: всё ожидаемое названо в
+      // отчёте. Обещание «не бросает» держится и тогда.
+      return ArchiveReport(
+        archive: file.name,
+        stopped: 'распаковка прервалась из-за ошибки приложения',
+      );
     } finally {
       await opened.handle.close();
-      final BookSource? borrowed = opened.borrowed;
-      if (borrowed != null) {
-        await _storage.release(borrowed);
-      }
+      await _dropBorrowed(opened.borrowed);
     }
   }
 
@@ -239,11 +265,11 @@ class LiteratureArchive {
         throw const ZipException(ZipProblem.unreadable);
       }
     }
-    final BookSource copy = await _storage.adopt(file);
+    final BookSource borrowed = await _setAside(await _storage.adopt(file));
     try {
-      return await _read(copy, borrowed: copy);
+      return await _read(borrowed, borrowed: borrowed);
     } on Object {
-      await _storage.release(copy);
+      await _dropBorrowed(borrowed);
       rethrow;
     }
   }
@@ -255,6 +281,63 @@ class LiteratureArchive {
     } on Object {
       await handle.close();
       rethrow;
+    }
+  }
+
+  /// Даёт перенесённому архиву своё имя, чтобы его не приняли за книгу.
+  ///
+  /// Хранилище называет перенесённое по отпечатку, как книгу. Закрой
+  /// приложение посреди распаковки — и файл размером с весь архив
+  /// остался бы в папке книг неотличимым от книги. Со своим именем его
+  /// выметает следующее добавление архива ([_sweepBorrowed]).
+  ///
+  /// Файл, который принадлежит книге на полке, не трогается: под видом
+  /// архива выбрали саму книгу.
+  Future<BookSource> _setAside(BookSource copy) async {
+    if (copy is! FilePathSource || !copy.owned || await _usedByBook(copy)) {
+      return copy;
+    }
+    final File moved = await File(
+      copy.path,
+    ).rename(p.join(p.dirname(copy.path), _borrowedName));
+    return FilePathSource(moved.path, owned: true);
+  }
+
+  Future<bool> _usedByBook(BookSource source) async {
+    final List<Book> books = await _library.books();
+    return books.any((Book book) => book.source == source);
+  }
+
+  /// Убирает перенесённый архив — если это не файл книги с полки.
+  Future<void> _dropBorrowed(BookSource? borrowed) async {
+    if (borrowed == null) {
+      return;
+    }
+    await releaseUnusedSource(
+      storage: _storage,
+      library: _library,
+      source: borrowed,
+    );
+  }
+
+  /// Выметает архивы, перенесённые в приложение и не убранные: приложение
+  /// закрыли посреди распаковки.
+  ///
+  /// Добавление идёт по одному архиву за раз, поэтому любой такой файл к
+  /// началу нового добавления — мусор.
+  Future<void> _sweepBorrowed() async {
+    try {
+      final Directory books = await _booksDirectory();
+      if (!await books.exists()) {
+        return;
+      }
+      await for (final FileSystemEntity entry in books.list()) {
+        if (entry is File && _isBorrowedName(p.basename(entry.path))) {
+          await discardPart(entry);
+        }
+      }
+    } on Object {
+      // Убрать не вышло — не повод отказывать в добавлении архива.
     }
   }
 
@@ -292,10 +375,6 @@ class LiteratureArchive {
       }
     }
 
-    final List<Book> added = <Book>[];
-    final List<ImportFailure> failed = <ImportFailure>[];
-    int already = 0;
-    String? stopped;
     final Directory books;
     try {
       books = await _booksDirectory();
@@ -305,16 +384,26 @@ class LiteratureArchive {
       // Недописанное с прошлого раза — мусор: приложение закрыли
       // посреди распаковки.
       await sweepIncoming(books);
-    } on FileSystemException catch (error) {
+    } on Object catch (error) {
       return ArchiveReport(
         archive: name,
         total: total,
         skipped: layout.skipped,
-        stopped: describeWriteFailure(error),
+        stopped: error is FileSystemException
+            ? describeWriteFailure(error)
+            : 'папка книг приложения недоступна',
       );
     }
 
+    final List<Book> added = <Book>[];
+    final List<ImportFailure> failed = <ImportFailure>[];
+    int already = 0;
+    int repeats = 0;
+    String? stopped;
     final Map<String, String> categoryIds = <String, String>{};
+    // Отпечатки книг, которые этот архив уже поставил на полку или
+    // застал на ней: тот же файл в другой папке — повтор, а не книга.
+    final Set<String> landed = <String>{};
     for (int i = 0; i < total; i++) {
       final ArchiveBook planned = layout.books[i];
       onProgress?.call(
@@ -330,24 +419,55 @@ class LiteratureArchive {
         // Книга без сжатия лежит в архиве как есть — её отпечаток
         // считается без распаковки, и уже стоящая на полке книга не
         // переписывается заново.
-        if (entry.isStored && await _onShelf(archive, entry)) {
+        if (entry.isStored) {
+          final String hash = await bookFingerprint(
+            await archive.stored(entry),
+          );
+          if (landed.contains(hash)) {
+            repeats++;
+            continue;
+          }
+          if (await _onShelf(hash)) {
+            landed.add(hash);
+            already++;
+            continue;
+          }
+        }
+        final FilePathSource source = FilePathSource(
+          await _extract(archive, entry, books, name),
+          owned: true,
+        );
+        final String hash = await fileFingerprint(source.path);
+        if (landed.contains(hash)) {
+          repeats++;
+          continue;
+        }
+        final Book? known = await _library.bookByHash(hash);
+        if (known != null && known.source == source) {
+          // Книга стоит на полке с этим самым файлом. Заводить её
+          // заново нельзя: импорт отметил бы её открытой сейчас, и
+          // полка в порядке «недавние» встала бы в порядке архива.
+          landed.add(hash);
           already++;
           continue;
         }
-        final String path = await _extract(archive, entry, books, name);
-        final Book? known = await _library.bookByHash(
-          await fileFingerprint(path),
-        );
+        final String? category = planned.category;
         final Book book = await _importer.registerSource(
-          FilePathSource(path, owned: true),
+          source,
           title: planned.title,
+          // Категория заводится, только когда книга открылась: папка
+          // архива, из которой не открылось ничего, пустой категории
+          // не оставляет. Стоящую на полке книгу архив не переставляет.
+          categoryFor: category == null
+              ? null
+              : () => _categoryId(category, categoryIds),
         );
-        if (known != null) {
-          // Стоящую на полке книгу архив не переставляет.
+        landed.add(hash);
+        if (known == null) {
+          added.add(book);
+        } else {
           already++;
-          continue;
         }
-        added.add(await _shelve(book, planned.category, categoryIds));
       } on ZipException catch (error) {
         failed.add(
           ImportFailure(
@@ -382,15 +502,15 @@ class LiteratureArchive {
       total: total,
       added: added,
       already: already,
+      repeats: repeats,
       skipped: layout.skipped,
       failed: failed,
       stopped: stopped,
     );
   }
 
-  /// Стоит ли книга из записи без сжатия уже на полке, с файлом на месте.
-  Future<bool> _onShelf(ZipArchive archive, ZipEntry entry) async {
-    final String hash = await bookFingerprint(await archive.stored(entry));
+  /// Стоит ли книга с отпечатком [hash] на полке, с файлом на месте.
+  Future<bool> _onShelf(String hash) async {
     final Book? known = await _library.bookByHash(hash);
     return known != null && await _storage.available(known.source);
   }
@@ -419,27 +539,6 @@ class LiteratureArchive {
       await discardPart(part);
       rethrow;
     }
-  }
-
-  /// Ставит новую книгу в категорию [category] — последней.
-  ///
-  /// Книга к этому мигу уже на полке, в «Без категории»: категория
-  /// заводится только под книгу, которая открылась. Папка архива, из
-  /// которой не открылось ничего, пустой категории не оставляет.
-  Future<Book> _shelve(
-    Book book,
-    String? category,
-    Map<String, String> known,
-  ) async {
-    if (category == null) {
-      return book;
-    }
-    final String id = await _categoryId(category, known);
-    final int position = shelfPlaceAfterLast(await _library.books(), id);
-    await _library.placeBooks(<BookPlacement>[
-      BookPlacement(bookId: book.id, categoryId: id, position: position),
-    ]);
-    return book.copyWith(categoryId: id, shelfPosition: position);
   }
 
   /// Категория с названием [title]: существующая или новая, в конце
@@ -479,6 +578,6 @@ class _Opened {
   final BookHandle handle;
   final ZipArchive archive;
 
-  /// Архив, перенесённый в приложение; отпускается после распаковки.
+  /// Архив, перенесённый в приложение; убирается после распаковки.
   final BookSource? borrowed;
 }

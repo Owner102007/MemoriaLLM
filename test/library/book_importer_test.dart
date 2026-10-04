@@ -429,6 +429,44 @@ void main() {
       expect(await data.library.bookById(book.id), isNotNull);
     });
 
+    test('SNO-F-LIT-01: категория спрашивается у открывшейся книги', () async {
+      const FilePathSource source = FilePathSource(
+        'test/fixtures/basic_text.pdf',
+      );
+      int asked = 0;
+      Future<String?> category() async {
+        asked++;
+        return 'study';
+      }
+
+      // Книга не открылась — категорию не спрашивали: заводить её
+      // было бы не под что.
+      await expectLater(
+        importer(
+          FakeReaderDocument.blank(1),
+          failure: const DocumentOpenException(DocumentProblem.damaged, source),
+        ).registerSource(source, title: 'Битая', categoryFor: category),
+        throwsA(isA<DocumentOpenException>()),
+      );
+      expect(asked, 0);
+
+      await data.library.save(testBook(id: 'a', hash: 'hash-a'));
+      await placeBook(data, 'a', 'study', position: 3);
+      final Book book = await importer(
+        FakeReaderDocument(pages: <String>['раз']),
+      ).registerSource(source, title: 'Анатомия', categoryFor: category);
+      expect(asked, 1);
+      expect(book.categoryId, 'study');
+      // И встаёт в названной категории последней (BUG-20).
+      expect(book.shelfPosition, 4);
+
+      // Стоящую на полке книгу не переставляют — и не спрашивают куда.
+      await importer(
+        FakeReaderDocument(pages: <String>['раз']),
+      ).registerSource(source, title: 'Анатомия', categoryFor: category);
+      expect(asked, 1);
+    });
+
     test('SNO-F-LIT-01: не открылась — источник отпущен', () async {
       final RecordingStorage storage = RecordingStorage();
       const FilePathSource source = FilePathSource(
