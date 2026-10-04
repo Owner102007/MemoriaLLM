@@ -191,6 +191,12 @@ Stream<ScanEvent> scanInIsolate(
           onError: port.sendPort,
           onExit: port.sendPort,
         );
+        if (ended) {
+          // Отписались, пока изолят заводился: `stop` его ещё не видел.
+          // Не убить его здесь — он обошёл бы весь диск в закрытый порт.
+          isolate?.kill(priority: Isolate.immediate);
+          isolate = null;
+        }
       } on Object catch (error) {
         finish('обход не запустился: $error');
       }

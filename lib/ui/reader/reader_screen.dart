@@ -924,6 +924,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
         });
       }
       return;
+    } on Object {
+      // Файл не приняли или не записали — что угодно, кроме «не
+      // открылся». Колесо не должно остаться навсегда: возвращается
+      // прежний экран, и сказано, что случилось.
+      waiting(false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Этот файл не удалось прочесть')),
+        );
+      }
+      return;
     }
     if (mounted) {
       await _open();

@@ -312,10 +312,7 @@ void main() {
 
       expect((await data.library.books()).single.hasTextLayer, isFalse);
       expect(find.textContaining('скан: текст не распознан'), findsOneWidget);
-      expect(
-        find.textContaining('выделение, поиск и функции'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('выделение, поиск и функции'), findsOneWidget);
 
       await unmount(tester);
     });

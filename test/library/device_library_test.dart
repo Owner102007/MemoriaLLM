@@ -225,6 +225,57 @@ void main() {
     });
   });
 
+  group('BUG-06: отписка останавливает свой обход', () {
+    test('BUG-06: прежний обход, доживая, новый не останавливает', () async {
+      // Поток хода зовёт `onCancel` и когда закрывается сам. Прежде это
+      // останавливало обход, который шёл в ту минуту, — то есть новый.
+      final StreamController<ScanEvent> first = StreamController<ScanEvent>();
+      final StreamController<ScanEvent> second =
+          StreamController<ScanEvent>();
+      final List<Stream<ScanEvent>> runs = <Stream<ScanEvent>>[
+        first.stream,
+        second.stream,
+      ];
+      final DeviceLibrary device = buildWith((List<String> roots) {
+        return runs.removeAt(0);
+      });
+
+      final Future<List<ScanProgress>> stale = device.scan().toList();
+      await pumpEventQueue();
+      final Future<List<ScanProgress>> fresh = device.scan().toList();
+      // Прежний обход доживает и закрывает свой поток.
+      await stale;
+      await pumpEventQueue();
+
+      expect(device.isScanning, isTrue, reason: 'новый обход идёт');
+      second.add(foundEvent(onDisk('/device/книга.pdf')));
+      await second.close();
+      expect((await fresh).last.found, 1);
+      await first.close();
+    });
+
+    test('BUG-06: отписка до начала обхода идущий не трогает', () async {
+      final StreamController<ScanEvent> live = StreamController<ScanEvent>();
+      int started = 0;
+      final DeviceLibrary device = buildWith((List<String> roots) {
+        started++;
+        return live.stream;
+      });
+      final Future<List<ScanProgress>> running = device.scan().toList();
+      await pumpEventQueue();
+      expect(started, 1);
+
+      // Второй обход попросили — и тут же раздумали.
+      await device.scan().listen((ScanProgress _) {}).cancel();
+      await pumpEventQueue();
+
+      expect(started, 1, reason: 'отменённый обход не начинался');
+      expect(device.isScanning, isTrue, reason: 'идущий не остановлен');
+      await live.close();
+      expect((await running).last.done, isTrue);
+    });
+  });
+
   group('BUG-16: сбой в обходе', () {
     Stream<ScanEvent> broken(ScannedFile file) async* {
       yield foundEvent(file);

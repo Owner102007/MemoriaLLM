@@ -117,6 +117,100 @@ void main() {
 
       expect(await data.deviceFiles.search('сохранённоеслово'), isNotEmpty);
     });
+
+    test('F-APP-02: обход не затирает узнанное, пока он шёл', () async {
+      // Разборка успела дойти до текста, а обход несёт снимок записи на
+      // своё начало — без отпечатка и со ступенью «имя».
+      await add(
+        record(
+          '/device/книга.pdf',
+          hash: 'h1',
+          title: 'Онегин',
+          stage: IndexStage.text,
+        ).copyWith(hasTextLayer: false),
+      );
+      final DateTime later = DateTime.utc(2026, 9, 9);
+
+      await data.deviceFiles.applyScan(<ScanDecision>[
+        ScanDecision(
+          ScanVerdict.unchanged,
+          record('/device/книга.pdf').copyWith(seenAt: later),
+        ),
+      ]);
+
+      final DeviceFileRecord saved = (await data.deviceFiles.files()).single;
+      expect(saved.seenAt, later, reason: 'файл отмечен как виденный');
+      expect(saved.stage, IndexStage.text);
+      expect(saved.fingerprint, 'h1');
+      expect(saved.title, 'Онегин');
+      expect(saved.hasTextLayer, isFalse);
+    });
+
+    test('BUG-06: пропавший файл тоже не теряет узнанного', () async {
+      await add(
+        record('/device/книга.pdf', hash: 'h1', stage: IndexStage.meta),
+      );
+
+      await data.deviceFiles.applyScan(<ScanDecision>[
+        ScanDecision(
+          ScanVerdict.gone,
+          record('/device/книга.pdf').copyWith(missing: true),
+        ),
+      ]);
+
+      final DeviceFileRecord saved = (await data.deviceFiles.files()).single;
+      expect(saved.missing, isTrue);
+      // Карту памяти вернут — и отпечаток считать заново не придётся.
+      expect(saved.fingerprint, 'h1');
+      expect(saved.stage, IndexStage.meta);
+    });
+
+    test('«файл на месте» о незнакомом файле заводит запись', () async {
+      await data.deviceFiles.applyScan(<ScanDecision>[
+        ScanDecision(ScanVerdict.unchanged, record('/device/новая.pdf')),
+      ]);
+
+      expect((await data.deviceFiles.files()).single.path, '/device/новая.pdf');
+    });
+  });
+
+  group('F-DEV-13: правило «есть ли текст» поменялось', () {
+    test('F-DEV-13: ответ «текста нет» проверяется заново', () async {
+      await add(
+        record(
+          '/device/скан.pdf',
+          hash: 'h1',
+          stage: IndexStage.text,
+        ).copyWith(hasTextLayer: false),
+      );
+      await add(
+        record(
+          '/device/книга.pdf',
+          hash: 'h2',
+          stage: IndexStage.text,
+        ).copyWith(hasTextLayer: true),
+      );
+
+      expect(await data.deviceFiles.recheckTextLayers(), 1);
+
+      final Map<String, DeviceFileRecord> saved = <String, DeviceFileRecord>{
+        for (final DeviceFileRecord file in await data.deviceFiles.files())
+          file.path: file,
+      };
+      final DeviceFileRecord scan = saved['/device/скан.pdf']!;
+      expect(scan.hasTextLayer, isNull, reason: 'прежний ответ снят');
+      expect(scan.stage, IndexStage.meta, reason: 'текст прочитают ещё раз');
+      expect(scan.fingerprint, 'h1', reason: 'остальное на месте');
+      final DeviceFileRecord book = saved['/device/книга.pdf']!;
+      expect(book.hasTextLayer, isTrue);
+      expect(book.stage, IndexStage.text);
+    });
+
+    test('F-DEV-13: без ответов «текста нет» менять нечего', () async {
+      await add(record('/device/книга.pdf'));
+
+      expect(await data.deviceFiles.recheckTextLayers(), 0);
+    });
   });
 
   group('ранжирование', () {

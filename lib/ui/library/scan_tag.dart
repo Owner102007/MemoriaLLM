@@ -23,7 +23,7 @@ class ScanTag extends StatelessWidget {
     return Tooltip(
       message: 'Скан: $kScanExplanation',
       child: Semantics(
-        label: 'скан без текста',
+        label: kScanLong,
         child: Padding(
           padding: const EdgeInsets.all(4),
           child: DecoratedBox(

@@ -224,10 +224,7 @@ void main() {
       expect(find.byKey(const Key('device-search')), findsNothing);
       final List<Book> books = await data.library.books();
       expect(books.length, 2);
-      expect(
-        books.every((Book book) => book.categoryId == 'study'),
-        isTrue,
-      );
+      expect(books.every((Book book) => book.categoryId == 'study'), isTrue);
 
       await unmount(tester);
     });
@@ -373,6 +370,13 @@ void main() {
       await data.library.save(testBook());
       final List<StreamController<ScanEvent>> feeds =
           <StreamController<ScanEvent>>[];
+      // Потоки закрываются после теста, а не в нём: ожидание настоящего
+      // будущего внутри widget-теста, где время подменено, не кончается.
+      addTearDown(() async {
+        for (final StreamController<ScanEvent> feed in feeds) {
+          await feed.close();
+        }
+      });
       final AppServices services = testServices(
         data: data,
         scanRunner: (List<String> roots) {
@@ -405,9 +409,6 @@ void main() {
       expect(feeds.length, 2);
 
       await unmount(tester);
-      for (final StreamController<ScanEvent> feed in feeds) {
-        await feed.close();
-      }
     });
   });
 }

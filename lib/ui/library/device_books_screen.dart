@@ -12,6 +12,8 @@ import '../../domain/library/device_files.dart';
 import '../../domain/library/device_scan.dart';
 import '../../domain/library/shelf.dart';
 import '../../domain/library/storage_access.dart';
+import '../../domain/reading/reader_document.dart';
+import '../../domain/settings/app_settings.dart';
 import 'device_book_card.dart';
 import 'storage_permission_view.dart';
 
@@ -132,6 +134,10 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
     unawaited(_loadCategory());
     if (widget.visible && _mayWork) {
       unawaited(_start());
+    } else if (widget.visible) {
+      // Раздел открыт, а работать нельзя: обход за ним остаётся в долгу
+      // и начнётся, когда помеха уйдёт.
+      _interrupted = true;
     }
   }
 
@@ -165,9 +171,9 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Отписка от хода останавливает свой обход; чужого экран не трогает.
     unawaited(_scan?.cancel());
     unawaited(_watch?.cancel());
-    unawaited(_device.stopScan());
     _search.dispose();
     super.dispose();
   }
@@ -219,8 +225,8 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
         setState(() => _progress = null);
       }
     }
+    // Отписка останавливает свой обход — и только его.
     await scan.cancel();
-    await _device.stopScan();
   }
 
   /// Узнаёт название категории, в которую лягут книги.
@@ -275,6 +281,7 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
       return;
     }
     _ready = true;
+    await _applyTextRule();
     await _loadShelf();
     if (!mounted) {
       return;
@@ -297,6 +304,27 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
     }
   }
 
+  /// Сверяет, каким правилом «есть ли текст» проверены файлы устройства
+  /// (F-DEV-13).
+  ///
+  /// Правило стало другим — ответы «текста нет», данные прежним,
+  /// снимаются, и разборка проверит эти файлы ещё раз. Иначе книги,
+  /// которые когда-то не открылись, так и ходили бы с меткой «скан».
+  /// Сбой здесь не мешает ничему: проверка повторится в другой раз.
+  Future<void> _applyTextRule() async {
+    const String current = '$kTextLayerRule';
+    final AppSettingsRepository settings = widget.services.data.settings;
+    try {
+      if (await settings.read(SettingsKeys.deviceTextRule) == current) {
+        return;
+      }
+      await _device.recheckTextLayers();
+      await settings.write(SettingsKeys.deviceTextRule, current);
+    } on Object {
+      // Производное: не сверилось сейчас — сверится при следующем заходе.
+    }
+  }
+
   Future<void> _loadShelf() async {
     final List<Book> books = await widget.services.data.library.books();
     if (!mounted) {
@@ -312,7 +340,13 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
 
   Future<void> _rescan() async {
     await _scan?.cancel();
-    if (!mounted || !_mayWork) {
+    if (!mounted) {
+      return;
+    }
+    if (!_mayWork) {
+      // Обход просили, а начать его нельзя: открыта книга или приложение
+      // свёрнуто. Просьба запоминается — он начнётся, когда помеха уйдёт.
+      _interrupted = true;
       return;
     }
     _interrupted = false;
@@ -524,10 +558,7 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
             ),
           ),
         ),
-        _ProgressLine(
-          progress: _progress,
-          onRetry: () => unawaited(_rescan()),
-        ),
+        _ProgressLine(progress: _progress, onRetry: () => unawaited(_rescan())),
         Expanded(child: _grid(shown)),
       ],
     );

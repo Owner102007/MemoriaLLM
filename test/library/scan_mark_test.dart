@@ -122,7 +122,7 @@ void main() {
       expect(text, contains('Сканов без текста: 1'));
     });
 
-    test('ничего не добавилось — сказано прямо', () {
+    test('F-DEV-13: ничего не добавилось — сказано прямо', () {
       final String text = describeImportReport(
         const ImportReport(
           added: <Book>[],

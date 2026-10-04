@@ -162,7 +162,16 @@ class _HomeShellState extends State<HomeShell> {
                     current: _section,
                     onOpen: _open,
                   ),
-                Expanded(child: _buildSections(top: top)),
+                // Контекст — из-под `Scaffold`: отступ под клавиатуру он
+                // уже учёл, и взять его из контекста оболочки значило бы
+                // вернуть разделам отступ, который отдан дважды.
+                Expanded(
+                  child: Builder(
+                    builder: (BuildContext inner) {
+                      return _buildSections(inner, top: top);
+                    },
+                  ),
+                ),
               ],
             ),
             bottomNavigationBar: top || typing
@@ -178,7 +187,7 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
-  Widget _buildSections({required bool top}) {
+  Widget _buildSections(BuildContext inner, {required bool top}) {
     final Widget sections = IndexedStack(
       key: _sections,
       index: _section.index,
@@ -212,7 +221,7 @@ class _HomeShellState extends State<HomeShell> {
     // Верхний отступ системы уже занят полосой навигации: шапкам
     // разделов отступать ещё раз незачем.
     return MediaQuery.removePadding(
-      context: context,
+      context: inner,
       removeTop: true,
       child: sections,
     );
@@ -326,9 +335,7 @@ class _TopNavButton extends StatelessWidget {
     // Выбранный раздел написан основным цветом текста и подчёркнут
     // акцентом; остальные — вторичным. Одним цветом раздел не отмечен:
     // под ночной красной темой оттенки сходятся в один, а черта остаётся.
-    final Color colour = Color(
-      selected ? palette.text : palette.textSecondary,
-    );
+    final Color colour = Color(selected ? palette.text : palette.textSecondary);
     return Semantics(
       selected: selected,
       button: true,

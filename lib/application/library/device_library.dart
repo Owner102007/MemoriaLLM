@@ -233,6 +233,10 @@ class DeviceLibrary {
     return grouped;
   }
 
+  /// Снимает со всех файлов ответ «текста нет», чтобы разборка проверила
+  /// их заново: поменялось само правило (F-DEV-13, `kTextLayerRule`).
+  Future<int> recheckTextLayers() => _files.recheckTextLayers();
+
   /// Забывает список файлов и индекс: разрешение отозвано.
   Future<void> forgetDevice() => _files.forgetEverything();
 
@@ -294,7 +298,10 @@ class DeviceLibrary {
     // Прежний обход, если он ещё идёт, останавливается: два обхода разом
     // писали бы в базу наперегонки, а поле с подпиской у службы одно.
     // Циклом — потому что, пока ждали остановки, мог завестись третий.
-    while (_finished != null) {
+    //
+    // Но сначала — не отменили ли этот обход раньше, чем он начался:
+    // отменённому останавливать идущий незачем.
+    while (!finished.isCompleted && _finished != null) {
       await stopScan();
     }
     if (finished.isCompleted) {

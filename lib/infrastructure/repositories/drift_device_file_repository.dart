@@ -78,9 +78,9 @@ class DriftDeviceFileRepository implements DeviceFileRepository {
             await _write(decision.record);
             await _reindex(decision.record, body: '');
           case ScanVerdict.unchanged:
-            await _write(decision.record);
+            await _markSeen(decision.record);
           case ScanVerdict.gone:
-            await _write(decision.record);
+            await _markSeen(decision.record);
             await _dropFromIndex(decision.record.path);
         }
       }
@@ -192,6 +192,41 @@ class DriftDeviceFileRepository implements DeviceFileRepository {
       }
     }
     return found;
+  }
+
+  /// Отмечает, что файл на месте (или что его нет), не трогая остального.
+  ///
+  /// Запись у обхода — снимок на его начало, а разборка идёт, пока идёт
+  /// обход, и успевает узнать о файле больше: отпечаток, заголовок, есть
+  /// ли текст. Записать снимок целиком значило бы стереть это — метка «на
+  /// полке» и метка «скан» мигали бы при каждом обходе, а разборка делала
+  /// бы ту же работу заново. С шага 10 обход идёт при каждом возвращении
+  /// в раздел, и то, что прежде случалось редко, стало бы обычным.
+  Future<void> _markSeen(DeviceFileRecord record) async {
+    final update = _db.update(_db.deviceFiles);
+    update.where((tbl) => tbl.path.equals(record.path));
+    final int touched = await update.write(
+      DeviceFilesCompanion(
+        seenAt: Value<DateTime>(record.seenAt),
+        missing: Value<bool>(record.missing),
+      ),
+    );
+    if (touched == 0) {
+      // Строки нет — значит, и затирать нечего: пишем как есть.
+      await _write(record);
+    }
+  }
+
+  @override
+  Future<int> recheckTextLayers() async {
+    final update = _db.update(_db.deviceFiles);
+    update.where((tbl) => tbl.hasTextLayer.equals(false));
+    return update.write(
+      DeviceFilesCompanion(
+        hasTextLayer: const Value<bool?>(null),
+        stage: Value<String>(IndexStage.meta.name),
+      ),
+    );
   }
 
   Future<void> _write(DeviceFileRecord record) {

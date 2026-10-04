@@ -88,6 +88,9 @@ class BookTextCache {
   Future<void>? _loading;
   bool _closed = false;
 
+  /// Видели ли на какой-нибудь странице текст, кроме пробелов (F-DEV-13).
+  bool _sawText = false;
+
   /// Счёт проходов: остановленный проход узнаёт по нему, что устарел.
   int _passRun = 0;
   Future<void>? _pass;
@@ -115,11 +118,43 @@ class BookTextCache {
   /// Есть ли в книге текст — по прочитанному, а не по первым страницам
   /// (F-DEV-13). `null`, пока книга не запомнена целиком: о книге,
   /// которую не дочитали или не смогли прочесть, ответа нет.
-  bool? get readVerdict {
+  ///
+  /// «Текст» здесь — хоть один знак, кроме пробельных. У страниц,
+  /// прочитанных сейчас, это известно сразу. У запомненных в прошлый раз
+  /// известна только длина, которую посчитала база, — вместе с пробелами;
+  /// по ней скан из страниц с одним переводом строки сошёл бы за книгу с
+  /// текстом. Поэтому страница с ненулевой длиной, которую мы сами не
+  /// видели, дочитывается из базы: у книги с текстом это одна страница.
+  Future<bool?> readVerdict() async {
     if (pageCount <= 0 || !isComplete) {
       return null;
     }
-    return cachedSize > 0;
+    if (_sawText) {
+      return true;
+    }
+    for (final int page in _cached.keys.toList()) {
+      if ((_cached[page] ?? 0) <= 0) {
+        continue;
+      }
+      final String text;
+      try {
+        final Map<int, String> stored = await _store.pageTexts(
+          _key,
+          from: page,
+          to: page,
+        );
+        text = stored[page] ?? '';
+      } on Object {
+        // База не ответила — ответа нет: гадать о тексте не будем.
+        return null;
+      }
+      if (text.trim().isNotEmpty) {
+        _sawText = true;
+        return true;
+      }
+      _cached[page] = 0;
+    }
+    return false;
   }
 
   /// Идёт ли сейчас фоновый проход.
@@ -268,7 +303,10 @@ class BookTextCache {
     await _save(batch);
     // Проход дошёл до конца, и книга запомнена вся — про её текст теперь
     // известно точно. Остановленный и закрытый молчат.
-    final bool? verdict = readVerdict;
+    if (onBookRead == null || _closed || run != _passRun) {
+      return;
+    }
+    final bool? verdict = await readVerdict();
     if (verdict != null && !_closed && run == _passRun) {
       onBookRead?.call(verdict);
     }
@@ -323,9 +361,11 @@ class BookTextCache {
       if (saved) {
         // Страница из одних пробелов — страница без текста: по этим
         // длинам кэш отвечает, есть ли в книге текст (F-DEV-13).
-        _cached[entry.key] = entry.value.trim().isEmpty
-            ? 0
-            : entry.value.length;
+        final bool blank = entry.value.trim().isEmpty;
+        _cached[entry.key] = blank ? 0 : entry.value.length;
+        if (!blank) {
+          _sawText = true;
+        }
       }
     }
   }

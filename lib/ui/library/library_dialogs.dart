@@ -80,7 +80,7 @@ Future<BookAction?> askBookAction(BuildContext context, Book book) {
 String _describeBook(Book book) {
   final List<String> parts = <String>[
     if (book.pageCount != null) 'страниц: ${book.pageCount}',
-    if (isMarkedScan(book.hasTextLayer)) 'скан без текстового слоя',
+    if (isMarkedScan(book.hasTextLayer)) kScanLong,
   ];
   return parts.isEmpty ? 'книга на полке' : parts.join(' · ');
 }

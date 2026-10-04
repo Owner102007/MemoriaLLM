@@ -363,12 +363,12 @@ void main() {
         MemoryPageTextStore(),
         heard,
       );
-      expect(cache.readVerdict, isNull, reason: 'книгу ещё не читали');
+      expect(await cache.readVerdict(), isNull, reason: 'книгу не читали');
 
       cache.startPass(from: 1);
       await cache.passDone();
 
-      expect(cache.readVerdict, isFalse);
+      expect(await cache.readVerdict(), isFalse);
       expect(heard, <bool>[false]);
     });
 
@@ -389,7 +389,7 @@ void main() {
       cache.startPass(from: 1);
       await cache.passDone();
 
-      expect(cache.readVerdict, isTrue);
+      expect(await cache.readVerdict(), isTrue);
       expect(heard, <bool>[true]);
     });
 
@@ -407,6 +407,44 @@ void main() {
       expect(heard, <bool>[false]);
     });
 
+    test('F-DEV-13: скан из пробелов остаётся сканом и в другой раз', () async {
+      // База помнит длину страницы вместе с пробелами. Если судить по
+      // ней, скан из страниц с одним переводом строки при следующем
+      // открытии сошёл бы за книгу с текстом — и метка пропала бы.
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: const <String>['\n', '  ', '\n'],
+      );
+      final BookTextCache first = cacheOf(document, store);
+      first.startPass(from: 1);
+      await first.passDone();
+
+      final List<bool> heard = <bool>[];
+      final BookTextCache second = listening(document, store, heard);
+      second.startPass(from: 1);
+      await second.passDone();
+
+      expect(heard, <bool>[false]);
+      expect(reads(document), 3, reason: 'движок второй раз не нужен');
+    });
+
+    test('F-DEV-13: база не ответила — ответа о тексте нет', () async {
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final FakeReaderDocument document = book(pages: 3);
+      final BookTextCache first = cacheOf(document, store);
+      first.startPass(from: 1);
+      await first.passDone();
+
+      final List<bool> heard = <bool>[];
+      final BookTextCache second = listening(document, store, heard);
+      await second.load();
+      store.failReads = true;
+      second.startPass(from: 1);
+      await second.passDone();
+
+      expect(heard, isEmpty, reason: 'гадать о тексте не будем');
+    });
+
     test('F-DEV-13: непрочитанная книга ответа не даёт', () async {
       // Вторая страница не читается: «не знаю» — не «скан».
       final List<bool> heard = <bool>[];
@@ -419,7 +457,7 @@ void main() {
       cache.startPass(from: 1);
       await cache.passDone();
 
-      expect(cache.readVerdict, isNull);
+      expect(await cache.readVerdict(), isNull);
       expect(heard, isEmpty);
     });
 
