@@ -447,8 +447,12 @@ class _SearchPanelState extends State<SearchPanel> {
     final int count = search.hits.length;
     final int current = widget.current;
     final bool placed = current >= 0 && current < count;
+    // Пока поиск идёт, «нет» было бы неправдой: ещё не досмотрено.
+    // Так панель выглядит, когда её открыло «Найти в книге» над
+    // выделением (SNO-F-READ-01): сразу списком, без поля и без строки
+    // состояния.
     final String label = count == 0
-        ? 'нет'
+        ? (search.isRunning ? 'ищу…' : 'нет')
         : (placed ? '${current + 1} из $count' : 'из $count');
     final void Function(int step)? step = count == 0 ? null : widget.onStep;
     return SizedBox(

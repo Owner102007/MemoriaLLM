@@ -31,6 +31,26 @@ class SelectionPanel extends StatelessWidget {
     super.key,
   });
 
+  /// Панель экрана чтения: с моделью или без неё (SNO-F-READ-01).
+  ///
+  /// С моделью ([models]) — промпты читателя и три действия, как было.
+  /// Без неё — в сборках ветвей СНО2026 — промптов нет, какими бы ни
+  /// были [prompts], а четвёртым действием стоит «Найти в книге»
+  /// ([onFind]). Решение живёт здесь, а не в экране чтения: лист с
+  /// выделением в тестах не строится, а панель проверяется.
+  const SelectionPanel.forReader({
+    required this.anchor,
+    required bool models,
+    required PromptSet prompts,
+    required this.onPrompt,
+    required this.onQuote,
+    required this.onNote,
+    required this.onCopy,
+    required VoidCallback onFind,
+    super.key,
+  }) : prompts = models ? prompts : PromptSet.empty,
+       onFind = models ? null : onFind;
+
   /// Сколько места панель занимает по высоте вместе с отступами, когда
   /// в ней два ряда — промпты и действия.
   ///

@@ -11,6 +11,12 @@ import '../../domain/library/shelf_title_search.dart';
 /// найденного под ним.
 const double kShelfSearchWidth = 420;
 
+/// Насколько плотна подложка под совпавшим куском названия.
+///
+/// Буквы на ней остаются основного цвета текста; при этой плотности он
+/// держит 4,5:1 на всех темах — проверяется автотестом.
+const double kShelfMarkOpacity = 0.35;
+
 /// Место под слово «Полка» в шапке широкого окна.
 ///
 /// Ширина задана числом, а не текстом: по ней список найденного встаёт
@@ -81,6 +87,11 @@ class ShelfSearchField extends StatelessWidget {
         controller: controller,
         focusNode: focusNode,
         textInputAction: TextInputAction.search,
+        // На широком окне `Enter` указатель ввода из поля не уводит:
+        // список уже на экране, а без указателя `Esc` перестал бы
+        // закрывать поиск. На телефоне кнопка клавиатуры её прячет —
+        // так список виден целиком.
+        onEditingComplete: framed ? () {} : null,
         decoration: InputDecoration(
           hintText: 'Название книги',
           isDense: true,
@@ -149,7 +160,9 @@ class ShelfSearchResults extends StatelessWidget {
     // текста остаётся основным и держит контраст на любой теме.
     final TextStyle mark = TextStyle(
       fontWeight: FontWeight.w700,
-      backgroundColor: theme.colorScheme.tertiary.withValues(alpha: 0.35),
+      backgroundColor: theme.colorScheme.secondary.withValues(
+        alpha: kShelfMarkOpacity,
+      ),
     );
     return ListView.builder(
       key: const Key('shelf-search-results'),
@@ -244,9 +257,11 @@ class _ResultCover extends StatelessWidget {
             File(path),
             fit: BoxFit.cover,
             filterQuality: FilterQuality.medium,
-            errorBuilder:
-                (BuildContext context, Object error, StackTrace? stack) =>
-                    blank,
+            errorBuilder: (
+              BuildContext context,
+              Object error,
+              StackTrace? stack,
+            ) => blank,
           );
         },
       ),

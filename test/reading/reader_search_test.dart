@@ -463,7 +463,7 @@ void main() {
   });
 
   group('SNO-F-READ-01: «Найти в книге» над выделением', () {
-    /// Место слова «тройка» на странице книги [threes].
+    /// Место слова «тройка» на пятой странице книги [threes].
     const String fifth = 'и снова тройка';
     final int start = fifth.indexOf('тройка');
 
@@ -474,6 +474,18 @@ void main() {
       tester.view.physicalSize = size * tester.view.devicePixelRatio;
     }
 
+    /// «Найти в книге» по слову на пятой странице.
+    void findFifth(WidgetTester tester, List<String> queries) {
+      unawaited(
+        stateOf(tester).findInBook(
+          queries,
+          pageNumber: 5,
+          start: start,
+          end: start + 6,
+        ),
+      );
+    }
+
     testWidgets('SNO-F-READ-01: поиск открыт с выделенным как запросом', (
       WidgetTester tester,
     ) async {
@@ -482,14 +494,7 @@ void main() {
       await controller.goToPage(5);
       await tester.pumpAndSettle();
 
-      unawaited(
-        stateOf(tester).findInBook(
-          'тройка',
-          pageNumber: 5,
-          start: start,
-          end: start + 6,
-        ),
-      );
+      findFifth(tester, <String>['тройка']);
       await tester.pumpAndSettle();
 
       // Панель открыта списком найденного, а не полем ввода: читатель
@@ -523,7 +528,12 @@ void main() {
       await tester.pumpAndSettle();
 
       unawaited(
-        stateOf(tester).findInBook('тройка', pageNumber: 3, start: 0, end: 6),
+        stateOf(tester).findInBook(
+          <String>['тройка'],
+          pageNumber: 3,
+          start: 0,
+          end: 6,
+        ),
       );
       await tester.pumpAndSettle();
 
@@ -531,6 +541,112 @@ void main() {
       expect(count(tester), 'из 2');
       expect(find.byKey(const Key('search-current')), findsNothing);
       expect(label(tester), '3 / 6');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-01: не нашлось — ищется запасной запрос', (
+      WidgetTester tester,
+    ) async {
+      // Слово, склеенное из переноса, в книге не встречается; с
+      // дефисом — тоже; находится третий запрос.
+      await pumpReader(tester, document: threes());
+
+      findFifth(tester, <String>['тройкасемёрка', 'тройка-семёрка', 'тройка']);
+      await tester.pumpAndSettle();
+
+      expect(scaffoldOf(tester).search.query, 'тройка');
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('search-query')),
+          matching: find.text('тройка'),
+        ),
+        findsOneWidget,
+      );
+      expect(count(tester), '2 из 2');
+      expect(label(tester), '5 / 6');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-01: ничего не нашлось — так и сказано', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester, document: threes());
+
+      findFifth(tester, <String>['семёрка', 'туз']);
+      await tester.pumpAndSettle();
+
+      // Показан последний из запросов, и найденного нет.
+      expect(scaffoldOf(tester).search.query, 'туз');
+      expect(count(tester), 'нет');
+      expect(label(tester), '1 / 6');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-01: пока ищется, «нет» не сказано', (
+      WidgetTester tester,
+    ) async {
+      final _GatedDocument document = _GatedDocument(
+        pages: <String>['вступление', 'здесь встречается тройка', 'конец'],
+      );
+      await pumpReader(tester, document: document);
+
+      // Движок задержан: поиск идёт, найденного ещё нет.
+      document.gate = Completer<void>();
+      unawaited(
+        stateOf(tester).findInBook(
+          <String>['тройка'],
+          pageNumber: 2,
+          start: 18,
+          end: 24,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(count(tester), 'ищу…');
+
+      document.gate!.complete();
+      document.gate = null;
+      await tester.pumpAndSettle();
+      expect(count(tester), '1 из 1');
+      expect(label(tester), '2 / 3');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-01: вернулся ко вводу — поиск его не уводит', (
+      WidgetTester tester,
+    ) async {
+      final _GatedDocument document = _GatedDocument(
+        pages: <String>['вступление', 'здесь встречается тройка', 'конец'],
+      );
+      await pumpReader(tester, document: document);
+
+      document.gate = Completer<void>();
+      unawaited(
+        stateOf(tester).findInBook(
+          <String>['тройка'],
+          pageNumber: 2,
+          start: 18,
+          end: 24,
+        ),
+      );
+      await tester.pump();
+      // Пока поиск идёт, читатель нажал по запросу и вернулся ко вводу.
+      stateOf(tester).openSearch();
+      await tester.pump();
+
+      document.gate!.complete();
+      document.gate = null;
+      await tester.pumpAndSettle();
+
+      // Найденное показано, но поле осталось полем, и читатель — там,
+      // где был: к месту выделения его не унесло.
+      expect(find.byKey(const Key('search-field')), findsOneWidget);
+      expect(count(tester), 'из 1');
+      expect(label(tester), '1 / 3');
 
       await unmount(tester);
     });
@@ -547,7 +663,7 @@ void main() {
 
       unawaited(
         stateOf(tester).findInBook(
-          'тройка',
+          <String>['тройка'],
           pageNumber: 2,
           start: 'здесь встречается '.length,
           end: 'здесь встречается тройка'.length,
@@ -575,14 +691,7 @@ void main() {
       resize(tester, const Size(1280, 800));
       await pumpReader(tester, document: threes());
 
-      unawaited(
-        stateOf(tester).findInBook(
-          'тройка',
-          pageNumber: 5,
-          start: start,
-          end: start + 6,
-        ),
-      );
+      findFifth(tester, <String>['тройка']);
       await tester.pumpAndSettle();
 
       final TextField field = tester.widget(
@@ -595,4 +704,19 @@ void main() {
       await unmount(tester);
     });
   });
+}
+
+/// Документ, чей движок можно придержать: пока [gate] не закрыт, текст
+/// страницы не отдаётся — как на большой книге без запомненного текста.
+class _GatedDocument extends FakeReaderDocument {
+  _GatedDocument({required super.pages});
+
+  /// Задержка движка; `null` — отвечает сразу.
+  Completer<void>? gate;
+
+  @override
+  Future<String> pageText(int pageNumber) async {
+    await gate?.future;
+    return super.pageText(pageNumber);
+  }
 }

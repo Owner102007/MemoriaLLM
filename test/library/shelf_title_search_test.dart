@@ -135,11 +135,7 @@ void main() {
         book('mixed', 'Патанатомия. Атлас'),
         book('starts', 'Анатомия. Атлас'),
       ];
-      expect(found('анат атлас', books), <String>[
-        'starts',
-        'mixed',
-        'inside',
-      ]);
+      expect(found('анат атлас', books), <String>['starts', 'mixed', 'inside']);
     });
   });
 

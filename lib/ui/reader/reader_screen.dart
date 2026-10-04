@@ -1302,7 +1302,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// «Найти в книге»: выделенное становится запросом поиска по книге.
   ///
-  /// SNO-F-READ-01. Запрос собирает [selectionSearchQuery]; поиск
+  /// SNO-F-READ-01. Запросы собирает [selectionSearchQueries]; поиск
   /// открывает обвязка экрана — сразу со списком найденного, а текущим
   /// делает совпадение на месте выделения.
   Future<void> _onFind() async {
@@ -1311,14 +1311,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (selection == null || scaffold == null) {
       return;
     }
-    final String query = selectionSearchQuery(selection.text);
-    if (!isSearchableQuery(query)) {
+    final List<String> queries = selectionSearchQueries(selection.text);
+    if (queries.isEmpty || !isSearchableQuery(queries.first)) {
       _say('Для поиска выделите хотя бы два знака');
       return;
     }
     _dismissSelection();
     await scaffold.findInBook(
-      query,
+      queries,
       pageNumber: selection.pageNumber,
       start: selection.start,
       end: selection.end,
@@ -1934,16 +1934,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // BUG-25: выделение на этом листе есть — панель есть. Нет
         // прямоугольников — она встаёт посередине листа, а не пропадает.
         if (selection != null && pages.contains(selection.pageNumber))
-          SelectionPanel(
+          // SNO-F-READ-01: без модели промптов над выделением нет, а
+          // четвёртым действием стоит «Найти в книге».
+          SelectionPanel.forReader(
             anchor: panelAnchor(rects: selected, area: size),
-            // SNO-F-READ-01: без модели промптов над выделением нет,
-            // а четвёртым действием стоит «Найти в книге».
-            prompts: widget.models ? _prompts : PromptSet.empty,
+            models: widget.models,
+            prompts: _prompts,
             onPrompt: (SelectionPrompt prompt) => unawaited(_onPrompt(prompt)),
             onQuote: () => unawaited(_onQuote()),
             onNote: () => unawaited(_onNote()),
             onCopy: () => unawaited(_onCopy()),
-            onFind: widget.models ? null : () => unawaited(_onFind()),
+            onFind: () => unawaited(_onFind()),
           ),
       ],
     );

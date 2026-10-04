@@ -150,10 +150,34 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// Занят ли экран поиском: тогда «назад» закрывает его, а не раздел.
   bool get _searchActive => _searching || _query.isNotEmpty;
 
+  /// Потоки полки: категории, книги, места чтения.
+  ///
+  /// Заводятся один раз, а не в каждом построении: поиск по названию
+  /// перестраивает экран с каждой буквой, и подписываться на базу заново
+  /// на каждую букву незачем.
+  late Stream<List<BookCategory>> _categoryStream;
+  late Stream<List<Book>> _bookStream;
+  late Stream<Map<String, ReadingPosition>> _positionStream;
+
+  void _watchShelf() {
+    _categoryStream = widget.services.data.categories.watchCategories();
+    _bookStream = widget.services.data.library.watchBooks();
+    _positionStream = widget.services.data.reading.watchPositions();
+  }
+
   @override
   void initState() {
     super.initState();
+    _watchShelf();
     unawaited(_restoreSort());
+  }
+
+  @override
+  void didUpdateWidget(LibraryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.services, widget.services)) {
+      _watchShelf();
+    }
   }
 
   @override
@@ -194,13 +218,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
   ///
   /// Свой путь, отдельный от нажатия на полке: журналу записи (этап 2
   /// ветви) предстоит отличать «нашёл поиском» от «открыл по памяти».
-  /// Поиск при этом закрывается: вернувшись из книги, читатель видит
-  /// полку, а не список, и каждое новое обращение к поиску остаётся
-  /// отдельным действием.
-  Future<void> _openFound(Book book) async {
-    _closeSearch();
-    await _openBook(book);
-  }
+  /// Поиск закрывает само открытие книги ([_openBook]).
+  Future<void> _openFound(Book book) => _openBook(book);
 
   /// Книгу подняли: полка готовится ехать под пальцем.
   void _dragStarted() {
@@ -327,6 +346,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// тогда, когда сообщение ушло, а не своим таймером: иначе «Вернуть»
   /// оставалось бы на экране дольше, чем книгу можно вернуть с файлом.
   Future<void> _removeBook(Book book) async {
+    if (widget.locked) {
+      return;
+    }
     await widget.services.data.library.delete(book.id);
     if (!mounted) {
       return;
@@ -406,6 +428,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     List<BookCategory> categories,
     List<ShelfSection> sections,
   ) async {
+    if (widget.locked) {
+      return;
+    }
     final MoveTarget? target = await askWhereToMove(
       context,
       categories: categories,
@@ -459,8 +484,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     required String? categoryId,
   }) async {
     // SNO-F-LIB-02: под замком книга остаётся там, где стоит. Поднять её
-    // и так нечем; проверка здесь — на случай, если замок закрылся, пока
-    // книгу уже несли.
+    // и так нечем: эта проверка и такие же в снятии с полки, переносе
+    // через меню и правке категорий — на случай, если замок закрылся,
+    // пока меню было открыто или книгу уже несли.
     if (widget.locked) {
       return;
     }
@@ -503,6 +529,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<BookCategory?> _createCategory(int position) async {
+    if (widget.locked) {
+      return null;
+    }
     final String? name = await askCategoryName(context);
     if (name == null) {
       return null;
@@ -520,7 +549,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _renameCategory(BookCategory category) async {
     // Меню категории в этот момент ещё уходит с экрана — см. [_afterFrame].
     await _afterFrame();
-    if (!mounted) {
+    if (!mounted || widget.locked) {
       return;
     }
     final String? name = await askCategoryName(
@@ -537,7 +566,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _deleteCategory(BookCategory category) async {
     await _afterFrame();
-    if (!mounted) {
+    if (!mounted || widget.locked) {
       return;
     }
     final bool confirmed = await confirmCategoryRemoval(context, category);
@@ -557,6 +586,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// записывалось и тут, до открытия: одно открытие считалось дважды, а
   /// книга с потерянным файлом поднималась в «Сначала недавние».
   Future<void> _openBook(Book book) async {
+    // SNO-F-LIB-01: открытая книга закрывает поиск по названию.
+    // Вернувшись, читатель видит полку, а не список найденного и не
+    // поле с клавиатурой: каждое обращение к поиску — отдельное действие.
+    _closeSearch();
     // BUG-47: сообщение полки не ложится на страницу и на ползунок.
     _dismissMessages();
     widget.onReading?.call(true);
@@ -612,6 +645,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final bool wide =
         widget.titleSearch &&
         navPlacementFor(MediaQuery.sizeOf(context).width) == NavPlacement.top;
+    // Запрос остался от широкого окна, которое сузили: на узком экране
+    // поле держится своим признаком — иначе оно закрылось бы само, стоило
+    // стереть последнюю букву.
+    if (widget.titleSearch && !wide && _query.isNotEmpty) {
+      _searching = true;
+    }
     return PopScope<Object?>(
       // «Назад» при открытом поиске закрывает поиск, а не раздел.
       canPop: !_searchActive,
@@ -623,22 +662,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
       child: Scaffold(
         appBar: _bar(wide: wide),
         body: StreamBuilder<List<BookCategory>>(
-          stream: widget.services.data.categories.watchCategories(),
+          stream: _categoryStream,
           builder:
               (
                 BuildContext context,
                 AsyncSnapshot<List<BookCategory>> categories,
               ) {
                 return StreamBuilder<List<Book>>(
-                  stream: widget.services.data.library.watchBooks(),
+                  stream: _bookStream,
                   builder:
-                      (
-                        BuildContext context,
-                        AsyncSnapshot<List<Book>> books,
-                      ) {
+                      (BuildContext context, AsyncSnapshot<List<Book>> books) {
                         return StreamBuilder<Map<String, ReadingPosition>>(
-                          stream: widget.services.data.reading
-                              .watchPositions(),
+                          stream: _positionStream,
                           builder:
                               (
                                 BuildContext context,
@@ -647,8 +682,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               ) {
                                 return _buildShelf(
                                   categories:
-                                      categories.data ??
-                                      const <BookCategory>[],
+                                      categories.data ?? const <BookCategory>[],
                                   books: books.data ?? const <Book>[],
                                   positions:
                                       positions.data ??
@@ -671,9 +705,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// заголовка; на широком окне поле стоит в шапке всегда. SNO-F-LIB-02:
   /// под замком в шапке остаётся только поиск.
   PreferredSizeWidget _bar({required bool wide}) {
-    // Поле стоит и тогда, когда запрос остался от широкого окна, которое
-    // сузили: найденное без поля нечем было бы ни править, ни закрыть.
-    if (widget.titleSearch && !wide && _searchActive) {
+    if (widget.titleSearch && !wide && _searching) {
       return AppBar(
         leading: IconButton(
           key: const Key('shelf-search-back'),
@@ -693,6 +725,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return AppBar(
       automaticallyImplyLeading: !wide,
       centerTitle: wide ? false : null,
+      // Отступ назван числом: по нему же список найденного встаёт под
+      // полем на широком окне.
+      titleSpacing: NavigationToolbar.kMiddleSpacing,
       title: wide
           ? Row(
               children: <Widget>[
@@ -791,7 +826,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
         : buildShelf(
             categories: categories,
             books: books,
-            sort: _sort,
+            // SNO-F-LIB-02: под замком полка стоит в порядке «Как
+            // расставил», какой бы порядок ни был выбран. «Сначала
+            // недавние» переставлял бы книги после каждой открытой.
+            sort: widget.locked ? ShelfSort.manual : _sort,
             progress: progress,
           );
     final Widget shelf;
@@ -812,30 +850,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       );
     }
-    // SNO-F-LIB-01: пока в поле пусто, на экране полка как есть.
-    if (!widget.titleSearch || _query.trim().isEmpty) {
+    if (!widget.titleSearch) {
       return shelf;
     }
-    final Widget found = ShelfSearchResults(
-      // Книги — в порядке полки: при равном весе находки стоят так же,
-      // как стоят на ней.
-      hits: searchShelfTitles(
-        query: _query,
-        books: <Book>[
-          for (final ShelfSection section in sections) ...section.books,
-        ],
-      ),
-      categories: <String, String>{
-        for (final ShelfSection section in sections)
-          for (final Book book in section.books) book.id: section.title,
-      },
-      covers: widget.services.covers,
-      onOpen: (Book book) => unawaited(_openFound(book)),
-      shrinkWrap: wide,
-    );
+    // SNO-F-LIB-01: пока в поле пусто, на экране полка как есть.
+    final bool searching = _query.trim().isNotEmpty;
+    final Widget found = searching
+        ? ShelfSearchResults(
+            // Книги — в порядке полки: при равном весе находки стоят
+            // так же, как стоят на ней.
+            hits: searchShelfTitles(
+              query: _query,
+              books: <Book>[
+                for (final ShelfSection section in sections) ...section.books,
+              ],
+            ),
+            categories: <String, String>{
+              for (final ShelfSection section in sections)
+                for (final Book book in section.books) book.id: section.title,
+            },
+            covers: widget.services.covers,
+            onOpen: (Book book) => unawaited(_openFound(book)),
+            shrinkWrap: wide,
+          )
+        : const SizedBox.shrink();
     if (!wide) {
-      // Телефон: полка сменяется списком.
-      return found;
+      // Телефон: полка сменяется списком, но из дерева не уходит — и
+      // после поиска стоит там же, где её оставили. Расположение книг
+      // участник запоминает; полка, прыгнувшая в начало, сбивала бы его.
+      return IndexedStack(
+        index: searching ? 1 : 0,
+        sizing: StackFit.expand,
+        children: <Widget>[shelf, found],
+      );
     }
     // Широкое окно: список — под полем, полка под ним видна затемнённой.
     // Нажатие мимо списка закрывает поиск.
@@ -843,34 +890,36 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return Stack(
       children: <Widget>[
         shelf,
-        Positioned.fill(
-          child: GestureDetector(
-            key: const Key('shelf-search-scrim'),
-            behavior: HitTestBehavior.opaque,
-            onTap: _closeSearch,
-            child: ColoredBox(
-              color: theme.colorScheme.scrim.withValues(alpha: 0.6),
+        if (searching)
+          Positioned.fill(
+            child: GestureDetector(
+              key: const Key('shelf-search-scrim'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _closeSearch,
+              child: ColoredBox(
+                color: theme.colorScheme.scrim.withValues(alpha: 0.6),
+              ),
             ),
           ),
-        ),
-        Positioned(
-          // Левый край поля в шапке: отступ заголовка и место под
-          // слово «Полка».
-          left: NavigationToolbar.kMiddleSpacing + kShelfTitleWidth,
-          top: 0,
-          bottom: 16,
-          width: kShelfSearchWidth,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: Material(
-              color: theme.colorScheme.surface,
-              elevation: 6,
-              borderRadius: BorderRadius.circular(12),
-              clipBehavior: Clip.antiAlias,
-              child: found,
+        if (searching)
+          Positioned(
+            // Левый край поля в шапке: отступ заголовка и место под
+            // слово «Полка».
+            left: NavigationToolbar.kMiddleSpacing + kShelfTitleWidth,
+            top: 0,
+            bottom: 16,
+            width: kShelfSearchWidth,
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                color: theme.colorScheme.surface,
+                elevation: 6,
+                borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                child: found,
+              ),
             ),
           ),
-        ),
       ],
     );
   }

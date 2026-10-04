@@ -5,6 +5,7 @@ import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
+import 'package:memoria/domain/library/shelf.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/ui/library/book_card.dart';
 import 'package:memoria/ui/library/library_screen.dart';
@@ -29,12 +30,13 @@ void main() {
     AppServices services, {
     required bool locked,
     bool titleSearch = false,
+    bool canAddBooks = false,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: LibraryScreen(
           services: services,
-          canAddBooks: false,
+          canAddBooks: canAddBooks,
           titleSearch: titleSearch,
           locked: locked,
         ),
@@ -171,6 +173,71 @@ void main() {
       expect(find.byKey(const Key('library-open-file')), findsNothing);
       // Поиск по названию остаётся: расположения он не меняет.
       expect(find.byKey(const Key('library-search')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIB-02: замок прячет и добавление книг', (
+      WidgetTester tester,
+    ) async {
+      // Полка, с которой книги добавляют: без замка «+» и кнопка в
+      // шапке есть, под замком — нет.
+      bigScreen(tester);
+      await fillShelf();
+      await pumpShelf(
+        tester,
+        testServices(data: data),
+        locked: false,
+        canAddBooks: true,
+      );
+      expect(find.byType(AddBookCard), findsWidgets);
+      expect(find.byKey(const Key('library-open-file')), findsOneWidget);
+      await unmount(tester);
+
+      await pumpShelf(
+        tester,
+        testServices(data: data),
+        locked: true,
+        canAddBooks: true,
+      );
+      expect(find.byType(AddBookCard), findsNothing);
+      expect(find.byKey(const Key('library-open-file')), findsNothing);
+      expect(find.byKey(const Key('library-book-a')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIB-02: под замком книги стоят, как расставлены', (
+      WidgetTester tester,
+    ) async {
+      bigScreen(tester);
+      await fillShelf();
+      // Выбран порядок по названию, а места книг — обратные ему.
+      await placeBook(data, 'c', 'study', position: 0);
+      await placeBook(data, 'b', 'study', position: 1);
+      await placeBook(data, 'a', 'study', position: 2);
+      await data.settings.write(SettingsKeys.shelfSort, ShelfSort.title.name);
+
+      double left(String id) {
+        return tester.getTopLeft(find.byKey(Key('library-book-$id'))).dx;
+      }
+
+      // Без замка действует выбранный порядок.
+      await pumpShelf(tester, testServices(data: data), locked: false);
+      expect(left('a'), lessThan(left('b')));
+      expect(left('b'), lessThan(left('c')));
+      await unmount(tester);
+
+      // Под замком — порядок мест: его запоминает участник, и открытая
+      // книга его не меняет.
+      await pumpShelf(tester, testServices(data: data), locked: true);
+      expect(left('c'), lessThan(left('b')));
+      expect(left('b'), lessThan(left('a')));
+      // Выбранный порядок при этом не стёрт: замок снимут — он вернётся.
+      expect(
+        await data.settings.read(SettingsKeys.shelfSort),
+        ShelfSort.title.name,
+      );
 
       await unmount(tester);
     });

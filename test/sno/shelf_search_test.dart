@@ -6,6 +6,8 @@ import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/shelf_title_search.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
+import 'package:memoria/domain/theme/app_palette.dart';
+import 'package:memoria/domain/theme/contrast.dart';
 import 'package:memoria/ui/library/library_screen.dart';
 import 'package:memoria/ui/library/shelf_search.dart';
 import 'package:memoria/ui/reader/reader_screen.dart';
@@ -283,6 +285,85 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-LIB-01: после поиска полка стоит там же', (
+      WidgetTester tester,
+    ) async {
+      // Категорий больше, чем помещается на экране: полку можно
+      // прокрутить.
+      for (int i = 0; i < 8; i++) {
+        await data.categories.save(
+          BookCategory(
+            id: 'c$i',
+            title: 'Раздел $i',
+            position: i,
+            createdAt: DateTime.utc(2026, 8, 20),
+          ),
+        );
+        await data.library.save(
+          testBook(id: 'b$i', title: 'Том $i', hash: 'hash-b$i'),
+        );
+        await placeBook(data, 'b$i', 'c$i');
+      }
+      await pumpShelf(tester, testServices(data: data));
+
+      double offset() {
+        return tester
+            .state<ScrollableState>(
+              find
+                  .descendant(
+                    of: find.byKey(const Key('library-shelf')),
+                    matching: find.byType(Scrollable),
+                  )
+                  .first,
+            )
+            .position
+            .pixels;
+      }
+
+      await tester.drag(
+        find.byKey(const Key('library-shelf')),
+        const Offset(0, -400),
+      );
+      await tester.pumpAndSettle();
+      final double before = offset();
+      expect(before, greaterThan(0));
+
+      await tester.tap(find.byKey(const Key('library-search')));
+      await tester.pumpAndSettle();
+      await type(tester, 'том');
+      expect(find.byKey(const Key('library-shelf')), findsNothing);
+      await tester.tap(find.byKey(const Key('shelf-search-back')));
+      await tester.pumpAndSettle();
+
+      // Расположение книг участник запоминает: полка не прыгает в начало.
+      expect(offset(), before);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIB-01: книга с полки закрывает открытое поле', (
+      WidgetTester tester,
+    ) async {
+      await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      await threeBooks();
+      await pumpShelf(tester, testServices(data: data));
+      // Поле открыто и пусто: на экране полка, и книгу открывают с неё.
+      await tester.tap(find.byKey(const Key('library-search')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('library-book-hist')));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReaderScreen), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      // Вернулись к полке, а не к полю с клавиатурой.
+      expect(find.byKey(const Key('shelf-search-field')), findsNothing);
+      expect(find.byKey(const Key('library-search')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-LIB-01: в основном приложении поиска на полке нет', (
       WidgetTester tester,
     ) async {
@@ -365,6 +446,54 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-LIB-01: после Enter поиск закрывается по Esc', (
+      WidgetTester tester,
+    ) async {
+      wideWindow(tester);
+      await threeBooks();
+      await pumpShelf(tester, testServices(data: data));
+      await type(tester, 'анат');
+
+      // Enter указатель ввода из поля не уводит — иначе Esc до поля не
+      // дошёл бы, и закрыть найденное с клавиатуры было бы нечем.
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shelf-search-results')), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shelf-search-results')), findsNothing);
+      expect(find.byKey(const Key('shelf-search-scrim')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIB-01: окно сузили — поле и найденное на месте', (
+      WidgetTester tester,
+    ) async {
+      wideWindow(tester);
+      await threeBooks();
+      await pumpShelf(tester, testServices(data: data));
+      await type(tester, 'гист');
+      expect(hit('hist'), findsOneWidget);
+
+      tester.view.physicalSize = const Size(600, 800);
+      await tester.pumpAndSettle();
+
+      // Узкий экран: поле — на месте заголовка, найденное — вместо полки.
+      expect(find.byKey(const Key('shelf-search-field')), findsOneWidget);
+      expect(find.byKey(const Key('shelf-search-back')), findsOneWidget);
+      expect(hit('hist'), findsOneWidget);
+      expect(find.byKey(const Key('library-shelf')), findsNothing);
+
+      // Стёрли запрос — поле не закрылось посреди набора.
+      await type(tester, '');
+      expect(find.byKey(const Key('shelf-search-field')), findsOneWidget);
+      expect(find.byKey(const Key('library-shelf')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-LIB-01: нет совпадений — строка под полем', (
       WidgetTester tester,
     ) async {
@@ -400,10 +529,7 @@ void main() {
 
       expect(span.toPlainText(), title);
       expect(pieces(span, marked: true), <String>['Прив', 'Анат']);
-      expect(pieces(span, marked: false), <String>[
-        'ес. ',
-        'омия человека',
-      ]);
+      expect(pieces(span, marked: false), <String>['ес. ', 'омия человека']);
     });
 
     test('SNO-F-LIB-01: без совпавшего название показано как есть', () {
@@ -423,6 +549,28 @@ void main() {
       expect(span.toPlainText(), 'Атлас');
       expect(pieces(span, marked: true), <String>['ас']);
     });
+  });
+
+  group('SNO-F-LIB-01: совпавшее читается на любой теме', () {
+    for (final AppPalette palette in appPalettes.values) {
+      test('SNO-F-LIB-01: ${palette.title} — буквы на подложке 4,5:1', () {
+        // Список найденного лежит на фоне экрана (телефон) или на
+        // поверхности (карточка под полем на широком окне).
+        for (final int under in <int>[palette.background, palette.surface]) {
+          final int mark = blendOver(
+            palette.accentText,
+            kShelfMarkOpacity,
+            under,
+          );
+          final double ratio = contrastRatio(palette.text, mark);
+          expect(
+            ratio,
+            greaterThanOrEqualTo(wcagAaNormalText),
+            reason: 'выходит ${ratio.toStringAsFixed(2)}:1',
+          );
+        }
+      });
+    }
   });
 
   group('SNO-F-READ-01: полка передаёт чтению, есть ли модель', () {

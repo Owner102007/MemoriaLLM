@@ -202,6 +202,64 @@ void main() {
       expect(left('copy'), lessThan(left('find')));
     });
 
+    testWidgets('SNO-F-READ-01: экран чтения без модели промптов не даёт', (
+      WidgetTester tester,
+    ) async {
+      // Промпты у читателя заведены, но модели в сборке нет: панель
+      // экрана чтения их не показывает, а «Найти в книге» — показывает.
+      int finds = 0;
+      await tester.pumpWidget(
+        host(
+          SelectionPanel.forReader(
+            anchor: const Rect.fromLTWH(50, 300, 200, 24),
+            models: false,
+            prompts: PromptSet(
+              prompts: <SelectionPrompt>[prompt('p1', 'Значение')],
+              fromBook: false,
+            ),
+            onPrompt: (_) {},
+            onQuote: () {},
+            onNote: () {},
+            onCopy: () {},
+            onFind: () => finds++,
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('selection-prompt-p1')), findsNothing);
+      expect(find.text('Значение'), findsNothing);
+      expect(find.byType(IconButton), findsNWidgets(4));
+      await tester.tap(find.byKey(const Key('selection-action-find')));
+      await tester.pump();
+      expect(finds, 1);
+    });
+
+    testWidgets('SNO-F-READ-01: экран чтения с моделью — панель прежняя', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        host(
+          SelectionPanel.forReader(
+            anchor: const Rect.fromLTWH(50, 300, 200, 24),
+            models: true,
+            prompts: PromptSet(
+              prompts: <SelectionPrompt>[prompt('p1', 'Значение')],
+              fromBook: false,
+            ),
+            onPrompt: (_) {},
+            onQuote: () {},
+            onNote: () {},
+            onCopy: () {},
+            onFind: () {},
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('selection-prompt-p1')), findsOneWidget);
+      expect(find.byKey(const Key('selection-action-find')), findsNothing);
+      expect(find.byType(IconButton), findsNWidgets(3));
+    });
+
     testWidgets('SNO-F-READ-01: с моделью действия «Найти в книге» нет', (
       WidgetTester tester,
     ) async {
