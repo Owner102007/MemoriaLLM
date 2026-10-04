@@ -588,6 +588,47 @@ def make_garbage() -> None:
     print(f"  truncated.pdf: {truncated.stat().st_size / 1024:.1f} КБ")
 
 
+# --------------------------------------------------------------------------
+# 14. Слова, разрезанные переносом в конце строки
+# --------------------------------------------------------------------------
+
+
+def make_hyphen_breaks() -> None:
+    """Страница, где слова разрезаны дефисом в конце строки.
+
+    PDFium такой дефис в тексте страницы не отдаёт: на его месте стоит
+    служебный знак U+0002, а перевода строки после него нет. Поиск по
+    книге и «Найти в книге» обязаны находить слово целиком — и это
+    проверяется на настоящем движке, а не на строке, набранной руками.
+
+    В файле три случая: обычный перенос (`micro-` / `scope`), составное
+    слово (`self-` / `made`), заглавная после дефиса (`Saint-` /
+    `Petersburg`) — и тире после пробела в конце строки, которое
+    переносом не является.
+    """
+    pdf = new_pdf()
+    font = simple_font(pdf)
+    resources = Dictionary(Font=Dictionary(F1=font))
+    lines = (
+        "The big micro-",
+        "scope stands on a self-",
+        "made table near Saint-",
+        "Petersburg. A microscope and a self-made thing.",
+        "The range 1998 -",
+        "2001 stays a dash.",
+    )
+    body = "".join(
+        "BT /F1 12 Tf 72 {y} Td ({text}) Tj ET\n".format(
+            y=760 - 20 * i,
+            text=line,
+        )
+        for i, line in enumerate(lines)
+    )
+    add_page(pdf, content(pdf, body), resources)
+    pdf.docinfo["/Title"] = String("Memoria Hyphen Breaks")
+    save(pdf, "hyphen_breaks.pdf")
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     print(f"Корпус: {OUT}")
@@ -604,6 +645,7 @@ def main() -> None:
     make_encrypted()
     make_broken_xref()
     make_garbage()
+    make_hyphen_breaks()
 
     total = sum(
         f.stat().st_size for f in OUT.iterdir() if f.suffix == ".pdf"
