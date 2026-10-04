@@ -343,21 +343,20 @@ void main() {
           hash: 'hash-a',
         ).copyWith(categoryId: 'lit', shelfPosition: 1),
       );
-      await ReferenceKeeper(
-        data: data,
-        storage: MemoryBookStorage(),
-      ).remember(const <ArchivePlacement>[
-        ArchivePlacement(
-          fingerprint: 'hash-z',
-          title: 'Яя',
-          category: 'Литература',
-        ),
-        ArchivePlacement(
-          fingerprint: 'hash-a',
-          title: 'Аа',
-          category: 'Литература',
-        ),
-      ]);
+      await ReferenceKeeper(data: data, storage: MemoryBookStorage()).remember(
+        const <ArchivePlacement>[
+          ArchivePlacement(
+            fingerprint: 'hash-z',
+            title: 'Яя',
+            category: 'Литература',
+          ),
+          ArchivePlacement(
+            fingerprint: 'hash-a',
+            title: 'Аа',
+            category: 'Литература',
+          ),
+        ],
+      );
       final ThemeController theme = await ThemeController.restore(
         data.settings,
       );

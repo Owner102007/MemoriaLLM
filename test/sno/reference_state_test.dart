@@ -466,9 +466,8 @@ void main() {
       await placeBook(data, 'a3', 'lit', position: 4);
 
       // Тот же архив ещё раз: все книги уже стоят на полке.
-      final ReferenceState? again = await keeper(
-        now: DateTime.utc(2026, 10, 9),
-      ).remember(archive);
+      final ReferenceState? again = await keeper(now: DateTime.utc(2026, 10, 9))
+          .remember(archive);
 
       expect(again!.savedAt.isAtSameMomentAs(saved), isTrue);
       expect((await keeper().snapshot()).matches(again), isFalse);
