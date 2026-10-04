@@ -494,6 +494,44 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-LIB-01: окно расширили — пустой поиск не держит', (
+      WidgetTester tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(700, 800);
+      addTearDown(tester.view.reset);
+      await threeBooks();
+      await pumpShelf(tester, testServices(data: data));
+
+      bool canPop() {
+        final PopScope<Object?> scope = tester.widget(
+          find
+              .descendant(
+                of: find.byType(LibraryScreen),
+                matching: find.byWidgetPredicate(
+                  (Widget widget) => widget is PopScope<Object?>,
+                ),
+              )
+              .first,
+        );
+        return scope.canPop;
+      }
+
+      // Узкий экран: поле открыто и пусто — «назад» закрывает его.
+      await tester.tap(find.byKey(const Key('library-search')));
+      await tester.pumpAndSettle();
+      expect(canPop(), isFalse);
+
+      // Окно расширили: поле в шапке стоит всегда, закрывать нечего, и
+      // «назад» снова работает как обычно.
+      tester.view.physicalSize = const Size(1200, 800);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('shelf-search-field')), findsOneWidget);
+      expect(canPop(), isTrue);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-LIB-01: нет совпадений — строка под полем', (
       WidgetTester tester,
     ) async {

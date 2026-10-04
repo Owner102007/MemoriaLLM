@@ -203,11 +203,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// Закрывает поиск: набранное стирается, на экране снова полка.
   void _closeSearch() {
+    // Указатель ввода уходит из поля и тогда, когда закрывать нечего: на
+    // широком окне поле стоит всегда и могло быть просто нажато.
+    _searchFocus.unfocus();
     if (!_searchActive && _searchField.text.isEmpty) {
       return;
     }
     _searchField.clear();
-    _searchFocus.unfocus();
     setState(() {
       _searching = false;
       _query = '';
@@ -436,7 +438,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       categories: categories,
       current: book.categoryId,
     );
-    if (target == null || !mounted) {
+    if (target == null || !mounted || widget.locked) {
       return;
     }
     String? destination = target.categoryId;
@@ -533,7 +535,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return null;
     }
     final String? name = await askCategoryName(context);
-    if (name == null) {
+    if (name == null || !mounted || widget.locked) {
       return null;
     }
     final BookCategory category = BookCategory(
@@ -556,7 +558,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       context,
       initial: category.title,
     );
-    if (name == null) {
+    if (name == null || !mounted || widget.locked) {
       return;
     }
     await widget.services.data.categories.save(
@@ -570,7 +572,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     final bool confirmed = await confirmCategoryRemoval(context, category);
-    if (!confirmed) {
+    if (!confirmed || !mounted || widget.locked) {
       return;
     }
     await widget.services.data.categories.delete(category.id);
@@ -650,6 +652,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     // стереть последнюю букву.
     if (widget.titleSearch && !wide && _query.isNotEmpty) {
       _searching = true;
+    }
+    // И наоборот: на широком окне поле стоит всегда, открывать его
+    // нечем — признак не должен пережить узкий экран и держать «назад».
+    if (wide) {
+      _searching = false;
     }
     return PopScope<Object?>(
       // «Назад» при открытом поиске закрывает поиск, а не раздел.

@@ -25,19 +25,34 @@ library;
 
 import '../library/search_text.dart';
 
+/// Знак, которым движок помечает перенос слова в конце строки.
+///
+/// PDFium дефис в конце строки, за которым слово продолжается, в тексте
+/// страницы не отдаёт: на его месте стоит служебный знак U+0002, а
+/// перевода строки после него нет — `остео`, знак, `логия`. Закреплено
+/// на настоящем движке файлом `hyphen_breaks.pdf` корпуса. Для поиска
+/// этого знака нет вовсе (BUG-50): слово, разрезанное переносом, обязано
+/// находиться целиком — и набранное руками, и взятое из выделенного.
+const int kLineBreakHyphen = 0x02;
+
 /// Текст страницы, подготовленный к поиску.
 class SearchableText {
   const SearchableText._(this.text, this.sourceIndex);
 
   /// Готовит текст: пробельные последовательности схлопываются в один
   /// пробел, края обрезаются, для каждого символа запоминается его место
-  /// в исходной строке.
+  /// в исходной строке. Знак переноса слова ([kLineBreakHyphen])
+  /// выбрасывается: слово по обе стороны от него становится целым, а
+  /// место совпадения в исходном тексте по-прежнему известно до знака.
   factory SearchableText.of(String raw) {
     final StringBuffer buffer = StringBuffer();
     final List<int> map = <int>[];
     bool pendingSpace = false;
     for (int i = 0; i < raw.length; i++) {
       final String char = raw[i];
+      if (char.codeUnitAt(0) == kLineBreakHyphen) {
+        continue;
+      }
       if (_isWhitespace(char)) {
         if (buffer.isNotEmpty) {
           pendingSpace = true;
@@ -310,6 +325,11 @@ String _collapse(String value) {
   bool pendingSpace = false;
   for (int i = 0; i < value.length; i++) {
     final String char = value[i];
+    // Знака переноса нет ни в тексте, ни в запросе: запрос из
+    // выделенного может принести его с собой.
+    if (char.codeUnitAt(0) == kLineBreakHyphen) {
+      continue;
+    }
     if (_isWhitespace(char)) {
       if (buffer.isNotEmpty) {
         pendingSpace = true;

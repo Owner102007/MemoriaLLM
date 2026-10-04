@@ -118,7 +118,13 @@ List<String> titleQueryWords(String query) {
 /// чем найденное в середине: набравший «анат» ищет «Анатомию», а не
 /// «Патанатомию».
 ShelfTitleHit? matchShelfTitle(Book book, List<String> words) {
-  if (words.isEmpty) {
+  // Пустое слово нашлось бы на каждом месте — и без конца; список из
+  // одних пустых слов не находит ничего.
+  final List<String> wanted = <String>[
+    for (final String word in words)
+      if (word.isNotEmpty) word,
+  ];
+  if (wanted.isEmpty) {
     return null;
   }
   // Слой названия пока один. Название от читателя (F-LIB-18) встанет
@@ -126,11 +132,7 @@ ShelfTitleHit? matchShelfTitle(Book book, List<String> words) {
   final String folded = foldShelfTitle(book.title);
   final List<TitleSpan> found = <TitleSpan>[];
   int rank = 0;
-  for (final String word in words) {
-    // Пустое слово нашлось бы на каждом месте — и без конца.
-    if (word.isEmpty) {
-      continue;
-    }
+  for (final String word in wanted) {
     bool startsWord = false;
     int from = 0;
     int count = 0;

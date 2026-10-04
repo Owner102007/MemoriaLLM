@@ -12,82 +12,60 @@ import 'text_search.dart';
 /// себя и не поместится в поле. Обрезается по слову.
 const int kSelectionQueryLimit = 200;
 
-/// Слово, разрезанное концом строки: буква, дефис, перевод строки и
-/// строчная буква следом. «Что-то» посреди строки сюда не попадает, а
-/// «Санкт-» и «Петербург» на двух строках не склеиваются: заглавная
-/// после дефиса — начало слова, а не его продолжение.
-final RegExp _brokenWord = RegExp(
-  r'(\p{L})[-\u2010\u2011\u00AD][ \t]*(?:\r\n|\r|\n)\s*(?=\p{Ll})',
-  unicode: true,
-);
-
-/// Дефис в конце строки, за которым слово продолжается с любой буквы.
-final RegExp _hyphenAtBreak = RegExp(
-  r'(\p{L})[-\u2010\u2011\u00AD][ \t]*(?:\r\n|\r|\n)\s*(?=\p{L})',
-  unicode: true,
-);
-
 final RegExp _spaces = RegExp(r'\s+');
 
-/// Запросы поиска из выделенного текста — от лучшего к запасному.
+/// Запросы поиска из выделенного текста — в том порядке, в каком их
+/// пробует поиск.
 ///
 /// Обычно запрос один: выделенное без переводов строк и лишних
-/// пробелов. Их становится больше, когда в выделенном слово разрезано
-/// концом строки, — по тексту не узнать, перенос это или дефис
-/// составного слова:
+/// пробелов. Их два, когда в выделенном слово разрезано переносом в
+/// конце строки — движок ставит на этом месте [kLineBreakHyphen], и по
+/// тексту не узнать, перенос это или дефис составного слова:
 ///
-/// 1. слово склеено — «остео-», «логия» → «остеология»: так оно
-///    написано во всех остальных местах книги;
-/// 2. дефис оставлен, перевод строки убран — «сердечно-»,
-///    «сосудистая» → «сердечно-сосудистая», «Санкт-», «Петербург» →
-///    «Санкт-Петербург»: составное слово склейкой не находится;
-/// 3. как выделено — «остео- логия»: находит хотя бы само это место.
+/// 1. с дефисом — `сердечно`, знак, `сосудистая` →
+///    «сердечно-сосудистая»: так составное слово написано в остальных
+///    местах книги;
+/// 2. слитно — `остео`, знак, `логия` → «остеология»: так написано
+///    обычное слово, и так же поиск видит само выделенное место — знака
+///    переноса для него нет.
 ///
-/// Поиск берёт первый запрос, по которому что-то нашлось. Каждый
-/// укорочен до [limit] по слову; пустых и одинаковых в списке нет.
+/// Поиск берёт первый запрос, по которому что-то нашлось. С дефисом —
+/// первым: обычное слово с дефисом не найдётся нигде, и поиск перейдёт
+/// ко второму; составное же слово, взятое слитно, нашло бы только само
+/// себя, и остальные его места остались бы не найдены.
+///
+/// Каждый запрос укорочен до [limit] по слову; пустых и одинаковых в
+/// списке нет. Знак переноса на краю выделенного ничего не разрезает и
+/// просто отбрасывается.
 List<String> selectionSearchQueries(
   String selected, {
   int limit = kSelectionQueryLimit,
 }) {
+  final String mark = String.fromCharCode(kLineBreakHyphen);
+  String core = selected.trim();
+  while (core.startsWith(mark)) {
+    core = core.substring(mark.length).trimLeft();
+  }
+  while (core.endsWith(mark)) {
+    core = core.substring(0, core.length - mark.length).trimRight();
+  }
   String flat(String raw) {
     return _shorten(raw.replaceAll(_spaces, ' ').trim(), limit);
   }
 
-  final String plain = flat(selected);
-  final String glued = flat(
-    selected.replaceAllMapped(_brokenWord, (Match word) => word.group(1)!),
-  );
-  final String hyphened = flat(
-    selected.replaceAllMapped(
-      _hyphenAtBreak,
-      (Match word) => '${word.group(1)}-',
-    ),
-  );
-  final List<String> queries = <String>[];
-  for (final String query in <String>[glued, hyphened, plain]) {
-    if (query.isNotEmpty && !queries.contains(query)) {
-      queries.add(query);
-    }
-  }
-  // «Как выделено» — всегда последним: оно находит только своё место.
-  if (queries.length > 1 && queries.remove(plain)) {
-    queries.add(plain);
-  }
-  return queries;
-}
-
-/// Первый из запросов по выделенному: тот, что встаёт в поле поиска.
-/// Пустая строка — искать нечего.
-String selectionSearchQuery(
-  String selected, {
-  int limit = kSelectionQueryLimit,
-}) {
-  final List<String> queries = selectionSearchQueries(selected, limit: limit);
-  return queries.isEmpty ? '' : queries.first;
+  final String glued = flat(core.replaceAll(mark, ''));
+  final String hyphened = flat(core.replaceAll(mark, '-'));
+  return <String>[
+    if (hyphened.isNotEmpty && hyphened != glued) hyphened,
+    if (glued.isNotEmpty) glued,
+  ];
 }
 
 /// Укорачивает запрос до [limit] знаков по слову.
 String _shorten(String flat, int limit) {
+  if (limit <= 0) {
+    return '';
+  }
   if (flat.length <= limit) {
     return flat;
   }

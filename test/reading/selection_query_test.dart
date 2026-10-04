@@ -5,110 +5,149 @@ import 'package:memoria/domain/reading/text_search.dart';
 /// SNO-F-READ-01: «Найти в книге» — запросы из выделенного и место
 /// выделения среди найденного.
 void main() {
-  group('SNO-F-READ-01: запрос из выделенного', () {
+  /// Знак, который движок ставит на месте дефиса переноса.
+  final String mark = String.fromCharCode(kLineBreakHyphen);
+
+  group('SNO-F-READ-01: запросы из выделенного', () {
     test('SNO-F-READ-01: края и лишние пробелы убраны', () {
-      expect(selectionSearchQuery('  остеология  '), 'остеология');
+      expect(selectionSearchQueries('  остеология  '), <String>['остеология']);
       expect(
-        selectionSearchQuery('плечевая\r\nкость\n\nи  лопатка'),
-        'плечевая кость и лопатка',
+        selectionSearchQueries('плечевая\r\nкость\n\nи  лопатка'),
+        <String>['плечевая кость и лопатка'],
       );
-      expect(selectionSearchQuery('плечевая\u00A0кость'), 'плечевая кость');
-      // Без разрезанных слов запрос один.
-      expect(selectionSearchQueries('плечевая\nкость'), <String>[
+      expect(selectionSearchQueries('плечевая\u00A0кость'), <String>[
         'плечевая кость',
       ]);
     });
 
-    test('SNO-F-READ-01: слово, разрезанное переносом, склеено', () {
-      expect(selectionSearchQuery('остео-\nлогия'), 'остеология');
-      expect(selectionSearchQuery('остео- \r\n  логия'), 'остеология');
-      expect(selectionSearchQuery('micro-\nscope'), 'microscope');
-      expect(selectionSearchQuery('остео\u00AD\nлогия'), 'остеология');
-    });
-
-    test('SNO-F-READ-01: запасные запросы — с дефисом и как выделено', () {
-      // По тексту не узнать, перенос это или дефис составного слова:
-      // склеенное не нашлось — ищется с дефисом, потом как выделено.
-      expect(selectionSearchQueries('остео-\nлогия'), <String>[
-        'остеология',
-        'остео-логия',
-        'остео- логия',
-      ]);
-      expect(selectionSearchQueries('сердечно-\nсосудистая система'), <String>[
-        'сердечнососудистая система',
-        'сердечно-сосудистая система',
-        'сердечно- сосудистая система',
-      ]);
-    });
-
-    test('SNO-F-READ-01: дефис внутри строки остаётся дефисом', () {
+    test('SNO-F-READ-01: дефис в выделенном остаётся дефисом', () {
       expect(selectionSearchQueries('что-то'), <String>['что-то']);
       expect(selectionSearchQueries('кость - длинная'), <String>[
         'кость - длинная',
       ]);
+      // Тире в конце строки с переводом строки после него — не перенос.
+      expect(selectionSearchQueries('1998 -\r\n2001'), <String>['1998 - 2001']);
     });
 
-    test('SNO-F-READ-01: заглавная после переноса — это новое слово', () {
-      // Не склеивается, но дефис без перевода строки — первым.
-      expect(selectionSearchQueries('Санкт-\nПетербург'), <String>[
-        'Санкт-Петербург',
-        'Санкт- Петербург',
+    test('SNO-F-READ-01: слово с переноса ищется с дефисом и слитно', () {
+      // По тексту не узнать, перенос это или дефис составного слова.
+      // С дефисом — первым: обычное слово так не найдётся нигде, и
+      // поиск перейдёт к слитному.
+      expect(selectionSearchQueries('остео${mark}логия'), <String>[
+        'остео-логия',
+        'остеология',
       ]);
+      expect(
+        selectionSearchQueries('сердечно${mark}сосудистая система'),
+        <String>['сердечно-сосудистая система', 'сердечнососудистая система'],
+      );
+      expect(selectionSearchQueries('Санкт${mark}Петербург'), <String>[
+        'Санкт-Петербург',
+        'СанктПетербург',
+      ]);
+    });
+
+    test('SNO-F-READ-01: знак переноса на краю выделенного отброшен', () {
+      // Выделили слово до конца строки или с начала следующей: резать
+      // здесь нечего, и запрос один.
+      expect(selectionSearchQueries('остео$mark'), <String>['остео']);
+      expect(selectionSearchQueries('${mark}логия'), <String>['логия']);
+      expect(selectionSearchQueries(' $mark '), isEmpty);
+    });
+
+    test('SNO-F-READ-01: знака переноса в запросах нет', () {
+      final List<String> queries = selectionSearchQueries(
+        'строение остео${mark}логии и сердечно${mark}сосудистой системы',
+      );
+      expect(queries, hasLength(2));
+      for (final String query in queries) {
+        expect(query.contains(mark), isFalse, reason: query);
+      }
     });
 
     test('SNO-F-READ-01: слишком длинное обрезано по слову', () {
       final String long = List<String>.filled(60, 'слово').join(' ');
-      final String query = selectionSearchQuery(long);
+      final String query = selectionSearchQueries(long).single;
       expect(query.length, lessThanOrEqualTo(kSelectionQueryLimit));
       expect(query.endsWith('слово'), isTrue);
       expect(long.startsWith(query), isTrue);
 
       // Одно слово длиннее предела режется по пределу.
       final String solid = 'а' * 300;
-      expect(selectionSearchQuery(solid).length, kSelectionQueryLimit);
-      expect(selectionSearchQuery('абвгд еж', limit: 6), 'абвгд');
+      expect(selectionSearchQueries(solid).single.length, kSelectionQueryLimit);
+      expect(selectionSearchQueries('абвгд еж', limit: 6), <String>['абвгд']);
     });
 
     test('SNO-F-READ-01: предел на границе слова слов не теряет', () {
-      expect(selectionSearchQuery('ааа ббб ввв', limit: 7), 'ааа ббб');
-      expect(selectionSearchQuery('ааа ббб ввв', limit: 8), 'ааа ббб');
-      expect(selectionSearchQuery('ааа ббб ввв', limit: 6), 'ааа');
+      const String text = 'ааа ббб ввв';
+      expect(selectionSearchQueries(text, limit: 7), <String>['ааа ббб']);
+      expect(selectionSearchQueries(text, limit: 8), <String>['ааа ббб']);
+      expect(selectionSearchQueries(text, limit: 6), <String>['ааа']);
+      expect(selectionSearchQueries(text, limit: 0), isEmpty);
     });
 
     test('SNO-F-READ-01: пустое выделение запросов не даёт', () {
       expect(selectionSearchQueries(''), isEmpty);
       expect(selectionSearchQueries(' \n '), isEmpty);
-      expect(selectionSearchQuery(' \n '), '');
-      expect(isSearchableQuery(selectionSearchQuery(' я ')), isFalse);
+      expect(isSearchableQuery(selectionSearchQueries(' я ').single), isFalse);
     });
 
     test('SNO-F-READ-01: запрос находит то, что выделяли', () {
       // Текст страницы с переводом строки внутри фразы; выделенное —
       // тот же кусок, как его отдаёт просмотрщик.
       const String page = 'Плечевая кость,\r\nили humerus, — длинная.';
-      const String selected = 'кость,\r\nили humerus';
+      const String selected = 'кость,\nили humerus';
       final List<SearchHit> hits = findInPageText(
         pageNumber: 1,
         pageText: page,
-        query: selectionSearchQuery(selected),
+        query: selectionSearchQueries(selected).single,
       );
       expect(hits, hasLength(1));
       expect(hits.single.sourceStart, page.indexOf('кость'));
     });
 
-    test('SNO-F-READ-01: «как выделено» находит разрезанное слово', () {
-      // Последний из запросов обязан найти само выделенное место — что
-      // бы ни стояло на переносе.
-      const String page = 'Строение сердечно-\nсосудистой системы.';
-      const String selected = 'сердечно-\nсосудистой';
+    test('SNO-F-READ-01: слитный запрос находит и само слово с переноса', () {
+      // Слово разрезано переносом, а ниже по странице написано целиком.
+      final String page =
+          'Строение остео${mark}логии.\r\nОстеология — наука о костях.';
+      final String selected = 'остео${mark}логии';
+      final int at = page.indexOf(selected);
       final List<String> queries = selectionSearchQueries(selected);
       List<SearchHit> find(String query) {
         return findInPageText(pageNumber: 1, pageText: page, query: query);
       }
 
+      // С дефисом слово не написано нигде — поиск перейдёт к слитному.
       expect(find(queries.first), isEmpty);
+      final List<SearchHit> hits = find(queries.last);
+      expect(hits, hasLength(1));
+      // Найденное — то самое место, которое выделяли.
+      expect(
+        hitIndexAt(
+          hits,
+          pageNumber: 1,
+          start: at,
+          end: at + selected.length,
+        ),
+        0,
+      );
+      expect(find('остеологи'), hasLength(2));
+    });
+
+    test('SNO-F-READ-01: составное слово с переноса находится с дефисом', () {
+      final String page =
+          'Болезни сердечно${mark}сосудистой системы.\r\n'
+          'Сердечно-сосудистая система и сердечно-сосудистые болезни.';
+      final List<String> queries = selectionSearchQueries(
+        'сердечно${mark}сосудист',
+      );
+      List<SearchHit> find(String query) {
+        return findInPageText(pageNumber: 1, pageText: page, query: query);
+      }
+
+      // С дефисом находятся остальные места, слитно — только свой.
+      expect(find(queries.first), hasLength(2));
       expect(find(queries.last), hasLength(1));
-      expect(find(queries.last).single.sourceStart, page.indexOf('сердечно'));
     });
   });
 
@@ -139,8 +178,8 @@ void main() {
     });
 
     test('SNO-F-READ-01: соседнее совпадение на странице не берётся', () {
-      // Слово склеено из переноса: на своём месте оно не найдено, а
-      // уводить читателя в другую полосу страницы незачем.
+      // На своём месте не найдено — уводить читателя в другую полосу
+      // страницы незачем.
       expect(hitIndexAt(hits, pageNumber: 5, start: 50, end: 60), -1);
       expect(hitIndexAt(hits, pageNumber: 5, start: 100, end: 110), -1);
     });

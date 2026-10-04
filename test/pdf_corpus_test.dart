@@ -465,6 +465,39 @@ void main() {
       );
     });
 
+    test('BUG-50: дефис переноса движок отдаёт знаком U+0002', () async {
+      // На этом стоит и поиск по книге, и «Найти в книге»: дефиса в
+      // конце строки в тексте страницы нет, перевода строки после него
+      // тоже — слово разрезано служебным знаком.
+      final ReaderDocument document = await open('hyphen_breaks.pdf');
+      final String text = await document.pageText(1);
+      final String mark = String.fromCharCode(0x02);
+
+      expect(text, contains('micro${mark}scope'));
+      expect(text, contains('self${mark}made'));
+      expect(text, contains('Saint${mark}Petersburg'));
+      // Тире после пробела в конце строки — не перенос: оно на месте, и
+      // перевод строки после него тоже.
+      expect(text, contains('1998 -'));
+      expect(text.contains('1998 -${mark}2001'), isFalse);
+    });
+
+    test('BUG-50: слово с переноса находится поиском по книге', () async {
+      final ReaderDocument document = await open('hyphen_breaks.pdf');
+      final DocumentSearch search = DocumentSearch(document: document);
+      addTearDown(search.dispose);
+
+      // Один раз слово разрезано переносом, второй — написано целиком.
+      await search.start('microscope');
+      expect(search.hits, hasLength(2));
+      final String text = await document.pageText(1);
+      final SearchHit broken = search.hits.first;
+      expect(
+        text.substring(broken.sourceStart, broken.sourceEnd),
+        'micro${String.fromCharCode(0x02)}scope',
+      );
+    });
+
     test('в скане искать нечего, и поиск это переживает', () async {
       final ReaderDocument document = await open('scan_no_text.pdf');
       final DocumentSearch search = DocumentSearch(document: document);

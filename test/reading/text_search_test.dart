@@ -268,4 +268,62 @@ void main() {
       );
     });
   });
+
+  group('BUG-50: слово, разрезанное переносом в конце строки', () {
+    // На месте дефиса переноса движок ставит служебный знак U+0002, а
+    // перевода строки после него нет (корпус, `hyphen_breaks.pdf`).
+    final String mark = String.fromCharCode(0x02);
+    final String page =
+        'Строение остео${mark}логии и сердца.\r\nОстеология — наука о костях.';
+
+    List<SearchHit> find(String query) {
+      return findInPageText(pageNumber: 1, pageText: page, query: query);
+    }
+
+    test('BUG-50: набранное слово находится и на переносе', () {
+      final List<SearchHit> hits = find('остеологи');
+      expect(hits, hasLength(2));
+      // Первое совпадение лежит поверх знака переноса: в исходном тексте
+      // оно захватывает слово целиком, вместе со знаком.
+      final SearchHit broken = hits.first;
+      expect(
+        page.substring(broken.sourceStart, broken.sourceEnd),
+        'остео${mark}логи',
+      );
+    });
+
+    test('BUG-50: в отрывке слово показано целым, без знака', () {
+      final SearchHit broken = find('остеологи').first;
+      expect(broken.matchedText, 'остеологи');
+      expect(broken.snippet.contains(mark), isFalse);
+      expect(broken.snippet, contains('Строение остеологии и сердца.'));
+    });
+
+    test('BUG-50: знак переноса в запросе ничего не меняет', () {
+      // Запрос из выделенного может принести знак с собой.
+      final List<SearchHit> typed = find('остеологии');
+      final List<SearchHit> selected = find('остео${mark}логии');
+      expect(typed, hasLength(1));
+      expect(selected, typed);
+    });
+
+    test('BUG-50: совпадение рядом со знаком его не захватывает', () {
+      final int at = page.indexOf(mark);
+      final SearchHit before = find('остео').first;
+      expect(before.sourceEnd, at);
+      final SearchHit after = find('логии').single;
+      expect(after.sourceStart, at + 1);
+    });
+
+    test('BUG-50: страница без знака ищется как прежде', () {
+      const String plain = 'Остео-логии нет, остеология есть.';
+      final List<SearchHit> hits = findInPageText(
+        pageNumber: 1,
+        pageText: plain,
+        query: 'остеология',
+      );
+      expect(hits, hasLength(1));
+      expect(hits.single.sourceStart, plain.indexOf('остеология'));
+    });
+  });
 }

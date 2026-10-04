@@ -635,6 +635,40 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-READ-01: перелистнул — обратно его не возвращают', (
+      WidgetTester tester,
+    ) async {
+      final _GatedDocument document = _GatedDocument(
+        pages: <String>['вступление', 'здесь встречается тройка', 'конец'],
+      );
+      await pumpReader(tester, document: document);
+      final ReaderController controller = scaffoldOf(tester).controller;
+      await controller.goToPage(2);
+      await tester.pumpAndSettle();
+
+      document.gate = Completer<void>();
+      unawaited(
+        stateOf(tester)
+            .findInBook(<String>['тройка'], pageNumber: 2, start: 18, end: 24),
+      );
+      await tester.pump();
+      // Пока поиск идёт, читатель ушёл на следующую страницу.
+      unawaited(controller.goToPage(3));
+      await tester.pump();
+      await tester.pump();
+
+      document.gate!.complete();
+      document.gate = null;
+      await tester.pumpAndSettle();
+
+      // Найденное показано, но читатель там, куда ушёл сам.
+      expect(count(tester), 'из 1');
+      expect(find.byKey(const Key('search-current')), findsNothing);
+      expect(label(tester), '3 / 3');
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-READ-01: в открытом поиске запрос сменяется', (
       WidgetTester tester,
     ) async {

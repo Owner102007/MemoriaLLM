@@ -242,6 +242,66 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-LIB-02: замок закрылся при открытом диалоге', (
+      WidgetTester tester,
+    ) async {
+      // Диалог открыли до замка, а подтвердили уже под ним: запись
+      // началась, и расположение менять поздно.
+      bigScreen(tester);
+      await fillShelf();
+      final List<String> before = await layoutOf();
+      final AppServices services = testServices(data: data);
+      bool locked = false;
+      late StateSetter relock;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              relock = setState;
+              return LibraryScreen(
+                services: services,
+                canAddBooks: false,
+                locked: locked,
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Новая категория из шапки.
+      await tester.tap(find.byKey(const Key('library-new-category')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('category-name-field')),
+        'Справочники',
+      );
+      relock(() => locked = true);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('category-name-ok')));
+      await tester.pumpAndSettle();
+      expect(await layoutOf(), before);
+
+      // Переименование категории.
+      relock(() => locked = false);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('shelf-menu-study')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Переименовать'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('category-name-field')),
+        'Другое имя',
+      );
+      relock(() => locked = true);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('category-name-ok')));
+      await tester.pumpAndSettle();
+      expect(await layoutOf(), before);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-LIB-02: у книги и у категории нет меню', (
       WidgetTester tester,
     ) async {

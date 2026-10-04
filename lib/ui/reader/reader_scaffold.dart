@@ -342,7 +342,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// Ищет в книге выделенное и открывает найденное — «Найти в книге»
   /// над выделенным текстом (SNO-F-READ-01).
   ///
-  /// [queries] — запросы от лучшего к запасному
+  /// [queries] — запросы в том порядке, в каком их пробовать
   /// (`selectionSearchQueries`): берётся первый, по которому что-то
   /// нашлось. Поиск открывается сразу в виде «просмотр»: читатель не
   /// набирает, а смотрит найденное, и клавиатура на телефоне не
@@ -353,8 +353,9 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   ///
   /// Пока шёл поиск, читатель мог распорядиться им сам — выбрать
   /// результат, вернуться ко вводу, закрыть панель. Тогда найденное
-  /// остаётся ему: ни к месту выделения, ни к следующему запросу его
-  /// отсюда не уводят.
+  /// остаётся ему, и следующий запрос отсюда не запускается. А если он
+  /// за это время перелистнул страницу, поиск доводится до конца, но к
+  /// месту выделения читателя не возвращают.
   Future<void> findInBook(
     List<String> queries, {
     required int pageNumber,
@@ -362,6 +363,9 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     required int end,
   }) async {
     final DocumentSearch search = widget.search;
+    final ReaderController controller = widget.controller;
+    final int page = controller.page;
+    final int fragment = controller.fragment;
     for (final String query in queries) {
       if (!mounted) {
         return;
@@ -384,11 +388,14 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       _report();
       _keys.requestFocus();
       await done;
+      // Указатель ввода в поле — читатель набирает свой запрос: на
+      // широком окне поле стоит всегда, и вид «просмотр» этого не видит.
       if (!mounted ||
           !_searchOpen ||
           !_browsing ||
           _hit != -1 ||
           _seed != seed ||
+          _searchField.hasFocus ||
           search.isRunning ||
           search.query != query.trim()) {
         return;
@@ -397,7 +404,9 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         break;
       }
     }
-    if (!mounted) {
+    if (!mounted ||
+        controller.page != page ||
+        controller.fragment != fragment) {
       return;
     }
     final List<SearchHit> hits = search.hits;

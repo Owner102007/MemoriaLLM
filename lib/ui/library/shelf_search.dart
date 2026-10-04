@@ -89,9 +89,16 @@ class ShelfSearchField extends StatelessWidget {
         textInputAction: TextInputAction.search,
         // На широком окне `Enter` указатель ввода из поля не уводит:
         // список уже на экране, а без указателя `Esc` перестал бы
-        // закрывать поиск. На телефоне кнопка клавиатуры её прячет —
-        // так список виден целиком.
-        onEditingComplete: framed ? () {} : null,
+        // закрывать поиск. Экранная клавиатура — другое дело: её кнопка
+        // «Найти» клавиатуру прячет, на телефоне и на планшете, — так
+        // список виден целиком.
+        onEditingComplete: framed
+            ? () {
+                if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+                  focusNode.unfocus();
+                }
+              }
+            : null,
         decoration: InputDecoration(
           hintText: 'Название книги',
           isDense: true,
