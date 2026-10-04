@@ -162,6 +162,35 @@ void main() {
       // Android — ещё и закреплённые ссылки в никуда.
       expect(storage.released, <BookSource>[FilePathSource(_picked.path!)]);
     });
+
+    test('BUG-45: отказ открыть файл не трогает книгу на полке', () async {
+      final RecordingStorage storage = RecordingStorage();
+      // Книга уже стоит на полке, и источник у неё — этот самый файл.
+      final Book shelved = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(_picked);
+      expect(storage.released, isEmpty);
+
+      // Тот же файл выбрали снова, а открыть его на этот раз не вышло.
+      await expectLater(
+        importer(
+          FakeReaderDocument.blank(1),
+          storage: storage,
+          failure: DocumentOpenException(
+            DocumentProblem.missing,
+            shelved.source,
+          ),
+        ).register(_picked),
+        throwsA(isA<DocumentOpenException>()),
+      );
+
+      // Источник принадлежит книге на полке: отпустить его — значит
+      // удалить её копию или отозвать её закреплённую ссылку.
+      expect(storage.released, isEmpty);
+      final Book? still = await data.library.bookById(shelved.id);
+      expect(still?.source, shelved.source);
+    });
   });
 
   group('импорт пачкой', () {

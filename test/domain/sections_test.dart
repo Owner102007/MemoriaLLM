@@ -36,14 +36,11 @@ void main() {
   group('F-APP-02: разделы', () {
     test('F-APP-02: разделов три, и «Полка» первая', () {
       // Основное приложение: сканер есть, «Тестирования» нет.
-      expect(
-        sectionsFor(scanner: true, testing: false),
-        <AppSection>[
-          AppSection.shelf,
-          AppSection.device,
-          AppSection.settings,
-        ],
-      );
+      expect(sectionsFor(scanner: true, testing: false), <AppSection>[
+        AppSection.shelf,
+        AppSection.device,
+        AppSection.settings,
+      ]);
     });
 
     test('F-APP-02: «Полка» первая и «Настройки» последние всегда', () {
@@ -56,11 +53,7 @@ void main() {
           final String reason = 'сканер: $scanner, тестирование: $testing';
           expect(sections.first, AppSection.shelf, reason: reason);
           expect(sections.last, AppSection.settings, reason: reason);
-          expect(
-            sections.contains(AppSection.device),
-            scanner,
-            reason: reason,
-          );
+          expect(sections.contains(AppSection.device), scanner, reason: reason);
           expect(
             sections.contains(AppSection.testing),
             testing,

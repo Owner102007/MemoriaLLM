@@ -171,11 +171,7 @@ void main() {
       await settle(tester);
 
       // Ни при старте, ни при открытии полки, ни в одном из разделов.
-      for (final String section in <String>[
-        'testing',
-        'settings',
-        'library',
-      ]) {
+      for (final String section in <String>['testing', 'settings', 'library']) {
         await open(tester, section);
       }
 

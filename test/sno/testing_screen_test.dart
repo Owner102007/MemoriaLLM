@@ -32,10 +32,7 @@ void main() {
   }) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: TestingScreen(
-          services: services,
-          flags: BranchFlags.of(branch),
-        ),
+        home: TestingScreen(services: services, flags: BranchFlags.of(branch)),
       ),
     );
     await tester.pumpAndSettle();
@@ -86,10 +83,7 @@ void main() {
     ) async {
       await pumpTesting(tester, testServices(data: data));
       expect(find.textContaining('ветвь I · '), findsOneWidget);
-      expect(
-        find.textContaining('флаги: запись, литература'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('флаги: запись, литература'), findsOneWidget);
 
       await pumpTesting(tester, testServices(data: data), branch: 'II');
       expect(find.textContaining('ветвь II · '), findsOneWidget);
@@ -138,10 +132,10 @@ void main() {
 
       final List<Book> books = await data.library.books();
       expect(books, hasLength(2));
-      expect(
-        books.map((Book book) => book.title).toSet(),
-        <String>{'Анатомия', 'Гистология'},
-      );
+      expect(books.map((Book book) => book.title).toSet(), <String>{
+        'Анатомия',
+        'Гистология',
+      });
       expect(
         books.every((Book book) => book.categoryId == null),
         isTrue,

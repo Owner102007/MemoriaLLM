@@ -134,9 +134,7 @@ bool isSnoBranch(String branch) {
 /// и в заголовке окна на ПК (`windows/runner/main.cpp`): экспериментатор
 /// по одному взгляду понимает, какая сборка перед ним.
 String appNameFor(String branch) {
-  return isSnoBranch(branch)
-      ? 'Memoria · СНО2026 · $branch'
-      : 'Memoria LLM HB';
+  return isSnoBranch(branch) ? 'Memoria · СНО2026 · $branch' : 'Memoria LLM HB';
 }
 
 /// Подпапка данных ветви [branch] в папке данных приложения.

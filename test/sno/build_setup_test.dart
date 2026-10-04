@@ -11,16 +11,13 @@ import 'package:memoria/sno/flags.dart';
 /// незаметно, поэтому сверяет его тест. Что вышло в собранном APK и exe,
 /// проверяет CI — шагами «Что внутри…» после сборки.
 void main() {
-  final String gradle = File(
-    'android/app/build.gradle.kts',
-  ).readAsStringSync();
+  final String gradle = File('android/app/build.gradle.kts').readAsStringSync();
   final String runner = File('windows/runner/main.cpp').readAsStringSync();
 
   /// Тело флейвора [name] в `build.gradle.kts`.
   String flavor(String name) {
-    final RegExpMatch? match = RegExp(
-      'create\\("$name"\\)\\s*\\{([^}]*)\\}',
-    ).firstMatch(gradle);
+    final RegExpMatch? match = RegExp('create\\("$name"\\)\\s*\\{([^}]*)\\}')
+        .firstMatch(gradle);
     expect(match, isNotNull, reason: 'нет флейвора $name');
     return match!.group(1)!;
   }
@@ -68,8 +65,10 @@ void main() {
       for (final MapEntry<String, String> entry in branches.entries) {
         expect(
           flavor(entry.key),
-          contains('manifestPlaceholders["appLabel"] = '
-              '"${appNameFor(entry.value)}"'),
+          contains(
+            'manifestPlaceholders["appLabel"] = '
+            '"${appNameFor(entry.value)}"',
+          ),
           reason: 'флейвор ${entry.key}',
         );
       }
@@ -109,9 +108,8 @@ void main() {
     ];
 
     test('SNO-F-CFG-02: в общем манифесте их нет', () {
-      final String shared = File(
-        'android/app/src/main/AndroidManifest.xml',
-      ).readAsStringSync();
+      final String shared = File('android/app/src/main/AndroidManifest.xml')
+          .readAsStringSync();
       for (final String name in storage) {
         expect(
           shared,
@@ -123,9 +121,8 @@ void main() {
     });
 
     test('SNO-F-CFG-02: они объявлены только у основного приложения', () {
-      final String full = File(
-        'android/app/src/full/AndroidManifest.xml',
-      ).readAsStringSync();
+      final String full = File('android/app/src/full/AndroidManifest.xml')
+          .readAsStringSync();
       expect(full, contains('android.permission.MANAGE_EXTERNAL_STORAGE'));
       expect(full, contains('android.permission.READ_EXTERNAL_STORAGE'));
       expect(full, contains('android:requestLegacyExternalStorage="true"'));
@@ -157,9 +154,8 @@ void main() {
     });
 
     test('SNO-F-CFG-01: ветвь окну называет та же переменная, что CI', () {
-      final String cmake = File(
-        'windows/runner/CMakeLists.txt',
-      ).readAsStringSync();
+      final String cmake = File('windows/runner/CMakeLists.txt')
+          .readAsStringSync();
       expect(cmake, contains(r'"$ENV{SNO_BRANCH}" STREQUAL "I"'));
       expect(cmake, contains(r'"$ENV{SNO_BRANCH}" STREQUAL "II"'));
       expect(cmake, contains('"SNO_BRANCH_I"'));

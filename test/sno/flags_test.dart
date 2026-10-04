@@ -139,11 +139,7 @@ void main() {
       final BranchFlags flags = BranchFlags.of('I');
       expect(
         sectionsFor(scanner: flags.scanner, testing: flags.recording),
-        <AppSection>[
-          AppSection.shelf,
-          AppSection.testing,
-          AppSection.settings,
-        ],
+        <AppSection>[AppSection.shelf, AppSection.testing, AppSection.settings],
       );
     });
 
@@ -151,11 +147,7 @@ void main() {
       final BranchFlags flags = BranchFlags.of('');
       expect(
         sectionsFor(scanner: flags.scanner, testing: flags.recording),
-        <AppSection>[
-          AppSection.shelf,
-          AppSection.device,
-          AppSection.settings,
-        ],
+        <AppSection>[AppSection.shelf, AppSection.device, AppSection.settings],
       );
     });
   });
@@ -173,16 +165,12 @@ void main() {
       expect(Sno.palimpsest, Sno.flags.palimpsest);
     });
 
-    test(
-      'SNO-F-CFG-01: в сборке без SNO_BRANCH флаги ветви выключены',
-      () {
-        expect(Sno.enabled, isFalse);
-        expect(Sno.recording, isFalse);
-        expect(Sno.literature, isFalse);
-        expect(Sno.scanner, isTrue);
-        expect(Sno.cltPassword, isEmpty);
-      },
-      skip: Sno.enabled ? 'прогон ветви: проверяется основным' : false,
-    );
+    test('SNO-F-CFG-01: в сборке без SNO_BRANCH флаги ветви выключены', () {
+      expect(Sno.enabled, isFalse);
+      expect(Sno.recording, isFalse);
+      expect(Sno.literature, isFalse);
+      expect(Sno.scanner, isTrue);
+      expect(Sno.cltPassword, isEmpty);
+    }, skip: Sno.enabled ? 'прогон ветви: проверяется основным' : false);
   });
 }
