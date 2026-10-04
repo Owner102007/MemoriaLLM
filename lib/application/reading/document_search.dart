@@ -108,10 +108,26 @@ class DocumentSearch extends ChangeNotifier {
       _scannedPages >= _document.pageCount;
 
   /// Запускает поиск. Предыдущий, если он шёл, отменяется.
-  Future<void> start(String query) async {
+  ///
+  /// [also] — другие написания того же запроса: найденное по ним
+  /// встаёт в общий список по порядку страниц, а запросом остаётся
+  /// [query]. Так «Найти в книге» ищет слово, выделенное на переносе:
+  /// слитно — и заодно с дефисом, каким оно может быть написано в
+  /// остальных местах книги (SNO-F-READ-01). Проход по книге один.
+  Future<void> start(
+    String query, {
+    List<String> also = const <String>[],
+  }) async {
     _session++;
     final int session = _session;
     _query = query.trim();
+    final List<String> queries = <String>[_query];
+    for (final String other in also) {
+      final String spelled = other.trim();
+      if (isSearchableQuery(spelled) && !queries.contains(spelled)) {
+        queries.add(spelled);
+      }
+    }
     _hits = const <SearchHit>[];
     _scannedPages = 0;
     _reachedLimit = false;
@@ -146,12 +162,7 @@ class DocumentSearch extends ChangeNotifier {
             _sawText = true;
           }
           found.addAll(
-            findInPageText(
-              pageNumber: page,
-              pageText: text,
-              query: _query,
-              limit: hitLimit - found.length,
-            ),
+            _findOnPage(page, text, queries, hitLimit - found.length),
           );
         }
         _scannedPages = page;
@@ -176,6 +187,41 @@ class DocumentSearch extends ChangeNotifier {
     _hits = List<SearchHit>.unmodifiable(found);
     _isRunning = false;
     notifyListeners();
+  }
+
+  /// Совпадения одной страницы по всем написаниям запроса — без
+  /// повторов и в том порядке, в каком они идут в её тексте.
+  List<SearchHit> _findOnPage(
+    int page,
+    String text,
+    List<String> queries,
+    int limit,
+  ) {
+    final List<SearchHit> hits = findInPageText(
+      pageNumber: page,
+      pageText: text,
+      query: queries.first,
+      limit: limit,
+    );
+    if (queries.length == 1) {
+      return hits;
+    }
+    final List<SearchHit> all = <SearchHit>[...hits];
+    for (final String query in queries.skip(1)) {
+      final List<SearchHit> more = findInPageText(
+        pageNumber: page,
+        pageText: text,
+        query: query,
+        limit: limit,
+      );
+      for (final SearchHit hit in more) {
+        if (!all.contains(hit)) {
+          all.add(hit);
+        }
+      }
+    }
+    all.sort(compareSearchHits);
+    return all.length > limit ? all.sublist(0, limit) : all;
   }
 
   /// Текст страниц с [from] по [to]: из кэша, если он дан, иначе прямо

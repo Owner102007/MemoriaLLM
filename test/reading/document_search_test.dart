@@ -131,6 +131,81 @@ void main() {
     search.dispose();
   });
 
+  group('SNO-F-READ-01: другие написания запроса', () {
+    /// Слово, разрезанное переносом: между частями стоит знак движка.
+    String cut(String head, String tail) {
+      return '$head${String.fromCharCode(kLineBreakHyphen)}$tail';
+    }
+
+    FakeReaderDocument heart() {
+      return FakeReaderDocument(
+        pages: <String>[
+          'Болезни ${cut('сердечно', 'сосудистой')} системы.',
+          'Обычный текст.',
+          'Сердечно-сосудистая система.',
+        ],
+      );
+    }
+
+    test('SNO-F-READ-01: найденное по ним стоит в том же списке', () async {
+      final FakeReaderDocument document = heart();
+      final DocumentSearch search = DocumentSearch(document: document);
+      await search.start(
+        'сердечнососудист',
+        also: <String>['сердечно-сосудист'],
+      );
+
+      // Запросом остаётся основной; найденное — по порядку страниц.
+      expect(search.query, 'сердечнососудист');
+      expect(search.hits.map((SearchHit h) => h.pageNumber), <int>[1, 3]);
+      // Проход по книге один, сколько бы написаний ни искалось.
+      expect(document.textReads, <int, int>{1: 1, 2: 1, 3: 1});
+      search.dispose();
+    });
+
+    test('SNO-F-READ-01: место, найденное дважды, в списке одно', () async {
+      final DocumentSearch search = DocumentSearch(document: heart());
+      await search.start(
+        'сердечно-сосудист',
+        also: <String>['сердечнососудист', ' сердечно-сосудист '],
+      );
+      expect(search.hits.map((SearchHit h) => h.pageNumber), <int>[1, 3]);
+      search.dispose();
+    });
+
+    test('SNO-F-READ-01: без других написаний поиск прежний', () async {
+      final DocumentSearch search = DocumentSearch(document: heart());
+      await search.start('сердечнососудист');
+      expect(search.hits.map((SearchHit h) => h.pageNumber), <int>[1]);
+      search.dispose();
+    });
+
+    test('SNO-F-READ-01: слишком короткое написание не ищется', () async {
+      final DocumentSearch search = DocumentSearch(document: heart());
+      await search.start('систем', also: <String>['о', '']);
+      expect(search.hits.map((SearchHit h) => h.pageNumber), <int>[1, 3]);
+      search.dispose();
+    });
+
+    test('SNO-F-READ-01: предел считается по общему списку', () async {
+      final DocumentSearch search = DocumentSearch(
+        document: FakeReaderDocument(
+          pages: List<String>.filled(20, 'раз два раз два раз два'),
+        ),
+        hitLimit: 7,
+      );
+      await search.start('раз', also: <String>['два']);
+      expect(search.hits.length, 7);
+      expect(search.reachedLimit, isTrue);
+      // На странице найденное идёт вперемешку, как в тексте.
+      expect(
+        search.hits.take(4).map((SearchHit h) => h.sourceStart),
+        <int>[0, 4, 8, 12],
+      );
+      search.dispose();
+    });
+  });
+
   group('F-TEXT-04: поиск по кэшу текста', () {
     BookTextCache cacheOf(FakeReaderDocument document, MemoryPageTextStore s) {
       return BookTextCache(

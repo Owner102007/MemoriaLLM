@@ -498,6 +498,33 @@ void main() {
       );
     });
 
+    test('BUG-50: составное слово с переноса находится с дефисом', () async {
+      final ReaderDocument document = await open('hyphen_breaks.pdf');
+      final DocumentSearch search = DocumentSearch(document: document);
+      addTearDown(search.dispose);
+      final String text = await document.pageText(1);
+      final String mark = String.fromCharCode(0x02);
+      String found(SearchHit hit) {
+        return text.substring(hit.sourceStart, hit.sourceEnd);
+      }
+
+      // Дефис составного слова попал на конец строки, и движок отдал
+      // его тем же знаком, что и перенос: с дефисом находятся оба места.
+      await search.start('self-made');
+      expect(search.hits.map(found), <String>['self${mark}made', 'self-made']);
+
+      await search.start('Saint-Petersburg');
+      expect(search.hits.map(found), <String>['Saint${mark}Petersburg']);
+
+      // Слитно набранное находит только место с переноса.
+      await search.start('selfmade');
+      expect(search.hits.map(found), <String>['self${mark}made']);
+
+      // Тире в конце строки — не перенос, и находится оно один раз.
+      await search.start('1998 - 2001');
+      expect(search.hits, hasLength(1));
+    });
+
     test('в скане искать нечего, и поиск это переживает', () async {
       final ReaderDocument document = await open('scan_no_text.pdf');
       final DocumentSearch search = DocumentSearch(document: document);

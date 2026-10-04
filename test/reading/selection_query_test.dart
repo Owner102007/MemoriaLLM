@@ -32,21 +32,21 @@ void main() {
       expect(selectionSearchQueries('1998 -\r\n2001'), <String>['1998 - 2001']);
     });
 
-    test('SNO-F-READ-01: слово с переноса ищется с дефисом и слитно', () {
+    test('SNO-F-READ-01: слово с переноса ищется слитно и с дефисом', () {
       // По тексту не узнать, перенос это или дефис составного слова.
-      // С дефисом — первым: обычное слово так не найдётся нигде, и
-      // поиск перейдёт к слитному.
+      // Слитно — основной запрос, он встаёт в поле; с дефисом — другое
+      // написание, поиск ищет его заодно.
       expect(selectionSearchQueries(cut('остео', 'логия')), <String>[
-        'остео-логия',
         'остеология',
+        'остео-логия',
       ]);
       expect(
         selectionSearchQueries('${cut('сердечно', 'сосудистая')} система'),
-        <String>['сердечно-сосудистая система', 'сердечнососудистая система'],
+        <String>['сердечнососудистая система', 'сердечно-сосудистая система'],
       );
       expect(selectionSearchQueries(cut('Санкт', 'Петербург')), <String>[
-        'Санкт-Петербург',
         'СанктПетербург',
+        'Санкт-Петербург',
       ]);
     });
 
@@ -110,7 +110,7 @@ void main() {
       expect(hits.single.sourceStart, page.indexOf('кость'));
     });
 
-    test('SNO-F-READ-01: слитный запрос находит и само слово с переноса', () {
+    test('SNO-F-READ-01: оба запроса находят само слово с переноса', () {
       // Слово разрезано переносом, а ниже по странице написано целиком.
       final String page =
           'Строение ${cut('остео', 'логии')}.\r\nОстеология — наука о костях.';
@@ -121,15 +121,17 @@ void main() {
         return findInPageText(pageNumber: 1, pageText: page, query: query);
       }
 
-      // С дефисом слово не написано нигде — поиск перейдёт к слитному.
-      expect(find(queries.first), isEmpty);
-      final List<SearchHit> hits = find(queries.last);
+      // Слитно находится само выделенное место — и только оно: ниже
+      // слово стоит в другой форме.
+      final List<SearchHit> hits = find(queries.first);
       expect(hits, hasLength(1));
-      // Найденное — то самое место, которое выделяли.
       expect(
         hitIndexAt(hits, pageNumber: 1, start: at, end: at + selected.length),
         0,
       );
+      // С дефисом — то же место: знак переноса читается и как дефис.
+      // В общем списке оно одно.
+      expect(find(queries.last), hits);
       expect(find('остеологи'), hasLength(2));
     });
 
@@ -144,9 +146,13 @@ void main() {
         return findInPageText(pageNumber: 1, pageText: page, query: query);
       }
 
-      // С дефисом находятся остальные места, слитно — только свой.
-      expect(find(queries.first), hasLength(2));
-      expect(find(queries.last), hasLength(1));
+      // Слитно находится только само выделенное, с дефисом — и оно, и
+      // остальные места, где слово написано через дефис.
+      final List<SearchHit> own = find(queries.first);
+      expect(own, hasLength(1));
+      final List<SearchHit> all = find(queries.last);
+      expect(all, hasLength(3));
+      expect(all.first, own.single);
     });
   });
 

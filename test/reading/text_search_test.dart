@@ -318,6 +318,89 @@ void main() {
       expect(after.sourceStart, at + 1);
     });
 
+    test('BUG-50: составное слово находится и на переносе', () {
+      // Дефис составного слова попал на конец строки: движок отдал его
+      // тем же знаком, что и перенос.
+      final String compound =
+          'Болезни ${cut('сердечно', 'сосудистой')} системы.\r\n'
+          'Сердечно-сосудистая система.';
+      final List<SearchHit> hits = findInPageText(
+        pageNumber: 1,
+        pageText: compound,
+        query: 'сердечно-сосудист',
+      );
+      expect(hits, hasLength(2));
+      expect(
+        compound.substring(hits.first.sourceStart, hits.first.sourceEnd),
+        cut('сердечно', 'сосудист'),
+      );
+      // В отрывке на месте знака стоит дефис — как в запросе.
+      expect(hits.first.matchedText, 'сердечно-сосудист');
+      expect(hits.first.snippet.contains(mark), isFalse);
+      // Слитно набранное находит только место с переноса.
+      expect(
+        findInPageText(
+          pageNumber: 1,
+          pageText: compound,
+          query: 'сердечнососудист',
+        ),
+        <SearchHit>[hits.first],
+      );
+    });
+
+    test('BUG-50: место, найденное обоими чтениями, в списке одно', () {
+      // Запрос с дефисом проходит страницу со знаком дважды: знак как
+      // ничто и знак как дефис. Обычный дефис находят оба прохода.
+      final String both =
+          'Что-то ${cut('сердечно', 'сосудистое')} и что-то ещё.';
+      final List<SearchHit> hits = findInPageText(
+        pageNumber: 1,
+        pageText: both,
+        query: 'что-то',
+      );
+      expect(hits, hasLength(2));
+      expect(hits.first.sourceStart, 0);
+      expect(hits.last.sourceStart, both.lastIndexOf('что-то'));
+    });
+
+    test('BUG-50: найденное обоими чтениями стоит по порядку текста', () {
+      // Первое место находит только чтение «знак — дефис», второе — оба.
+      final String page = '${cut('что', 'то')} и что-то ещё.';
+      List<SearchHit> upTo({int limit = 500}) {
+        return findInPageText(
+          pageNumber: 1,
+          pageText: page,
+          query: 'что-то',
+          limit: limit,
+        );
+      }
+
+      final List<SearchHit> hits = upTo();
+      expect(hits, hasLength(2));
+      expect(
+        page.substring(hits.first.sourceStart, hits.first.sourceEnd),
+        cut('что', 'то'),
+      );
+      expect(
+        page.substring(hits.last.sourceStart, hits.last.sourceEnd),
+        'что-то',
+      );
+      // Предел считается по общему списку: остаётся первое по тексту.
+      expect(upTo(limit: 1), <SearchHit>[hits.first]);
+    });
+
+    test('BUG-50: запрос, где знак — не дефис, находится по-прежнему', () {
+      // В запросе есть дефис, но слово на переносе в нём слитное.
+      final String page = 'Что-то об ${cut('остео', 'логии')}.';
+      final List<SearchHit> hits = findInPageText(
+        pageNumber: 1,
+        pageText: page,
+        query: 'что-то об остеологии',
+      );
+      expect(hits, hasLength(1));
+      expect(hits.single.sourceStart, 0);
+    });
+
     test('BUG-50: страница без знака ищется как прежде', () {
       const String plain = 'Остео-логии нет, остеология есть.';
       final List<SearchHit> hits = findInPageText(

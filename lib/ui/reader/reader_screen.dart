@@ -1312,7 +1312,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     final List<String> queries = selectionSearchQueries(selection.text);
-    if (queries.isEmpty || !isSearchableQuery(queries.last)) {
+    if (queries.isEmpty || !isSearchableQuery(queries.first)) {
       _say('Для поиска выделите хотя бы два знака');
       return;
     }

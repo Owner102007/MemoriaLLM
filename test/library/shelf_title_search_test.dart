@@ -102,6 +102,11 @@ void main() {
       expect(found('   ', shelf), isEmpty);
       expect(found('«—»…', shelf), isEmpty);
       expect(titleQueryWords(' ., '), isEmpty);
+      // Пустое слово — не слово: оно «нашлось» бы в любом названии.
+      final Book any = book('any', 'Любая книга');
+      expect(matchShelfTitle(any, const <String>[]), isNull);
+      expect(matchShelfTitle(any, const <String>['']), isNull);
+      expect(matchShelfTitle(any, const <String>['', 'кни'])!.rank, 3);
     });
 
     test('SNO-ALG-LIB-01: окончания не снимаются', () {

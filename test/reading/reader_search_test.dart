@@ -537,21 +537,22 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-READ-01: не нашлось — ищется запасной запрос', (
+    testWidgets('SNO-F-READ-01: другое написание ищется заодно', (
       WidgetTester tester,
     ) async {
-      // Слово, склеенное из переноса, в книге не встречается; с
-      // дефисом — тоже; находится третий запрос.
+      // Основной запрос в книге не встречается; найденное по другому
+      // написанию встаёт в тот же список, а запросом остаётся основной —
+      // он и показан.
       await pumpReader(tester, document: threes());
 
-      findFifth(tester, <String>['тройкасемёрка', 'тройка-семёрка', 'тройка']);
+      findFifth(tester, <String>['тройкасемёрка', 'тройка']);
       await tester.pumpAndSettle();
 
-      expect(scaffoldOf(tester).search.query, 'тройка');
+      expect(scaffoldOf(tester).search.query, 'тройкасемёрка');
       expect(
         find.descendant(
           of: find.byKey(const Key('search-query')),
-          matching: find.text('тройка'),
+          matching: find.text('тройкасемёрка'),
         ),
         findsOneWidget,
       );
@@ -569,8 +570,8 @@ void main() {
       findFifth(tester, <String>['семёрка', 'туз']);
       await tester.pumpAndSettle();
 
-      // Показан последний из запросов, и найденного нет.
-      expect(scaffoldOf(tester).search.query, 'туз');
+      // Показан основной запрос, и найденного нет ни по одному.
+      expect(scaffoldOf(tester).search.query, 'семёрка');
       expect(count(tester), 'нет');
       expect(label(tester), '1 / 6');
 

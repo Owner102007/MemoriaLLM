@@ -342,69 +342,61 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// Ищет в книге выделенное и открывает найденное — «Найти в книге»
   /// над выделенным текстом (SNO-F-READ-01).
   ///
-  /// [queries] — запросы в том порядке, в каком их пробовать
-  /// (`selectionSearchQueries`): берётся первый, по которому что-то
-  /// нашлось. Поиск открывается сразу в виде «просмотр»: читатель не
-  /// набирает, а смотрит найденное, и клавиатура на телефоне не
+  /// [queries] — запросы из `selectionSearchQueries`: первый встаёт в
+  /// поле, остальные — другие написания того же — ищутся заодно, за
+  /// один проход. Поиск открывается сразу в виде «просмотр»: читатель
+  /// не набирает, а смотрит найденное, и клавиатура на телефоне не
   /// поднимается. Когда поиск кончился, текущим становится совпадение на
   /// месте выделения — страница [pageNumber], текст от [start] до
   /// [end]. Нет там совпадения — текущего нет, и читатель остаётся там,
   /// где читал.
   ///
   /// Пока шёл поиск, читатель мог распорядиться им сам — выбрать
-  /// результат, вернуться ко вводу, закрыть панель. Тогда найденное
-  /// остаётся ему, и следующий запрос отсюда не запускается. А если он
-  /// за это время перелистнул страницу, поиск доводится до конца, но к
-  /// месту выделения читателя не возвращают.
+  /// результат, вернуться ко вводу, закрыть панель — или перелистнуть
+  /// страницу. Тогда найденное остаётся ему, и к месту выделения его не
+  /// возвращают.
   Future<void> findInBook(
     List<String> queries, {
     required int pageNumber,
     required int start,
     required int end,
   }) async {
+    if (!mounted || queries.isEmpty) {
+      return;
+    }
     final DocumentSearch search = widget.search;
     final ReaderController controller = widget.controller;
     final int page = controller.page;
     final int fragment = controller.fragment;
-    for (final String query in queries) {
-      if (!mounted) {
-        return;
+    final String query = queries.first;
+    // Запрос у поиска появляется сразу, до первого ожидания: панель,
+    // которая встанет на экран следом, возьмёт его в своё поле.
+    final Future<void> done = search.start(query, also: queries.sublist(1));
+    setState(() {
+      _searchOpen = true;
+      _browsing = true;
+      _hit = -1;
+      _seed++;
+      // Полоса поиска на узком экране лежит под панелями чтения, и
+      // нижняя закрыла бы найденное.
+      if (!_wide) {
+        _chromeVisible = false;
       }
-      // Запрос у поиска появляется сразу, до первого ожидания: панель,
-      // которая встанет на экран следом, возьмёт его в своё поле.
-      final Future<void> done = search.start(query);
-      setState(() {
-        _searchOpen = true;
-        _browsing = true;
-        _hit = -1;
-        _seed++;
-        // Полоса поиска на узком экране лежит под панелями чтения, и
-        // нижняя закрыла бы найденное.
-        if (!_wide) {
-          _chromeVisible = false;
-        }
-      });
-      final int seed = _seed;
-      _report();
-      _keys.requestFocus();
-      await done;
-      // Указатель ввода в поле — читатель набирает свой запрос: на
-      // широком окне поле стоит всегда, и вид «просмотр» этого не видит.
-      if (!mounted ||
-          !_searchOpen ||
-          !_browsing ||
-          _hit != -1 ||
-          _seed != seed ||
-          _searchField.hasFocus ||
-          search.isRunning ||
-          search.query != query.trim()) {
-        return;
-      }
-      if (search.hits.isNotEmpty) {
-        break;
-      }
-    }
+    });
+    final int seed = _seed;
+    _report();
+    _keys.requestFocus();
+    await done;
+    // Указатель ввода в поле — читатель набирает свой запрос: на
+    // широком окне поле стоит всегда, и вид «просмотр» этого не видит.
     if (!mounted ||
+        !_searchOpen ||
+        !_browsing ||
+        _hit != -1 ||
+        _seed != seed ||
+        _searchField.hasFocus ||
+        search.isRunning ||
+        search.query != query.trim() ||
         controller.page != page ||
         controller.fragment != fragment) {
       return;

@@ -468,6 +468,43 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-LIB-01: «Найти» на экранной клавиатуре её прячет', (
+      WidgetTester tester,
+    ) async {
+      // Планшет: окно широкое, а клавиатура экранная. Полка стоит в теле
+      // оболочки, где нижний отступ уже снят, — высоту клавиатуры поле
+      // спрашивает у окна.
+      wideWindow(tester);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await threeBooks();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: LibraryScreen(
+              services: testServices(data: data),
+              canAddBooks: false,
+              titleSearch: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await type(tester, 'анат');
+      final TextField field = tester.widget(
+        find.byKey(const Key('shelf-search-field')),
+      );
+      expect(field.focusNode!.hasFocus, isTrue);
+
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+
+      // Клавиатура убрана, найденное осталось на экране.
+      expect(field.focusNode!.hasFocus, isFalse);
+      expect(find.byKey(const Key('shelf-search-results')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-LIB-01: окно сузили — поле и найденное на месте', (
       WidgetTester tester,
     ) async {

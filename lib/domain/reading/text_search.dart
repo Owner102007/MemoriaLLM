@@ -30,9 +30,18 @@ import '../library/search_text.dart';
 /// PDFium дефис в конце строки, за которым слово продолжается, в тексте
 /// страницы не отдаёт: на его месте стоит служебный знак U+0002, а
 /// перевода строки после него нет — `остео`, знак, `логия`. Закреплено
-/// на настоящем движке файлом `hyphen_breaks.pdf` корпуса. Для поиска
-/// этого знака нет вовсе (BUG-50): слово, разрезанное переносом, обязано
-/// находиться целиком — и набранное руками, и взятое из выделенного.
+/// на настоящем движке файлом `hyphen_breaks.pdf` корпуса.
+///
+/// По тексту не узнать, что стояло на бумаге: перенос обычного слова
+/// или дефис составного, попавший на конец строки. Поэтому поиск читает
+/// знак **двояко** (BUG-50): как ничто — «остеология» находит `остео`,
+/// знак, `логия` — и как дефис — «сердечно-сосудистая» находит
+/// `сердечно`, знак, `сосудистая`. В запросе знака нет вовсе.
+///
+/// Оговорка: у шрифта без таблицы соответствия движок отдаёт сырые коды
+/// знаков, и код 2 там — обычная буква. Набором в такой книге не ищут
+/// всё равно, а для неё это значит одно: буква с кодом 2 поиску не
+/// видна.
 const int kLineBreakHyphen = 0x02;
 
 /// Текст страницы, подготовленный к поиску.
@@ -44,14 +53,19 @@ class SearchableText {
   /// в исходной строке. Знак переноса слова ([kLineBreakHyphen])
   /// выбрасывается: слово по обе стороны от него становится целым, а
   /// место совпадения в исходном тексте по-прежнему известно до знака.
-  factory SearchableText.of(String raw) {
+  /// С [breaksAsHyphens] знак, наоборот, становится дефисом — так текст
+  /// читается, если на конец строки попал дефис составного слова.
+  factory SearchableText.of(String raw, {bool breaksAsHyphens = false}) {
     final StringBuffer buffer = StringBuffer();
     final List<int> map = <int>[];
     bool pendingSpace = false;
     for (int i = 0; i < raw.length; i++) {
-      final String char = raw[i];
+      String char = raw[i];
       if (char.codeUnitAt(0) == kLineBreakHyphen) {
-        continue;
+        if (!breaksAsHyphens) {
+          continue;
+        }
+        char = '-';
       }
       if (_isWhitespace(char)) {
         if (buffer.isNotEmpty) {
@@ -276,7 +290,52 @@ List<SearchHit> findInPageText({
   if (needle.isEmpty || pageText.isEmpty) {
     return const <SearchHit>[];
   }
-  final SearchableText prepared = SearchableText.of(pageText);
+  final List<SearchHit> hits = _findPrepared(
+    prepared: SearchableText.of(pageText),
+    pageNumber: pageNumber,
+    needle: needle,
+    caseSensitive: caseSensitive,
+    snippetRadius: snippetRadius,
+    limit: limit,
+  );
+  // BUG-50: знак переноса читается и как дефис. Второй проход нужен
+  // только запросу с дефисом на странице, где такой знак есть: иначе он
+  // нашёл бы то же самое.
+  if (!needle.contains('-') ||
+      !pageText.codeUnits.contains(kLineBreakHyphen)) {
+    return hits;
+  }
+  final List<SearchHit> hyphened = _findPrepared(
+    prepared: SearchableText.of(pageText, breaksAsHyphens: true),
+    pageNumber: pageNumber,
+    needle: needle,
+    caseSensitive: caseSensitive,
+    snippetRadius: snippetRadius,
+    limit: limit,
+  );
+  final List<SearchHit> all = <SearchHit>[
+    ...hits,
+    for (final SearchHit hit in hyphened)
+      if (!hits.contains(hit)) hit,
+  ]..sort(compareSearchHits);
+  return all.length > limit ? all.sublist(0, limit) : all;
+}
+
+/// Порядок совпадений одной страницы: как они идут в её тексте.
+int compareSearchHits(SearchHit a, SearchHit b) {
+  final int byStart = a.sourceStart.compareTo(b.sourceStart);
+  return byStart != 0 ? byStart : a.sourceEnd.compareTo(b.sourceEnd);
+}
+
+/// Ищет [needle] в уже подготовленном тексте страницы.
+List<SearchHit> _findPrepared({
+  required SearchableText prepared,
+  required int pageNumber,
+  required String needle,
+  required bool caseSensitive,
+  required int snippetRadius,
+  required int limit,
+}) {
   final String shown = prepared.text;
   final String plain = caseSensitive ? shown : plainSearchText(shown);
   final String plainNeedle = caseSensitive ? needle : plainSearchText(needle);
@@ -325,8 +384,8 @@ String _collapse(String value) {
   bool pendingSpace = false;
   for (int i = 0; i < value.length; i++) {
     final String char = value[i];
-    // Знака переноса нет ни в тексте, ни в запросе: запрос из
-    // выделенного может принести его с собой.
+    // В запросе знака переноса нет вовсе: вставленный из буфера текст
+    // может принести его с собой (BUG-51).
     if (char.codeUnitAt(0) == kLineBreakHyphen) {
       continue;
     }

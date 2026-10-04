@@ -91,10 +91,14 @@ class ShelfSearchField extends StatelessWidget {
         // список уже на экране, а без указателя `Esc` перестал бы
         // закрывать поиск. Экранная клавиатура — другое дело: её кнопка
         // «Найти» клавиатуру прячет, на телефоне и на планшете, — так
-        // список виден целиком.
+        // список виден целиком. Высота клавиатуры спрашивается у окна:
+        // под `Scaffold` оболочки нижний отступ уже снят и равен нулю.
         onEditingComplete: framed
             ? () {
-                if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+                final MediaQueryData window = MediaQueryData.fromView(
+                  View.of(context),
+                );
+                if (window.viewInsets.bottom > 0) {
                   focusNode.unfocus();
                 }
               }
