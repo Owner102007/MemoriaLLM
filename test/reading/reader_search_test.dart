@@ -477,12 +477,8 @@ void main() {
     /// «Найти в книге» по слову на пятой странице.
     void findFifth(WidgetTester tester, List<String> queries) {
       unawaited(
-        stateOf(tester).findInBook(
-          queries,
-          pageNumber: 5,
-          start: start,
-          end: start + 6,
-        ),
+        stateOf(tester)
+            .findInBook(queries, pageNumber: 5, start: start, end: start + 6),
       );
     }
 
@@ -528,12 +524,8 @@ void main() {
       await tester.pumpAndSettle();
 
       unawaited(
-        stateOf(tester).findInBook(
-          <String>['тройка'],
-          pageNumber: 3,
-          start: 0,
-          end: 6,
-        ),
+        stateOf(tester)
+            .findInBook(<String>['тройка'], pageNumber: 3, start: 0, end: 6),
       );
       await tester.pumpAndSettle();
 
@@ -596,12 +588,8 @@ void main() {
       // Движок задержан: поиск идёт, найденного ещё нет.
       document.gate = Completer<void>();
       unawaited(
-        stateOf(tester).findInBook(
-          <String>['тройка'],
-          pageNumber: 2,
-          start: 18,
-          end: 24,
-        ),
+        stateOf(tester)
+            .findInBook(<String>['тройка'], pageNumber: 2, start: 18, end: 24),
       );
       await tester.pump();
       await tester.pump();
@@ -626,12 +614,8 @@ void main() {
 
       document.gate = Completer<void>();
       unawaited(
-        stateOf(tester).findInBook(
-          <String>['тройка'],
-          pageNumber: 2,
-          start: 18,
-          end: 24,
-        ),
+        stateOf(tester)
+            .findInBook(<String>['тройка'], pageNumber: 2, start: 18, end: 24),
       );
       await tester.pump();
       // Пока поиск идёт, читатель нажал по запросу и вернулся ко вводу.
