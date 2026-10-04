@@ -319,6 +319,11 @@ void main() {
           (Book book) => book.title == 'Атлас',
         );
         await placeBook(data, atlas.id, null, position: 9);
+        // Книгу после добавления открывали, и чтение узнало, что это
+        // скан.
+        final DateTime read = DateTime.utc(2026, 10, 5, 9);
+        await data.library.markOpened(atlas.id, read);
+        await data.library.setTextLayer(atlas.id, false);
         final List<String> before = await shelf();
         final List<String> files = copies();
 
@@ -333,6 +338,11 @@ void main() {
         expect(await shelf(), before);
         expect(before.first, '—: Латинский язык, Атлас');
         expect(copies(), files);
+        // Повторное добавление — не открытие книги: порядок «недавние»
+        // и то, что о книге узнало чтение, остаются как были.
+        final Book? kept = await data.library.bookById(atlas.id);
+        expect(kept!.openedAt!.isAtSameMomentAs(read), isTrue);
+        expect(kept.hasTextLayer, isFalse);
       });
     }
 
@@ -550,12 +560,12 @@ void main() {
     test('SNO-F-LIT-01: добавленная файлом — из архива не вторая', () async {
       final File single = File('${temp.path}/Атлас.pdf')
         ..writeAsBytesSync(contentOf('01 Анатомия/02 Атлас.pdf'));
-      int seen = 0;
+      int files = 0;
       final Book byFile = await BookImporter(
         library: data.library,
         storage: LocalBookStorage(copyInto: () async => books),
         opener: FakeDocumentOpener(FakeReaderDocument(pages: <String>['т'])),
-        newId: () => 'file-${seen++}',
+        newId: () => 'file-${files++}',
       ).register(PickedFile(name: 'Атлас.pdf', path: single.path));
 
       final ArchiveReport report = await archiveOn().add(
