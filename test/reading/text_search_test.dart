@@ -273,8 +273,11 @@ void main() {
     // На месте дефиса переноса движок ставит служебный знак U+0002, а
     // перевода строки после него нет (корпус, `hyphen_breaks.pdf`).
     final String mark = String.fromCharCode(0x02);
+    // Слово, разрезанное переносом: между частями стоит знак движка.
+    String cut(String head, String tail) => '$head$mark$tail';
     final String page =
-        'Строение остео${mark}логии и сердца.\r\nОстеология — наука о костях.';
+        'Строение ${cut('остео', 'логии')} и сердца.\r\n'
+        'Остеология — наука о костях.';
 
     List<SearchHit> find(String query) {
       return findInPageText(pageNumber: 1, pageText: page, query: query);
@@ -288,7 +291,7 @@ void main() {
       final SearchHit broken = hits.first;
       expect(
         page.substring(broken.sourceStart, broken.sourceEnd),
-        'остео${mark}логи',
+        cut('остео', 'логи'),
       );
     });
 
@@ -302,7 +305,7 @@ void main() {
     test('BUG-50: знак переноса в запросе ничего не меняет', () {
       // Запрос из выделенного может принести знак с собой.
       final List<SearchHit> typed = find('остеологии');
-      final List<SearchHit> selected = find('остео${mark}логии');
+      final List<SearchHit> selected = find(cut('остео', 'логии'));
       expect(typed, hasLength(1));
       expect(selected, typed);
     });

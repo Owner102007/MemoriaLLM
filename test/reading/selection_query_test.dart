@@ -8,6 +8,9 @@ void main() {
   /// Знак, который движок ставит на месте дефиса переноса.
   final String mark = String.fromCharCode(kLineBreakHyphen);
 
+  /// Слово, разрезанное переносом: между частями стоит знак движка.
+  String cut(String head, String tail) => '$head$mark$tail';
+
   group('SNO-F-READ-01: запросы из выделенного', () {
     test('SNO-F-READ-01: края и лишние пробелы убраны', () {
       expect(selectionSearchQueries('  остеология  '), <String>['остеология']);
@@ -33,15 +36,15 @@ void main() {
       // По тексту не узнать, перенос это или дефис составного слова.
       // С дефисом — первым: обычное слово так не найдётся нигде, и
       // поиск перейдёт к слитному.
-      expect(selectionSearchQueries('остео${mark}логия'), <String>[
+      expect(selectionSearchQueries(cut('остео', 'логия')), <String>[
         'остео-логия',
         'остеология',
       ]);
       expect(
-        selectionSearchQueries('сердечно${mark}сосудистая система'),
+        selectionSearchQueries('${cut('сердечно', 'сосудистая')} система'),
         <String>['сердечно-сосудистая система', 'сердечнососудистая система'],
       );
-      expect(selectionSearchQueries('Санкт${mark}Петербург'), <String>[
+      expect(selectionSearchQueries(cut('Санкт', 'Петербург')), <String>[
         'Санкт-Петербург',
         'СанктПетербург',
       ]);
@@ -51,13 +54,14 @@ void main() {
       // Выделили слово до конца строки или с начала следующей: резать
       // здесь нечего, и запрос один.
       expect(selectionSearchQueries('остео$mark'), <String>['остео']);
-      expect(selectionSearchQueries('${mark}логия'), <String>['логия']);
+      expect(selectionSearchQueries(cut('', 'логия')), <String>['логия']);
       expect(selectionSearchQueries(' $mark '), isEmpty);
     });
 
     test('SNO-F-READ-01: знака переноса в запросах нет', () {
       final List<String> queries = selectionSearchQueries(
-        'строение остео${mark}логии и сердечно${mark}сосудистой системы',
+        'строение ${cut('остео', 'логии')} и '
+        '${cut('сердечно', 'сосудистой')} системы',
       );
       expect(queries, hasLength(2));
       for (final String query in queries) {
@@ -109,8 +113,8 @@ void main() {
     test('SNO-F-READ-01: слитный запрос находит и само слово с переноса', () {
       // Слово разрезано переносом, а ниже по странице написано целиком.
       final String page =
-          'Строение остео${mark}логии.\r\nОстеология — наука о костях.';
-      final String selected = 'остео${mark}логии';
+          'Строение ${cut('остео', 'логии')}.\r\nОстеология — наука о костях.';
+      final String selected = cut('остео', 'логии');
       final int at = page.indexOf(selected);
       final List<String> queries = selectionSearchQueries(selected);
       List<SearchHit> find(String query) {
@@ -123,12 +127,7 @@ void main() {
       expect(hits, hasLength(1));
       // Найденное — то самое место, которое выделяли.
       expect(
-        hitIndexAt(
-          hits,
-          pageNumber: 1,
-          start: at,
-          end: at + selected.length,
-        ),
+        hitIndexAt(hits, pageNumber: 1, start: at, end: at + selected.length),
         0,
       );
       expect(find('остеологи'), hasLength(2));
@@ -136,10 +135,10 @@ void main() {
 
     test('SNO-F-READ-01: составное слово с переноса находится с дефисом', () {
       final String page =
-          'Болезни сердечно${mark}сосудистой системы.\r\n'
+          'Болезни ${cut('сердечно', 'сосудистой')} системы.\r\n'
           'Сердечно-сосудистая система и сердечно-сосудистые болезни.';
       final List<String> queries = selectionSearchQueries(
-        'сердечно${mark}сосудист',
+        cut('сердечно', 'сосудист'),
       );
       List<SearchHit> find(String query) {
         return findInPageText(pageNumber: 1, pageText: page, query: query);
