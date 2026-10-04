@@ -537,4 +537,37 @@ void main() {
       expect(none, lessThan(1));
     });
   });
+
+  group('BUG-20: место новой книги', () {
+    test('BUG-20: за последней книгой своей категории', () {
+      final List<Book> books = <Book>[
+        _book(id: 'a', categoryId: 'study', place: 0),
+        _book(id: 'b', categoryId: 'study', place: 4),
+        _book(id: 'c', categoryId: 'fiction', place: 9),
+        _book(id: 'd', place: 2),
+      ];
+      expect(shelfPlaceAfterLast(books, 'study'), 5);
+      expect(shelfPlaceAfterLast(books, 'fiction'), 10);
+      // «Без категории» — такая же категория, со своим счётом.
+      expect(shelfPlaceAfterLast(books, null), 3);
+    });
+
+    test('BUG-20: в пустой категории место нулевое', () {
+      expect(shelfPlaceAfterLast(const <Book>[], 'study'), 0);
+      expect(shelfPlaceAfterLast(<Book>[_book(id: 'a')], 'study'), 0);
+    });
+
+    test('BUG-20: новая книга — последняя в порядке «Как расставил»', () {
+      final List<Book> books = <Book>[
+        _book(id: 'a', title: 'Аа', place: 0),
+        _book(id: 'b', title: 'Яя', place: 1),
+      ];
+      final Book added = _book(
+        id: 'c',
+        title: 'Мм',
+        place: shelfPlaceAfterLast(books, null),
+      );
+      expect(sortBooks(<Book>[added, ...books], ShelfSort.manual).last.id, 'c');
+    });
+  });
 }

@@ -4,6 +4,7 @@ import '../../domain/library/book_source.dart';
 import '../../domain/library/book_storage.dart';
 import '../../domain/library/ids.dart';
 import '../../domain/library/scan_mark.dart';
+import '../../domain/library/shelf.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../infrastructure/files/file_fingerprint.dart';
 import 'source_release.dart';
@@ -185,10 +186,30 @@ class BookImporter {
   /// в библиотеке книгу, которую нельзя прочесть, незачем.
   Future<Book> register(PickedFile file, {String? categoryId}) async {
     final BookSource source = await _storage.adopt(file);
+    return registerSource(
+      source,
+      title: titleFromFileName(file.name),
+      categoryId: categoryId,
+    );
+  }
+
+  /// Заводит книгу, которая уже лежит по [source].
+  ///
+  /// Вторая половина [register]: файл принят хранилищем или положен в
+  /// папку приложения иначе — распаковкой архива с литературой
+  /// (SNO-F-LIT-01), где книга сразу пишется на своё место и принимать
+  /// её ещё раз значило бы копировать дважды. Всё остальное — как у
+  /// выбранного файла: та же книга второй раз не заводится, а источник,
+  /// который не открылся, отпускается, если он ничей.
+  Future<Book> registerSource(
+    BookSource source, {
+    required String title,
+    String? categoryId,
+  }) async {
     try {
       return await _save(
         source,
-        titleFromFileName(file.name),
+        title,
         null,
         categoryId: categoryId,
         releaseReplaced: true,
@@ -379,6 +400,12 @@ class BookImporter {
             hasTextLayer: textLayer,
             openedAt: moment,
             categoryId: categoryId,
+            // BUG-20: новая книга встаёт за последней книгой своей
+            // категории, а не на место 0.
+            shelfPosition: shelfPlaceAfterLast(
+              await _library.books(),
+              categoryId,
+            ),
           )
         : existing.copyWith(
             source: source,

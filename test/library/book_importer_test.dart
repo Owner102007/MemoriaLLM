@@ -411,6 +411,43 @@ void main() {
     });
   });
 
+  group('SNO-F-LIT-01: книга, которая уже лежит на месте', () {
+    test('SNO-F-LIT-01: заводится без приёма хранилищем', () async {
+      final RecordingStorage storage = RecordingStorage();
+      const FilePathSource source = FilePathSource(
+        'test/fixtures/basic_text.pdf',
+      );
+      final Book book = await importer(
+        FakeReaderDocument(pages: <String>['раз', 'два']),
+        storage: storage,
+      ).registerSource(source, title: 'Анатомия', categoryId: 'study');
+
+      expect(book.title, 'Анатомия');
+      expect(book.source, source);
+      expect(book.categoryId, 'study');
+      expect(book.pageCount, 2);
+      expect(await data.library.bookById(book.id), isNotNull);
+    });
+
+    test('SNO-F-LIT-01: не открылась — источник отпущен', () async {
+      final RecordingStorage storage = RecordingStorage();
+      const FilePathSource source = FilePathSource(
+        'test/fixtures/truncated.pdf',
+        owned: true,
+      );
+      await expectLater(
+        importer(
+          FakeReaderDocument.blank(1),
+          failure: const DocumentOpenException(DocumentProblem.damaged, source),
+          storage: storage,
+        ).registerSource(source, title: 'Битая'),
+        throwsA(isA<DocumentOpenException>()),
+      );
+      expect(storage.released, <BookSource>[source]);
+      expect(await data.library.books(), isEmpty);
+    });
+  });
+
   group('перевыбор файла', () {
     test('книга остаётся той же, а источник меняется', () async {
       final Book book = await importer(
