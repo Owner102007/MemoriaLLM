@@ -192,8 +192,9 @@ class PdfrxReaderDocument implements ReaderDocument {
   /// ней сюда, — и поиск по всей книге видит все страницы, сколько бы их
   /// ни осталось неизмеренными при открытии.
   ///
-  /// Сбой измерения книгу не роняет: возвращается страница как есть, и
-  /// зовущий получит от неё пустой текст — как от страницы без текста.
+  /// Сбой измерения книгу не роняет: возвращается страница как есть.
+  /// Рамка и слой текста получат от неё пустой ответ, как от страницы
+  /// без текста, а [pageText] скажет прямо, что текст не прочитан.
   Future<PdfPage> _measured(int pageNumber) async {
     PdfPage page = _pageAt(pageNumber);
     // Повтор нужен в одном случае: фоновое измерение просмотрщика
@@ -242,7 +243,14 @@ class PdfrxReaderDocument implements ReaderDocument {
   Future<String> pageText(int pageNumber) async {
     final PdfPage page = await _measured(pageNumber);
     final PdfPageRawText? text = await page.loadText();
-    return text?.fullText ?? '';
+    if (text == null) {
+      // Движок не ответил: страница не измерилась или книга уже
+      // закрыта. Это не «страница без текста» — у той текст пустой, а не
+      // отсутствующий. Разница важна кэшу текста (F-TEXT-04): пустой
+      // ответ он запоминает навсегда, а этот обязан спросить ещё раз.
+      throw StateError('текст страницы $pageNumber не прочитан');
+    }
+    return text.fullText;
   }
 
   @override

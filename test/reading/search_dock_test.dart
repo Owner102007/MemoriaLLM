@@ -157,6 +157,13 @@ void main() {
       expect(dock.extent, 0);
     });
 
+    test('тесная полоса — та, где поле и счёт вместе не помещаются', () {
+      // Поле, строка счёта и разделитель — около 110 точек; при вводе
+      // полосе положено не меньше места под них и одну строку списка.
+      expect(kSearchCrampedExtent, greaterThan(kSearchCounterExtent * 2));
+      expect(kSearchCrampedExtent, lessThan(kSearchTypingExtent));
+    });
+
     test('отрицательная высота клавиатуры — её нет', () {
       expect(place(phone, keyboard: -10), place(phone));
     });

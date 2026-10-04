@@ -376,7 +376,13 @@ class DeviceLibrary {
           ? document.pageCount
           : kTextProbePages;
       for (int page = 1; page <= limit; page++) {
-        final String content = (await document.pageText(page)).trim();
+        final String content;
+        try {
+          content = (await document.pageText(page)).trim();
+        } on Object {
+          // Одна нечитаемая страница — не повод считать книгу сканом.
+          continue;
+        }
         if (content.isEmpty) {
           continue;
         }

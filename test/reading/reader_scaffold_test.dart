@@ -42,6 +42,9 @@ void main() {
   late List<bool> searches;
   late List<double> docks;
 
+  /// Сколько раз обвязка строила страницу заново.
+  late int viewerBuilds;
+
   setUp(() {
     reading = FakeReadingRepository();
     jumps = <int>[];
@@ -52,6 +55,7 @@ void main() {
     covers = <bool>[];
     searches = <bool>[];
     docks = <double>[];
+    viewerBuilds = 0;
   });
 
   Future<ReaderController> makeController({
@@ -114,6 +118,7 @@ void main() {
                   controller.onPageChanged(page);
                 },
             viewerBuilder: (BuildContext context, VoidCallback onTap) {
+              viewerBuilds++;
               return GestureDetector(
                 key: const Key('fake-viewer'),
                 onTap: onTap,
@@ -1008,10 +1013,14 @@ void main() {
       await openSearch(tester);
 
       // Клавиатура поднялась на 300 точек.
+      final int builds = viewerBuilds;
       tester.view.viewInsets = FakeViewPadding(
         bottom: 300 * tester.view.devicePixelRatio,
       );
       await tester.pumpAndSettle();
+      // Пока клавиатура выезжает, перестраивается одна панель: страницу
+      // под ней на каждый кадр заново не строят.
+      expect(viewerBuilds, builds);
 
       final Rect strip = tester.getRect(panel);
       expect(strip.bottom, 500, reason: 'верх клавиатуры');
@@ -1034,6 +1043,50 @@ void main() {
       tester.view.resetViewInsets();
       await tester.pumpAndSettle();
       expect(tester.getRect(panel).bottom, 800);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-TEXT-12: в тесноте полоса сжимается, а не ломается', (
+      WidgetTester tester,
+    ) async {
+      // Телефон на боку с высокой клавиатурой: над ней сто точек — на
+      // поле и строку счёта вместе этого мало. Остаётся одно поле.
+      resize(tester, const Size(800, 360));
+      addTearDown(tester.view.resetViewInsets);
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+
+      tester.view.viewInsets = FakeViewPadding(
+        bottom: 260 * tester.view.devicePixelRatio,
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      final Rect strip = tester.getRect(panel);
+      expect(strip.bottom, 100, reason: 'верх клавиатуры');
+      expect(strip.top, greaterThanOrEqualTo(0));
+      expect(field, findsOneWidget);
+      expect(find.byKey(const Key('search-results')), findsNothing);
+
+      // Результат выбран — в той же тесноте остаётся строка счёта.
+      await tester.sendKeyEvent(LogicalKeyboardKey.f3);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('search-count')), findsOneWidget);
+      expect(find.byKey(const Key('search-query')), findsOneWidget);
+
+      // Клавиатура закрыла всё место — полосы не видно, ошибок нет.
+      tester.view.viewInsets = FakeViewPadding(
+        bottom: 400 * tester.view.devicePixelRatio,
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
 
       search.dispose();
       await controller.close();

@@ -558,14 +558,6 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// при открытом поиске. Панель рядом со страницей с ними не спорит.
   Widget _buildBody(BuildContext context, Size area) {
     final ReaderController controller = widget.controller;
-    // Клавиатура места под страницу не отнимает, а панель поиска
-    // поднимает над собой.
-    final SearchDock dock = placeSearchPanel(
-      screen: MediaQuery.sizeOf(context),
-      area: area,
-      keyboard: MediaQuery.viewInsetsOf(context).bottom,
-      typing: !_browsing,
-    );
     return Stack(
       children: <Widget>[
         Positioned(
@@ -575,7 +567,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
           // На широком окне панель поиска стоит рядом со страницей, и
           // лист раскладывается в оставшейся ширине: найденное под
           // панелью оказаться не может.
-          right: _searchOpen ? dock.taken : 0,
+          right: _searchOpen && _wide ? kSearchPanelWidth : 0,
           child: Stack(
             children: <Widget>[
               Positioned.fill(
@@ -584,16 +576,8 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
               // Узкий экран: полупрозрачная полоса у нижнего края — и
               // пока набирают запрос, и после выбора результата
               // (F-TEXT-12). Непрозрачного окна во весь экран нет.
-              if (_searchOpen && !dock.beside)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: dock.lift,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(maxHeight: dock.extent),
-                    child: _searchPanel(browsing: _browsing, translucent: true),
-                  ),
-                ),
+              if (_searchOpen && !_wide)
+                Positioned.fill(child: _buildStrip(area)),
               _TopBar(
                 visible: _chromeVisible,
                 title: controller.book.title,
@@ -621,15 +605,69 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         ),
         // Рядом со страницей: места хватает и полю, и списку, и вид у
         // панели один — что при вводе, что при просмотре.
-        if (_searchOpen && dock.beside)
+        if (_searchOpen && _wide)
           Positioned(
             top: 0,
-            bottom: dock.lift,
+            bottom: 0,
             right: 0,
-            width: dock.extent,
-            child: _searchPanel(edged: true),
+            width: kSearchPanelWidth,
+            child: _buildBeside(area),
           ),
       ],
+    );
+  }
+
+  /// Место панели поиска с оглядкой на экранную клавиатуру.
+  ///
+  /// Клавиатура места под страницу не отнимает (F-TEXT-12), а панель
+  /// поднимает над собой. Высота клавиатуры читается здесь, а не в теле
+  /// экрана: пока клавиатура выезжает, перестраиваться на каждый кадр
+  /// обязана одна панель, а не страница под ней.
+  SearchDock _dockIn(BuildContext context, Size area) {
+    return placeSearchPanel(
+      screen: MediaQuery.sizeOf(context),
+      area: area,
+      keyboard: MediaQuery.viewInsetsOf(context).bottom,
+      typing: !_browsing,
+    );
+  }
+
+  /// Узкий экран: полоса у нижнего края, над клавиатурой (ALG-UI-31).
+  ///
+  /// Слой во весь экран нажатий не ловит: ловит их только сама полоса,
+  /// а страница над ней остаётся живой.
+  Widget _buildStrip(Size area) {
+    return Builder(
+      builder: (BuildContext context) {
+        final SearchDock dock = _dockIn(context, area);
+        return Padding(
+          padding: EdgeInsets.only(bottom: dock.lift),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: area.width,
+                maxHeight: dock.extent,
+              ),
+              child: _searchPanel(browsing: _browsing, translucent: true),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Широкое окно: панель рядом со страницей; клавиатура планшета
+  /// укорачивает её, а не страницу.
+  Widget _buildBeside(Size area) {
+    return Builder(
+      builder: (BuildContext context) {
+        final SearchDock dock = _dockIn(context, area);
+        return Padding(
+          padding: EdgeInsets.only(bottom: dock.lift),
+          child: _searchPanel(edged: true),
+        );
+      },
     );
   }
 

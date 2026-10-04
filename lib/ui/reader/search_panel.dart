@@ -242,6 +242,55 @@ class _SearchPanelState extends State<SearchPanel> {
     // клавиатура. Состояние поиска там встаёт в строку счёта, а не
     // отдельной строкой.
     final bool statusInCounter = strip && typing && counter;
+    if (strip) {
+      return LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints limits) {
+          // Телефон на боку с высокой клавиатурой: места меньше, чем
+          // нужно полю и строке счёта. Остаётся одна строка, и за край
+          // полосы ничего не вылезает.
+          if (limits.maxHeight < kSearchCrampedExtent) {
+            return SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
+                child: typing
+                    ? _input(context, theme, search)
+                    : _counter(context, theme, search, status: false),
+              ),
+            );
+          }
+          return _column(
+            context,
+            theme,
+            search,
+            list: list,
+            counter: counter,
+            statusInCounter: statusInCounter,
+          );
+        },
+      );
+    }
+    return _column(
+      context,
+      theme,
+      search,
+      list: list,
+      counter: counter,
+      statusInCounter: statusInCounter,
+    );
+  }
+
+  /// Поле, счёт, состояние и список — сверху вниз.
+  Widget _column(
+    BuildContext context,
+    ThemeData theme,
+    DocumentSearch search, {
+    required bool list,
+    required bool counter,
+    required bool statusInCounter,
+  }) {
+    final bool strip = widget.translucent;
+    final bool typing = !widget.browsing;
     return SafeArea(
       // От вырезов экрана полоса отступает только там, где она его краёв
       // касается: нижней полосе верхний вырез не сосед.

@@ -45,6 +45,7 @@ class DocumentSearch extends ChangeNotifier {
   bool _isRunning = false;
   bool _reachedLimit = false;
   bool _sawText = false;
+  int _unreadPages = 0;
   int _scannedPages = 0;
   int _session = 0;
 
@@ -95,11 +96,15 @@ class DocumentSearch extends ChangeNotifier {
   /// скан без текстового слоя (F-TEXT-04).
   ///
   /// «Ничего не найдено» здесь было бы неправдой: искать было не в чем.
+  /// Но и «скан» говорится только о книге, которая прочитана на самом
+  /// деле: страница, которую движок не отдал, — не пустая страница.
   bool get bookHasNoText =>
       isFinished &&
       isSearchableQuery(_query) &&
       !_reachedLimit &&
       !_sawText &&
+      _unreadPages == 0 &&
+      (_cache?.isComplete ?? true) &&
       _scannedPages >= _document.pageCount;
 
   /// Запускает поиск. Предыдущий, если он шёл, отменяется.
@@ -111,6 +116,7 @@ class DocumentSearch extends ChangeNotifier {
     _scannedPages = 0;
     _reachedLimit = false;
     _sawText = false;
+    _unreadPages = 0;
 
     if (!isSearchableQuery(_query)) {
       _isRunning = false;
@@ -186,6 +192,7 @@ class DocumentSearch extends ChangeNotifier {
       } on Object {
         // Одна нечитаемая страница не должна обрывать поиск по книге.
         texts[page] = '';
+        _unreadPages++;
       }
     }
     return texts;
@@ -199,6 +206,7 @@ class DocumentSearch extends ChangeNotifier {
     _isRunning = false;
     _reachedLimit = false;
     _sawText = false;
+    _unreadPages = 0;
     _scannedPages = 0;
     notifyListeners();
   }

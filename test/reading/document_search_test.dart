@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/reading/book_text.dart';
 import 'package:memoria/application/reading/document_search.dart';
+import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/text_search.dart';
 
 import '../support/fake_reading.dart';
@@ -297,6 +298,34 @@ void main() {
       search.dispose();
     });
 
+    test('книга, которая не прочиталась, — не скан', () async {
+      // Движок не отдал ни одной страницы: это «не знаю», а не «текста
+      // нет». Сказать «скан» можно только о книге, прочитанной на деле.
+      final _UnreadableDocument plain = _UnreadableDocument();
+      final DocumentSearch live = DocumentSearch(document: plain);
+      await live.start('что угодно');
+      expect(live.isEmptyResult, isTrue);
+      expect(live.bookHasNoText, isFalse);
+
+      final _UnreadableDocument document = _UnreadableDocument();
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final DocumentSearch cached = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, store),
+      );
+      await cached.start('что угодно');
+      expect(cached.isEmptyResult, isTrue);
+      expect(cached.bookHasNoText, isFalse);
+      expect(store.rowCount('book-1'), 0, reason: 'незнание не запоминается');
+      live.dispose();
+      cached.dispose();
+    });
+
+    test('нечитаемая страница не прячет текст книги', () async {
+      expect(await hasTextLayer(_BrokenFirstPageDocument()), isTrue);
+      expect(await hasTextLayer(_UnreadableDocument()), isFalse);
+    });
+
     test('база отказала — поиск идёт движком, как раньше', () async {
       final FakeReaderDocument document = _book();
       final MemoryPageTextStore store = MemoryPageTextStore()
@@ -311,6 +340,29 @@ void main() {
       search.dispose();
     });
   });
+}
+
+/// Документ, из которого не читается ни одна страница.
+class _UnreadableDocument extends FakeReaderDocument {
+  _UnreadableDocument() : super(pages: <String>['раз', 'два', 'три']);
+
+  @override
+  Future<String> pageText(int pageNumber) {
+    throw StateError('текст страницы $pageNumber не прочитан');
+  }
+}
+
+/// Документ, у которого не читается первая страница.
+class _BrokenFirstPageDocument extends FakeReaderDocument {
+  _BrokenFirstPageDocument() : super(pages: <String>['битая', 'текст']);
+
+  @override
+  Future<String> pageText(int pageNumber) {
+    if (pageNumber == 1) {
+      throw StateError('страница не читается');
+    }
+    return super.pageText(pageNumber);
+  }
 }
 
 /// Документ, у которого вторая страница не читается.

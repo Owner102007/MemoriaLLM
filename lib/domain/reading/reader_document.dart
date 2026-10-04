@@ -264,6 +264,10 @@ abstract interface class ReaderDocument {
   Future<void> measure(Iterable<int> pageNumbers);
 
   /// Текст страницы. Пустая строка означает, что текста на странице нет.
+  ///
+  /// Страница, которую движок прочитать не смог, — не пустая строка, а
+  /// ошибка: «текста нет» и «не знаю» — разные ответы, и первый
+  /// запоминается кэшем текста навсегда (F-TEXT-04).
   Future<String> pageText(int pageNumber);
 
   /// Прямоугольники символов страницы в долях отображаемой страницы.
@@ -335,7 +339,13 @@ Future<bool> hasTextLayer(ReaderDocument document, {int probePages = 5}) async {
       ? document.pageCount
       : probePages;
   for (int page = 1; page <= limit; page++) {
-    final String text = await document.pageText(page);
+    final String text;
+    try {
+      text = await document.pageText(page);
+    } on Object {
+      // Страница не прочиталась — судим по остальным.
+      continue;
+    }
     if (text.trim().isNotEmpty) {
       return true;
     }

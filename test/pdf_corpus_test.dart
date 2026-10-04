@@ -1574,6 +1574,26 @@ void main() {
       expect(search.bookHasNoText, isTrue);
     });
 
+    test('F-TEXT-04: закрытая книга в кэш пустотой не ложится', () async {
+      // «Текста нет» и «не прочитал» — разные ответы: пустой текст кэш
+      // запоминает навсегда, и книга, закрытая посреди прохода, осталась
+      // бы в нём сканом.
+      final ReaderDocument document = await opener.open(
+        _source('basic_text.pdf'),
+      );
+      expect(await document.pageText(1), isNotEmpty);
+      await document.close();
+
+      await expectLater(document.pageText(2), throwsA(anything));
+
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final BookTextCache cache = cacheOf(document, store, 'closed');
+      final Map<int, String> texts = await cache.textsOf(1, 3);
+      expect(texts.values.every((String text) => text.isEmpty), isTrue);
+      expect(store.rowCount('closed'), 0);
+      expect(cache.cachedCount, 0);
+    });
+
     test('F-TEXT-04: замеры — вес текста, проход, поиск', () async {
       // Числа уходят в журнал прогона строками «ЗАМЕР F-TEXT-04» и оттуда
       // — в PROGRESS.md; с порогом здесь не сравниваются: раннер шумит.

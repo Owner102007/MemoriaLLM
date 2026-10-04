@@ -91,7 +91,9 @@ class BookTextCache {
   /// Запомнена ли книга целиком.
   bool get isComplete => _cached.length >= pageCount;
 
-  /// Сколько знаков текста книги лежит в кэше.
+  /// Сколько знаков текста книги лежит в кэше — для замеров, с
+  /// точностью до редких знаков: страницы, запомненные в прошлый раз,
+  /// посчитаны базой в знаках, а записанные сейчас — в кодовых единицах.
   int get cachedSize {
     int total = 0;
     for (final int size in _cached.values) {
@@ -161,8 +163,8 @@ class BookTextCache {
           from: first,
           to: last,
         );
-        // Только те, о которых мы знаем: строка, появившаяся в базе
-        // помимо нас, ничем не хуже, но и считать её незачем.
+        // База отвечает по ключу — этот файл, эта версия алгоритма, — так
+        // что годится всё, что она отдала в запрошенном отрезке.
         for (final MapEntry<int, String> entry in stored.entries) {
           if (entry.key >= first && entry.key <= last) {
             texts[entry.key] = entry.value;
