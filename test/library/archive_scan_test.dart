@@ -152,12 +152,21 @@ void main() {
     });
 
     test('SNO-ALG-LIT-02: из двух корней берётся ближайший', () {
+      // Корень внутри корня: место считается от того, что ближе к
+      // архиву, каким бы по счёту он ни был назван.
+      expect(
+        archivePlace('/storage/emulated/0/Download/x.zip', <String>[
+          '/storage/emulated/0',
+          '/storage',
+        ]),
+        'Download',
+      );
       expect(
         archivePlace('/storage/emulated/0/Download/x.zip', <String>[
           '/storage',
           '/storage/emulated/0',
         ]),
-        'Download',
+        '0/Download',
       );
     });
 
