@@ -153,6 +153,7 @@ class AndroidBookStorage implements BookStorage {
     final String destination;
     try {
       final Directory books = await _booksDirectory();
+      await sweepIncoming(books);
       final File part = File(incomingPathIn(books, uri));
       try {
         await copyDescriptorToFile(

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../application/app_services.dart';
+import '../../application/library/source_release.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/library/drag_scroll.dart';
@@ -244,7 +245,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _releaseBook(Book book) async {
     await widget.services.covers.forget(book);
-    await widget.services.storage.release(book.source);
+    // BUG-45: источник отпускается, только если он больше ничей — у
+    // двух книг мог быть один файл, и вторая стоит на полке.
+    await releaseUnusedSource(
+      storage: widget.services.storage,
+      library: widget.services.data.library,
+      source: book.source,
+    );
   }
 
   Future<void> _restoreBook(Book book) async {

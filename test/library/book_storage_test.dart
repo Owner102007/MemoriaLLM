@@ -214,6 +214,26 @@ void main() {
       expect(File(copy.path).lengthSync(), 1000);
     });
 
+    test('SNO-F-LIT-02: недописанное с прошлого раза выметается', () async {
+      // Приложение убили посреди переноса: в папке остался `.part`.
+      books.createSync(recursive: true);
+      final File stale = File('${books.path}/incoming-0123456789abcdef.part')
+        ..writeAsBytesSync(<int>[1, 2, 3]);
+      final File book = writeBook('kniga.pdf', 1000);
+      final BookSource kept = await copying.adopt(
+        PickedFile(name: 'kniga.pdf', path: book.path),
+      );
+
+      await copying.adopt(
+        PickedFile(name: 'drugaya.pdf', path: writeBook('d.pdf', 500).path),
+      );
+
+      expect(stale.existsSync(), isFalse);
+      // Готовые копии уборка не трогает.
+      expect(File((kept as FilePathSource).path).lengthSync(), 1000);
+      expect(names(), hasLength(2));
+    });
+
     test('SNO-F-LIT-02: снятая с полки копия удаляется', () async {
       final File book = writeBook('kniga.pdf', 1000);
       final BookSource source = await copying.adopt(

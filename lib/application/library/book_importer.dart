@@ -6,6 +6,7 @@ import '../../domain/library/ids.dart';
 import '../../domain/library/scan_mark.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../infrastructure/files/file_fingerprint.dart';
+import 'source_release.dart';
 
 /// Чем закончился импорт пачки книг.
 class ImportReport {
@@ -190,6 +191,7 @@ class BookImporter {
         titleFromFileName(file.name),
         null,
         categoryId: categoryId,
+        releaseReplaced: true,
       );
     } on Object {
       // Приняли файл, а прочесть не смогли: отпускаем принятое, чтобы
@@ -201,17 +203,18 @@ class BookImporter {
       // названа по содержимому, закреплённая ссылка — та же самая.
       // Отпустить такой источник значило бы удалить копию книги или
       // отозвать её ссылку из-за одного неудачного открытия.
-      if (!await _onShelf(source)) {
-        await _storage.release(source);
-      }
+      await _releaseUnused(source);
       rethrow;
     }
   }
 
-  /// Стоит ли на полке книга с источником [source].
-  Future<bool> _onShelf(BookSource source) async {
-    final List<Book> books = await _library.books();
-    return books.any((Book book) => book.source == source);
+  /// Отпускает [source], если он не принадлежит ни одной книге на полке.
+  Future<void> _releaseUnused(BookSource source) async {
+    await releaseUnusedSource(
+      storage: _storage,
+      library: _library,
+      source: source,
+    );
   }
 
   /// Заводит сразу несколько выбранных файлов.
@@ -300,14 +303,18 @@ class BookImporter {
     } on Object {
       // Принятое отпускается — но не тогда, когда это и есть прежний
       // источник книги: файл выбрали тот же, и отпустить его значило бы
-      // отнять у книги то, что у неё было.
+      // отнять у книги то, что у неё было. И не тогда, когда он
+      // принадлежит другой книге на полке (BUG-45): книгу по ошибке
+      // привязывали к чужому файлу.
       if (previous != source) {
-        await _storage.release(source);
+        await _releaseUnused(source);
       }
       rethrow;
     }
+    // Прежний источник отпускается, если он больше ничей: у двух книг
+    // мог быть один файл (BUG-45).
     if (previous != source) {
-      await _storage.release(previous);
+      await _releaseUnused(previous);
     }
     return relinked;
   }
@@ -324,12 +331,17 @@ class BookImporter {
   ///
   /// [check] зовётся, когда файл уже прочитан, а в базу ещё ничего не
   /// записано: бросив ошибку, он отменяет запись (BUG-19).
+  ///
+  /// [releaseReplaced] — отпустить прежний источник книги, если она уже
+  /// стояла на полке и переехала на новый (BUG-17): ту же книгу выбрали
+  /// из другого места. Перепривязка отпускает прежний источник сама.
   Future<Book> _save(
     BookSource source,
     String title,
     Book? known, {
     String? categoryId,
     Future<void> Function(String hash, int pageCount)? check,
+    bool releaseReplaced = false,
   }) async {
     final BookHandle handle = await _storage.open(source);
     final String hash;
@@ -377,6 +389,12 @@ class BookImporter {
             openedAt: moment,
           );
     await _library.save(book);
+    // BUG-17: книга переехала на новый источник — прежний отпускается,
+    // если он больше ничей. Иначе копились бы копии-сироты и
+    // закреплённые ссылки, которых у приложения ограниченное число.
+    if (releaseReplaced && existing != null && existing.source != source) {
+      await _releaseUnused(existing.source);
+    }
     return book;
   }
 }

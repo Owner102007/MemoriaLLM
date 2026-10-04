@@ -68,13 +68,12 @@ Future<String> copyFileInto({
   required String source,
   required Directory books,
 }) async {
-  if (p.isWithin(books.path, source)) {
-    // Выбрали саму копию: она уже у нас, и копировать нечего.
-    return source;
-  }
+  // Выбрана сама копия из этой папки — особого случая нет: её копия
+  // получит тот же отпечаток, и [settleCopy] вернёт уже лежащий файл.
   if (!await books.exists()) {
     await books.create(recursive: true);
   }
+  await sweepIncoming(books);
   final File part = File(incomingPathIn(books, source));
   try {
     await File(source).copy(part.path);
@@ -83,6 +82,28 @@ Future<String> copyFileInto({
     await discardPart(part);
     rethrow;
   }
+}
+
+/// Выметает из [books] недописанные копии прежних переносов.
+///
+/// Остаться они могут только после того, как приложение убили посреди
+/// переноса: при ошибке перенос убирает свой файл сам. Импорт идёт по
+/// одной книге за раз, поэтому любой `.part` к началу нового переноса —
+/// мусор.
+Future<void> sweepIncoming(Directory books) async {
+  if (!await books.exists()) {
+    return;
+  }
+  await for (final FileSystemEntity entry in books.list()) {
+    if (entry is File && _isIncoming(p.basename(entry.path))) {
+      await discardPart(entry);
+    }
+  }
+}
+
+/// Имя недописанной копии — то, что даёт [incomingPathIn].
+bool _isIncoming(String name) {
+  return name.startsWith('incoming-') && name.endsWith('.part');
 }
 
 /// Убирает недописанную копию, если она осталась.
