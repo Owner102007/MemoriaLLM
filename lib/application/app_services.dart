@@ -8,6 +8,7 @@ import '../domain/reading/full_screen.dart';
 import '../domain/reading/reader_document.dart';
 import '../domain/reading/volume_keys.dart';
 import '../infrastructure/files/android_book_storage.dart';
+import '../infrastructure/files/book_copy.dart';
 import '../infrastructure/files/cover_cache.dart';
 import '../infrastructure/files/fast_book_picker.dart';
 import '../infrastructure/files/local_book_storage.dart';
@@ -15,6 +16,7 @@ import '../infrastructure/files/platform_storage_access.dart';
 import '../infrastructure/pdf/pdfrx_document.dart';
 import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
+import '../sno/flags.dart';
 import 'data/app_data.dart';
 import 'library/cover_service.dart';
 import 'library/device_library.dart';
@@ -59,9 +61,15 @@ class AppServices {
     // Единственное место, где расходятся платформы. На Windows у книги
     // есть настоящий путь и посредники не нужны; на Android пути нет
     // вовсе, и книга читается по закреплённой ссылке.
+    //
+    // В сборке ветви СНО2026 книга при добавлении копируется в папку
+    // приложения (SNO-F-LIT-02): флаг — константа сборки, и в основном
+    // приложении хранилища те же, что были.
     final BookStorage storage = Platform.isAndroid
-        ? AndroidBookStorage()
-        : const LocalBookStorage();
+        ? AndroidBookStorage(alwaysCopy: Sno.literature)
+        : const LocalBookStorage(
+            copyInto: Sno.literature ? applicationBooks : null,
+          );
     return AppServices(
       data: data,
       storage: storage,

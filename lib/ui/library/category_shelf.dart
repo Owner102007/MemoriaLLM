@@ -54,7 +54,11 @@ class CategoryShelf extends StatelessWidget {
   final void Function(Book book) onMenu;
 
   /// Добавить книги в эту категорию.
-  final VoidCallback onAdd;
+  ///
+  /// `null` — добавления с полки нет (сборки ветвей СНО2026,
+  /// SNO-F-CFG-02): кнопки «+» в участке нет, а последний блок остаётся
+  /// пустым местом, куда книгу можно положить «в самый конец».
+  final VoidCallback? onAdd;
 
   /// Идёт ли импорт прямо сейчас.
   final bool busy;
@@ -145,16 +149,19 @@ class CategoryShelf extends StatelessWidget {
                         // единственное место, куда книгу можно положить
                         // «в самый конец».
                         if (index == section.books.length) {
+                          final VoidCallback? add = onAdd;
                           return _TailSlot(
                             section: section,
                             onDropBook: onDropBook,
-                            child: AddBookCard(
-                              sectionId: section.id.isEmpty
-                                  ? 'loose'
-                                  : section.id,
-                              onAdd: onAdd,
-                              busy: busy,
-                            ),
+                            child: add == null
+                                ? const SizedBox.expand()
+                                : AddBookCard(
+                                    sectionId: section.id.isEmpty
+                                        ? 'loose'
+                                        : section.id,
+                                    onAdd: add,
+                                    busy: busy,
+                                  ),
                           );
                         }
                         final Book book = section.books[index];

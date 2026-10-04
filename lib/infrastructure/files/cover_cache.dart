@@ -1,9 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:path_provider/path_provider.dart';
-
 import '../../domain/library/cover.dart';
+import 'app_directory.dart';
 
 /// Обложки в отдельной папке приложения.
 ///
@@ -86,7 +85,7 @@ class FileCoverStore implements CoverStore {
   }
 
   static Future<Directory> _appCoverDirectory() async {
-    final Directory support = await getApplicationSupportDirectory();
+    final Directory support = await appDataDirectory();
     return Directory('${support.path}${Platform.pathSeparator}covers');
   }
 

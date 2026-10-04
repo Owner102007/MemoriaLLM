@@ -79,6 +79,111 @@ void main() {
     });
   });
 
+  group('SNO-F-LIT-02: копия книги в папке приложения', () {
+    late Directory books;
+    late LocalBookStorage copying;
+
+    setUp(() {
+      books = Directory('${temp.path}/books');
+      copying = LocalBookStorage(copyInto: () async => books);
+    });
+
+    List<String> names() {
+      return <String>[
+        for (final FileSystemEntity entry in books.listSync())
+          entry.uri.pathSegments.last,
+      ];
+    }
+
+    test('SNO-F-LIT-02: книга копируется, источник — своя копия', () async {
+      final File book = writeBook('kniga.pdf', 3000);
+      final BookSource source = await copying.adopt(
+        PickedFile(name: 'kniga.pdf', path: book.path),
+      );
+
+      final FilePathSource copy = source as FilePathSource;
+      expect(copy.owned, isTrue, reason: 'копию делали мы — нам и убирать');
+      expect(copy.encode(), startsWith('copy:'));
+      expect(copy.path, startsWith(books.path));
+      expect(copy.path, isNot(book.path));
+      expect(File(copy.path).readAsBytesSync(), book.readAsBytesSync());
+      // Чужой файл цел, а недописанных копий не осталось.
+      expect(book.existsSync(), isTrue);
+      expect(names().where((String name) => name.endsWith('.part')), isEmpty);
+    });
+
+    test('SNO-F-LIT-02: копия читается и после пропажи исходника', () async {
+      final File book = writeBook('kniga.pdf', 5000);
+      final BookSource source = await copying.adopt(
+        PickedFile(name: 'kniga.pdf', path: book.path),
+      );
+      book.deleteSync();
+
+      expect(await copying.available(source), isTrue);
+      final BookHandle handle = await copying.open(source);
+      addTearDown(handle.close);
+      expect(handle.length, 5000);
+      final Uint8List buffer = Uint8List(10);
+      expect(await handle.read(buffer, 4000, 10), 10);
+      expect(buffer[0], 4000 % 251);
+    });
+
+    test('SNO-F-LIT-02: тёзки из разных папок лежат порознь', () async {
+      final Directory first = Directory('${temp.path}/a')..createSync();
+      final Directory second = Directory('${temp.path}/b')..createSync();
+      final File one = File('${first.path}/kniga.pdf')
+        ..writeAsBytesSync(<int>[1, 2, 3]);
+      final File two = File('${second.path}/kniga.pdf')
+        ..writeAsBytesSync(<int>[4, 5, 6, 7]);
+
+      final BookSource a = await copying.adopt(
+        PickedFile(name: 'kniga.pdf', path: one.path),
+      );
+      final BookSource b = await copying.adopt(
+        PickedFile(name: 'kniga.pdf', path: two.path),
+      );
+
+      expect(a, isNot(b));
+      final FilePathSource copyA = a as FilePathSource;
+      final FilePathSource copyB = b as FilePathSource;
+      expect(File(copyA.path).readAsBytesSync(), <int>[1, 2, 3]);
+      expect(File(copyB.path).readAsBytesSync(), <int>[4, 5, 6, 7]);
+    });
+
+    test('SNO-F-LIT-02: тот же файл повторно — та же копия', () async {
+      final File book = writeBook('kniga.pdf', 1000);
+      final PickedFile picked = PickedFile(name: 'kniga.pdf', path: book.path);
+
+      final BookSource first = await copying.adopt(picked);
+      final BookSource second = await copying.adopt(picked);
+
+      expect(second, first);
+      expect(names(), hasLength(1));
+    });
+
+    test('SNO-F-LIT-02: снятая с полки копия удаляется', () async {
+      final File book = writeBook('kniga.pdf', 1000);
+      final BookSource source = await copying.adopt(
+        PickedFile(name: 'kniga.pdf', path: book.path),
+      );
+
+      await copying.release(source);
+
+      expect(File((source as FilePathSource).path).existsSync(), isFalse);
+      expect(book.existsSync(), isTrue);
+    });
+
+    test('SNO-F-LIT-02: исходника нет — ошибка, и копии не остаётся', () async {
+      await expectLater(
+        copying.adopt(
+          PickedFile(name: 'net.pdf', path: '${temp.path}/net.pdf'),
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(names(), isEmpty);
+    });
+  });
+
   group('документы Android', () {
     test('ссылка закрепляется, и книга читается без копии', () async {
       final File book = writeBook('учебник.pdf', 300 * 1024);
@@ -189,6 +294,49 @@ void main() {
       final FilePathSource copy = source as FilePathSource;
       expect(copy.owned, isTrue);
       expect(File(copy.path).readAsBytesSync(), bytes);
+    });
+
+    test('SNO-F-LIT-02: в ветви книга переносится всегда', () async {
+      final File book = writeBook('учебник.pdf', 300 * 1024);
+      final FakeDocumentGateway documents = FakeDocumentGateway(
+        <String, String>{'content://doc/9': book.path},
+      );
+      final AndroidBookStorage storage = AndroidBookStorage(
+        documents: documents,
+        booksDirectory: () async => Directory('${temp.path}/books'),
+        alwaysCopy: true,
+      );
+
+      final BookSource source = await storage.adopt(
+        const PickedFile(name: 'учебник.pdf', uri: 'content://doc/9'),
+      );
+
+      // Ссылка годилась для чтения на месте — и всё равно книга у нас:
+      // в ветви все книги живут внутри приложения (SNO-DIV-03).
+      final FilePathSource copy = source as FilePathSource;
+      expect(copy.owned, isTrue);
+      expect(File(copy.path).readAsBytesSync(), book.readAsBytesSync());
+      // И ни одного закреплённого разрешения на чужой файл.
+      expect(documents.persisted, isEmpty);
+      expect(documents.openDescriptors, isEmpty);
+    });
+
+    test('SNO-F-LIT-02: в ветви файл с путём тоже копируется', () async {
+      final File book = writeBook('свой.pdf', 2000);
+      final AndroidBookStorage storage = AndroidBookStorage(
+        documents: FakeDocumentGateway(const <String, String>{}),
+        booksDirectory: () async => Directory('${temp.path}/books'),
+        alwaysCopy: true,
+      );
+
+      final BookSource source = await storage.adopt(
+        PickedFile(name: 'свой.pdf', path: book.path),
+      );
+
+      final FilePathSource copy = source as FilePathSource;
+      expect(copy.owned, isTrue);
+      expect(copy.path, startsWith('${temp.path}/books'));
+      expect(File(copy.path).readAsBytesSync(), book.readAsBytesSync());
     });
 
     test('снятая с полки книга отпускает ссылку', () async {

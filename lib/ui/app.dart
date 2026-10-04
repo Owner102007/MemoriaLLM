@@ -4,6 +4,8 @@ import '../application/app_services.dart';
 import '../application/theme/theme_controller.dart';
 import '../domain/navigation/sections.dart';
 import '../domain/theme/app_palette.dart';
+import '../sno/flags.dart';
+import '../sno/testing_screen.dart';
 import 'library/device_books_screen.dart';
 import 'library/library_screen.dart';
 import 'settings/settings_screen.dart';
@@ -32,7 +34,7 @@ class MemoriaApp extends StatelessWidget {
       builder: (BuildContext context, AppThemeId themeId, Widget? child) {
         final AppPalette palette = appPalettes[themeId]!;
         return MaterialApp(
-          title: 'Memoria LLM HB',
+          title: appNameFor(Sno.branch),
           debugShowCheckedModeBanner: false,
           theme: buildTheme(palette),
           // Палитра нужна полке целыми числами, а не через `ColorScheme`:
@@ -54,6 +56,12 @@ class MemoriaApp extends StatelessWidget {
 /// узком окне навигация стоит у нижнего края, в окне от
 /// [kTopNavWidth] точек — полосой наверху; где ей стоять, решает
 /// `domain/navigation/sections.dart`.
+///
+/// В сборке ветви СНО2026 разделы другие (SNO-F-CFG-02, SNO-F-CFG-03):
+/// «Устройства» нет — ветвь ничего не ищет на диске и доступа к файлам
+/// не просит, — а на его месте стоит «Тестирование». Какие разделы
+/// есть, решают флаги сборки (`sno/flags.dart`): это константы, и в
+/// основном приложении раздела «Тестирование» нет вовсе.
 ///
 /// Каждый раздел **остаётся там, где его оставили**: все они живут в
 /// одном `IndexedStack`, и переключение раздела не сбрасывает ни место
@@ -82,6 +90,12 @@ class _HomeShellState extends State<HomeShell> {
   /// Ключ на разделы: навигация переезжает сверху вниз вместе с шириной
   /// окна, и разделы при этом не должны строиться заново.
   final GlobalKey _sections = GlobalKey();
+
+  /// Разделы этой сборки, в порядке навигации.
+  final List<AppSection> _visible = sectionsFor(
+    scanner: Sno.scanner,
+    testing: Sno.recording,
+  );
 
   AppSection _section = AppSection.shelf;
 
@@ -159,6 +173,7 @@ class _HomeShellState extends State<HomeShell> {
                 if (top)
                   _TopNav(
                     key: const Key('nav-top'),
+                    sections: _visible,
                     current: _section,
                     onOpen: _open,
                   ),
@@ -178,6 +193,7 @@ class _HomeShellState extends State<HomeShell> {
                 ? null
                 : _BottomNav(
                     key: const Key('nav-bottom'),
+                    sections: _visible,
                     current: _section,
                     onOpen: _open,
                   ),
@@ -190,29 +206,9 @@ class _HomeShellState extends State<HomeShell> {
   Widget _buildSections(BuildContext inner, {required bool top}) {
     final Widget sections = IndexedStack(
       key: _sections,
-      index: _section.index,
+      index: _visible.indexOf(_section),
       children: <Widget>[
-        LibraryScreen(
-          services: widget.services,
-          onAddBooks: _addBooks,
-          onReading: _readingChanged,
-        ),
-        if (_deviceOpened)
-          DeviceBooksScreen(
-            services: widget.services,
-            section: true,
-            visible: _section == AppSection.device,
-            paused: _reading,
-            categoryId: _targetCategory,
-            onClearCategory: () => setState(() => _targetCategory = null),
-            onAdded: _booksAdded,
-          )
-        else
-          const SizedBox.shrink(),
-        SettingsScreen(
-          themeController: widget.themeController,
-          settings: widget.services.data.settings,
-        ),
+        for (final AppSection section in _visible) _buildSection(section),
       ],
     );
     if (!top) {
@@ -226,6 +222,44 @@ class _HomeShellState extends State<HomeShell> {
       child: sections,
     );
   }
+
+  Widget _buildSection(AppSection section) {
+    switch (section) {
+      case AppSection.shelf:
+        return LibraryScreen(
+          services: widget.services,
+          onAddBooks: _addBooks,
+          onReading: _readingChanged,
+          // SNO-F-CFG-02: в ветви полка на «Устройство» не ведёт.
+          canAddBooks: Sno.scanner,
+        );
+      case AppSection.device:
+        if (!_deviceOpened) {
+          return const SizedBox.shrink();
+        }
+        return DeviceBooksScreen(
+          services: widget.services,
+          section: true,
+          visible: _section == AppSection.device,
+          paused: _reading,
+          categoryId: _targetCategory,
+          onClearCategory: () => setState(() => _targetCategory = null),
+          onAdded: _booksAdded,
+        );
+      case AppSection.testing:
+        // SNO-F-CFG-03. Условие — константа сборки: в основном
+        // приложении ветка недостижима, и раздел в него не попадает.
+        if (Sno.recording) {
+          return TestingScreen(services: widget.services, flags: Sno.flags);
+        }
+        return const SizedBox.shrink();
+      case AppSection.settings:
+        return SettingsScreen(
+          themeController: widget.themeController,
+          settings: widget.services.data.settings,
+        );
+    }
+  }
 }
 
 IconData _iconOf(AppSection section, {required bool selected}) {
@@ -233,6 +267,7 @@ IconData _iconOf(AppSection section, {required bool selected}) {
     AppSection.shelf => selected ? Icons.menu_book : Icons.menu_book_outlined,
     AppSection.device =>
       selected ? Icons.folder_copy : Icons.folder_copy_outlined,
+    AppSection.testing => selected ? Icons.science : Icons.science_outlined,
     AppSection.settings => selected ? Icons.tune : Icons.tune_outlined,
   };
 }
@@ -243,24 +278,32 @@ Key _keyOf(AppSection section) {
   return switch (section) {
     AppSection.shelf => const Key('nav-library'),
     AppSection.device => const Key('nav-device'),
+    AppSection.testing => const Key('nav-testing'),
     AppSection.settings => const Key('nav-settings'),
   };
 }
 
 /// Навигация у нижнего края: телефон и узкое окно.
 class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.current, required this.onOpen, super.key});
+  const _BottomNav({
+    required this.sections,
+    required this.current,
+    required this.onOpen,
+    super.key,
+  });
 
+  /// Разделы этой сборки, в порядке навигации.
+  final List<AppSection> sections;
   final AppSection current;
   final ValueChanged<AppSection> onOpen;
 
   @override
   Widget build(BuildContext context) {
     return NavigationBar(
-      selectedIndex: current.index,
-      onDestinationSelected: (int value) => onOpen(AppSection.values[value]),
+      selectedIndex: sections.indexOf(current),
+      onDestinationSelected: (int value) => onOpen(sections[value]),
       destinations: <Widget>[
-        for (final AppSection section in AppSection.values)
+        for (final AppSection section in sections)
           NavigationDestination(
             key: _keyOf(section),
             icon: Icon(_iconOf(section, selected: false)),
@@ -278,8 +321,15 @@ class _BottomNav extends StatelessWidget {
 /// это место вкладок с открытыми книгами (F-DESK-01), и навигация не
 /// должна его занимать.
 class _TopNav extends StatelessWidget {
-  const _TopNav({required this.current, required this.onOpen, super.key});
+  const _TopNav({
+    required this.sections,
+    required this.current,
+    required this.onOpen,
+    super.key,
+  });
 
+  /// Разделы этой сборки, в порядке навигации.
+  final List<AppSection> sections;
   final AppSection current;
   final ValueChanged<AppSection> onOpen;
 
@@ -295,7 +345,7 @@ class _TopNav extends StatelessWidget {
           child: Row(
             children: <Widget>[
               const SizedBox(width: 8),
-              for (final AppSection section in AppSection.values)
+              for (final AppSection section in sections)
                 if (section != AppSection.settings)
                   _TopNavButton(
                     section: section,

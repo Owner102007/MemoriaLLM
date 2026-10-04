@@ -1,13 +1,11 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../../domain/library/book_file_picker.dart';
 import '../../domain/library/book_source.dart';
 import '../../domain/library/book_storage.dart';
+import 'book_copy.dart';
 import 'descriptor_book_handle.dart';
 import 'descriptor_copy.dart';
 import 'document_gateway.dart';
@@ -34,21 +32,35 @@ import 'local_book_storage.dart';
 /// 4. Если нельзя (провайдер отдал трубу — так делают облачные
 ///    хранилища) или разрешение закрепить не дали — книга потоково
 ///    переносится в папку приложения, и дальше это обычный файл.
+///
+/// В сборках ветвей СНО2026 порядок короче (SNO-F-LIT-02, SNO-DIV-03):
+/// книга **всегда** переносится в папку приложения. Ссылка не
+/// закрепляется вовсе — у тестировщика приложение не держит ни одного
+/// разрешения на чужие файлы.
 class AndroidBookStorage implements BookStorage {
   /// Создаёт хранилище.
   ///
   /// [booksDirectory] подменяется в тестах: настоящая папка приложения
   /// требует платформенного канала, а проверять надо перенос книги, а не
   /// умение спросить у системы путь.
+  ///
+  /// [alwaysCopy] — книга переносится в папку приложения всегда, а не
+  /// только когда иначе нельзя.
   AndroidBookStorage({
     DocumentGateway? documents,
     Future<Directory> Function()? booksDirectory,
+    bool alwaysCopy = false,
   }) : _documents = documents ?? SafDocumentGateway(),
-       _booksDirectory = booksDirectory ?? _applicationBooks;
+       _booksDirectory = booksDirectory ?? applicationBooks,
+       _alwaysCopy = alwaysCopy,
+       _files = LocalBookStorage(
+         copyInto: alwaysCopy ? booksDirectory ?? applicationBooks : null,
+       );
 
   final DocumentGateway _documents;
   final Future<Directory> Function() _booksDirectory;
-  final LocalBookStorage _files = const LocalBookStorage();
+  final bool _alwaysCopy;
+  final LocalBookStorage _files;
 
   @override
   Future<BookSource> adopt(PickedFile file) async {
@@ -57,6 +69,13 @@ class AndroidBookStorage implements BookStorage {
       // Диалог отдал настоящий путь — так бывает у файлов внутри самого
       // приложения. Посредники тут не нужны.
       return _files.adopt(file);
+    }
+
+    if (_alwaysCopy) {
+      // Ветвь СНО2026: книга живёт внутри приложения. Закреплять ссылку
+      // незачем — после переноса она не понадобится.
+      final int source = await _documents.openDescriptor(uri);
+      return _copyToBooks(uri, file.name, source);
     }
 
     final bool persisted = await _documents.persist(uri);
@@ -136,7 +155,7 @@ class AndroidBookStorage implements BookStorage {
     int descriptor,
   ) async {
     final Directory books = await _booksDirectory();
-    final String destination = p.join(books.path, _copyName(uri, name));
+    final String destination = p.join(books.path, copyFileName(uri, name));
     try {
       await copyDescriptorToFile(
         descriptor: descriptor,
@@ -146,24 +165,5 @@ class AndroidBookStorage implements BookStorage {
       await _documents.closeDescriptor(descriptor);
     }
     return FilePathSource(destination, owned: true);
-  }
-
-  /// Имя копии: краткий отпечаток ссылки плюс имя файла.
-  ///
-  /// Отпечаток нужен, чтобы две книги с одинаковым именем из разных
-  /// папок не легли одна поверх другой; имя — чтобы папку приложения
-  /// можно было открыть и понять, что в ней лежит.
-  static String _copyName(String uri, String name) {
-    final String digest = sha256
-        .convert(utf8.encode(uri))
-        .toString()
-        .substring(0, 16);
-    final String safe = name.replaceAll(RegExp(r'[^\w.\- ]+'), '_');
-    return '$digest-$safe';
-  }
-
-  static Future<Directory> _applicationBooks() async {
-    final Directory support = await getApplicationSupportDirectory();
-    return Directory(p.join(support.path, 'books'));
   }
 }

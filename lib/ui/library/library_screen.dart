@@ -28,6 +28,7 @@ class LibraryScreen extends StatefulWidget {
     required this.services,
     this.onAddBooks,
     this.onReading,
+    this.canAddBooks = true,
     super.key,
   });
 
@@ -48,6 +49,14 @@ class LibraryScreen extends StatefulWidget {
   /// Оболочка передаёт это разделу «Устройство»: пока книгу читают,
   /// обход и разборка стоят — движок и диск отданы странице.
   final ValueChanged<bool>? onReading;
+
+  /// Можно ли добавлять книги с полки.
+  ///
+  /// В сборках ветвей СНО2026 — нет (SNO-F-CFG-02): раздела «Устройство»
+  /// там не существует, и полка на него не ведёт. Кнопки в шапке и «+»
+  /// в категориях нет, а пустая полка говорит, откуда берутся книги, —
+  /// их добавляет экспериментатор в разделе «Тестирование».
+  final bool canAddBooks;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -457,12 +466,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
             tooltip: 'Новая категория',
             onPressed: () => unawaited(_newCategoryFromBar()),
           ),
-          IconButton(
-            key: const Key('library-open-file'),
-            icon: const Icon(Icons.library_add_outlined),
-            tooltip: 'Книги на устройстве',
-            onPressed: () => unawaited(_addBooks(null)),
-          ),
+          if (widget.canAddBooks)
+            IconButton(
+              key: const Key('library-open-file'),
+              icon: const Icon(Icons.library_add_outlined),
+              tooltip: 'Книги на устройстве',
+              onPressed: () => unawaited(_addBooks(null)),
+            ),
         ],
       ),
       body: StreamBuilder<List<BookCategory>>(
@@ -520,7 +530,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
         entry.key: entry.value.progress,
     };
     if (books.isEmpty && categories.isEmpty) {
-      return _EmptyShelf(onOpen: () => unawaited(_addBooks(null)));
+      return widget.canAddBooks
+          ? _EmptyShelf(onOpen: () => unawaited(_addBooks(null)))
+          : const _EmptyBranchShelf();
     }
     final List<ShelfSection> sections = buildShelf(
       categories: categories,
@@ -564,7 +576,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
           onOpen: (Book book) => unawaited(_openBook(book)),
           onMenu: (Book book) =>
               unawaited(_showBookMenu(book, categories, sections)),
-          onAdd: () => unawaited(_addBooks(category?.id)),
+          onAdd: widget.canAddBooks
+              ? () => unawaited(_addBooks(category?.id))
+              : null,
           onDropBook: (DraggedBook dragged, ShelfSection into, Book? before) =>
               unawaited(_dropBook(dragged, into, before)),
           onDragStarted: _dragStarted,
@@ -656,6 +670,48 @@ class _EmptyShelf extends StatelessWidget {
               'Приложение покажет все PDF, которые лежат на устройстве, — '
               'с обложками и поиском. Можно и выбрать файлы вручную.',
               style: theme.textTheme.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Пустая полка сборки ветви СНО2026 (SNO-F-CFG-02).
+///
+/// Кнопки здесь нет намеренно: тестировщик книг не добавляет, а
+/// экспериментатору сказано, куда идти.
+class _EmptyBranchShelf extends StatelessWidget {
+  const _EmptyBranchShelf();
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          key: const Key('library-empty-branch'),
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(
+              Icons.auto_stories_outlined,
+              size: 72,
+              color: theme.colorScheme.secondary,
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Литературы в поставке нет',
+              style: theme.textTheme.headlineSmall,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Книги добавляет экспериментатор: '
+              'Тестирование → Для экспериментатора → Добавить PDF…',
+              style: theme.textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),
           ],
