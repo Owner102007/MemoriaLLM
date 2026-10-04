@@ -50,6 +50,10 @@ PDFium: он гоняет по корпусу из `test/fixtures` каждый 
 по каждому файлу — в [test/fixtures/README.md](test/fixtures/README.md),
 собирает его `tool/make_fixtures.py` (нужны `pikepdf` и `pypdfium2`).
 
+Рядом, в `test/fixtures/zip`, лежат архивы-образцы для читателя ZIP: их
+собирают **другие** реализации — `zipfile` из Python и `zip` от Info-ZIP
+(`tool/make_zip_fixtures.py`), — и описаны они в том же файле.
+
 Если этот тест падает с `Failed to load PDFium module`, укажите библиотеку
 явно — так делает и CI:
 
