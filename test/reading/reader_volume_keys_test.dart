@@ -203,7 +203,7 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('F-READ-26: под панелью поиска кнопки — снова громкость', (
+  testWidgets('F-TEXT-12: поиск страницу не закрывает — кнопки листают', (
     WidgetTester tester,
   ) async {
     await pumpReader(tester);
@@ -211,8 +211,16 @@ void main() {
 
     await tester.tap(find.byKey(const Key('reader-search-button')));
     await tester.pumpAndSettle();
-    // Узкий экран, читатель набирает запрос: панель закрывает страницу.
-    expect(keys.active, isFalse);
+    // Узкий экран, читатель набирает запрос: панель — полоса у нижнего
+    // края, страница видна, и перехват кнопок остаётся. Прежде панель
+    // закрывала страницу целиком, и кнопки меняли громкость.
+    expect(find.byKey(const Key('search-panel')), findsOneWidget);
+    expect(keys.active, isTrue);
+
+    // Найденного нет — перебирать нечего, и кнопки листают, как всегда.
+    expect(keys.click(VolumeKey.down), VolumeKeyOutcome.forward);
+    await tester.pumpAndSettle();
+    expect(label(tester), '2 / 6');
 
     // Панель — не маршрут: её закрывает сам экран чтения.
     tester

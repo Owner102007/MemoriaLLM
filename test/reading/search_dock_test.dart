@@ -5,33 +5,29 @@ import 'package:memoria/domain/reading/search_dock.dart';
 import 'package:memoria/domain/theme/app_palette.dart';
 import 'package:memoria/domain/theme/contrast.dart';
 
-/// F-TEXT-11, ALG-UI-31: где стоит панель поиска.
+/// F-TEXT-11, F-TEXT-12, ALG-UI-31: где стоит панель поиска.
 ///
-/// Панель остаётся на экране после выбора результата и не должна
-/// закрывать то, ради чего её открыли, — найденное. Правило — чистый
-/// счёт, и проверяется числами: широкое окно, телефон в портрете и в
-/// альбоме, сетка положений найденного.
+/// Панель остаётся на экране после выбора результата. На широком окне
+/// она стоит рядом со страницей; на узком экране — полупрозрачной
+/// полосой всегда у нижнего края (F-TEXT-12, замечание владельца
+/// 04.10.2026). Правило — чистый счёт, и проверяется числами: широкое
+/// окно, телефон в портрете и в альбоме, клавиатура, ввод и просмотр.
 void main() {
   const Size phone = Size(360, 760);
   const Size phoneTurned = Size(760, 360);
   const Size desktop = Size(1280, 800);
 
-  /// Строка текста на экране: во всю ширину колонки, у высоты [top].
-  Rect line(Size screen, double top, {double height = 24}) {
-    return Rect.fromLTWH(screen.width * 0.1, top, screen.width * 0.8, height);
-  }
-
   SearchDock place(
     Size screen, {
-    Rect? found,
-    SearchDockSide? current,
     Size? area,
+    double keyboard = 0,
+    bool typing = false,
   }) {
     return placeSearchPanel(
       screen: screen,
       area: area ?? screen,
-      found: found,
-      current: current,
+      keyboard: keyboard,
+      typing: typing,
     );
   }
 
@@ -41,7 +37,6 @@ void main() {
       expect(dock.side, SearchDockSide.right);
       expect(dock.extent, kSearchPanelWidth);
       expect(dock.beside, isTrue);
-      expect(dock.compact, isFalse);
     });
 
     test('место под лист — окно минус панель', () {
@@ -54,16 +49,8 @@ void main() {
       );
     });
 
-    test('найденное панель не двигает: под ней ему не оказаться', () {
-      for (double left = 0; left < 1200; left += 100) {
-        final SearchDock dock = place(
-          desktop,
-          found: Rect.fromLTWH(left, 300, 80, 20),
-          current: SearchDockSide.left,
-        );
-        expect(dock.side, SearchDockSide.right, reason: 'слева $left');
-        expect(dock.beside, isTrue);
-      }
+    test('ввод и просмотр панель не двигают', () {
+      expect(place(desktop, typing: true), place(desktop));
     });
 
     test('граница широкого окна — 900 точек', () {
@@ -72,153 +59,106 @@ void main() {
       expect(place(const Size(900, 600)).beside, isTrue);
       expect(place(const Size(899, 600)).beside, isFalse);
     });
+
+    test('клавиатура поднимает панель, а ширины у листа не отнимает', () {
+      final SearchDock dock = place(desktop, keyboard: 300);
+      expect(dock.taken, kSearchPanelWidth);
+      expect(dock.lift, 300);
+      expect(dock.rectIn(desktop).bottom, 500);
+    });
   });
 
-  group('F-TEXT-11: телефон в портрете', () {
-    test('из коробки панель внизу и не выше 40 % экрана', () {
+  group('F-TEXT-12: узкий экран — полоса всегда снизу', () {
+    test('портрет: у нижнего края, не выше 40 % экрана', () {
       final SearchDock dock = place(phone);
       expect(dock.side, SearchDockSide.bottom);
       expect(dock.extent, closeTo(760 * 0.4, 1e-9));
       expect(dock.beside, isFalse, reason: 'лежит поверх страницы');
       expect(dock.taken, 0, reason: 'лист под ней не перекладывается');
-      expect(dock.vertical, isFalse);
+      expect(dock.rectIn(phone).bottom, 760);
+      expect(dock.rectIn(phone).width, 360);
     });
 
-    test('найденное наверху — панель остаётся внизу', () {
-      final SearchDock dock = place(phone, found: line(phone, 120));
+    test('альбом: тоже у нижнего края, а не сбоку', () {
+      final SearchDock dock = place(phoneTurned);
       expect(dock.side, SearchDockSide.bottom);
+      expect(dock.extent, closeTo(360 * 0.4, 1e-9));
+      expect(dock.rectIn(phoneTurned).bottom, 360);
+      expect(dock.rectIn(phoneTurned).width, 760);
     });
 
-    test('найденное внизу — панель переезжает наверх', () {
-      final SearchDock dock = place(phone, found: line(phone, 600));
-      expect(dock.side, SearchDockSide.top);
-      expect(dock.compact, isFalse);
-    });
-
-    test('панель не переезжает, пока найденное не закрыто', () {
-      // Стояла наверху, следующее совпадение — в середине экрана, мимо
-      // обеих полос: панель остаётся где была, а не возвращается вниз.
-      final SearchDock dock = place(
-        phone,
-        found: line(phone, 370),
-        current: SearchDockSide.top,
-      );
-      expect(dock.side, SearchDockSide.top);
-    });
-
-    test('найденное под верхней панелью — она возвращается вниз', () {
-      final SearchDock dock = place(
-        phone,
-        found: line(phone, 100),
-        current: SearchDockSide.top,
-      );
-      expect(dock.side, SearchDockSide.bottom);
-    });
-
-    test('найденное нигде не закрыто панелью — на сетке положений', () {
-      for (final SearchDockSide start in <SearchDockSide>[
-        SearchDockSide.bottom,
-        SearchDockSide.top,
-      ]) {
-        for (double top = 0; top <= 736; top += 8) {
-          final Rect found = line(phone, top);
-          final SearchDock dock = place(phone, found: found, current: start);
-          expect(
-            dock.rectIn(phone).overlaps(found),
-            isFalse,
-            reason: 'найденное на высоте $top, панель была $start, стала $dock',
-          );
+    test('нижний край — на сетке размеров экрана, при вводе и просмотре', () {
+      for (double width = 240; width < kSearchWideWindow; width += 60) {
+        for (double height = 240; height <= 1200; height += 80) {
+          for (final bool typing in <bool>[false, true]) {
+            final Size screen = Size(width, height);
+            final SearchDock dock = place(screen, typing: typing);
+            final Rect rect = dock.rectIn(screen);
+            final String where = '$width×$height, ввод: $typing';
+            expect(dock.side, SearchDockSide.bottom, reason: where);
+            expect(dock.beside, isFalse, reason: where);
+            expect(rect.bottom, height, reason: where);
+            expect(rect.left, 0, reason: where);
+            expect(rect.width, width, reason: where);
+            expect(rect.top, greaterThanOrEqualTo(0), reason: where);
+          }
         }
       }
     });
 
-    test('выделение через весь экран — панель сжимается до строки', () {
-      final SearchDock dock = place(
-        phone,
-        found: const Rect.fromLTWH(36, 200, 288, 400),
-      );
-      expect(dock.compact, isTrue);
-      expect(dock.extent, kSearchCompactExtent);
-      expect(dock.side, SearchDockSide.bottom, reason: 'остаётся где была');
-    });
-
-    test('сжатая панель уходит от найденного, если оно у её края', () {
-      // Найденное занимает весь низ экрана и середину: одна строка
-      // панели встаёт наверху, где его нет.
-      final SearchDock dock = place(
-        phone,
-        found: const Rect.fromLTWH(36, 250, 288, 510),
-      );
-      expect(dock.compact, isTrue);
-      expect(dock.side, SearchDockSide.top);
-    });
-  });
-
-  group('F-TEXT-11: телефон в альбоме', () {
-    test('из коробки панель справа и не шире 40 % экрана', () {
-      final SearchDock dock = place(phoneTurned);
-      expect(dock.side, SearchDockSide.right);
-      expect(dock.extent, closeTo(760 * 0.4, 1e-9));
-      expect(dock.beside, isFalse);
-      expect(dock.vertical, isTrue);
-    });
-
-    test('найденное справа — панель переезжает налево', () {
-      final SearchDock dock = place(
-        phoneTurned,
-        found: const Rect.fromLTWH(520, 150, 120, 20),
-      );
-      expect(dock.side, SearchDockSide.left);
-    });
-
-    test('найденное слева — панель остаётся справа', () {
-      final SearchDock dock = place(
-        phoneTurned,
-        found: const Rect.fromLTWH(60, 150, 120, 20),
-      );
-      expect(dock.side, SearchDockSide.right);
-    });
-
-    test('строка через всю полосу — панель сжимается до строки', () {
-      const Rect found = Rect.fromLTWH(40, 100, 680, 20);
-      final SearchDock dock = place(phoneTurned, found: found);
-      expect(dock.compact, isTrue);
-      expect(dock.side, SearchDockSide.bottom);
-      expect(dock.rectIn(phoneTurned).overlaps(found), isFalse);
-    });
-
-    test('поворот экрана выбирает сторону заново', () {
-      // Панель стояла наверху в портрете; в альбоме верхнего края у неё
-      // нет — она встаёт справа.
-      final SearchDock dock = place(phoneTurned, current: SearchDockSide.top);
-      expect(dock.side, SearchDockSide.right);
-    });
-  });
-
-  group('F-TEXT-11: без найденного', () {
-    test('прямоугольника нет — панель стоит где стояла', () {
-      expect(
-        place(phone, current: SearchDockSide.top).side,
-        SearchDockSide.top,
-      );
-      expect(place(phone).side, SearchDockSide.bottom);
-      expect(
-        place(phoneTurned, current: SearchDockSide.left).side,
-        SearchDockSide.left,
-      );
-    });
-
-    test('пустой прямоугольник — то же, что его отсутствие', () {
-      expect(
-        place(phone, found: Rect.zero, current: SearchDockSide.top).side,
-        SearchDockSide.top,
-      );
-    });
-
     test('место меньше экрана — доля считается от места', () {
-      // Клавиатура или системная панель отняли у места часть высоты.
+      // Системная панель отняла у места часть высоты.
       final SearchDock dock = place(phone, area: const Size(360, 500));
       expect(dock.extent, closeTo(200, 1e-9));
+    });
+
+    test('без клавиатуры ввод и просмотр — одно и то же место', () {
+      // Найденное правилу не подаётся вовсе: двигать полосу или менять
+      // её размер ему нечем. А пока клавиатуры нет, не меняет его и
+      // переход от ввода к просмотру.
+      expect(place(phone, typing: true), place(phone));
+      expect(place(phoneTurned, typing: true).side, SearchDockSide.bottom);
+    });
+  });
+
+  group('F-TEXT-12: клавиатура', () {
+    test('полоса стоит над клавиатурой', () {
+      final SearchDock dock = place(phone, keyboard: 300, typing: true);
+      expect(dock.lift, 300);
+      expect(dock.rectIn(phone).bottom, 460, reason: 'верх клавиатуры');
+      expect(dock.taken, 0, reason: 'лист под клавиатурой не перекладывается');
+    });
+
+    test('доля считается от места над клавиатурой', () {
+      final SearchDock dock = place(phone, keyboard: 300);
+      expect(dock.extent, closeTo(460 * 0.4, 1e-9));
+    });
+
+    test('при вводе полосе хватает места на строку списка', () {
+      // 40 % от 360 точек над клавиатурой — 144: на поле, строку счёта и
+      // строку списка этого мало.
+      final SearchDock dock = place(phone, keyboard: 400, typing: true);
+      expect(dock.extent, kSearchTypingExtent);
+      // При просмотре поля нет — и доля прежняя.
+      expect(place(phone, keyboard: 400).extent, closeTo(144, 1e-9));
+    });
+
+    test('полоса не выше места над клавиатурой', () {
+      // Телефон на боку: над клавиатурой осталось 140 точек.
+      final SearchDock dock = place(phoneTurned, keyboard: 220, typing: true);
+      expect(dock.extent, 140);
+      expect(dock.rectIn(phoneTurned).top, 0);
+      expect(dock.rectIn(phoneTurned).bottom, 140);
+    });
+
+    test('клавиатура выше места — полосы нет, а счёт не ломается', () {
+      final SearchDock dock = place(phoneTurned, keyboard: 500, typing: true);
+      expect(dock.lift, 360);
+      expect(dock.extent, 0);
+    });
+
+    test('отрицательная высота клавиатуры — её нет', () {
+      expect(place(phone, keyboard: -10), place(phone));
     });
   });
 

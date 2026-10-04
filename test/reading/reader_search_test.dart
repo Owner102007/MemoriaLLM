@@ -156,14 +156,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(keys.active, isTrue);
 
-      // Узкий экран, читатель набирает запрос: страницы не видно, и
-      // кнопки — снова громкость.
+      // Узкий экран, читатель набирает запрос: панель — полоса у
+      // нижнего края, страницу она не закрывает (F-TEXT-12), и перехват
+      // кнопок остаётся.
       stateOf(tester).openSearch();
       await tester.pumpAndSettle();
-      expect(keys.active, isFalse);
+      expect(keys.active, isTrue);
 
-      // Результат выбран: страница видна, панель — полосой у края.
-      await tester.tap(find.byKey(const Key('search-hit-0')));
+      // «Тише» при открытом поиске — первое совпадение, а не листание.
+      expect(keys.click(VolumeKey.down), VolumeKeyOutcome.forward);
       await tester.pumpAndSettle();
       expect(label(tester), '2 / 6');
       expect(keys.active, isTrue);

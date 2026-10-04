@@ -165,8 +165,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late final VolumeKeyHandler _volumeHandler = _onVolumeKey;
 
   /// На экране ли страница: поверх нет ни шторки, ни диалога, ни другого
-  /// экрана ([_onTop]), и её не закрыла панель ([_panelOpen]) —
-  /// оглавление или поиск, пока в нём набирают запрос на узком экране.
+  /// экрана ([_onTop]), и её не закрыло оглавление ([_panelOpen]). Поиск
+  /// страницу не закрывает (F-TEXT-12).
   bool _onTop = true;
   bool _panelOpen = false;
 
@@ -204,14 +204,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   List<_HitRects> _hitRects = const <_HitRects>[];
   String _hitRectsFor = '';
   int _hitRectsRun = 0;
-
-  /// Где на экране лежит текущее совпадение: по нему панель поиска на
-  /// узком экране выбирает край (ALG-UI-31). `null` — его не видно.
-  final ValueNotifier<Rect?> _found = ValueNotifier<Rect?>(null);
-
-  /// Что о месте найденного собираемся сказать после кадра.
-  Rect? _foundNext;
-  bool _foundQueued = false;
 
   /// Сколько ширины у страницы отняла панель поиска: на широком окне
   /// она стоит рядом со страницей (F-TEXT-11).
@@ -659,9 +651,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // Место под лист в ленте не меряется: к возвращению оно устарело.
     _window.releaseBox();
     setState(() => _flowNow.value = flow);
-    // В ленте слоя подсветки нет: ни места найденного, ни остальных
-    // совпадений там не показать.
-    _sayFound(null);
+    // В ленте слоя подсветки нет: совпадений там не показать.
     _refreshHitRects();
     _offerZoneHint();
     // Вернулись к листам в развороте — рамка соседней страницы могла
@@ -728,7 +718,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _jumpTimer?.cancel();
     _window.dispose();
     _flowNow.dispose();
-    _found.dispose();
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
     _search?.dispose();
@@ -943,24 +932,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Сколько совпадений одного листа подсвечивается, не больше.
   static const int _maxHitRects = 80;
-
-  /// Говорит панели поиска, где на экране лежит текущее совпадение.
-  ///
-  /// Место становится известно, пока строится лист, а сообщать о нём
-  /// посреди построения дерева нельзя — сообщаем после кадра.
-  void _sayFound(Rect? rect) {
-    _foundNext = rect;
-    if (_foundQueued) {
-      return;
-    }
-    _foundQueued = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _foundQueued = false;
-      if (mounted) {
-        _found.value = _foundNext;
-      }
-    });
-  }
 
   /// Снять выделение вместе с панелью.
   ///
@@ -1497,7 +1468,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onPanelsChanged: _onPanels,
       onSearchOpen: _onSearchOpen,
       onSearchDock: _onSearchDock,
-      found: _found,
       selecting: () => _selection != null || _sheet.selecting,
       fullScreen: _fullScreen,
       onFullScreen: widget.services.window.available
@@ -1748,13 +1718,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
         if (pages.contains(hit.pageNumber) && !hit.isAt(mark))
           ..._screenRects(view, document, pages, hit.pageNumber, hit.boxes),
     ];
-    // Панели поиска надо знать, где найденное, чтобы не закрыть его
-    // (ALG-UI-31).
-    _sayFound(
-      found.isEmpty
-          ? null
-          : found.reduce((Rect a, Rect b) => a.expandToInclude(b)),
-    );
     final List<Rect> selected = selection == null
         ? const <Rect>[]
         : _screenRects(

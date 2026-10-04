@@ -1,15 +1,17 @@
-/// Место панели поиска рядом с найденным (F-TEXT-11, ALG-UI-31).
+/// Место панели поиска рядом со страницей (F-TEXT-11, F-TEXT-12,
+/// ALG-UI-31).
 ///
 /// Поиск — не окно, которое закрывает страницу, а её спутник: читатель
 /// выбирает результат, страница переходит к нему, а список остаётся на
-/// экране. Значит, панель обязана стоять там, где она не закрывает то,
-/// ради чего её открыли, — найденное.
+/// экране.
 ///
 /// На широком окне места хватает обоим: панель стоит справа, а лист
 /// раскладывается в оставшейся ширине. На узком экране панель лежит
-/// поверх страницы полупрозрачной полосой и уступает найденному место:
-/// переезжает к противоположному краю, а если оно не помещается мимо
-/// неё нигде — сжимается до одной строки.
+/// поверх страницы полупрозрачной полосой **всегда у нижнего края**
+/// (F-TEXT-12, замечание владельца 04.10.2026): и пока запрос набирают,
+/// и после выбора результата, в портрете и в альбоме. К другому краю
+/// она не переезжает, куда бы ни пришлось найденное: под полосой оно
+/// видно сквозь неё.
 ///
 /// Здесь — только счёт. Виджетов файл не знает и проверяется числами.
 library;
@@ -30,12 +32,15 @@ const double kSearchPanelWidth = 380;
 /// Принято владельцем 03.10.2026 (решение Ж1) до проверки на устройстве.
 const double kSearchStripShare = 0.4;
 
-/// Высота панели, сжатой до одной строки `‹ 3 из 17 ›`.
-const double kSearchCompactExtent = 48;
+/// Высота строки счёта `‹ 3 из 17 ›`.
+const double kSearchCounterExtent = 48;
 
-/// На сколько найденное должно отстоять от панели, чтобы не считаться
-/// закрытым: подсветка, прижатая к самому краю панели, читается плохо.
-const double kSearchFoundMargin = 6;
+/// Сколько места полоса занимает, пока в ней набирают запрос, не меньше.
+///
+/// Поле, строка счёта и одна строка списка: с поднятой клавиатурой
+/// 40 % оставшегося экрана на них не хватает, а полоса, в которой не
+/// видно ни одного результата, бесполезна (F-TEXT-12).
+const double kSearchTypingExtent = 168;
 
 /// Непрозрачность панели поверх страницы.
 ///
@@ -49,17 +54,11 @@ const double kSearchPanelOpacity = 0.78;
 
 /// У какого края стоит панель.
 enum SearchDockSide {
-  /// У правого края.
+  /// У правого края — рядом со страницей, на широком окне.
   right,
 
-  /// У левого края.
-  left,
-
-  /// У нижнего края.
+  /// У нижнего края — полосой поверх страницы, на узком экране.
   bottom,
-
-  /// У верхнего края.
-  top,
 }
 
 /// Где и какой стоит панель поиска.
@@ -69,14 +68,13 @@ class SearchDock {
     required this.side,
     required this.extent,
     this.beside = false,
-    this.compact = false,
+    this.lift = 0,
   });
 
   /// У какого края.
   final SearchDockSide side;
 
-  /// Размер поперёк края: ширина у боковых краёв, высота у верхнего и
-  /// нижнего.
+  /// Размер поперёк края: ширина у правого края, высота у нижнего.
   final double extent;
 
   /// Стоит ли панель рядом со страницей (`true`) или поверх неё.
@@ -85,13 +83,11 @@ class SearchDock {
   /// панелью оказаться не может. Поверх — лист не перекладывается.
   final bool beside;
 
-  /// Сжата ли панель до одной строки: найденное не поместилось мимо неё
-  /// ни у одного края.
-  final bool compact;
-
-  /// Стоит ли панель столбцом у бокового края.
-  bool get vertical =>
-      side == SearchDockSide.left || side == SearchDockSide.right;
+  /// На сколько панель поднята над нижним краем: высота клавиатуры.
+  ///
+  /// Страница под клавиатурой не перекладывается, а панель обязана
+  /// стоять над ней — иначе поле запроса оказалось бы под клавишами.
+  final double lift;
 
   /// Сколько ширины панель отнимает у листа.
   double get taken => beside ? extent : 0;
@@ -100,13 +96,19 @@ class SearchDock {
   Rect rectIn(Size area) {
     switch (side) {
       case SearchDockSide.right:
-        return Rect.fromLTWH(area.width - extent, 0, extent, area.height);
-      case SearchDockSide.left:
-        return Rect.fromLTWH(0, 0, extent, area.height);
+        return Rect.fromLTWH(
+          area.width - extent,
+          0,
+          extent,
+          area.height - lift,
+        );
       case SearchDockSide.bottom:
-        return Rect.fromLTWH(0, area.height - extent, area.width, extent);
-      case SearchDockSide.top:
-        return Rect.fromLTWH(0, 0, area.width, extent);
+        return Rect.fromLTWH(
+          0,
+          area.height - lift - extent,
+          area.width,
+          extent,
+        );
     }
   }
 
@@ -116,17 +118,16 @@ class SearchDock {
         other.side == side &&
         other.extent == extent &&
         other.beside == beside &&
-        other.compact == compact;
+        other.lift == lift;
   }
 
   @override
-  int get hashCode => Object.hash(side, extent, beside, compact);
+  int get hashCode => Object.hash(side, extent, beside, lift);
 
   @override
   String toString() {
     final String how = beside ? 'рядом' : 'поверх';
-    final String size = compact ? 'одной строкой' : '$extent';
-    return 'SearchDock($side, $how, $size)';
+    return 'SearchDock($side, $how, $extent, над клавиатурой $lift)';
   }
 }
 
@@ -135,78 +136,47 @@ bool isSearchWide(Size screen) => screen.width >= kSearchWideWindow;
 
 /// Выбирает место панели поиска.
 ///
-/// [screen] — экран или окно целиком: по нему решается, широкое ли окно
-/// и как повёрнут телефон. [area] — место, в котором стоят страница и
-/// панель: оно бывает меньше экрана. [found] — прямоугольник текущего
-/// совпадения в координатах [area]; `null` — его нет на экране или у
-/// страницы нет координат текста. [current] — где панель стоит сейчас.
+/// [screen] — экран или окно целиком: по нему решается, широкое ли окно.
+/// [area] — место, в котором стоят страница и панель: оно бывает меньше
+/// экрана. [keyboard] — сколько высоты [area] снизу закрыла экранная
+/// клавиатура. [typing] — набирают ли запрос: тогда в полосе стоит поле
+/// ввода, и ей нужно место хотя бы под одну строку списка.
 ///
 /// Правила — ALG-UI-31:
 ///
 /// 1. Широкое окно — панель у правого края, рядом со страницей.
-/// 2. Узкий экран в портрете — полоса во всю ширину, из коробки снизу.
-/// 3. Узкий экран в альбоме — полоса во всю высоту, из коробки справа.
-/// 4. Панель закрывает найденное — переезжает к противоположному краю.
-///    Не закрывает — стоит где стояла: при шаге по совпадениям она не
-///    скачет без нужды.
-/// 5. Найденное не помещается мимо панели ни у одного края — панель
-///    сжимается до одной строки.
+/// 2. Узкий экран — полоса во всю ширину у нижнего края, в портрете и в
+///    альбоме, при вводе и при просмотре (F-TEXT-12). Найденное её не
+///    двигает и размера ей не меняет.
+/// 3. Высота полосы — не больше 40 % того, что осталось от места над
+///    клавиатурой; при вводе — не меньше [kSearchTypingExtent], но и не
+///    больше оставшегося места.
+/// 4. Клавиатура поднимает панель над собой и места под лист не меняет.
 SearchDock placeSearchPanel({
   required Size screen,
   required Size area,
-  Rect? found,
-  SearchDockSide? current,
+  double keyboard = 0,
+  bool typing = false,
 }) {
+  final double height = area.height;
+  final double lift = keyboard <= 0
+      ? 0
+      : (keyboard > height ? height : keyboard);
   if (isSearchWide(screen)) {
-    return const SearchDock(
+    return SearchDock(
       side: SearchDockSide.right,
       extent: kSearchPanelWidth,
       beside: true,
+      lift: lift,
     );
   }
-  final bool portrait = screen.height >= screen.width;
-  final SearchDockSide first = portrait
-      ? SearchDockSide.bottom
-      : SearchDockSide.right;
-  final SearchDockSide second = portrait
-      ? SearchDockSide.top
-      : SearchDockSide.left;
-  final double extent =
-      (portrait ? area.height : area.width) * kSearchStripShare;
-  final SearchDockSide preferred = current == second ? second : first;
-  final SearchDock here = SearchDock(side: preferred, extent: extent);
-  if (found == null || found.isEmpty) {
-    return here;
+  final double free = height - lift;
+  double extent = free * kSearchStripShare;
+  if (typing && extent < kSearchTypingExtent) {
+    extent = kSearchTypingExtent;
   }
-  final Rect kept = found.inflate(kSearchFoundMargin);
-  if (!kept.overlaps(here.rectIn(area))) {
-    return here;
+  if (extent > free) {
+    extent = free;
   }
-  final SearchDock there = SearchDock(
-    side: preferred == first ? second : first,
-    extent: extent,
-  );
-  if (!kept.overlaps(there.rectIn(area))) {
-    return there;
-  }
-  // Найденное тянется через весь экран: панель остаётся одной строкой —
-  // у нижнего края, а если оно и там, то у верхнего.
-  const SearchDock low = SearchDock(
-    side: SearchDockSide.bottom,
-    extent: kSearchCompactExtent,
-    compact: true,
-  );
-  const SearchDock high = SearchDock(
-    side: SearchDockSide.top,
-    extent: kSearchCompactExtent,
-    compact: true,
-  );
-  if (portrait && preferred == SearchDockSide.top) {
-    return kept.overlaps(high.rectIn(area)) && !kept.overlaps(low.rectIn(area))
-        ? low
-        : high;
-  }
-  return kept.overlaps(low.rectIn(area)) && !kept.overlaps(high.rectIn(area))
-      ? high
-      : low;
+  return SearchDock(side: SearchDockSide.bottom, extent: extent, lift: lift);
 }

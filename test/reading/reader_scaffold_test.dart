@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -81,7 +80,6 @@ void main() {
     bool fullScreen = false,
     bool hasWindow = false,
     KeyBindings keyBindings = KeyBindings.standard,
-    ValueListenable<Rect?>? found,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -105,7 +103,6 @@ void main() {
             onPanelsChanged: covers.add,
             onSearchOpen: searches.add,
             onSearchDock: docks.add,
-            found: found,
             selecting: () => selecting,
             fullScreen: fullScreen,
             onFullScreen: hasWindow ? windows.add : null,
@@ -742,8 +739,8 @@ void main() {
       expect(jumps, <int>[2]);
       expect(panel, findsOneWidget);
       expect(count(tester), '1 из 3');
-      // Узкий экран: результат выбран — панель сжалась в полосу, и поля
-      // ввода в ней нет.
+      // Узкий экран: результат выбран — в полосе поля ввода больше нет,
+      // запрос стоит в строке счёта.
       expect(field, findsNothing);
       expect(find.byKey(const Key('search-query')), findsOneWidget);
 
@@ -862,9 +859,12 @@ void main() {
       controller.dispose();
     });
 
-    testWidgets('узкий экран: страница закрыта, только пока набирают', (
+    testWidgets('F-TEXT-12: при вводе страница не закрыта', (
       WidgetTester tester,
     ) async {
+      // Экран теста — 800×600: узкий. Прежде панель при вводе занимала
+      // его целиком; теперь она с первого мгновения — полоса у нижнего
+      // края, и страница над ней видна.
       final _Searched book = await threes();
       final ReaderController controller = book.controller;
       final DocumentSearch search = book.search;
@@ -873,17 +873,33 @@ void main() {
       expect(state.searchSteps, isFalse, reason: 'поиск закрыт');
 
       await openSearch(tester);
-      expect(covers, <bool>[true]);
-      expect(tester.getSize(panel), const Size(800, 600), reason: 'весь экран');
-      expect(state.searchSteps, isFalse, reason: 'страницы не видно');
+
+      expect(field, findsOneWidget, reason: 'поле запроса — в полосе');
+      final Rect strip = tester.getRect(panel);
+      expect(strip.bottom, 600, reason: 'у нижнего края');
+      expect(strip.width, 800);
+      expect(strip.height, lessThanOrEqualTo(600 * kSearchStripShare));
+      expect(strip.top, greaterThan(300), reason: 'страница над полосой видна');
+      expect(covers, isEmpty, reason: 'страницу поиск не закрывает');
+      expect(docks, isEmpty, reason: 'поверх страницы, а не рядом с ней');
+      // Место под страницу прежнее: лист не перекладывается.
+      expect(
+        tester.getSize(find.byKey(const Key('fake-viewer'))),
+        const Size(800, 600),
+      );
+      // Страница видна — кнопки громкости ведут по совпадениям сразу.
+      expect(state.searchSteps, isTrue);
+
+      // Сквозь полосу видно страницу: она полупрозрачна и при вводе.
+      final Material material = tester.widget<Material>(panel);
+      expect(material.color!.a, closeTo(kSearchPanelOpacity, 0.01));
 
       await tapKey(tester, 'search-hit-0');
-      expect(covers, <bool>[true, false]);
-      expect(state.searchSteps, isTrue, reason: 'страница видна');
-      expect(docks, isEmpty, reason: 'поверх страницы, а не рядом с ней');
+      expect(covers, isEmpty);
+      expect(state.searchSteps, isTrue);
 
       await tapKey(tester, 'search-close');
-      expect(covers, <bool>[true, false]);
+      expect(covers, isEmpty);
       expect(state.searchSteps, isFalse);
 
       search.dispose();
@@ -891,78 +907,156 @@ void main() {
       controller.dispose();
     });
 
-    testWidgets('телефон в альбоме: полоса сбоку и уступает найденному', (
+    testWidgets('F-TEXT-12: поле в полосе читается на своём фоне', (
       WidgetTester tester,
     ) async {
-      // Экран теста — 800×600: узкий и лежит на боку.
-      final ValueNotifier<Rect?> found = ValueNotifier<Rect?>(null);
-      addTearDown(found.dispose);
+      // Набранное и подсказка стоят на непрозрачном фоне поля, а не на
+      // чужой странице под полосой; состояние поиска — основным цветом.
       final _Searched book = await threes();
       final ReaderController controller = book.controller;
       final DocumentSearch search = book.search;
-      await pumpReader(tester, controller, search: search, found: found);
+      await pumpReader(tester, controller, search: search);
       await openSearch(tester);
-      await tapKey(tester, 'search-hit-0');
 
-      Rect strip() => tester.getRect(panel);
-      expect(strip().width, closeTo(800 * kSearchStripShare, 0.5));
-      expect(strip().right, 800, reason: 'из коробки — у правого края');
-      expect(strip().height, 600);
-
-      // Найденное оказалось под панелью — она переезжает налево.
-      found.value = const Rect.fromLTWH(600, 200, 100, 20);
-      await tester.pumpAndSettle();
-      expect(strip().left, 0);
-
-      // Следующее найденное панелью не закрыто — она стоит где стояла.
-      found.value = const Rect.fromLTWH(400, 300, 100, 20);
-      await tester.pumpAndSettle();
-      expect(strip().left, 0, reason: 'без нужды не переезжает');
-
-      // А это — под ней: возвращается направо.
-      found.value = const Rect.fromLTWH(100, 300, 100, 20);
-      await tester.pumpAndSettle();
-      expect(strip().right, 800);
+      final ThemeData theme = Theme.of(tester.element(panel));
+      final InputDecoration decoration = tester
+          .widget<TextField>(field)
+          .decoration!;
+      expect(decoration.filled, isTrue);
+      expect(decoration.fillColor, theme.colorScheme.surface);
+      expect(decoration.fillColor!.a, 1);
+      final Text status = tester.widget<Text>(
+        find.byKey(const Key('search-status')),
+      );
+      expect(status.style!.color, theme.colorScheme.onSurface);
 
       search.dispose();
       await controller.close();
       controller.dispose();
     });
 
-    testWidgets('телефон в портрете: полоса снизу, не выше 40 % экрана', (
+    testWidgets('F-TEXT-12: телефон в альбоме — полоса тоже снизу', (
       WidgetTester tester,
     ) async {
-      resize(tester, const Size(400, 800));
-      final ValueNotifier<Rect?> found = ValueNotifier<Rect?>(null);
-      addTearDown(found.dispose);
+      // Экран теста — 800×600: узкий и лежит на боку. Прежде полоса
+      // вставала сбоку.
       final _Searched book = await threes();
       final ReaderController controller = book.controller;
       final DocumentSearch search = book.search;
-      await pumpReader(tester, controller, search: search, found: found);
+      await pumpReader(tester, controller, search: search);
       await openSearch(tester);
       await tapKey(tester, 'search-hit-0');
 
-      Rect strip() => tester.getRect(panel);
-      expect(strip().bottom, 800, reason: 'из коробки — у нижнего края');
-      expect(strip().width, 400);
-      expect(strip().height, lessThanOrEqualTo(800 * kSearchStripShare));
+      final Rect strip = tester.getRect(panel);
+      expect(strip.left, 0);
+      expect(strip.right, 800, reason: 'во всю ширину');
+      expect(strip.bottom, 600, reason: 'у нижнего края');
+      expect(strip.height, lessThanOrEqualTo(600 * kSearchStripShare));
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-TEXT-12: полоса не переезжает при шаге по совпадениям', (
+      WidgetTester tester,
+    ) async {
+      resize(tester, const Size(400, 800));
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+      await tapKey(tester, 'search-hit-0');
+
+      final Rect first = tester.getRect(panel);
+      expect(first.bottom, 800, reason: 'у нижнего края');
+      expect(first.width, 400);
+      expect(first.height, lessThanOrEqualTo(800 * kSearchStripShare));
       // Страница под полосой не перекладывается: место под неё прежнее.
       expect(
         tester.getSize(find.byKey(const Key('fake-viewer'))),
         const Size(400, 800),
       );
 
-      // Найденное внизу экрана — полоса переезжает наверх.
-      found.value = const Rect.fromLTWH(40, 700, 320, 20);
+      // Где бы ни лежало следующее найденное, полоса стоит где стояла и
+      // того же размера: найденное под ней видно сквозь неё.
+      await tapKey(tester, 'search-next');
+      expect(tester.getRect(panel), first);
+      await tapKey(tester, 'search-next');
+      expect(tester.getRect(panel), first);
+      await tester.sendKeyEvent(LogicalKeyboardKey.f3);
       await tester.pumpAndSettle();
-      expect(strip().top, 0);
+      expect(tester.getRect(panel), first);
+      expect(jumps, <int>[2, 4, 6, 2]);
+      expect(find.byKey(const Key('search-results')), findsOneWidget);
 
-      // Выделение через весь экран — остаётся одна строка счёта.
-      found.value = const Rect.fromLTWH(40, 20, 320, 760);
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-TEXT-12: с клавиатурой полоса стоит над ней', (
+      WidgetTester tester,
+    ) async {
+      resize(tester, const Size(400, 800));
+      addTearDown(tester.view.resetViewInsets);
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await openSearch(tester);
+
+      // Клавиатура поднялась на 300 точек.
+      tester.view.viewInsets = FakeViewPadding(
+        bottom: 300 * tester.view.devicePixelRatio,
+      );
       await tester.pumpAndSettle();
-      expect(strip().height, lessThanOrEqualTo(kSearchCompactExtent));
-      expect(find.byKey(const Key('search-results')), findsNothing);
-      expect(find.byKey(const Key('search-count')), findsOneWidget);
+
+      final Rect strip = tester.getRect(panel);
+      expect(strip.bottom, 500, reason: 'верх клавиатуры');
+      expect(strip.top, greaterThanOrEqualTo(0));
+      expect(field, findsOneWidget);
+      expect(tester.getRect(field).bottom, lessThanOrEqualTo(500));
+      // Список виден: хотя бы одна строка над клавиатурой.
+      expect(find.byKey(const Key('search-hit-0')), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(const Key('search-hit-0'))).bottom,
+        lessThanOrEqualTo(500),
+      );
+      // Страница под клавиатурой не перекладывается.
+      expect(
+        tester.getSize(find.byKey(const Key('fake-viewer'))),
+        const Size(400, 800),
+      );
+
+      // Клавиатура ушла — полоса вернулась к нижнему краю.
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      expect(tester.getRect(panel).bottom, 800);
+
+      search.dispose();
+      await controller.close();
+      controller.dispose();
+    });
+
+    testWidgets('F-TEXT-12: поиск, открытый кнопкой, прячет панели чтения', (
+      WidgetTester tester,
+    ) async {
+      // Полоса лежит у нижнего края, под панелями чтения: нижняя панель
+      // закрыла бы поле запроса, останься она на экране.
+      final _Searched book = await threes();
+      final ReaderController controller = book.controller;
+      final DocumentSearch search = book.search;
+      await pumpReader(tester, controller, search: search);
+      await tester.tap(find.byKey(const Key('fake-viewer')));
+      await tester.pumpAndSettle();
+      expect(chromeOpacity(tester), 1);
+
+      await tapKey(tester, 'reader-search-button');
+
+      expect(panel, findsOneWidget);
+      expect(chromeOpacity(tester), 0);
 
       search.dispose();
       await controller.close();

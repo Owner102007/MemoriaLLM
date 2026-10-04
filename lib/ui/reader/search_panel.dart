@@ -25,8 +25,14 @@ import '../../domain/reading/text_search.dart';
 ///
 /// * **ввод** — поле, счёт совпадений, список;
 /// * **просмотр** ([browsing]) — результат выбран, и на узком экране
-///   панель сжата в полосу: поля нет, в одной строке стоят `‹ 3 из 17 ›`,
-///   запрос (нажатие по нему возвращает ко вводу) и `✕`.
+///   поля в полосе нет: в одной строке стоят `‹ 3 из 17 ›`, запрос
+///   (нажатие по нему возвращает ко вводу) и `✕`.
+///
+/// **На узком экране панель — полупрозрачная полоса у нижнего края в
+/// обоих видах** (F-TEXT-12, замечание владельца 04.10.2026): страница
+/// видна над ней и сквозь неё и пока запрос набирают. Места в полосе
+/// мало, поэтому поле в ней плотнее, а состояние поиска стоит в строке
+/// счёта.
 class SearchPanel extends StatefulWidget {
   /// Создаёт панель.
   const SearchPanel({
@@ -34,10 +40,8 @@ class SearchPanel extends StatefulWidget {
     required this.onSelect,
     this.current = -1,
     this.browsing = false,
-    this.compact = false,
     this.translucent = false,
     this.edged = false,
-    this.side,
     this.fieldFocus,
     this.onStep,
     this.onEdit,
@@ -58,21 +62,12 @@ class SearchPanel extends StatefulWidget {
   /// Вид «просмотр»: поля ввода нет, запрос показан текстом.
   final bool browsing;
 
-  /// Сжата до одной строки: списка нет.
-  final bool compact;
-
-  /// Лежит ли панель поверх страницы полупрозрачной полосой.
+  /// Лежит ли панель поверх страницы полупрозрачной полосой у нижнего
+  /// края (узкий экран).
   final bool translucent;
 
   /// Стоит ли панель рядом со страницей: тогда их разделяет линия.
   final bool edged;
-
-  /// У какого края панель лежит полосой; `null` — она занимает экран
-  /// целиком или стоит рядом со страницей.
-  ///
-  /// От вырезов экрана полоса отступает только там, где она его краёв
-  /// касается: нижней полосе верхний вырез не сосед.
-  final SearchDockSide? side;
 
   /// Узел поля ввода: экран чтения ставит в него указатель, когда
   /// открывает поиск.
@@ -121,8 +116,7 @@ class _SearchPanelState extends State<SearchPanel> {
       widget.search.addListener(_onChanged);
     }
     if (oldWidget.current != widget.current ||
-        oldWidget.browsing != widget.browsing ||
-        oldWidget.compact != widget.compact) {
+        oldWidget.browsing != widget.browsing) {
       _revealSoon();
     }
   }
@@ -207,7 +201,7 @@ class _SearchPanelState extends State<SearchPanel> {
     final ThemeData theme = Theme.of(context);
     final DocumentSearch search = widget.search;
     final Color surface = theme.colorScheme.surface;
-    final bool list = !widget.compact && search.hits.isNotEmpty;
+    final bool list = search.hits.isNotEmpty;
     // Своя область фокуса, как была у боковой шторки. Поле, потеряв
     // указатель ввода — по `Enter` или по нажатию мышью мимо него, —
     // отдаёт его своей области, а она лежит ниже узла клавиш чтения:
@@ -241,32 +235,33 @@ class _SearchPanelState extends State<SearchPanel> {
     DocumentSearch search, {
     required bool list,
   }) {
-    final SearchDockSide? side = widget.side;
+    final bool strip = widget.translucent;
+    final bool typing = !widget.browsing;
+    final bool counter = widget.browsing || search.hits.isNotEmpty;
+    // F-TEXT-12: в полосе место дорого — над ней страница, под ней
+    // клавиатура. Состояние поиска там встаёт в строку счёта, а не
+    // отдельной строкой.
+    final bool statusInCounter = strip && typing && counter;
     return SafeArea(
-      left: side != SearchDockSide.right,
-      top: side != SearchDockSide.bottom,
-      right: side != SearchDockSide.left,
-      bottom: side != SearchDockSide.top,
+      // От вырезов экрана полоса отступает только там, где она его краёв
+      // касается: нижней полосе верхний вырез не сосед.
+      top: !strip,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          if (!widget.browsing) _input(context, search),
-          if (!widget.browsing && search.isRunning)
+          if (typing) _input(context, theme, search),
+          if (typing && search.isRunning)
             LinearProgressIndicator(
               key: const Key('search-progress'),
               value: search.progress,
             ),
-          if (widget.browsing || search.hits.isNotEmpty)
-            _counter(context, theme, search),
-          if (!widget.browsing)
+          if (counter)
+            _counter(context, theme, search, status: statusInCounter),
+          if (typing && !statusInCounter)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-              child: Text(
-                _status(search),
-                key: const Key('search-status'),
-                style: theme.textTheme.bodySmall,
-              ),
+              child: _statusText(theme, search),
             ),
           if (list) const Divider(height: 1),
           if (list) Flexible(child: _results(context, theme, search.hits)),
@@ -275,10 +270,39 @@ class _SearchPanelState extends State<SearchPanel> {
     );
   }
 
+  /// Состояние поиска одной строкой.
+  ///
+  /// На полупрозрачной полосе — основным цветом текста: вторичный над
+  /// чужой страницей контраст не держит (`kSearchPanelOpacity`).
+  Widget _statusText(ThemeData theme, DocumentSearch search) {
+    final TextStyle? style = theme.textTheme.bodySmall;
+    return Text(
+      _status(search),
+      key: const Key('search-status'),
+      maxLines: widget.translucent ? 1 : null,
+      overflow: widget.translucent ? TextOverflow.ellipsis : null,
+      style: widget.translucent
+          ? style?.copyWith(color: theme.colorScheme.onSurface)
+          : style,
+    );
+  }
+
   /// Поле ввода и кнопка, закрывающая поиск.
-  Widget _input(BuildContext context, DocumentSearch search) {
+  Widget _input(BuildContext context, ThemeData theme, DocumentSearch search) {
+    final bool strip = widget.translucent;
+    final Widget clear = IconButton(
+      key: const Key('search-clear'),
+      icon: const Icon(Icons.backspace_outlined),
+      tooltip: 'Очистить',
+      onPressed: () {
+        _field.clear();
+        search.clear();
+      },
+    );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 4, 8),
+      padding: strip
+          ? const EdgeInsets.fromLTRB(12, 8, 4, 4)
+          : const EdgeInsets.fromLTRB(16, 16, 4, 8),
       child: Row(
         children: <Widget>[
           Expanded(
@@ -294,19 +318,27 @@ class _SearchPanelState extends State<SearchPanel> {
                 // на телефоне поднимало клавиатуру.
                 focusNode: widget.fieldFocus,
                 textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  labelText: 'Поиск по книге',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    key: const Key('search-clear'),
-                    icon: const Icon(Icons.backspace_outlined),
-                    tooltip: 'Очистить',
-                    onPressed: () {
-                      _field.clear();
-                      search.clear();
-                    },
-                  ),
-                ),
+                // В полосе поле плотное и непрозрачное: набранное и
+                // подсказка читаются на своём фоне, а не на чужой
+                // странице под полосой (F-TEXT-12).
+                decoration: strip
+                    ? InputDecoration(
+                        hintText: 'Поиск по книге',
+                        isDense: true,
+                        filled: true,
+                        fillColor: theme.colorScheme.surface,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: clear,
+                      )
+                    : InputDecoration(
+                        labelText: 'Поиск по книге',
+                        border: const OutlineInputBorder(),
+                        suffixIcon: clear,
+                      ),
                 onChanged: _onQueryChanged,
                 // Enter по уже найденному запросу — это «следующее
                 // совпадение», а не «искать то же самое заново»: искать
@@ -339,12 +371,13 @@ class _SearchPanelState extends State<SearchPanel> {
   }
 
   /// Строка счёта: `‹ 3 из 17 ›`, а в виде «просмотр» — ещё запрос и
-  /// `✕`.
+  /// `✕`. В полосе при вводе в ней же стоит состояние поиска ([status]).
   Widget _counter(
     BuildContext context,
     ThemeData theme,
-    DocumentSearch search,
-  ) {
+    DocumentSearch search, {
+    required bool status,
+  }) {
     final int count = search.hits.length;
     final int current = widget.current;
     final bool placed = current >= 0 && current < count;
@@ -353,7 +386,7 @@ class _SearchPanelState extends State<SearchPanel> {
         : (placed ? '${current + 1} из $count' : 'из $count');
     final void Function(int step)? step = count == 0 ? null : widget.onStep;
     return SizedBox(
-      height: kSearchCompactExtent,
+      height: kSearchCounterExtent,
       child: Row(
         children: <Widget>[
           const SizedBox(width: 4),
@@ -392,6 +425,16 @@ class _SearchPanelState extends State<SearchPanel> {
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium,
                   ),
+                ),
+              ),
+            )
+          else if (status)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8, right: 12),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: _statusText(theme, search),
                 ),
               ),
             )
