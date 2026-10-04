@@ -41,7 +41,6 @@ void main() {
               children: <Widget>[
                 SelectionPanel(
                   anchor: anchor,
-                  area: area,
                   prompts: prompts,
                   onPrompt: (_) {},
                   onQuote: () {},
@@ -72,7 +71,9 @@ void main() {
         closeTo(anchor.center.dx, 1),
         reason: 'панель $panel, выделение $anchor',
       );
-      expect(panel.bottom, lessThanOrEqualTo(anchor.top));
+      // Над выделением и вплотную к нему: место считается по настоящей
+      // высоте панели, а без промптов она вдвое ниже обычной.
+      expect(panel.bottom, closeTo(anchor.top - SelectionPanel.gap, 0.5));
     });
 
     testWidgets('BUG-03: на телефоне узкая панель тоже над выделением', (

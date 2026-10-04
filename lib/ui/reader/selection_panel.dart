@@ -13,11 +13,15 @@ import '../../domain/prompts/selection_prompt.dart';
 /// Панель встаёт над выделением, а если сверху места нет — под ним. Ни
 /// то, ни другое не должно накрывать сам выделенный текст: читатель
 /// смотрит на него, пока выбирает, что с ним сделать.
+///
+/// По горизонтали панель стоит **по середине выделения** и шириной по
+/// своим кнопкам (BUG-03): место ей назначается после того, как она
+/// измерена, — заранее её ширины не знает никто, она зависит от имён
+/// промптов читателя.
 class SelectionPanel extends StatelessWidget {
   /// Создаёт панель.
   const SelectionPanel({
     required this.anchor,
-    required this.area,
     required this.prompts,
     required this.onPrompt,
     required this.onQuote,
@@ -26,17 +30,25 @@ class SelectionPanel extends StatelessWidget {
     super.key,
   });
 
-  /// Сколько места панель занимает по высоте вместе с отступами.
+  /// Сколько места панель занимает по высоте вместе с отступами, когда
+  /// в ней два ряда — промпты и действия.
+  ///
+  /// На экране высота берётся настоящая, измеренная; это число — для
+  /// расчётов, которым измерить панель негде.
   static const double height = 108;
+
+  /// Отступ панели от краёв области.
+  static const double margin = 8;
+
+  /// Ниже этой ширины панель не сжимается и на самом узком экране.
+  static const double minWidth = 240;
 
   /// Отступ панели от выделения.
   static const double gap = 10;
 
-  /// Прямоугольник выделения на экране.
+  /// Прямоугольник выделения — в координатах области, которую панель
+  /// занимает: размер области она узнаёт сама, при раскладке.
   final Rect anchor;
-
-  /// Размер области, в которой стоит панель.
-  final Size area;
 
   /// Промпты читателя.
   final PromptSet prompts;
@@ -56,92 +68,119 @@ class SelectionPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final Offset at = panelOffset(anchor: anchor, area: area);
-    return Stack(
-      children: <Widget>[
-        Positioned(
-          left: at.dx,
-          top: at.dy,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: area.width - 16 < 240 ? 240 : area.width - 16,
-            ),
-            child: Material(
-              key: const Key('selection-panel'),
-              color: theme.colorScheme.surface,
-              elevation: 6,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    if (prompts.prompts.isNotEmpty)
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            for (final SelectionPrompt prompt
-                                in prompts.prompts)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 2,
-                                ),
-                                child: TextButton(
-                                  key: Key('selection-prompt-${prompt.id}'),
-                                  onPressed: () => onPrompt(prompt),
-                                  style: TextButton.styleFrom(
-                                    visualDensity: VisualDensity.compact,
-                                    foregroundColor: prompt.isPrimary
-                                        ? theme.colorScheme.primary
-                                        : theme.colorScheme.onSurface,
-                                  ),
-                                  child: Text(prompt.name),
-                                ),
-                              ),
-                          ],
+    // BUG-03: место панели считается по её настоящему размеру. Прежде
+    // она считалась шириной во весь экран и потому всегда стояла у
+    // левого края — на широком окне ПК в полуэкране от выделенного.
+    return CustomSingleChildLayout(
+      delegate: _PanelPlace(anchor: anchor),
+      child: Material(
+        key: const Key('selection-panel'),
+        color: theme.colorScheme.surface,
+        elevation: 6,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              if (prompts.prompts.isNotEmpty)
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      for (final SelectionPrompt prompt in prompts.prompts)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: TextButton(
+                            key: Key('selection-prompt-${prompt.id}'),
+                            onPressed: () => onPrompt(prompt),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              foregroundColor: prompt.isPrimary
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurface,
+                            ),
+                            child: Text(prompt.name),
+                          ),
                         ),
-                      ),
-                    // Три подписи в ряд не помещаются в телефон в
-                    // портрете: «Копировать» уезжало за край экрана, и
-                    // до него приходилось бы доскроллить. Подписей у
-                    // действий поэтому нет — только значки и всплывающие
-                    // подсказки. Имена остаются там, где они и есть
-                    // смысл: на кнопках промптов, которые читатель назвал
-                    // сам.
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        _Action(
-                          id: 'quote',
-                          icon: Icons.format_quote,
-                          label: 'В цитаты',
-                          onPressed: onQuote,
-                        ),
-                        _Action(
-                          id: 'note',
-                          icon: Icons.edit_note,
-                          label: 'Заметка',
-                          onPressed: onNote,
-                        ),
-                        _Action(
-                          id: 'copy',
-                          icon: Icons.copy_all_outlined,
-                          label: 'Копировать',
-                          onPressed: onCopy,
-                        ),
-                      ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
+              // Три подписи в ряд не помещаются в телефон в портрете:
+              // «Копировать» уезжало за край экрана, и до него
+              // приходилось бы доскроллить. Подписей у действий поэтому
+              // нет — только значки и всплывающие подсказки. Имена
+              // остаются там, где они и есть смысл: на кнопках промптов,
+              // которые читатель назвал сам.
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _Action(
+                    id: 'quote',
+                    icon: Icons.format_quote,
+                    label: 'В цитаты',
+                    onPressed: onQuote,
+                  ),
+                  _Action(
+                    id: 'note',
+                    icon: Icons.edit_note,
+                    label: 'Заметка',
+                    onPressed: onNote,
+                  ),
+                  _Action(
+                    id: 'copy',
+                    icon: Icons.copy_all_outlined,
+                    label: 'Копировать',
+                    onPressed: onCopy,
+                  ),
+                ],
               ),
-            ),
+            ],
           ),
         ),
-      ],
+      ),
     );
+  }
+}
+
+/// Ставит панель на место, когда её размер уже известен (BUG-03).
+///
+/// Слой занимает всю область над страницей, но нажатия ловит только
+/// сама панель: мимо неё они проходят к странице, как и прежде.
+class _PanelPlace extends SingleChildLayoutDelegate {
+  const _PanelPlace({required this.anchor});
+
+  /// Прямоугольник выделения на экране.
+  final Rect anchor;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    // Панель не шире области без полей — длинный ряд промптов тогда
+    // прокручивается внутри неё, — но и не уже своего минимума.
+    final double room = constraints.maxWidth - SelectionPanel.margin * 2;
+    return BoxConstraints(
+      maxWidth: room < SelectionPanel.minWidth
+          ? SelectionPanel.minWidth
+          : room,
+      maxHeight: constraints.maxHeight,
+    );
+  }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    return panelOffset(
+      anchor: anchor,
+      area: size,
+      width: childSize.width,
+      height: childSize.height,
+    );
+  }
+
+  @override
+  bool shouldRelayout(_PanelPlace oldDelegate) {
+    return oldDelegate.anchor != anchor;
   }
 }
 
@@ -175,9 +214,15 @@ class _Action extends StatelessWidget {
 /// Сверху, если там есть место; иначе снизу. Если места нет нигде — а так
 /// бывает, когда выделен весь экран, — панель прижимается к нижнему краю:
 /// она нужнее, чем вид на последнюю строку выделения.
+///
+/// По горизонтали — по середине выделения (ALG-UI-18, BUG-03): [width] —
+/// настоящая ширина панели, а не ширина экрана. У края страницы панель
+/// прижимается к нему с отступом [SelectionPanel.margin] и за экран не
+/// выходит.
 Offset panelOffset({
   required Rect anchor,
   required Size area,
+  required double width,
   double height = SelectionPanel.height,
   double gap = SelectionPanel.gap,
 }) {
@@ -194,17 +239,30 @@ Offset panelOffset({
   if (top < 0) {
     top = 0;
   }
-  // По горизонтали панель встаёт по середине выделения и не вылезает за
-  // края: у выделения в углу страницы середина у самого края экрана.
-  const double margin = 8;
-  final double width = area.width - margin * 2;
+  const double margin = SelectionPanel.margin;
   double left = anchor.center.dx - width / 2;
+  // Правый край проверяется первым, левый — последним: панель шире
+  // области обязана начинаться у левого поля, а не уезжать влево.
+  final double limit = area.width - margin - width;
+  if (left > limit) {
+    left = limit;
+  }
   if (left < margin) {
     left = margin;
   }
-  final double limit = area.width - margin - width;
-  if (left > limit) {
-    left = limit < margin ? margin : limit;
-  }
   return Offset(left, top);
+}
+
+/// К чему привязать панель: прямоугольник всего выделения (BUG-25).
+///
+/// Обычно это объединение прямоугольников выделения по строкам. Если их
+/// нет вовсе — ни наших, ни от просмотрщика, — панель всё равно
+/// показывается: привязка уходит к нижнему краю области, по её середине.
+/// Выделено, а сделать с выделенным ничего нельзя — хуже, чем панель не
+/// на своём месте.
+Rect panelAnchor({required List<Rect> rects, required Size area}) {
+  if (rects.isEmpty) {
+    return Rect.fromLTWH(area.width / 2, area.height, 0, 0);
+  }
+  return rects.reduce((Rect a, Rect b) => a.expandToInclude(b));
 }

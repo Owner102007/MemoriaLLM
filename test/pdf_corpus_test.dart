@@ -21,7 +21,15 @@ import 'package:memoria/domain/reading/text_search.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/infrastructure/images/png.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
-import 'package:pdfrx/pdfrx.dart' show PdfDocument, PdfPage, pdfrxInitialize;
+import 'package:memoria/ui/reader/viewer_selection.dart';
+import 'package:pdfrx/pdfrx.dart'
+    show
+        PdfDocument,
+        PdfPage,
+        PdfPageBaseExtensions,
+        PdfPageText,
+        PdfPageTextRange,
+        pdfrxInitialize;
 
 import 'support/descriptors.dart';
 import 'support/fake_reading.dart';
@@ -808,6 +816,101 @@ void main() {
           expect(box.right, lessThanOrEqualTo(1));
           expect(box.bottom, lessThanOrEqualTo(1));
         }
+      }
+    });
+  });
+
+  group('BUG-25: прямоугольники выделения от просмотрщика', () {
+    /// Страница движка и её текст в разборе просмотрщика — тот самый, по
+    /// которому он считает выделение.
+    Future<({PdfPage page, PdfPageText text})> structured(
+      String name,
+      int pageNumber,
+    ) async {
+      final ReaderDocument document = await open(name);
+      await document.measure(<int>[pageNumber]);
+      final PdfDocument engine = document.engineDocument! as PdfDocument;
+      final PdfPage page = engine.pages[pageNumber - 1];
+      return (page: page, text: await page.loadStructuredText());
+    }
+
+    test('BUG-25: выделенный кусок — в долях страницы', () async {
+      final ({PdfPage page, PdfPageText text}) first = await structured(
+        'basic_text.pdf',
+        1,
+      );
+      final int length = first.text.fullText.length;
+      expect(length, greaterThan(20), reason: 'на странице есть текст');
+
+      final List<TextBox> boxes = viewerSelectionBoxes(
+        <PdfPageTextRange>[
+          PdfPageTextRange(pageText: first.text, start: 0, end: 20),
+        ],
+        first.page,
+      );
+
+      expect(boxes, isNotEmpty);
+      for (final TextBox box in boxes) {
+        expect(box.isValid, isTrue, reason: '$box');
+        expect(box.left, greaterThanOrEqualTo(0));
+        expect(box.top, greaterThanOrEqualTo(0));
+        expect(box.right, lessThanOrEqualTo(1));
+        expect(box.bottom, lessThanOrEqualTo(1));
+        // Кусок строки, а не пятно на полстраницы.
+        expect(box.height, lessThan(0.3), reason: '$box');
+      }
+    });
+
+    test('BUG-25: чужая страница и место за краем текста', () async {
+      final ({PdfPage page, PdfPageText text}) first = await structured(
+        'book_120_pages.pdf',
+        1,
+      );
+      final ({PdfPage page, PdfPageText text}) second = await structured(
+        'book_120_pages.pdf',
+        2,
+      );
+      final int length = first.text.fullText.length;
+
+      // Выделение со страницы 1 к странице 2 не привязывается.
+      expect(
+        viewerSelectionBoxes(<PdfPageTextRange>[
+          PdfPageTextRange(pageText: first.text, start: 0, end: 5),
+        ], second.page),
+        isEmpty,
+      );
+      // Место за краем текста не роняет: ответ пустой или частичный.
+      expect(
+        () => viewerSelectionBoxes(<PdfPageTextRange>[
+          PdfPageTextRange(
+            pageText: first.text,
+            start: length + 10,
+            end: length + 20,
+          ),
+        ], first.page),
+        returnsNormally,
+      );
+    });
+
+    test('BUG-25: повёрнутая страница — доли от повёрнутой', () async {
+      final ({PdfPage page, PdfPageText text}) turned = await structured(
+        'rotated_pages.pdf',
+        2,
+      );
+      final int length = turned.text.fullText.length;
+      if (length == 0) {
+        return;
+      }
+      final List<TextBox> boxes = viewerSelectionBoxes(
+        <PdfPageTextRange>[
+          PdfPageTextRange(pageText: turned.text, start: 0, end: length),
+        ],
+        turned.page,
+      );
+      for (final TextBox box in boxes) {
+        expect(box.isValid, isTrue, reason: '$box');
+        expect(box.right, lessThanOrEqualTo(1));
+        expect(box.bottom, lessThanOrEqualTo(1));
       }
     });
   });

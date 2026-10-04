@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/application/reading/book_selection.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/reading/context_paragraph.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
@@ -201,5 +202,150 @@ void main() {
 
     await controller.close();
     controller.dispose();
+  });
+
+  group('BUG-25: выделение собирается и без нашей геометрии', () {
+    /// Прямоугольники, которыми выделение нарисовал сам просмотрщик.
+    const List<TextBox> viewer = <TextBox>[
+      TextBox(left: 0.30, top: 0.40, right: 0.55, bottom: 0.42),
+      TextBox(left: 0.10, top: 0.43, right: 0.25, bottom: 0.45),
+    ];
+
+    test('BUG-25: без геометрии — прямоугольники просмотрщика', () async {
+      // Число знаков не сошлось с числом прямоугольников — наш слой для
+      // подсветки непригоден. Просмотрщик при этом выделение нарисовал.
+      // Прежде у такого выделения прямоугольников не было, и панель
+      // действий не появлялась.
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(pages: <String>['слово в тексте без геометрии']),
+      );
+
+      final BookSelection selection = await controller.selectionFrom(
+        pageNumber: 1,
+        start: 0,
+        end: 5,
+        located: 'слово',
+        text: 'слово',
+        viewerRects: viewer,
+      );
+
+      expect(selection.isEmpty, isFalse);
+      expect(selection.rects, viewer);
+      expect(selection.text, 'слово');
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('BUG-25: текст не нашёлся — место по просмотрщику', () async {
+      // Тексты разошлись сильнее, чем на пробелы: числа просмотрщика в
+      // нашей геометрии показали бы не то место. Его прямоугольники
+      // вернее.
+      final PageTextLayout layout = buildLayout(<TestLine>[
+        const TestLine('первая строка страницы', top: 0.10),
+        const TestLine('вторая строка страницы', top: 0.13),
+      ]);
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(
+          pages: <String>[layout.text],
+          layouts: <int, PageTextLayout>{1: layout},
+        ),
+      );
+
+      final BookSelection selection = await controller.selectionFrom(
+        pageNumber: 1,
+        start: 3,
+        end: 9,
+        located: 'третья',
+        text: 'третья',
+        viewerRects: viewer,
+      );
+
+      expect(selection.rects, viewer);
+      expect(selection.start, 3, reason: 'числа остаются просмотрщика');
+      expect(selection.end, 9);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('BUG-25: пока нашей геометрии можно верить, берётся она', () async {
+      final PageTextLayout layout = buildLayout(<TestLine>[
+        const TestLine('первая строка страницы', top: 0.10),
+        const TestLine('вторая строка страницы', top: 0.13),
+      ]);
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(
+          pages: <String>[layout.text],
+          layouts: <int, PageTextLayout>{1: layout},
+        ),
+      );
+      final ({int start, int end}) word = at(layout, 'вторая');
+
+      final BookSelection selection = await controller.selectionFrom(
+        pageNumber: 1,
+        // Подсказка просмотрщика сбита на два знака — как на живой книге.
+        start: word.start - 2,
+        end: word.end - 2,
+        located: 'вторая',
+        text: 'вторая',
+        viewerRects: viewer,
+      );
+
+      expect(selection.start, word.start);
+      expect(selection.end, word.end);
+      expect(selection.rects, isNot(viewer));
+      expect(selection.rects, hasLength(1));
+      expect(selection.rects.single.top, closeTo(0.13, 1e-9));
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('BUG-25: прямоугольников нет — выделение всё равно есть', () async {
+      // Панель при этом встаёт у нижнего края: привязку считает
+      // `panelAnchor`. Здесь важно, что выделение не объявлено пустым.
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(pages: <String>['слово в тексте без геометрии']),
+      );
+
+      final BookSelection selection = await controller.selectionFrom(
+        pageNumber: 1,
+        start: 0,
+        end: 5,
+        located: 'слово',
+        text: 'слово',
+      );
+
+      expect(selection.rects, isEmpty);
+      expect(selection.isEmpty, isFalse);
+
+      await controller.close();
+      controller.dispose();
+    });
+
+    test('BUG-25: вырожденные прямоугольники отброшены', () async {
+      final ReaderController controller = await makeController(
+        FakeReaderDocument(pages: <String>['слово в тексте без геометрии']),
+      );
+
+      final BookSelection selection = await controller.selectionFrom(
+        pageNumber: 1,
+        start: 0,
+        end: 5,
+        located: 'слово',
+        text: 'слово',
+        viewerRects: const <TextBox>[
+          TextBox(left: 0, top: 0, right: 0, bottom: 0),
+          TextBox(left: 0.30, top: 0.40, right: 0.55, bottom: 0.42),
+        ],
+      );
+
+      expect(selection.rects, hasLength(1));
+      expect(selection.rects.single.left, 0.30);
+
+      await controller.close();
+      controller.dispose();
+    });
   });
 }

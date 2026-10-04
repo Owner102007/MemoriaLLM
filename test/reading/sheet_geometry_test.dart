@@ -276,11 +276,13 @@ void main() {
 
   group('место панели действий', () {
     const Size area = Size(400, 800);
+    const double width = 180;
 
     test('над выделением, если сверху есть место', () {
       final Offset at = panelOffset(
         anchor: const Rect.fromLTWH(100, 400, 150, 20),
         area: area,
+        width: width,
       );
       expect(at.dy, 400 - SelectionPanel.gap - SelectionPanel.height);
     });
@@ -289,6 +291,7 @@ void main() {
       final Offset at = panelOffset(
         anchor: const Rect.fromLTWH(100, 10, 150, 20),
         area: area,
+        width: width,
       );
       expect(at.dy, 30 + SelectionPanel.gap);
     });
@@ -301,9 +304,16 @@ void main() {
         Rect.fromLTWH(380, 400, 20, 20),
       ];
       for (final Rect anchor in corners) {
-        final Offset at = panelOffset(anchor: anchor, area: area);
-        expect(at.dx, greaterThanOrEqualTo(0));
-        expect(at.dx, lessThanOrEqualTo(area.width));
+        final Offset at = panelOffset(
+          anchor: anchor,
+          area: area,
+          width: width,
+        );
+        expect(at.dx, greaterThanOrEqualTo(SelectionPanel.margin));
+        expect(
+          at.dx + width,
+          lessThanOrEqualTo(area.width - SelectionPanel.margin),
+        );
       }
     });
 
@@ -311,9 +321,79 @@ void main() {
       final Offset at = panelOffset(
         anchor: const Rect.fromLTWH(0, 0, 400, 800),
         area: area,
+        width: width,
       );
       expect(at.dy, area.height - SelectionPanel.height);
       expect(at.dy, greaterThanOrEqualTo(0));
+    });
+
+    test('BUG-03: панель стоит по середине выделения', () {
+      // Прежде ширина панели считалась шириной экрана без полей, правая
+      // граница совпадала с левой, и панель при любом выделении вставала
+      // в 8 точках от левого края.
+      for (final Size screen in <Size>[
+        const Size(400, 800),
+        const Size(1400, 900),
+        const Size(1920, 1080),
+      ]) {
+        final Rect anchor = Rect.fromLTWH(screen.width * 0.6, 400, 120, 22);
+        final Offset at = panelOffset(
+          anchor: anchor,
+          area: screen,
+          width: width,
+        );
+        expect(
+          at.dx + width / 2,
+          closeTo(anchor.center.dx, 1e-9),
+          reason: 'экран $screen',
+        );
+      }
+    });
+
+    test('BUG-03: настоящая высота панели ставит её вплотную к слову', () {
+      // Панель без промптов вдвое ниже панели с ними. Место считается по
+      // измеренной высоте — иначе низкая панель висела бы над
+      // выделением с лишним просветом.
+      final Offset at = panelOffset(
+        anchor: const Rect.fromLTWH(100, 400, 150, 20),
+        area: area,
+        width: width,
+        height: 48,
+      );
+      expect(at.dy + 48, 400 - SelectionPanel.gap);
+    });
+
+    test('BUG-03: панель шире экрана начинается у левого поля', () {
+      final Offset at = panelOffset(
+        anchor: const Rect.fromLTWH(150, 400, 40, 20),
+        area: const Size(200, 800),
+        width: SelectionPanel.minWidth,
+      );
+      expect(at.dx, SelectionPanel.margin);
+    });
+
+    test('BUG-25: привязка — прямоугольник всего выделения', () {
+      final Rect anchor = panelAnchor(
+        rects: const <Rect>[
+          Rect.fromLTWH(200, 300, 150, 20),
+          Rect.fromLTWH(40, 322, 90, 20),
+        ],
+        area: area,
+      );
+      expect(anchor, const Rect.fromLTRB(40, 300, 350, 342));
+    });
+
+    test('BUG-25: прямоугольников нет — панель у нижнего края', () {
+      // Выделено, а показать место нечем: панель всё равно обязана
+      // появиться — у нижнего края области, по её середине.
+      final Rect anchor = panelAnchor(rects: const <Rect>[], area: area);
+      final Offset at = panelOffset(anchor: anchor, area: area, width: width);
+
+      expect(at.dx + width / 2, area.width / 2);
+      expect(
+        at.dy,
+        area.height - SelectionPanel.gap - SelectionPanel.height,
+      );
     });
   });
 

@@ -18,6 +18,7 @@ import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/spread.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_highlight.dart';
+import 'book_selection.dart';
 import 'page_frames.dart';
 
 /// Чем кончилась попытка сменить режим отображения.
@@ -760,6 +761,68 @@ class ReaderController extends ChangeNotifier {
       at = page.indexOf(text, at + 1);
     }
     return best < 0 ? null : (start: best, end: best + text.length);
+  }
+
+  /// Собирает выделение из того, что отдал просмотрщик (BUG-25).
+  ///
+  /// [start] и [end] — место первого куска в счёте просмотрщика,
+  /// [located] — текст этого куска: по нему место ищется в нашем счёте.
+  /// [text] — всё выделенное целиком. [viewerRects] — прямоугольники
+  /// выделения, посчитанные самим просмотрщиком, в долях страницы.
+  ///
+  /// Прямоугольники берутся наши, пока им можно верить: выделенное
+  /// нашлось в нашем тексте, и у страницы есть геометрия. Иначе —
+  /// просмотрщика: он выделение уже нарисовал, значит, знает, где оно.
+  /// Прежде в этом случае прямоугольников не было вовсе, и панель
+  /// действий не появлялась: выделено, а сделать с выделенным ничего
+  /// нельзя.
+  Future<BookSelection> selectionFrom({
+    required int pageNumber,
+    required int start,
+    required int end,
+    required String located,
+    required String text,
+    List<TextBox> viewerRects = const <TextBox>[],
+  }) async {
+    // Просмотрщик считает места по своему разбору страницы, а всё
+    // остальное в читалке — по нашему. Числа переводятся сразу, у самого
+    // входа: дальше по ним и подсветка, и абзац контекста, и координаты
+    // цитаты, которые уедут в базу и переживут перезапуск.
+    final ({int start, int end})? place = await locateOnPage(
+      pageNumber: pageNumber,
+      text: located,
+      hint: start,
+    );
+    List<TextBox> rects = const <TextBox>[];
+    if (place != null) {
+      rects = await highlightFor(
+        pageNumber: pageNumber,
+        start: place.start,
+        end: place.end,
+      );
+    }
+    if (rects.isEmpty) {
+      rects = <TextBox>[
+        for (final TextBox box in viewerRects)
+          if (box.isValid) box,
+      ];
+    }
+    if (rects.isEmpty && place == null) {
+      // Последнее, что остаётся, — числа просмотрщика в нашей геометрии:
+      // так было до BUG-25, и это лучше, чем ничего.
+      rects = await highlightFor(
+        pageNumber: pageNumber,
+        start: start,
+        end: end,
+      );
+    }
+    return BookSelection(
+      pageNumber: pageNumber,
+      start: place?.start ?? start,
+      end: place?.end ?? end,
+      text: text,
+      rects: rects,
+    );
   }
 
   Future<PageTextLayout> _loadLayout(int pageNumber) async {

@@ -44,6 +44,7 @@ import 'reader_sheet.dart';
 import 'reading_filter_layer.dart';
 import 'selection_panel.dart';
 import 'tap_zone_hint.dart';
+import 'viewer_selection.dart';
 
 /// Экран чтения.
 ///
@@ -1111,32 +1112,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
         .map((PdfPageTextRange part) => part.text)
         .join(' ')
         .trim();
-    // Просмотрщик считает места по своему разбору страницы, а всё
-    // остальное в читалке — по нашему. Числа переводятся сразу, у самого
-    // входа: дальше по ним и подсветка, и абзац контекста, и координаты
-    // цитаты, которые уедут в базу и переживут перезапуск.
-    final ({int start, int end})? place = await controller.locateOnPage(
-      pageNumber: range.pageNumber,
-      text: range.text,
-      hint: range.start,
-    );
-    final int start = place?.start ?? range.start;
-    final int end = place?.end ?? range.end;
-    final List<TextBox> rects = await controller.highlightFor(
-      pageNumber: range.pageNumber,
-      start: start,
-      end: end,
+    // BUG-25: прямоугольники выделения берутся и у самого просмотрщика.
+    // Когда наш слой текста с его разбором не сошёлся, панель встаёт по
+    // ним — прежде она в этом случае не появлялась вовсе.
+    final Object? engine = controller.document.engineDocument;
+    final int pageNumber = range.pageNumber;
+    final List<TextBox> viewerRects =
+        engine is PdfDocument &&
+            pageNumber >= 1 &&
+            pageNumber <= engine.pages.length
+        ? viewerSelectionBoxes(ranges, engine.pages[pageNumber - 1])
+        : const <TextBox>[];
+    final BookSelection selection = await controller.selectionFrom(
+      pageNumber: pageNumber,
+      start: range.start,
+      end: range.end,
+      located: range.text,
+      text: text,
+      viewerRects: viewerRects,
     );
     if (!mounted) {
       return;
     }
-    final BookSelection selection = BookSelection(
-      pageNumber: range.pageNumber,
-      start: start,
-      end: end,
-      text: text,
-      rects: rects,
-    );
     setState(() => _selection = selection.isEmpty ? null : selection);
   }
 
@@ -1884,10 +1881,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
               color: theme.colorScheme.tertiary.withValues(alpha: 0.35),
             ),
           ),
-        if (selection != null && selected.isNotEmpty)
+        // BUG-25: выделение на этом листе есть — панель есть. Нет
+        // прямоугольников — она встаёт у нижнего края, а не пропадает.
+        if (selection != null && pages.contains(selection.pageNumber))
           SelectionPanel(
-            anchor: selected.reduce((Rect a, Rect b) => a.expandToInclude(b)),
-            area: size,
+            anchor: panelAnchor(rects: selected, area: size),
             prompts: _prompts,
             onPrompt: (SelectionPrompt prompt) => unawaited(_onPrompt(prompt)),
             onQuote: () => unawaited(_onQuote()),

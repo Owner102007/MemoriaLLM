@@ -39,7 +39,6 @@ void main() {
       host(
         SelectionPanel(
           anchor: const Rect.fromLTWH(50, 300, 200, 24),
-          area: const Size(400, 800),
           prompts: PromptSet(
             prompts: <SelectionPrompt>[
               prompt('p1', 'Значение'),
@@ -71,7 +70,6 @@ void main() {
       host(
         SelectionPanel(
           anchor: const Rect.fromLTWH(50, 300, 200, 24),
-          area: const Size(400, 800),
           prompts: PromptSet(
             prompts: <SelectionPrompt>[prompt('p1', 'Значение')],
             fromBook: false,
@@ -105,7 +103,6 @@ void main() {
       host(
         SelectionPanel(
           anchor: const Rect.fromLTWH(50, 300, 200, 24),
-          area: const Size(400, 800),
           prompts: PromptSet.empty,
           onPrompt: (_) {},
           onQuote: () {},
