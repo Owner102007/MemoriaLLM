@@ -9,6 +9,7 @@ import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/shelf.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/infrastructure/files/file_fingerprint.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
 
@@ -248,6 +249,98 @@ void main() {
       expect(again.id, first.id);
       expect((await data.library.books()).single.id, first.id);
       expect(await data.library.bookById('id-2'), isNull);
+    });
+
+    test('BUG-30: место чтения возвращается вместе с книгой', () async {
+      final Book first = await importer(
+        FakeReaderDocument(pages: <String>['раз', 'два', 'три']),
+      ).register(_picked);
+      await data.reading.savePosition(
+        ReadingPosition(bookId: first.id, page: 3, progress: 0.9),
+      );
+      await data.library.delete(first.id);
+
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['раз', 'два', 'три']),
+        id: 'id-2',
+      ).register(_picked);
+
+      final ReadingPosition? kept = await data.reading.position(again.id);
+      expect(kept!.page, 3);
+    });
+
+    test('BUG-30: в прежней категории книга встаёт на прежнее место', () async {
+      await data.library.save(testBook(id: 'a', title: 'Аа', hash: 'hash-a'));
+      await data.library.save(testBook(id: 'b', title: 'Яя', hash: 'hash-b'));
+      await placeBook(data, 'a', 'study');
+      await placeBook(data, 'b', 'study', position: 2);
+      final Book first = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked, categoryId: 'study');
+      await placeBook(data, first.id, 'study', position: 1);
+      await data.library.delete(first.id);
+
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        id: 'id-2',
+      ).register(_picked, categoryId: 'study');
+
+      expect(again.id, first.id);
+      expect(again.categoryId, 'study');
+      expect(again.shelfPosition, 1);
+    });
+
+    test('BUG-30: в другой категории книга встаёт последней', () async {
+      await data.library.save(testBook(id: 'a', title: 'Аа', hash: 'hash-a'));
+      await placeBook(data, 'a', 'fiction', position: 4);
+      final Book first = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked, categoryId: 'study');
+      await data.library.delete(first.id);
+
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        id: 'id-2',
+      ).register(_picked, categoryId: 'fiction');
+
+      expect(again.id, first.id);
+      expect(again.categoryId, 'fiction');
+      expect(again.shelfPosition, 5);
+    });
+
+    test('BUG-30: без названной категории книга встаёт, где стояла', () async {
+      final Book first = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked, categoryId: 'study');
+      await placeBook(data, first.id, 'study', position: 3);
+      await data.library.delete(first.id);
+
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        id: 'id-2',
+      ).register(_picked);
+
+      expect(again.categoryId, 'study');
+      expect(again.shelfPosition, 3);
+    });
+
+    test('BUG-30: живая книга с тем же файлом главнее снятой', () async {
+      // Надгробие прежней версии и живая книга с одним отпечатком:
+      // повторный выбор файла относится к живой.
+      await data.library.save(testBook(id: 'old', hash: 'hash-fixture'));
+      await data.library.delete('old');
+      final Book live = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked);
+      expect(live.id, 'id-1');
+
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        id: 'id-2',
+      ).register(_picked);
+
+      expect(again.id, 'id-1');
+      expect((await data.library.books()).single.id, 'id-1');
     });
   });
 

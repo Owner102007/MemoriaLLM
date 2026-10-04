@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book_category.dart';
+import 'package:memoria/domain/library/shelf.dart';
+import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/ui/library/book_card.dart';
 import 'package:memoria/ui/library/library_screen.dart';
 
@@ -100,6 +102,80 @@ void main() {
       expect(find.text('Учёба'), findsOneWidget);
       expect(find.text('Пока пусто.'), findsOneWidget);
       expect(find.textContaining('Нажмите «+»'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    /// Две книги: в порядке мест — «Яя», «Аа»; открывали последней «Аа».
+    Future<void> twoBooks() async {
+      await data.library.save(
+        testBook(id: 'z', title: 'Яя', hash: 'hash-z').copyWith(
+          shelfPosition: 0,
+          openedAt: DateTime.utc(2026, 10, 1),
+        ),
+      );
+      await data.library.save(
+        testBook(id: 'a', title: 'Аа', hash: 'hash-a').copyWith(
+          shelfPosition: 1,
+          openedAt: DateTime.utc(2026, 10, 3),
+        ),
+      );
+    }
+
+    double left(WidgetTester tester, String id) {
+      return tester.getTopLeft(find.byKey(Key('library-book-$id'))).dx;
+    }
+
+    testWidgets('SNO-F-CFG-04: в ветви книги стоят, как их положил архив', (
+      WidgetTester tester,
+    ) async {
+      await twoBooks();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LibraryScreen(
+            services: testServices(data: data),
+            canAddBooks: false,
+            defaultSort: ShelfSort.manual,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Порядок мест, а не «сначала недавние»: полка тестировщика не
+      // меняется оттого, что книгу открыли.
+      expect(left(tester, 'z'), lessThan(left(tester, 'a')));
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: выбранный порядок главнее исходного', (
+      WidgetTester tester,
+    ) async {
+      await twoBooks();
+      await data.settings.write(SettingsKeys.shelfSort, ShelfSort.title.name);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LibraryScreen(
+            services: testServices(data: data),
+            canAddBooks: false,
+            defaultSort: ShelfSort.manual,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(left(tester, 'a'), lessThan(left(tester, 'z')));
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: в основном приложении — сначала недавние', (
+      WidgetTester tester,
+    ) async {
+      await twoBooks();
+      await pumpShelf(tester, testServices(data: data), canAddBooks: true);
+
+      expect(left(tester, 'a'), lessThan(left(tester, 'z')));
 
       await unmount(tester);
     });

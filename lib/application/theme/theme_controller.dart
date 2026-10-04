@@ -25,6 +25,20 @@ class ThemeController extends ValueNotifier<AppThemeId> {
   /// Хранилище настроек. `null` — выбор не сохраняется.
   final AppSettingsRepository? settings;
 
+  /// Перечитывает тему из настроек.
+  ///
+  /// Нужно, когда настройки изменили мимо контроллера: сброс к
+  /// эталонному состоянию в сборке ветви СНО2026 стирает их разом
+  /// (SNO-F-CFG-04), и тема обязана вернуться к исходной без
+  /// перезапуска. Записи при этом нет: в настройках уже лежит то, что
+  /// надо показать.
+  Future<void> reload() async {
+    final AppSettingsRepository? store = settings;
+    value = store == null
+        ? defaultThemeId
+        : themeIdFromName(await store.read(SettingsKeys.theme));
+  }
+
   /// Палитра текущей темы.
   AppPalette get palette => appPalettes[value]!;
 

@@ -182,6 +182,11 @@ class BookImporter {
   /// переехать, но место, на котором книгу оставили, принадлежит книге,
   /// а не файлу.
   ///
+  /// BUG-30: то же — с книгой, которую сняли с полки. Она возвращается
+  /// прежней строкой, с прежним идентификатором, и место чтения, цитаты
+  /// и заметки возвращаются вместе с ней. Прежде снятая и добавленная
+  /// снова книга заводилась второй строкой, а надгробие оставалось.
+  ///
   /// Бросает [DocumentOpenException], если файл не открывается: заводить
   /// в библиотеке книгу, которую нельзя прочесть, незачем.
   Future<Book> register(PickedFile file, {String? categoryId}) async {
@@ -358,6 +363,11 @@ class BookImporter {
   /// категорию руками, и повторный выбор того же файла — не повод
   /// отменять это решение.
   ///
+  /// Снятая с полки книга возвращается прежней строкой (BUG-30). Встаёт
+  /// она в названную категорию, а если категория не названа — в ту, где
+  /// стояла. В своей прежней категории она получает прежнее место, в
+  /// другой — встаёт последней, как новая.
+  ///
   /// [check] зовётся, когда файл уже прочитан, а в базу ещё ничего не
   /// записано: бросив ошибку, он отменяет запись (BUG-19).
   ///
@@ -384,6 +394,10 @@ class BookImporter {
     }
 
     final Book? existing = known ?? await _library.bookByHash(hash);
+    // BUG-30: книги на полке нет — но, может быть, её с полки сняли.
+    final Book? removed = existing == null
+        ? await _library.removedBookByHash(hash)
+        : null;
 
     final ReaderDocument document = await _opener.open(source);
     final int pageCount;
@@ -403,30 +417,49 @@ class BookImporter {
         : await categoryFor();
 
     final DateTime moment = _now();
-    final Book book = existing == null
-        ? Book(
-            id: _newId(),
-            title: title,
-            source: source,
-            fileSize: size,
-            fileHash: hash,
-            addedAt: moment,
-            pageCount: pageCount,
-            hasTextLayer: textLayer,
-            openedAt: moment,
-            categoryId: place,
-            // BUG-20: новая книга встаёт за последней книгой своей
-            // категории, а не на место 0.
-            shelfPosition: shelfPlaceAfterLast(await _library.books(), place),
-          )
-        : existing.copyWith(
-            source: source,
-            fileSize: size,
-            fileHash: hash,
-            pageCount: pageCount,
-            hasTextLayer: textLayer,
-            openedAt: moment,
-          );
+    final Book book;
+    if (existing != null) {
+      book = existing.copyWith(
+        source: source,
+        fileSize: size,
+        fileHash: hash,
+        pageCount: pageCount,
+        hasTextLayer: textLayer,
+        openedAt: moment,
+      );
+    } else if (removed != null) {
+      // BUG-30: снятая книга возвращается собой. Запись снимает
+      // надгробие: `save` пишет строку живой.
+      final String? back = place ?? removed.categoryId;
+      book = removed.copyWith(
+        source: source,
+        fileSize: size,
+        fileHash: hash,
+        pageCount: pageCount,
+        hasTextLayer: textLayer,
+        openedAt: moment,
+        categoryId: back,
+        shelfPosition: back == removed.categoryId
+            ? removed.shelfPosition
+            : shelfPlaceAfterLast(await _library.books(), back),
+      );
+    } else {
+      book = Book(
+        id: _newId(),
+        title: title,
+        source: source,
+        fileSize: size,
+        fileHash: hash,
+        addedAt: moment,
+        pageCount: pageCount,
+        hasTextLayer: textLayer,
+        openedAt: moment,
+        categoryId: place,
+        // BUG-20: новая книга встаёт за последней книгой своей
+        // категории, а не на место 0.
+        shelfPosition: shelfPlaceAfterLast(await _library.books(), place),
+      );
+    }
     await _library.save(book);
     // BUG-17: книга переехала на новый источник — прежний отпускается,
     // если он больше ничей. Иначе копились бы копии-сироты и

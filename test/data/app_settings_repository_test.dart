@@ -63,6 +63,31 @@ void main() {
     expect(second.value, AppThemeId.sepia);
   });
 
+  test('SNO-F-CFG-04: тема перечитывается, когда настройки стёрты', () async {
+    final ThemeController controller = await ThemeController.restore(
+      data.settings,
+    );
+    await controller.select(AppThemeId.sepia);
+    // Сброс к эталонному состоянию стирает настройки мимо контроллера.
+    await data.settings.remove(SettingsKeys.theme);
+    expect(controller.value, AppThemeId.sepia);
+
+    await controller.reload();
+
+    expect(controller.value, defaultThemeId);
+    // Перечитать — не записать: настройка осталась стёртой.
+    expect(await data.settings.read(SettingsKeys.theme), isNull);
+  });
+
+  test('SNO-F-CFG-04: без хранилища тема возвращается к исходной', () async {
+    final ThemeController controller = ThemeController();
+    await controller.select(AppThemeId.sepia);
+
+    await controller.reload();
+
+    expect(controller.value, defaultThemeId);
+  });
+
   test('неизвестное имя темы не мешает запуску', () async {
     await data.settings.write(SettingsKeys.theme, 'бирюзовая-в-горошек');
     final ThemeController controller = await ThemeController.restore(

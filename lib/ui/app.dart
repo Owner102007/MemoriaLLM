@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../application/app_services.dart';
 import '../application/theme/theme_controller.dart';
+import '../domain/library/shelf.dart';
 import '../domain/navigation/sections.dart';
 import '../domain/theme/app_palette.dart';
 import '../sno/flags.dart';
@@ -109,6 +112,11 @@ class _HomeShellState extends State<HomeShell> {
   /// Категория, чей «+» нажали на полке: туда лягут добавленные книги.
   String? _targetCategory;
 
+  /// Сколько раз устройство сбрасывали к эталону за этот запуск
+  /// (SNO-F-CFG-04). Полка держит порядок книг в памяти; новый номер —
+  /// новая полка, которая читает настройки заново.
+  int _resets = 0;
+
   void _open(AppSection section) {
     if (section == _section) {
       return;
@@ -142,6 +150,17 @@ class _HomeShellState extends State<HomeShell> {
   void _readingChanged(bool reading) {
     if (mounted && reading != _reading) {
       setState(() => _reading = reading);
+    }
+  }
+
+  /// Устройство сбросили к эталонному состоянию (SNO-F-CFG-04).
+  ///
+  /// Настройки стёрты мимо всего, что держит их в памяти: тема
+  /// перечитывается, полка строится заново. Перезапуск не нужен.
+  Future<void> _stateReset() async {
+    await widget.themeController.reload();
+    if (mounted) {
+      setState(() => _resets++);
     }
   }
 
@@ -233,11 +252,14 @@ class _HomeShellState extends State<HomeShell> {
     switch (section) {
       case AppSection.shelf:
         return LibraryScreen(
+          key: ValueKey<int>(_resets),
           services: widget.services,
           onAddBooks: _addBooks,
           onReading: _readingChanged,
           // SNO-F-CFG-02: в ветви полка на «Устройство» не ведёт.
           canAddBooks: Sno.scanner,
+          // SNO-F-CFG-04: в ветви книги стоят, как их положил архив.
+          defaultSort: Sno.literature ? ShelfSort.manual : ShelfSort.recent,
         );
       case AppSection.device:
         if (!_deviceOpened) {
@@ -256,7 +278,12 @@ class _HomeShellState extends State<HomeShell> {
         // SNO-F-CFG-03. Условие — константа сборки: в основном
         // приложении ветка недостижима, и раздел в него не попадает.
         if (Sno.recording) {
-          return TestingScreen(services: widget.services, flags: Sno.flags);
+          return TestingScreen(
+            services: widget.services,
+            flags: Sno.flags,
+            visible: _section == AppSection.testing,
+            onStateReset: () => unawaited(_stateReset()),
+          );
         }
         return const SizedBox.shrink();
       case AppSection.settings:

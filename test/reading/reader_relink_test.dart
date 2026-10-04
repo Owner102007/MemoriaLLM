@@ -182,6 +182,61 @@ void main() {
 
     await unmount(tester);
   });
+
+  testWidgets('BUG-46: где файл не выбирают, сказано, откуда книга вернётся', (
+    WidgetTester tester,
+  ) async {
+    // Так экран чтения открывает полка сборки ветви СНО2026: свои PDF
+    // там не добавляются, и книгу к своему файлу привязать нельзя.
+    final Book book = testBook().copyWith(source: _gone);
+    await data.library.save(book);
+    final _MissingThenFound opener = _MissingThenFound();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderScreen(
+          book: book,
+          canRelink: false,
+          services: AppServices(
+            data: data,
+            opener: opener,
+            picker: FakeBookFilePicker(_found),
+            storage: MemoryBookStorage(),
+            coverStore: MemoryCoverStore(),
+            access: FakeStorageAccess(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('reader-failure-message')), findsOneWidget);
+    expect(find.byKey(const Key('reader-relink')), findsNothing);
+    expect(find.text('Выбрать файл заново'), findsNothing);
+    expect(find.byKey(const Key('reader-readd-archive')), findsOneWidget);
+    expect(
+      find.textContaining('Добавьте архив с литературой ещё раз'),
+      findsOneWidget,
+    );
+    // Книга осталась как была, и файл никто не спрашивал.
+    expect(opener.calls, 1);
+    expect((await data.library.bookById(book.id))!.source, _gone);
+
+    await unmount(tester);
+  });
+
+  testWidgets('BUG-46: в основном приложении выбор файла на месте', (
+    WidgetTester tester,
+  ) async {
+    final Book book = testBook().copyWith(source: _gone);
+    await data.library.save(book);
+    await pumpGone(tester, book);
+
+    expect(find.byKey(const Key('reader-relink')), findsOneWidget);
+    expect(find.byKey(const Key('reader-readd-archive')), findsNothing);
+
+    await unmount(tester);
+  });
 }
 
 /// Открыватель, который в первый раз не находит файл, а потом находит.

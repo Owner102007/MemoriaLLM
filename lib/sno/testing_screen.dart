@@ -13,7 +13,9 @@ import '../domain/library/scan_mark.dart';
 import '../domain/library/storage_access.dart';
 import '../domain/reading/reader_document.dart';
 import 'flags.dart';
+import 'hold_button.dart';
 import 'literature_archive.dart';
+import 'reference_state.dart';
 
 /// Сколько знаков идентификатора устройства показывается.
 ///
@@ -157,7 +159,8 @@ enum ArchiveSearchPhase {
 /// cognitive load test и записи на устройстве появляются вместе со
 /// своими функциями. Сейчас в разделе: код устройства, блок «Для
 /// экспериментатора» с архивами литературы (SNO-F-LIT-03, SNO-F-LIT-01)
-/// и сведения о ветви (SNO-F-CFG-01).
+/// и эталонным состоянием (SNO-F-CFG-04), сведения о ветви
+/// (SNO-F-CFG-01).
 ///
 /// **Архив с литературой приложение находит само** (SNO-F-LIT-03).
 /// Когда блок «Для экспериментатора» раскрыт, устройство обходится
@@ -170,6 +173,12 @@ enum ArchiveSearchPhase {
 /// **Свои PDF не добавляются** (SNO-F-LIT-02 снята решением владельца
 /// П3 от 04.10.2026): книга, выбранная вручную вместо архива, названа
 /// отказом и на полку не встаёт.
+///
+/// **Эталонное состояние** (SNO-F-CFG-04, `reference_state.dart`).
+/// Разложенный архив запоминается эталоном; экспериментатор перед новым
+/// тестировщиком удерживает «Сбросить» — следы предыдущего стёрты,
+/// полка и настройки снова как после архива. Сброс прячется в том же
+/// блоке и срабатывает только удержанием: стирает он по-настоящему.
 class TestingScreen extends StatefulWidget {
   /// Создаёт раздел.
   ///
@@ -179,6 +188,8 @@ class TestingScreen extends StatefulWidget {
     required this.services,
     required this.flags,
     this.unpack,
+    this.visible = true,
+    this.onStateReset,
     super.key,
   });
 
@@ -190,6 +201,17 @@ class TestingScreen extends StatefulWidget {
 
   /// Распаковка архива; `null` — настоящая.
   final ArchiveUnpack? unpack;
+
+  /// На экране ли раздел сейчас.
+  ///
+  /// Разделы живут в одном `IndexedStack`, и «Тестирование» не узнаёт
+  /// само, что из него уходили читать: вернулись — и слова «совпадает с
+  /// эталоном» обязаны быть проверены заново.
+  final bool visible;
+
+  /// Устройство сброшено к эталону: оболочке пора перечитать то, что
+  /// она держит в памяти, — тему и порядок полки.
+  final VoidCallback? onStateReset;
 
   @override
   State<TestingScreen> createState() => _TestingScreenState();
@@ -237,6 +259,25 @@ class _TestingScreenState extends State<TestingScreen>
   /// открывается, второго экрана не заводит.
   bool _asking = false;
 
+  /// Эталонное состояние; `null` — ещё не запомнено.
+  ReferenceState? _reference;
+
+  /// Совпадает ли устройство с эталоном; `null` — не знаем.
+  bool? _matches;
+
+  /// Когда устройство сбрасывали в последний раз.
+  DateTime? _lastReset;
+
+  /// Идёт ли сброс.
+  bool _resetting = false;
+
+  /// Чем кончился последний сброс — словами; `null` — не сбрасывали.
+  String? _resetResult;
+
+  /// Номер чтения эталона: ответ прежнего чтения, пришедший после
+  /// начала нового, не принимается.
+  int _referenceRun = 0;
+
   @override
   void initState() {
     super.initState();
@@ -264,13 +305,109 @@ class _TestingScreenState extends State<TestingScreen>
     }
   }
 
+  @override
+  void didUpdateWidget(TestingScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // В раздел вернулись: за это время могли читать, выделять и
+    // переставлять книги.
+    if (widget.visible && !oldWidget.visible && _expanded) {
+      unawaited(_refreshReference());
+    }
+  }
+
   void _expansionChanged(bool expanded) {
     _expanded = expanded;
+    if (expanded) {
+      unawaited(_refreshReference());
+    }
     // Обход, который уже идёт, заново не начинается: блок свернули и
     // раскрыли, а архивы всё те же.
     if (expanded && _phase != ArchiveSearchPhase.searching) {
       unawaited(_search());
     }
+  }
+
+  /// Эталон и сброс — на службах приложения.
+  ReferenceKeeper _keeper() {
+    return ReferenceKeeper(
+      data: widget.services.data,
+      storage: widget.services.storage,
+    );
+  }
+
+  /// Читает эталон и сверяет с ним устройство (SNO-F-CFG-04).
+  Future<void> _refreshReference() async {
+    final int run = ++_referenceRun;
+    final ReferenceKeeper keeper = _keeper();
+    final ReferenceState? reference;
+    final bool? matches;
+    final DateTime? lastReset;
+    try {
+      reference = await keeper.reference();
+      matches = reference == null
+          ? null
+          : (await keeper.snapshot()).matches(reference);
+      lastReset = await keeper.lastReset();
+    } on Object {
+      // База не ответила — раздел остаётся с тем, что знал.
+      return;
+    }
+    if (!mounted || run != _referenceRun) {
+      return;
+    }
+    setState(() {
+      _reference = reference;
+      _matches = matches;
+      _lastReset = lastReset;
+    });
+  }
+
+  /// Запоминает эталон после разложенного архива (SNO-F-CFG-04).
+  ///
+  /// Эталон — полка, какой её положил архив: его запоминает сама
+  /// распаковка, а не кнопка.
+  Future<void> _rememberReference(List<ArchiveReport> unpacked) async {
+    try {
+      await _keeper().remember(<Book>[
+        for (final ArchiveReport report in unpacked) ...report.added,
+      ]);
+    } on Object {
+      // Эталон не запомнился — книги при этом на полке, и следующий
+      // архив запомнит его заново.
+    }
+    await _refreshReference();
+  }
+
+  /// Сбрасывает устройство к эталонному состоянию (SNO-F-CFG-04).
+  Future<void> _reset() async {
+    if (_busy || _resetting) {
+      return;
+    }
+    setState(() {
+      _resetting = true;
+      _resetResult = null;
+    });
+    final String result = await _runReset();
+    await _refreshReference();
+    if (mounted) {
+      setState(() {
+        _resetting = false;
+        _resetResult = result;
+      });
+    }
+  }
+
+  /// Сам сброс; отвечает словами для экспериментатора и не бросает.
+  Future<String> _runReset() async {
+    final ResetReport report;
+    try {
+      report = await _keeper().reset();
+    } on Object {
+      return 'Сброс не удался: состояние осталось прежним.';
+    }
+    // Тема и порядок полки лежат в памяти оболочки — пора перечитать.
+    widget.onStateReset?.call();
+    return describeReset(report);
   }
 
   /// Ищет архивы с книгами на устройстве (SNO-F-LIT-03).
@@ -363,7 +500,7 @@ class _TestingScreenState extends State<TestingScreen>
 
   /// Выбор архива системным диалогом — запасной путь.
   Future<void> _pickArchives() async {
-    if (_busy || _picking) {
+    if (_busy || _picking || _resetting) {
       return;
     }
     final List<PickedFile> files;
@@ -386,7 +523,7 @@ class _TestingScreenState extends State<TestingScreen>
   /// всё остальное уходит в распаковку, и не-архив получает свой отказ
   /// от неё — «это не ZIP-архив».
   Future<void> _addArchives(List<PickedFile> files) async {
-    if (_busy) {
+    if (_busy || _resetting) {
       return;
     }
     final List<PickedFile> archives = <PickedFile>[
@@ -435,6 +572,8 @@ class _TestingScreenState extends State<TestingScreen>
             );
           }
         }
+        // SNO-F-CFG-04: эталон — полка, какой её положил архив.
+        await _rememberReference(unpacked);
       } finally {
         if (mounted) {
           setState(() {
@@ -654,6 +793,93 @@ class _TestingScreenState extends State<TestingScreen>
           ],
         ),
       ),
+      ..._referenceState(theme),
+    ];
+  }
+
+  /// Блок «Для экспериментатора»: эталонное состояние и сброс
+  /// (SNO-F-CFG-04).
+  ///
+  /// Стоит под архивами: сначала литература добавляется, потом к ней
+  /// возвращаются. Пока эталона нет, кнопки сброса нет тоже — кнопка,
+  /// которой нечего делать, была бы ложью о сборке.
+  List<Widget> _referenceState(ThemeData theme) {
+    final ReferenceState? reference = _reference;
+    final bool? matches = _matches;
+    final DateTime? lastReset = _lastReset;
+    final String? result = _resetResult;
+    return <Widget>[
+      const Divider(indent: 16, endIndent: 16),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Эталонное состояние',
+            style: theme.textTheme.titleSmall,
+          ),
+        ),
+      ),
+      if (reference == null)
+        const Padding(
+          key: Key('sno-reference-none'),
+          padding: EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Эталона ещё нет: он запомнится, когда будет добавлен '
+              'архив с литературой.',
+            ),
+          ),
+        )
+      else
+        Padding(
+          key: const Key('sno-reference'),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(describeReference(reference)),
+              if (matches != null)
+                Text(
+                  matches
+                      ? 'Сейчас: совпадает с эталоном'
+                      : 'Сейчас: отличается от эталона',
+                  key: const Key('sno-reference-status'),
+                ),
+              const SizedBox(height: 10),
+              HoldToConfirmButton(
+                key: const Key('sno-reset-hold'),
+                label: _resetting
+                    ? 'Сбрасываю…'
+                    : 'Удерживайте, чтобы сбросить',
+                onConfirmed: _busy || _resetting
+                    ? null
+                    : () => unawaited(_reset()),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Стирает прогресс, цитаты, заметки, закладки и настройки. '
+                'Книги остаются.',
+                style: theme.textTheme.bodySmall,
+              ),
+              if (result != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(result, key: const Key('sno-reset-result')),
+                ),
+              if (lastReset != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Последний сброс: ${describeMoment(lastReset)}',
+                    key: const Key('sno-reset-last'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+            ],
+          ),
+        ),
     ];
   }
 

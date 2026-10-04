@@ -59,13 +59,27 @@ import 'viewer_selection.dart';
 /// значит сломать оба.
 class ReaderScreen extends StatefulWidget {
   /// Создаёт экран чтения.
-  const ReaderScreen({required this.book, required this.services, super.key});
+  const ReaderScreen({
+    required this.book,
+    required this.services,
+    this.canRelink = true,
+    super.key,
+  });
 
   /// Книга.
   final Book book;
 
   /// Службы приложения.
   final AppServices services;
+
+  /// Можно ли показать файл книги заново, если он пропал.
+  ///
+  /// В сборках ветвей СНО2026 — нет (BUG-46, решение владельца П3 от
+  /// 04.10.2026): свои PDF там не добавляются, книги приходят только
+  /// архивом с литературой. «Выбрать файл заново» было последним путём,
+  /// которым под именем книги из литературы на полку вставал любой PDF.
+  /// Пропавшую копию возвращает повторное добавление архива.
+  final bool canRelink;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -1588,7 +1602,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return _FailureScreen(
         failure: failure,
         onPassword: (String password) => unawaited(_open(password: password)),
-        onRelink: () => unawaited(_relink()),
+        // BUG-46: в сборке ветви выбора файла нет вовсе.
+        onRelink: widget.canRelink ? () => unawaited(_relink()) : null,
       );
     }
 
@@ -2147,7 +2162,10 @@ class _FailureScreen extends StatefulWidget {
 
   final DocumentOpenException failure;
   final void Function(String password) onPassword;
-  final VoidCallback onRelink;
+
+  /// Показать файл заново; `null` — в этой сборке файл не выбирают
+  /// (BUG-46), и вместо кнопки сказано, откуда книга возвращается.
+  final VoidCallback? onRelink;
 
   @override
   State<_FailureScreen> createState() => _FailureScreenState();
@@ -2171,7 +2189,8 @@ class _FailureScreenState extends State<_FailureScreen> {
         problem == DocumentProblem.wrongPassword;
     // Файл потерялся — значит, его можно показать заново. Всё остальное
     // (повреждён, пустой) перевыбором того же файла не лечится.
-    final bool canRelink = problem == DocumentProblem.missing;
+    final bool missing = problem == DocumentProblem.missing;
+    final VoidCallback? onRelink = widget.onRelink;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Книга не открылась')),
@@ -2213,11 +2232,11 @@ class _FailureScreenState extends State<_FailureScreen> {
                 child: const Text('Открыть'),
               ),
             ],
-            if (canRelink) ...<Widget>[
+            if (missing && onRelink != null) ...<Widget>[
               const SizedBox(height: 24),
               FilledButton.icon(
                 key: const Key('reader-relink'),
-                onPressed: widget.onRelink,
+                onPressed: onRelink,
                 icon: const Icon(Icons.file_open_outlined),
                 label: const Text('Выбрать файл заново'),
               ),
@@ -2227,6 +2246,16 @@ class _FailureScreenState extends State<_FailureScreen> {
                 'принадлежат книге, а не файлу.',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall,
+              ),
+            ],
+            if (missing && onRelink == null) ...<Widget>[
+              const SizedBox(height: 24),
+              Text(
+                'Добавьте архив с литературой ещё раз: «Тестирование» → '
+                '«Для экспериментатора». Книга вернётся на своё место.',
+                key: const Key('reader-readd-archive'),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium,
               ),
             ],
           ],

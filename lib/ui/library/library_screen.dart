@@ -30,6 +30,7 @@ class LibraryScreen extends StatefulWidget {
     this.onAddBooks,
     this.onReading,
     this.canAddBooks = true,
+    this.defaultSort = ShelfSort.recent,
     super.key,
   });
 
@@ -59,17 +60,26 @@ class LibraryScreen extends StatefulWidget {
   /// их добавляет экспериментатор в разделе «Тестирование».
   final bool canAddBooks;
 
+  /// Порядок книг, пока читатель не выбрал свой.
+  ///
+  /// В сборках ветвей СНО2026 это «Как расставил» (SNO-F-CFG-04): книги
+  /// стоят так, как их положил архив с литературой, — по порядку имён.
+  /// В порядке «Сначала недавние» полка тестировщика вставала бы в
+  /// порядке, обратном архиву, и менялась после каждой открытой книги,
+  /// а эталонное состояние — это одна и та же полка у всех.
+  final ShelfSort defaultSort;
+
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  /// Сколько секунд книга ждёт, прежде чем её источник будет отпущен.
+  /// Сколько секунд сообщение «убрана с полки» предлагает вернуть книгу.
   ///
   /// Снятие с полки необратимо для источника: своя копия удаляется, а
   /// закреплённая ссылка освобождается. Промах по кнопке стоил бы
-  /// повторного выбора файла, поэтому отпускание откладывается ровно на
-  /// время, пока внизу висит «Вернуть».
+  /// повторного выбора файла, поэтому источник отпускается не раньше,
+  /// чем с экрана ушло «Вернуть» ([_removeBook]).
   static const Duration _undoWindow = Duration(seconds: 5);
 
   /// Как часто полка сдвигается, пока книгу держат у края.
@@ -79,8 +89,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// и проверяется там же, а здесь остаётся только перевод в пиксели.
   static const Duration _autoScrollTick = Duration(milliseconds: 16);
 
-  ShelfSort _sort = ShelfSort.recent;
-  final Map<String, Timer> _pending = <String, Timer>{};
+  late ShelfSort _sort = widget.defaultSort;
+
+  /// Снятые книги, которые ещё можно вернуть: их «Вернуть» стоит на
+  /// экране или ждёт своей очереди. Источник такой книги не отпущен.
+  final Map<String, Book> _removed = <String, Book>{};
   final ScrollController _shelf = ScrollController();
 
   /// Ключ на сам список категорий.
@@ -102,10 +115,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   void dispose() {
-    for (final Timer timer in _pending.values) {
-      timer.cancel();
-    }
-    _pending.clear();
+    _removed.clear();
     _autoScroll?.cancel();
     _shelf.dispose();
     super.dispose();
@@ -179,7 +189,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!mounted) {
       return;
     }
-    setState(() => _sort = shelfSortFromName(stored));
+    setState(() {
+      _sort = stored == null ? widget.defaultSort : shelfSortFromName(stored);
+    });
   }
 
   Future<void> _chooseSort(ShelfSort sort) async {
@@ -222,25 +234,64 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// полки в тот же миг, иначе непонятно, сработало ли нажатие. А вот
   /// источник — своя копия и закреплённая ссылка — отпускается только
   /// после того, как окно отмены закрылось: вернуть их назад нельзя.
+  ///
+  /// BUG-47: окно отмены — это само сообщение. Срок ему задан явно:
+  /// сообщение с кнопкой действия Flutter по умолчанию держит на экране,
+  /// пока его не закроют (`persist`), и «Вернуть» висело без конца — в
+  /// том числе поверх книги, открытой следом. Источник отпускается
+  /// тогда, когда сообщение ушло, а не своим таймером: иначе «Вернуть»
+  /// оставалось бы на экране дольше, чем книгу можно вернуть с файлом.
   Future<void> _removeBook(Book book) async {
     await widget.services.data.library.delete(book.id);
     if (!mounted) {
       return;
     }
-    _pending[book.id]?.cancel();
-    _pending[book.id] = Timer(_undoWindow, () {
-      _pending.remove(book.id);
-      unawaited(_releaseBook(book));
-    });
+    _removed[book.id] = book;
     final SnackBar bar = SnackBar(
       content: Text('«${book.title}» убрана с полки'),
       duration: _undoWindow,
+      persist: false,
       action: SnackBarAction(
         label: 'Вернуть',
         onPressed: () => unawaited(_restoreBook(book)),
       ),
     );
-    ScaffoldMessenger.of(context).showSnackBar(bar);
+    final ScaffoldFeatureController<SnackBar, SnackBarClosedReason> shown =
+        ScaffoldMessenger.of(context).showSnackBar(bar);
+    unawaited(
+      shown.closed.then<void>((SnackBarClosedReason reason) async {
+        if (reason != SnackBarClosedReason.action) {
+          await _releaseRemoved(book);
+        }
+      }),
+    );
+  }
+
+  /// Отпускает источник снятой книги: вернуть её больше нельзя.
+  ///
+  /// Зовётся и тогда, когда сообщение ушло само, и тогда, когда его
+  /// убрали ([_dismissMessages]); отпускает один раз.
+  Future<void> _releaseRemoved(Book book) async {
+    if (!mounted || _removed.remove(book.id) == null) {
+      return;
+    }
+    await _releaseBook(book);
+  }
+
+  /// Убирает с экрана сообщения полки — сразу и все (BUG-47).
+  ///
+  /// Сообщения показывает общий на всё приложение `ScaffoldMessenger`,
+  /// поэтому они остаются и поверх экрана, открытого с полки. Страница
+  /// не должна быть закрыта ничем (правило 7): книгу открывают — и
+  /// сообщение уходит без затухания, вместе с теми, что ждали очереди.
+  /// Вернуть снятые книги после этого нечем, и их источники отпускаются.
+  void _dismissMessages() {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.removeCurrentSnackBar();
+    for (final Book book in _removed.values.toList()) {
+      unawaited(_releaseRemoved(book));
+    }
   }
 
   Future<void> _releaseBook(Book book) async {
@@ -255,7 +306,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _restoreBook(Book book) async {
-    _pending.remove(book.id)?.cancel();
+    _removed.remove(book.id);
     await widget.services.data.library.save(book);
   }
 
@@ -409,12 +460,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// записывалось и тут, до открытия: одно открытие считалось дважды, а
   /// книга с потерянным файлом поднималась в «Сначала недавние».
   Future<void> _openBook(Book book) async {
+    // BUG-47: сообщение полки не ложится на страницу и на ползунок.
+    _dismissMessages();
     widget.onReading?.call(true);
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (BuildContext context) =>
-              ReaderScreen(book: book, services: widget.services),
+          builder: (BuildContext context) => ReaderScreen(
+            book: book,
+            services: widget.services,
+            // BUG-46: где книги с полки не добавляют, там и файл книги
+            // заново не выбирают — в сборке ветви книги приходят только
+            // архивом с литературой.
+            canRelink: widget.canAddBooks,
+          ),
         ),
       );
     } finally {

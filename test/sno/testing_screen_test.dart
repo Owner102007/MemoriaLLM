@@ -8,15 +8,21 @@ import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/library/book_importer.dart';
 import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/domain/reading/reading.dart';
+import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/sno/flags.dart';
+import 'package:memoria/sno/hold_button.dart';
 import 'package:memoria/sno/literature_archive.dart';
+import 'package:memoria/sno/reference_state.dart';
 import 'package:memoria/sno/testing_screen.dart';
 
 import '../data/test_data.dart';
+import '../support/fake_reading.dart';
 import '../support/test_services.dart';
 
 /// SNO-F-CFG-03, SNO-F-LIT-03, SNO-F-LIT-01: раздел «Тестирование» сам по
@@ -166,7 +172,9 @@ void main() {
       // кнопка, которая ничего не делает, — ложь о сборке.
       expect(find.textContaining('Старт записи'), findsNothing);
       expect(find.textContaining('Cognitive load test'), findsNothing);
-      expect(find.textContaining('Сбросить'), findsNothing);
+      // Сброс появился со своей функцией (SNO-F-CFG-04), но пока
+      // эталона нет, сбрасывать не к чему — и кнопки нет.
+      expect(find.byKey(const Key('sno-reset-hold')), findsNothing);
 
       await unmount(tester);
     });
@@ -1104,6 +1112,242 @@ void main() {
 
       await tester.tap(find.text('Понятно'));
       await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+  });
+
+  group('SNO-F-CFG-04: эталонное состояние и сброс', () {
+    // Экран высокий: блок «Для экспериментатора» виден целиком, и
+    // кнопку сброса не надо искать прокруткой.
+    void tall(WidgetTester tester) {
+      addTearDown(tester.view.resetPhysicalSize);
+      tester.view.physicalSize =
+          const Size(600, 1600) * tester.view.devicePixelRatio;
+    }
+
+    Future<void> pumpSection(
+      WidgetTester tester, {
+      ArchiveUnpack? unpack,
+      VoidCallback? onStateReset,
+      bool visible = true,
+      PickedFile? picked,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: TestingScreen(
+            services: testServices(data: data, picked: picked),
+            flags: BranchFlags.of('I'),
+            unpack: unpack,
+            visible: visible,
+            onStateReset: onStateReset,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    /// Полка из архива: категория и две книги в ней.
+    Future<List<Book>> archiveShelf() async {
+      await data.categories.save(
+        BookCategory(
+          id: 'lit',
+          title: 'Литература',
+          position: 0,
+          createdAt: DateTime.utc(2026, 10, 4),
+        ),
+      );
+      final List<Book> books = <Book>[
+        testBook(id: 'a', hash: 'hash-a').copyWith(categoryId: 'lit'),
+        testBook(
+          id: 'b',
+          title: 'Дубровский',
+          hash: 'hash-b',
+        ).copyWith(categoryId: 'lit', shelfPosition: 1),
+      ];
+      for (final Book book in books) {
+        await data.library.save(book);
+      }
+      return books;
+    }
+
+    ReferenceKeeper keeper() {
+      return ReferenceKeeper(data: data, storage: MemoryBookStorage());
+    }
+
+    /// Держит кнопку сброса [held] и отпускает.
+    Future<void> holdReset(WidgetTester tester, Duration held) async {
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const Key('sno-reset-hold'))),
+      );
+      // Нажатие узнаётся не сразу: рядом прокрутка списка.
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      await tester.pump(held);
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('SNO-F-CFG-04: эталона нет — сказано, кнопки сброса нет', (
+      WidgetTester tester,
+    ) async {
+      tall(tester);
+      await pumpSection(tester);
+      await openExperimenter(tester);
+
+      expect(find.byKey(const Key('sno-reference-none')), findsOneWidget);
+      expect(find.textContaining('Эталона ещё нет'), findsOneWidget);
+      expect(find.byKey(const Key('sno-reset-hold')), findsNothing);
+      expect(find.byKey(const Key('sno-reference-status')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: разложенный архив запоминается эталоном', (
+      WidgetTester tester,
+    ) async {
+      tall(tester);
+      final List<Book> books = await archiveShelf();
+      final List<PickedFile> unpacked = <PickedFile>[];
+      await pumpSection(
+        tester,
+        picked: archive,
+        unpack: recording(
+          unpacked,
+          report: (PickedFile file) =>
+              ArchiveReport(archive: file.name, total: 2, added: books),
+        ),
+      );
+      await openExperimenter(tester);
+      expect(find.byKey(const Key('sno-reference-none')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+
+      // Кнопки «запомнить» нет: эталон — полка, какой её положил архив.
+      expect(find.byKey(const Key('sno-reference-none')), findsNothing);
+      expect(find.textContaining('Категорий: 1, книг: 2'), findsOneWidget);
+      expect(find.text('Сейчас: совпадает с эталоном'), findsOneWidget);
+      expect(find.byKey(const Key('sno-reset-hold')), findsOneWidget);
+      final ReferenceState? stored = await keeper().reference();
+      expect(stored!.shelf.categories, <String>['Литература']);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: удержание сбрасывает к эталону', (
+      WidgetTester tester,
+    ) async {
+      tall(tester);
+      await keeper().remember(await archiveShelf());
+      // Следы тестировщика.
+      await data.reading.savePosition(
+        const ReadingPosition(bookId: 'a', page: 7),
+      );
+      await data.settings.write(SettingsKeys.theme, 'sepia');
+      await placeBook(data, 'b', null);
+      int resets = 0;
+      await pumpSection(tester, onStateReset: () => resets++);
+      await openExperimenter(tester);
+      expect(find.text('Сейчас: отличается от эталона'), findsOneWidget);
+      expect(find.byKey(const Key('sno-reset-last')), findsNothing);
+
+      await holdReset(tester, kResetHold + const Duration(milliseconds: 100));
+
+      expect(
+        find.text('Сброшено. Состояние совпадает с эталоном.'),
+        findsOneWidget,
+      );
+      expect(find.text('Сейчас: совпадает с эталоном'), findsOneWidget);
+      expect(find.byKey(const Key('sno-reset-last')), findsOneWidget);
+      expect(resets, 1, reason: 'оболочке сказано перечитать настройки');
+      expect(await data.reading.position('a'), isNull);
+      expect(await data.settings.read(SettingsKeys.theme), isNull);
+      expect((await data.library.bookById('b'))!.categoryId, 'lit');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: отпустили раньше — ничего не произошло', (
+      WidgetTester tester,
+    ) async {
+      tall(tester);
+      await keeper().remember(await archiveShelf());
+      await data.reading.savePosition(
+        const ReadingPosition(bookId: 'a', page: 7),
+      );
+      int resets = 0;
+      await pumpSection(tester, onStateReset: () => resets++);
+      await openExperimenter(tester);
+
+      await holdReset(tester, const Duration(milliseconds: 900));
+
+      expect(find.byKey(const Key('sno-reset-result')), findsNothing);
+      expect(resets, 0);
+      expect((await data.reading.position('a'))!.page, 7);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: пока идёт распаковка, сброс выключен', (
+      WidgetTester tester,
+    ) async {
+      tall(tester);
+      await keeper().remember(await archiveShelf());
+      final Completer<void> gate = Completer<void>();
+      await pumpSection(
+        tester,
+        picked: archive,
+        unpack:
+            (
+              PickedFile file, {
+              void Function(ArchiveProgress progress)? onProgress,
+            }) async {
+              await gate.future;
+              return ArchiveReport(archive: file.name);
+            },
+      );
+      await openExperimenter(tester);
+      HoldToConfirmButton button() {
+        return tester.widget(find.byKey(const Key('sno-reset-hold')));
+      }
+
+      expect(button().onConfirmed, isNotNull);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const Key('sno-archive-busy')), findsOneWidget);
+      expect(button().onConfirmed, isNull);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+      expect(button().onConfirmed, isNotNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: вернулись в раздел — сверка заново', (
+      WidgetTester tester,
+    ) async {
+      tall(tester);
+      await keeper().remember(await archiveShelf());
+      await pumpSection(tester);
+      await openExperimenter(tester);
+      expect(find.text('Сейчас: совпадает с эталоном'), findsOneWidget);
+
+      // Ушли читать — раздел остался жить в оболочке — и вернулись.
+      await pumpSection(tester, visible: false);
+      await data.reading.savePosition(
+        const ReadingPosition(bookId: 'a', page: 7),
+      );
+      await pumpSection(tester);
+
+      expect(find.text('Сейчас: отличается от эталона'), findsOneWidget);
+
       await unmount(tester);
     });
   });

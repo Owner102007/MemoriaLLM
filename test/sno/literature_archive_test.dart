@@ -30,8 +30,12 @@ const String _fixtures = 'test/fixtures/zip';
 /// Содержимое файла архива — то же правило, что в генераторе образцов.
 List<int> contentOf(String path) => utf8.encode('%PDF-1.4\n${'$path\n' * 40}');
 
-PickedFile fixture(String name) {
-  return PickedFile(name: name, path: '$_fixtures/$name');
+/// Имя, под которым архив видит экспериментатор, — одно на все
+/// образцы: по нему названа категория книг из корня (SNO-F-LIT-04).
+const String _archiveName = 'Литература.zip';
+
+PickedFile fixture(String name, {String shown = _archiveName}) {
+  return PickedFile(name: shown, path: '$_fixtures/$name');
 }
 
 /// Открыватель, у которого книга с заданным содержимым не открывается.
@@ -214,7 +218,8 @@ void main() {
   }
 
   const List<String> fullShelf = <String>[
-    '—: Латинский язык',
+    '—: ',
+    'Литература: Латинский язык',
     'Анатомия: Анатомия человека, т 1, Атлас',
     'Физиология: Нормальная физиология',
   ];
@@ -238,10 +243,10 @@ void main() {
       expect(report.total, 4);
       expect(report.added, hasLength(4));
       expect(report.already, 0);
-      expect(report.categories, 2);
+      expect(report.categories, 3);
       expect(await shelf(), fullShelf);
       expect(steps, <String>[
-        '1/4 — · Латинский язык',
+        '1/4 Литература · Латинский язык',
         '2/4 Анатомия · Анатомия человека, т 1',
         '3/4 Анатомия · Атлас',
         '4/4 Физиология · Нормальная физиология',
@@ -310,7 +315,8 @@ void main() {
       expect(report.added, hasLength(5));
       expect(report.skipped, 1);
       expect(await shelf(), <String>[
-        '—: Словарь',
+        '—: ',
+        'Литература: Словарь',
         'Анатомия: Анатомия, Синельников',
         'Биохимия: Биохимия',
         'Гистология: Гистология',
@@ -349,10 +355,10 @@ void main() {
       final List<BookCategory> categories = await data.categories.categories();
       expect(
         categories.map((BookCategory category) => category.title),
-        <String>['анатомия', 'Физиология'],
+        <String>['анатомия', 'Литература', 'Физиология'],
       );
-      // Новая категория встаёт в конец полки.
-      expect(categories.last.position, 6);
+      // Новые категории встают в конец полки.
+      expect(categories.last.position, 7);
       final List<Book> all = await data.library.books();
       expect(all.where((Book book) => book.categoryId == 'old'), hasLength(2));
     });
@@ -384,10 +390,10 @@ void main() {
         expect(again.already, 4);
         expect(again.failed, isEmpty);
         expect(await data.library.books(), hasLength(4));
-        expect(await data.categories.categories(), hasLength(2));
+        expect(await data.categories.categories(), hasLength(3));
         // И не переставляет: полка — как её оставил читатель.
         expect(await shelf(), before);
-        expect(before.first, '—: Латинский язык, Атлас');
+        expect(before.first, '—: Атлас');
         expect(copies(), files);
         // Повторное добавление — не открытие книги: порядок «недавние»
         // и то, что о книге узнало чтение, остаются как были.
@@ -412,7 +418,13 @@ void main() {
 
       expect(report.added, hasLength(2));
       expect(report.already, 2);
-      expect(await shelf(), fullShelf);
+      // Категории стоят в том порядке, в каком получили первую книгу.
+      expect(await shelf(), <String>[
+        '—: ',
+        'Анатомия: Анатомия человека, т 1, Атлас',
+        'Литература: Латинский язык',
+        'Физиология: Нормальная физиология',
+      ]);
       expect(copies(), hasLength(4));
       expect(copies().any((String name) => name.endsWith('.part')), isFalse);
     });
@@ -480,7 +492,8 @@ void main() {
       expect(report.failed.single.name, '02 Атлас.pdf');
       expect(report.failed.single.reason, contains('контрольная сумма'));
       expect(await shelf(), <String>[
-        '—: Латинский язык',
+        '—: ',
+        'Литература: Латинский язык',
         'Анатомия: Анатомия человека, т 1',
         'Физиология: Нормальная физиология',
       ]);
@@ -522,7 +535,7 @@ void main() {
       final List<BookCategory> categories = await data.categories.categories();
       expect(
         categories.map((BookCategory category) => category.title),
-        <String>['Анатомия'],
+        <String>['Литература', 'Анатомия'],
       );
     });
 
@@ -581,6 +594,49 @@ void main() {
       ]);
       expect(copies(), hasLength(4));
       expect(copies().every((String name) => name.endsWith('.pdf')), isTrue);
+    });
+  });
+
+  group('SNO-F-LIT-04: категория с названием архива', () {
+    test('SNO-F-LIT-04: хвост повторной загрузки в название не идёт', () async {
+      await archiveOn().add(
+        fixture('shelf_stored.zip', shown: '01 Курс анатомии (1).zip'),
+      );
+
+      expect(await shelf(), <String>[
+        '—: ',
+        'Курс анатомии: Латинский язык',
+        'Анатомия: Анатомия человека, т 1, Атлас',
+        'Физиология: Нормальная физиология',
+      ]);
+    });
+
+    test('SNO-F-LIT-04: архив под другим именем книг не двигает', () async {
+      await archiveOn().add(fixture('shelf_stored.zip'));
+
+      final ArchiveReport again = await archiveOn().add(
+        fixture('shelf_stored.zip', shown: 'Литература (1).zip'),
+      );
+
+      expect(again.added, isEmpty);
+      expect(again.already, 4);
+      expect(await shelf(), fullShelf);
+    });
+
+    test('SNO-F-LIT-04: архив без имени — категория «Литература»', () async {
+      await archiveOn().add(fixture('shelf_stored.zip', shown: ''));
+
+      expect((await shelf())[1], 'Литература: Латинский язык');
+    });
+
+    test('SNO-F-LIT-04: из архива без папок все книги — в одной', () async {
+      await archiveOn().add(fixture('unicode_extra.zip', shown: 'Блок 1.zip'));
+
+      final List<String> shelved = await shelf();
+      expect(shelved.first, '—: ');
+      expect(shelved, hasLength(2));
+      expect(shelved.last, startsWith('Блок 1: '));
+      expect(await data.library.books(), hasLength(2));
     });
   });
 

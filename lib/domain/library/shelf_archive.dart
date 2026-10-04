@@ -1,9 +1,10 @@
 /// Раскладка архива с книгами: какая запись — какая книга и в какую
-/// категорию она встаёт (SNO-ALG-LIT-01, SNO-F-LIT-01).
+/// категорию она встаёт (SNO-ALG-LIT-01, SNO-F-LIT-01, SNO-F-LIT-04).
 ///
 /// Архив собирают руками, «Проводником» или 7-Zip, без инструментов и
-/// без манифеста: папка — категория, порядок — по именам. Тот же формат
-/// сможет писать отправка полки (F-LIB-19), когда до неё дойдёт.
+/// без манифеста: папка — категория, порядок — по именам; книги из
+/// корня архива встают в категорию с названием самого архива. Тот же
+/// формат сможет писать отправка полки (F-LIB-19), когда до неё дойдёт.
 ///
 /// Здесь только правило над списком имён — ни файлов, ни архива: оно
 /// проверяется обычными тестами на придуманных списках.
@@ -50,9 +51,9 @@ class ArchiveLayout {
     required this.skipped,
   });
 
-  /// Книги в том порядке, в каком они встают на полку: сначала «Без
-  /// категории», затем категории по порядку имён папок, внутри — по
-  /// именам файлов.
+  /// Книги в том порядке, в каком они встают на полку: сначала книги
+  /// из корня архива, затем категории по порядку имён папок, внутри —
+  /// по именам файлов.
   final List<ArchiveBook> books;
 
   /// Названия категорий в порядке полки.
@@ -68,11 +69,16 @@ bool isArchiveName(String name) => name.toLowerCase().endsWith('.zip');
 
 /// Раскладывает записи архива по полке.
 ///
-/// [names] — имена записей с путями, папки разделены `/`.
+/// [names] — имена записей с путями, папки разделены `/`. [archiveName]
+/// — имя файла архива; без него книги из корня встают в «Без категории»
+/// (так раскладку спрашивают там, где важно только число книг).
 ///
-/// - Папка верхнего уровня — категория; файлы в корне встают в «Без
-///   категории». Папки глубже первой категорий не заводят: их книги
-///   ложатся в категорию верхней папки.
+/// - Папка верхнего уровня — категория. Папки глубже первой категорий не
+///   заводят: их книги ложатся в категорию верхней папки.
+/// - Файлы в корне встают в категорию с названием архива
+///   ([archiveCategoryTitle], SNO-F-LIT-04; решение владельца С2 (б) от
+///   04.10.2026): по категории видно, из какого архива книга пришла, а
+///   раскладка по папкам остаётся.
 /// - Порядок — по именам, числа сравниваются как числа: «2» раньше «10».
 ///   Цифры в начале имени («01 Анатомия») задают порядок и в название не
 ///   попадают.
@@ -81,7 +87,10 @@ bool isArchiveName(String name) => name.toLowerCase().endsWith('.zip');
 ///   выглядит архив, в который упаковали папку целиком.
 /// - Не-PDF пропускаются и сосчитаны; служебное (`__MACOSX`, `.DS_Store`,
 ///   `Thumbs.db`, `desktop.ini`) пропускается молча.
-ArchiveLayout layoutShelfArchive(List<String> names) {
+ArchiveLayout layoutShelfArchive(List<String> names, {String? archiveName}) {
+  final String? rootCategory = archiveName == null
+      ? null
+      : archiveCategoryTitle(archiveName);
   final List<_Item> files = <_Item>[];
   for (int i = 0; i < names.length; i++) {
     final String name = names[i].replaceAll(r'\', '/');
@@ -115,7 +124,10 @@ ArchiveLayout layoutShelfArchive(List<String> names) {
   final Set<String> seen = <String>{};
   final List<ArchiveBook> result = <ArchiveBook>[];
   for (final _Item book in books) {
-    final String? category = _categoryOf(book.folder);
+    final String? folder = book.folder;
+    final String? category = folder == null
+        ? rootCategory
+        : _categoryOf(folder);
     if (category != null && seen.add(category.toLowerCase())) {
       categories.add(category);
     }
@@ -140,15 +152,49 @@ ArchiveLayout layoutShelfArchive(List<String> names) {
 ///
 /// Папка, названная «Без категории», — это она и есть, а не вторая
 /// категория с тем же названием рядом с постоянным разделом.
-String? _categoryOf(String? folder) {
-  if (folder == null) {
-    return null;
-  }
+String? _categoryOf(String folder) {
   final String title = normalizeCategoryTitle(stripOrderPrefix(folder));
   return title.toLowerCase() == kUncategorizedTitle.toLowerCase()
       ? null
       : title;
 }
+
+/// Название категории для архива, у которого своего имени нет.
+///
+/// Так бывает с архивом, выбранным вручную из облака: провайдер отдаёт
+/// поток без имени файла. Категория со служебным именем на полке
+/// тестировщика выглядела бы поломкой.
+const String kArchiveCategoryFallback = 'Литература';
+
+/// Название категории, в которую встают книги из корня архива
+/// (SNO-F-LIT-04); `null` — «Без категории».
+///
+/// Это имя файла архива, приведённое к виду названия:
+///
+/// - без пути и без расширения `.zip`;
+/// - без хвоста повторной загрузки: «Литература (1).zip» — тот же
+///   архив, скачанный второй раз, и вторая категория ему не положена
+///   (число в скобках из одной-двух цифр; год в скобках — название);
+/// - без цифр порядка в начале, как у папок: «01 Литература» →
+///   «Литература».
+///
+/// Архив без имени даёт [kArchiveCategoryFallback]; архив, названный
+/// «Без категории», — сам раздел «Без категории».
+String? archiveCategoryTitle(String archiveName) {
+  String name = archiveName.replaceAll(r'\', '/').trim();
+  final int slash = name.lastIndexOf('/');
+  if (slash >= 0) {
+    name = name.substring(slash + 1);
+  }
+  if (name.toLowerCase().endsWith('.zip')) {
+    name = name.substring(0, name.length - 4);
+  }
+  name = stripOrderPrefix(name.replaceFirst(_copySuffix, ''));
+  return _categoryOf(name.isEmpty ? kArchiveCategoryFallback : name);
+}
+
+/// Хвост повторной загрузки: « (1)», « (2) (1)».
+final RegExp _copySuffix = RegExp(r'(?:\s*\(\d{1,2}\))+\s*$');
 
 /// Убирает из начала имени цифры порядка: «01 Анатомия» → «Анатомия».
 ///

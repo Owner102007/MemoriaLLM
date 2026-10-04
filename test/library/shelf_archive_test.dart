@@ -239,6 +239,98 @@ void main() {
     });
   });
 
+  group('SNO-F-LIT-04: книги из корня — в категории с названием архива', () {
+    const List<String> names = <String>[
+      '01 Анатомия/02 Атлас.pdf',
+      'Латинский язык.pdf',
+      '02 Физиология/Нормальная физиология.pdf',
+      'Словарь.pdf',
+    ];
+
+    test('SNO-F-LIT-04: папки остаются категориями, корень — архивом', () {
+      final ArchiveLayout layout = layoutShelfArchive(
+        names,
+        archiveName: 'Литература.zip',
+      );
+
+      // Категория архива встаёт первой: книги корня идут раньше папок.
+      expect(layout.categories, <String>[
+        'Литература',
+        'Анатомия',
+        'Физиология',
+      ]);
+      expect(shelfOf(layout), <String>[
+        'Литература · Латинский язык',
+        'Литература · Словарь',
+        'Анатомия · Атлас',
+        'Физиология · Нормальная физиология',
+      ]);
+    });
+
+    test('SNO-F-LIT-04: без имени архива корень — «Без категории»', () {
+      // Так раскладку спрашивает поиск архивов: ему важно число книг.
+      final ArchiveLayout layout = layoutShelfArchive(names);
+
+      expect(layout.categories, <String>['Анатомия', 'Физиология']);
+      expect(shelfOf(layout).take(2), <String>[
+        '— · Латинский язык',
+        '— · Словарь',
+      ]);
+    });
+
+    test('SNO-F-LIT-04: папка с названием архива — та же категория', () {
+      final ArchiveLayout layout = layoutShelfArchive(<String>[
+        'литература/Атлас.pdf',
+        'Словарь.pdf',
+      ], archiveName: 'Литература.zip');
+
+      expect(layout.categories, <String>['Литература']);
+    });
+
+    test('SNO-F-LIT-04: обёртка снята — название даёт архив, а не она', () {
+      final ArchiveLayout layout = layoutShelfArchive(<String>[
+        'Обёртка/Словарь.pdf',
+        'Обёртка/1 Анатомия/Атлас.pdf',
+      ], archiveName: 'Курс.zip');
+
+      expect(shelfOf(layout), <String>['Курс · Словарь', 'Анатомия · Атлас']);
+    });
+
+    test('SNO-F-LIT-04: название — имя архива без расширения и пути', () {
+      expect(archiveCategoryTitle('Литература.zip'), 'Литература');
+      expect(archiveCategoryTitle('ЛИТЕРАТУРА.ZIP'), 'ЛИТЕРАТУРА');
+      expect(archiveCategoryTitle('/sdcard/Download/Курс.zip'), 'Курс');
+      expect(archiveCategoryTitle(r'C:\Users\Paul\Курс.zip'), 'Курс');
+      expect(archiveCategoryTitle('Курс'), 'Курс');
+    });
+
+    test('SNO-F-LIT-04: цифры порядка и хвост повторной загрузки сняты', () {
+      expect(archiveCategoryTitle('01 Литература.zip'), 'Литература');
+      expect(archiveCategoryTitle('Литература (1).zip'), 'Литература');
+      expect(archiveCategoryTitle('Литература (2) (1).zip'), 'Литература');
+      expect(archiveCategoryTitle('02. Курс(3).zip'), 'Курс');
+      // Цифры без разделителя и год в скобках — часть названия.
+      expect(archiveCategoryTitle('1984.zip'), '1984');
+      expect(archiveCategoryTitle('Курс (2026).zip'), 'Курс (2026)');
+    });
+
+    test('SNO-F-LIT-04: архив без имени — не служебное название', () {
+      expect(archiveCategoryTitle(''), kArchiveCategoryFallback);
+      expect(archiveCategoryTitle('.zip'), kArchiveCategoryFallback);
+      expect(archiveCategoryTitle('  (1).zip'), kArchiveCategoryFallback);
+      expect(kArchiveCategoryFallback, 'Литература');
+    });
+
+    test('SNO-F-LIT-04: архив «Без категории» — сам этот раздел', () {
+      expect(archiveCategoryTitle('Без категории.zip'), isNull);
+      final ArchiveLayout layout = layoutShelfArchive(<String>[
+        'Словарь.pdf',
+      ], archiveName: 'без категории.zip');
+      expect(layout.categories, isEmpty);
+      expect(shelfOf(layout), <String>['— · Словарь']);
+    });
+  });
+
   test('SNO-F-LIT-01: архив узнаётся по имени файла', () {
     expect(isArchiveName('Литература.zip'), isTrue);
     expect(isArchiveName('ЛИТЕРАТУРА.ZIP'), isTrue);

@@ -5,11 +5,16 @@ import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
 import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/domain/settings/app_settings.dart';
+import 'package:memoria/domain/theme/app_palette.dart';
 import 'package:memoria/sno/flags.dart';
+import 'package:memoria/sno/hold_button.dart';
+import 'package:memoria/sno/reference_state.dart';
 import 'package:memoria/sno/testing_screen.dart';
 import 'package:memoria/ui/app.dart';
 import 'package:memoria/ui/library/book_card.dart';
@@ -306,6 +311,90 @@ void main() {
 
       await tester.binding.handlePopRoute();
       await settle(tester);
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: сброс возвращает тему и порядок полки', (
+      WidgetTester tester,
+    ) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      resize(tester, tall);
+      // Полка из архива: в порядке мест — «Яя», «Аа».
+      await data.categories.save(
+        BookCategory(
+          id: 'lit',
+          title: 'Литература',
+          position: 0,
+          createdAt: DateTime.utc(2026, 10, 4),
+        ),
+      );
+      await data.library.save(
+        testBook(
+          id: 'z',
+          title: 'Яя',
+          hash: 'hash-z',
+        ).copyWith(categoryId: 'lit', shelfPosition: 0),
+      );
+      await data.library.save(
+        testBook(
+          id: 'a',
+          title: 'Аа',
+          hash: 'hash-a',
+        ).copyWith(categoryId: 'lit', shelfPosition: 1),
+      );
+      await ReferenceKeeper(
+        data: data,
+        storage: MemoryBookStorage(),
+      ).remember(await data.library.books());
+      final ThemeController theme = await ThemeController.restore(
+        data.settings,
+      );
+      double left(String id) {
+        return tester.getTopLeft(find.byKey(Key('library-book-$id'))).dx;
+      }
+
+      await tester.pumpWidget(
+        MemoriaApp(
+          themeController: theme,
+          services: testServices(data: data),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // В ветви полка стоит так, как её положил архив.
+      expect(left('z'), lessThan(left('a')));
+
+      // Тестировщик сменил тему и порядок полки.
+      await theme.select(AppThemeId.sepia);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('library-sort')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('По названию').last);
+      await settle(tester);
+      expect(left('a'), lessThan(left('z')));
+
+      await open(tester, 'testing');
+      await tester.tap(find.text('Для экспериментатора'));
+      await settle(tester);
+      expect(find.text('Сейчас: отличается от эталона'), findsOneWidget);
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const Key('sno-reset-hold'))),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      await tester.pump(kResetHold + const Duration(milliseconds: 100));
+      await gesture.up();
+      await settle(tester);
+
+      expect(
+        find.text('Сброшено. Состояние совпадает с эталоном.'),
+        findsOneWidget,
+      );
+      // Без перезапуска: тема и порядок полки перечитаны.
+      expect(theme.value, defaultThemeId);
+      expect(await data.settings.read(SettingsKeys.shelfSort), isNull);
+      await open(tester, 'library');
+      expect(left('z'), lessThan(left('a')));
+
       await unmount(tester);
     });
 

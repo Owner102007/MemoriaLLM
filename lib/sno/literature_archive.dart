@@ -3,7 +3,8 @@
 /// Литература исследования СНО2026 приходит тестировщику одним
 /// ZIP-архивом (решение владельца 04.10.2026): в установщик она не
 /// вшита. Экспериментатор выбирает архив в разделе «Тестирование», и
-/// книги раскладываются по полке: папка архива — категория, порядок — по
+/// книги раскладываются по полке: папка архива — категория, книги из
+/// корня — в категории с названием архива (SNO-F-LIT-04), порядок — по
 /// именам (`domain/library/shelf_archive.dart`).
 ///
 /// Книга распаковывается потоком в файл `.part` в папке приложения и
@@ -358,9 +359,11 @@ class LiteratureArchive {
     ZipArchive archive,
     void Function(ArchiveProgress progress)? onProgress,
   ) async {
+    // SNO-F-LIT-04: имя архива — название категории для книг из его
+    // корня.
     final ArchiveLayout layout = layoutShelfArchive(<String>[
       for (final ZipEntry entry in archive.entries) entry.name,
-    ]);
+    ], archiveName: name);
     final int total = layout.books.length;
     if (total == 0) {
       return ArchiveReport(

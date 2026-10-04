@@ -49,6 +49,20 @@ class DriftLibraryRepository implements LibraryRepository {
   }
 
   @override
+  Future<Book?> removedBookByHash(String fileHash) async {
+    final query = _db.select(_db.books);
+    query.where(
+      (tbl) => tbl.fileHash.equals(fileHash) & tbl.isDeleted.equals(true),
+    );
+    // Метка изменения начинается со времени, и строки меток сравниваются
+    // как время: первой идёт книга, снятая последней.
+    query.orderBy([(tbl) => OrderingTerm.desc(tbl.modified)]);
+    query.limit(1);
+    final BookRow? row = await query.getSingleOrNull();
+    return row == null ? null : _toBook(row);
+  }
+
+  @override
   Future<void> save(Book book) async {
     final Hlc stamp = _clock.issue();
     final String mark = stamp.toString();
