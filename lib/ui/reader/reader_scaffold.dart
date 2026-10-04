@@ -7,6 +7,7 @@ import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/reading/navigation.dart';
 import '../../domain/reading/search_dock.dart';
+import '../../domain/reading/selection_query.dart';
 import '../../domain/reading/text_search.dart';
 import 'key_bindings.dart';
 import 'outline_panel.dart';
@@ -175,6 +176,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   /// Запрос, по которому идёт счёт совпадений.
   String _query = '';
 
+  /// Сколько раз запрос задавали не набором в поле (SNO-F-READ-01):
+  /// по сменившемуся числу панель поиска обновляет своё поле.
+  int _seed = 0;
+
   @override
   void initState() {
     super.initState();
@@ -332,6 +337,57 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         _searchField.requestFocus();
       }
     });
+  }
+
+  /// Ищет в книге [query] и открывает найденное — «Найти в книге» над
+  /// выделенным текстом (SNO-F-READ-01).
+  ///
+  /// Поиск открывается сразу в виде «просмотр»: читатель не набирает, а
+  /// смотрит найденное, и клавиатура на телефоне не поднимается. Когда
+  /// поиск кончился, текущим становится совпадение на месте выделения —
+  /// страница [pageNumber], текст от [start] до [end]. Нет его на этой
+  /// странице — текущего нет, и читатель остаётся там, где читал.
+  Future<void> findInBook(
+    String query, {
+    required int pageNumber,
+    required int start,
+    required int end,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    final DocumentSearch search = widget.search;
+    // Запрос у поиска появляется сразу, до первого ожидания: панель,
+    // которая встанет на экран следом, возьмёт его в своё поле.
+    final Future<void> done = search.start(query);
+    setState(() {
+      _searchOpen = true;
+      _browsing = true;
+      _hit = -1;
+      _seed++;
+    });
+    _report();
+    _keys.requestFocus();
+    await done;
+    // Пока искали, запрос могли сменить, а поиск — закрыть.
+    if (!mounted ||
+        !_searchOpen ||
+        search.isRunning ||
+        search.query != query.trim()) {
+      return;
+    }
+    final List<SearchHit> hits = search.hits;
+    final int at = hitIndexAt(
+      hits,
+      pageNumber: pageNumber,
+      start: start,
+      end: end,
+    );
+    if (at < 0) {
+      return;
+    }
+    _browse(at);
+    await _goToHit(hits[at]);
   }
 
   /// Закрывает поиск. Запрос и место в списке остаются: откроют снова —
@@ -684,6 +740,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       translucent: translucent,
       edged: edged,
       fieldFocus: _searchField,
+      seed: _seed,
       onSelect: (SearchHit hit) => unawaited(_selectHit(hit)),
       onStep: (int step) => unawaited(stepHit(step)),
       onEdit: openSearch,

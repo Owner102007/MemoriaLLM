@@ -135,4 +135,94 @@ void main() {
     expect(find.textContaining('ineffable'), findsOneWidget);
     expect(find.byKey(const Key('prompt-preview-copy')), findsOneWidget);
   });
+
+  group('SNO-F-READ-01: панель без модели', () {
+    testWidgets('SNO-F-READ-01: ровно четыре действия и ни одного промпта', (
+      WidgetTester tester,
+    ) async {
+      int finds = 0;
+      await tester.pumpWidget(
+        host(
+          SelectionPanel(
+            anchor: const Rect.fromLTWH(50, 300, 200, 24),
+            prompts: PromptSet.empty,
+            onPrompt: (_) {},
+            onQuote: () {},
+            onNote: () {},
+            onCopy: () {},
+            onFind: () => finds++,
+          ),
+        ),
+      );
+
+      final Finder panel = find.byKey(const Key('selection-panel'));
+      expect(
+        find.descendant(of: panel, matching: find.byType(IconButton)),
+        findsNWidgets(4),
+      );
+      expect(
+        find.descendant(of: panel, matching: find.byType(TextButton)),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('selection-action-quote')), findsOneWidget);
+      expect(find.byKey(const Key('selection-action-note')), findsOneWidget);
+      expect(find.byKey(const Key('selection-action-copy')), findsOneWidget);
+      expect(find.byKey(const Key('selection-action-find')), findsOneWidget);
+      expect(find.byTooltip('Найти в книге'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('selection-action-find')));
+      await tester.pump();
+      expect(finds, 1);
+    });
+
+    testWidgets('SNO-F-READ-01: «Найти в книге» стоит последним', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        host(
+          SelectionPanel(
+            anchor: const Rect.fromLTWH(50, 300, 200, 24),
+            prompts: PromptSet.empty,
+            onPrompt: (_) {},
+            onQuote: () {},
+            onNote: () {},
+            onCopy: () {},
+            onFind: () {},
+          ),
+        ),
+      );
+
+      double left(String id) {
+        return tester.getTopLeft(find.byKey(Key('selection-action-$id'))).dx;
+      }
+
+      // Прежние три — в прежнем порядке, новое — за ними.
+      expect(left('quote'), lessThan(left('note')));
+      expect(left('note'), lessThan(left('copy')));
+      expect(left('copy'), lessThan(left('find')));
+    });
+
+    testWidgets('SNO-F-READ-01: с моделью действия «Найти в книге» нет', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        host(
+          SelectionPanel(
+            anchor: const Rect.fromLTWH(50, 300, 200, 24),
+            prompts: PromptSet(
+              prompts: <SelectionPrompt>[prompt('p1', 'Значение')],
+              fromBook: false,
+            ),
+            onPrompt: (_) {},
+            onQuote: () {},
+            onNote: () {},
+            onCopy: () {},
+          ),
+        ),
+      );
+
+      expect(find.byKey(const Key('selection-action-find')), findsNothing);
+      expect(find.byKey(const Key('selection-prompt-p1')), findsOneWidget);
+    });
+  });
 }

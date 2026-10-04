@@ -269,6 +269,10 @@ class _HomeShellState extends State<HomeShell> {
           canAddBooks: Sno.scanner,
           // SNO-F-CFG-04: в ветви книги стоят, как их положил архив.
           defaultSort: Sno.literature ? ShelfSort.manual : ShelfSort.recent,
+          // SNO-F-LIB-01: поиск по названию — в сборках ветвей.
+          titleSearch: Sno.enabled,
+          // SNO-F-READ-01: без модели над выделением нет промптов.
+          models: Sno.models,
         );
       case AppSection.device:
         if (!_deviceOpened) {

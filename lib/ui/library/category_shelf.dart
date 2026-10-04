@@ -35,6 +35,7 @@ class CategoryShelf extends StatelessWidget {
     this.onDelete,
     this.onDragStarted,
     this.onDragEnded,
+    this.movable = true,
     super.key,
   });
 
@@ -51,7 +52,9 @@ class CategoryShelf extends StatelessWidget {
   final void Function(Book book) onOpen;
 
   /// Показать меню книги.
-  final void Function(Book book) onMenu;
+  ///
+  /// `null` — меню у книг нет: полка закреплена (SNO-F-LIB-02).
+  final void Function(Book book)? onMenu;
 
   /// Добавить книги в эту категорию.
   ///
@@ -84,6 +87,12 @@ class CategoryShelf extends StatelessWidget {
   /// нет, и полка, ведомая ими, не останавливалась там, где палец замер
   /// в промежутке.
   final VoidCallback? onDragEnded;
+
+  /// Можно ли поднять книгу и переставить её.
+  ///
+  /// На закреплённой полке — нельзя (SNO-F-LIB-02): блок книги остаётся
+  /// просто блоком, и долгое нажатие ничего не захватывает.
+  final bool movable;
 
   @override
   Widget build(BuildContext context) {
@@ -165,26 +174,32 @@ class CategoryShelf extends StatelessWidget {
                           );
                         }
                         final Book book = section.books[index];
+                        final void Function(Book book)? menu = onMenu;
+                        final Widget card = BookCard(
+                          book: book,
+                          covers: covers,
+                          progress: progress[book.id] ?? 0,
+                          onOpen: () => onOpen(book),
+                          onMenu: menu == null ? null : () => menu(book),
+                        );
                         return _BookSlot(
                           section: section,
                           index: index,
                           onDropBook: onDropBook,
-                          child: BookDragHandle(
-                            payload: DraggedBook(
-                              book: book,
-                              fromCategoryId: book.categoryId,
-                            ),
-                            feedbackSize: blockSize,
-                            onDragStarted: onDragStarted,
-                            onDragEnded: onDragEnded,
-                            child: BookCard(
-                              book: book,
-                              covers: covers,
-                              progress: progress[book.id] ?? 0,
-                              onOpen: () => onOpen(book),
-                              onMenu: () => onMenu(book),
-                            ),
-                          ),
+                          // SNO-F-LIB-02: на закреплённой полке блок
+                          // книги не поднимается.
+                          child: movable
+                              ? BookDragHandle(
+                                  payload: DraggedBook(
+                                    book: book,
+                                    fromCategoryId: book.categoryId,
+                                  ),
+                                  feedbackSize: blockSize,
+                                  onDragStarted: onDragStarted,
+                                  onDragEnded: onDragEnded,
+                                  child: card,
+                                )
+                              : card,
                         );
                       },
                     ),

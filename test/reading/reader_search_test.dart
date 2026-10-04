@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -455,6 +457,140 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.f3);
       await tester.pumpAndSettle();
       expect(label(tester), '2 / 6');
+
+      await unmount(tester);
+    });
+  });
+
+  group('SNO-F-READ-01: «Найти в книге» над выделением', () {
+    /// Место слова «тройка» на странице книги [threes].
+    const String fifth = 'и снова тройка';
+    final int start = fifth.indexOf('тройка');
+
+    String count(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const Key('search-count'))).data!;
+
+    void resize(WidgetTester tester, Size size) {
+      tester.view.physicalSize = size * tester.view.devicePixelRatio;
+    }
+
+    testWidgets('SNO-F-READ-01: поиск открыт с выделенным как запросом', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester, document: threes());
+      final ReaderController controller = scaffoldOf(tester).controller;
+      await controller.goToPage(5);
+      await tester.pumpAndSettle();
+
+      unawaited(
+        stateOf(tester).findInBook(
+          'тройка',
+          pageNumber: 5,
+          start: start,
+          end: start + 6,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Панель открыта списком найденного, а не полем ввода: читатель
+      // смотрит найденное, клавиатура ему не нужна.
+      expect(find.byKey(const Key('search-panel')), findsOneWidget);
+      expect(find.byKey(const Key('search-field')), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('search-query')),
+          matching: find.text('тройка'),
+        ),
+        findsOneWidget,
+      );
+      expect(scaffoldOf(tester).search.query, 'тройка');
+      // Текущее — совпадение на месте выделения: второе из двух.
+      expect(count(tester), '2 из 2');
+      expect(find.byKey(const Key('search-current')), findsOneWidget);
+      expect(label(tester), '5 / 6');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-01: читатель остаётся там, где выделял', (
+      WidgetTester tester,
+    ) async {
+      // На третьей странице слова нет: текущего совпадения нет, и на
+      // чужую страницу читателя не уводят.
+      await pumpReader(tester, document: threes());
+      final ReaderController controller = scaffoldOf(tester).controller;
+      await controller.goToPage(3);
+      await tester.pumpAndSettle();
+
+      unawaited(
+        stateOf(tester).findInBook('тройка', pageNumber: 3, start: 0, end: 6),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('search-panel')), findsOneWidget);
+      expect(count(tester), 'из 2');
+      expect(find.byKey(const Key('search-current')), findsNothing);
+      expect(label(tester), '3 / 6');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-01: в открытом поиске запрос сменяется', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester, document: threes());
+      stateOf(tester).openSearch();
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('search-field')), 'ничего');
+      await tester.pumpAndSettle(const Duration(milliseconds: 400));
+      expect(scaffoldOf(tester).search.query, 'ничего');
+
+      unawaited(
+        stateOf(tester).findInBook(
+          'тройка',
+          pageNumber: 2,
+          start: 'здесь встречается '.length,
+          end: 'здесь встречается тройка'.length,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(count(tester), '1 из 2');
+      expect(label(tester), '2 / 6');
+
+      // Вернулись ко вводу: в поле стоит новый запрос, а не прежний.
+      await tester.tap(find.byKey(const Key('search-query')));
+      await tester.pumpAndSettle();
+      final TextField field = tester.widget(
+        find.byKey(const Key('search-field')),
+      );
+      expect(field.controller!.text, 'тройка');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-01: на широком окне запрос стоит в поле', (
+      WidgetTester tester,
+    ) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      resize(tester, const Size(1280, 800));
+      await pumpReader(tester, document: threes());
+
+      unawaited(
+        stateOf(tester).findInBook(
+          'тройка',
+          pageNumber: 5,
+          start: start,
+          end: start + 6,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final TextField field = tester.widget(
+        find.byKey(const Key('search-field')),
+      );
+      expect(field.controller!.text, 'тройка');
+      expect(count(tester), '2 из 2');
+      expect(label(tester), '5 / 6');
 
       await unmount(tester);
     });

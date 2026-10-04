@@ -46,6 +46,7 @@ class SearchPanel extends StatefulWidget {
     this.onStep,
     this.onEdit,
     this.onClose,
+    this.seed = 0,
     super.key,
   });
 
@@ -87,6 +88,13 @@ class SearchPanel extends StatefulWidget {
   /// поле осталось бы без пробела и `Backspace`.
   final VoidCallback? onClose;
 
+  /// Номер запроса, заданного не набором в поле (SNO-F-READ-01).
+  ///
+  /// «Найти в книге» над выделением запускает поиск сам. Панель, уже
+  /// стоящая на экране, узнаёт об этом по сменившемуся номеру и ставит
+  /// запрос в своё поле — иначе в поле остался бы прежний.
+  final int seed;
+
   @override
   State<SearchPanel> createState() => _SearchPanelState();
 }
@@ -118,6 +126,11 @@ class _SearchPanelState extends State<SearchPanel> {
     if (oldWidget.current != widget.current ||
         oldWidget.browsing != widget.browsing) {
       _revealSoon();
+    }
+    if (oldWidget.seed != widget.seed) {
+      // Недобранный запрос не должен стартовать поверх заданного.
+      _debounce?.cancel();
+      _field.text = widget.search.query;
     }
   }
 

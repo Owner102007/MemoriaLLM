@@ -43,7 +43,10 @@ class BookCard extends StatelessWidget {
   ///
   /// Открывается кнопкой «…» в углу обложки и правой кнопкой мыши.
   /// Долгое нажатие меню не открывает — оно поднимает книгу.
-  final VoidCallback onMenu;
+  ///
+  /// `null` — меню нет: на закреплённой полке (SNO-F-LIB-02) кнопки «…»
+  /// на обложке нет, и правая кнопка мыши ничего не открывает.
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -93,7 +96,7 @@ class _CoverFrame extends StatelessWidget {
   final Book book;
   final CoverService covers;
   final double progress;
-  final VoidCallback onMenu;
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -148,23 +151,24 @@ class _CoverFrame extends StatelessWidget {
               alignment: Alignment.bottomCenter,
               child: _ProgressBar(progress: progress),
             ),
-          Align(
-            alignment: Alignment.topRight,
-            child: IconButton(
-              key: Key('library-menu-${book.id}'),
-              icon: const Icon(Icons.more_vert, size: 18),
-              tooltip: 'Что сделать с книгой',
-              visualDensity: VisualDensity.compact,
-              style: IconButton.styleFrom(
-                backgroundColor: theme.colorScheme.surface.withValues(
-                  alpha: 0.72,
+          if (onMenu != null)
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                key: Key('library-menu-${book.id}'),
+                icon: const Icon(Icons.more_vert, size: 18),
+                tooltip: 'Что сделать с книгой',
+                visualDensity: VisualDensity.compact,
+                style: IconButton.styleFrom(
+                  backgroundColor: theme.colorScheme.surface.withValues(
+                    alpha: 0.72,
+                  ),
+                  minimumSize: const Size(28, 28),
+                  padding: EdgeInsets.zero,
                 ),
-                minimumSize: const Size(28, 28),
-                padding: EdgeInsets.zero,
+                onPressed: onMenu,
               ),
-              onPressed: onMenu,
             ),
-          ),
         ],
       ),
     );

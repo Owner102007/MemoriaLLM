@@ -27,6 +27,7 @@ class SelectionPanel extends StatelessWidget {
     required this.onQuote,
     required this.onNote,
     required this.onCopy,
+    this.onFind,
     super.key,
   });
 
@@ -64,6 +65,13 @@ class SelectionPanel extends StatelessWidget {
 
   /// Скопировать выделенное.
   final VoidCallback onCopy;
+
+  /// Найти выделенное в книге.
+  ///
+  /// `null` — действия нет. Оно есть в сборках ветвей СНО2026
+  /// (SNO-F-READ-01): там нет модели, ряд промптов пуст, и панель — это
+  /// один ряд из четырёх значков.
+  final VoidCallback? onFind;
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +143,14 @@ class SelectionPanel extends StatelessWidget {
                     label: 'Копировать',
                     onPressed: onCopy,
                   ),
+                  // Прежние три стоят как стояли; новое — последним.
+                  if (onFind case final VoidCallback find)
+                    _Action(
+                      id: 'find',
+                      icon: Icons.manage_search,
+                      label: 'Найти в книге',
+                      onPressed: find,
+                    ),
                 ],
               ),
             ],

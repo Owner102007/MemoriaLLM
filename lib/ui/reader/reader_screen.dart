@@ -22,6 +22,7 @@ import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
+import '../../domain/reading/selection_query.dart';
 import '../../domain/reading/sheet_arrangement.dart';
 import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/text_geometry.dart';
@@ -63,6 +64,7 @@ class ReaderScreen extends StatefulWidget {
     required this.book,
     required this.services,
     this.canRelink = true,
+    this.models = true,
     super.key,
   });
 
@@ -80,6 +82,14 @@ class ReaderScreen extends StatefulWidget {
   /// которым под именем книги из литературы на полку вставал любой PDF.
   /// Пропавшую копию возвращает повторное добавление архива.
   final bool canRelink;
+
+  /// Есть ли в сборке модель.
+  ///
+  /// В сборках ветвей СНО2026 — нет (SNO-F-READ-01, SNO-DIV-09): сети и
+  /// модели в тестах нет, и кнопка промпта вела бы к запросу, который
+  /// некому задать. Над выделением тогда четыре действия — «В цитаты»,
+  /// «Заметка», «Копировать», «Найти в книге» — и ни одного промпта.
+  final bool models;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -1290,6 +1300,31 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _say('Скопировано');
   }
 
+  /// «Найти в книге»: выделенное становится запросом поиска по книге.
+  ///
+  /// SNO-F-READ-01. Запрос собирает [selectionSearchQuery]; поиск
+  /// открывает обвязка экрана — сразу со списком найденного, а текущим
+  /// делает совпадение на месте выделения.
+  Future<void> _onFind() async {
+    final BookSelection? selection = _selection;
+    final ReaderScaffoldState? scaffold = _scaffold.currentState;
+    if (selection == null || scaffold == null) {
+      return;
+    }
+    final String query = selectionSearchQuery(selection.text);
+    if (!isSearchableQuery(query)) {
+      _say('Для поиска выделите хотя бы два знака');
+      return;
+    }
+    _dismissSelection();
+    await scaffold.findInBook(
+      query,
+      pageNumber: selection.pageNumber,
+      start: selection.start,
+      end: selection.end,
+    );
+  }
+
   void _say(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
@@ -1901,11 +1936,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
         if (selection != null && pages.contains(selection.pageNumber))
           SelectionPanel(
             anchor: panelAnchor(rects: selected, area: size),
-            prompts: _prompts,
+            // SNO-F-READ-01: без модели промптов над выделением нет,
+            // а четвёртым действием стоит «Найти в книге».
+            prompts: widget.models ? _prompts : PromptSet.empty,
             onPrompt: (SelectionPrompt prompt) => unawaited(_onPrompt(prompt)),
             onQuote: () => unawaited(_onQuote()),
             onNote: () => unawaited(_onNote()),
             onCopy: () => unawaited(_onCopy()),
+            onFind: widget.models ? null : () => unawaited(_onFind()),
           ),
       ],
     );

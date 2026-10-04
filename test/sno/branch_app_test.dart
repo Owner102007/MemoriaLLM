@@ -19,6 +19,7 @@ import 'package:memoria/sno/reference_state.dart';
 import 'package:memoria/sno/testing_screen.dart';
 import 'package:memoria/ui/app.dart';
 import 'package:memoria/ui/library/book_card.dart';
+import 'package:memoria/ui/library/library_screen.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
@@ -90,6 +91,21 @@ void main() {
       expect(find.byKey(const Key('library-open-file')), findsOneWidget);
       final MaterialApp app = tester.widget(find.byType(MaterialApp));
       expect(app.title, 'Memoria LLM HB');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIB-01: поиска по полке в ней нет, модель есть', (
+      WidgetTester tester,
+    ) async {
+      await data.library.save(testBook());
+      await pumpApp(tester, testServices(data: data));
+
+      final LibraryScreen shelf = tester.widget(find.byType(LibraryScreen));
+      expect(shelf.titleSearch, isFalse);
+      expect(shelf.models, isTrue);
+      expect(shelf.locked, isFalse);
+      expect(find.byKey(const Key('library-search')), findsNothing);
 
       await unmount(tester);
     });
@@ -422,6 +438,68 @@ void main() {
       await settle(tester);
 
       expect(find.byKey(const Key('library-shelf')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIB-01: на полке ветви есть поиск по названию', (
+      WidgetTester tester,
+    ) async {
+      await data.library.save(testBook());
+      await pumpApp(tester, testServices(data: data));
+
+      final LibraryScreen shelf = tester.widget(find.byType(LibraryScreen));
+      expect(shelf.titleSearch, isTrue);
+      // SNO-F-READ-01: модели в ветви нет — над выделением не будет
+      // промптов. SNO-F-LIB-02: замок закрывает запись, а её ещё нет.
+      expect(shelf.models, isFalse);
+      expect(shelf.locked, isFalse);
+
+      await tester.tap(find.byKey(const Key('library-search')));
+      await settle(tester);
+      await tester.enterText(
+        find.byKey(const Key('shelf-search-field')),
+        'пиковая',
+      );
+      await settle(tester);
+      expect(find.byKey(const Key('shelf-search-hit-book-1')), findsOneWidget);
+      // Поиск закрыли — на экране снова полка и разделы.
+      await tester.tap(find.byKey(const Key('shelf-search-back')));
+      await settle(tester);
+      expect(find.byKey(const Key('library-book-book-1')), findsOneWidget);
+      expect(find.byKey(const Key('nav-testing')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIB-01: на широком окне поле — в шапке полки', (
+      WidgetTester tester,
+    ) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      resize(tester, const Size(1280, 800));
+      await data.library.save(testBook());
+      await pumpApp(tester, testServices(data: data));
+
+      // Разделы стоят полосой наверху, шапка полки — под ней, и поле
+      // поиска в шапке видно сразу.
+      expect(find.byKey(const Key('nav-top')), findsOneWidget);
+      expect(find.byKey(const Key('shelf-search-field')), findsOneWidget);
+      expect(find.byKey(const Key('library-search')), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const Key('shelf-search-field')),
+        'дама',
+      );
+      await settle(tester);
+      final Rect field = tester.getRect(
+        find.byKey(const Key('shelf-search-field')),
+      );
+      final Rect list = tester.getRect(
+        find.byKey(const Key('shelf-search-results')),
+      );
+      expect(find.byKey(const Key('shelf-search-hit-book-1')), findsOneWidget);
+      expect(list.left, closeTo(field.left, 0.5));
+      expect(list.top, greaterThanOrEqualTo(field.bottom));
 
       await unmount(tester);
     });
