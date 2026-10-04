@@ -716,8 +716,8 @@ class _EmptyBranchShelf extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'Книги добавляет экспериментатор: '
-              'Тестирование → Для экспериментатора → Добавить PDF…',
+              'Книги добавляет экспериментатор: Тестирование → '
+              'Для экспериментатора → Добавить книги или архив…',
               style: theme.textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),

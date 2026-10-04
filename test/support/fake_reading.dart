@@ -348,12 +348,26 @@ class FakeBookFilePicker implements BookFilePicker {
   /// Сколько раз открывали диалог множественного выбора.
   int batchCalls = 0;
 
+  /// Сколько раз открывали диалог «книги и архивы».
+  int archiveCalls = 0;
+
   @override
   Future<PickedFile?> pickPdf() async => result;
 
   @override
   Future<List<PickedFile>> pickPdfs() async {
     batchCalls++;
+    final List<PickedFile>? batch = _batch;
+    if (batch != null) {
+      return batch;
+    }
+    final PickedFile? single = result;
+    return single == null ? const <PickedFile>[] : <PickedFile>[single];
+  }
+
+  @override
+  Future<List<PickedFile>> pickBooksOrArchives() async {
+    archiveCalls++;
     final List<PickedFile>? batch = _batch;
     if (batch != null) {
       return batch;

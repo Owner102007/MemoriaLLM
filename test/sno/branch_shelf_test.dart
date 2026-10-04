@@ -44,7 +44,10 @@ void main() {
       await pumpShelf(tester, testServices(data: data), canAddBooks: false);
 
       expect(find.byKey(const Key('library-empty-branch')), findsOneWidget);
-      expect(find.textContaining('Добавить PDF'), findsOneWidget);
+      expect(
+        find.textContaining('Добавить книги или архив'),
+        findsOneWidget,
+      );
       // Ни одной кнопки, которая вела бы к книгам устройства.
       expect(find.byKey(const Key('library-open-file-empty')), findsNothing);
       expect(find.byKey(const Key('library-open-file')), findsNothing);
