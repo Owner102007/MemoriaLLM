@@ -6,6 +6,7 @@ import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
+import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/category_style.dart';
 import 'package:memoria/domain/library/drag_scroll.dart';
 import 'package:memoria/domain/library/shelf.dart';
@@ -628,9 +629,56 @@ void main() {
       expect(find.byType(ReaderScreen), findsOneWidget);
       expect(find.text('Вернуть'), findsNothing);
       expect(find.textContaining('убрана с полки'), findsNothing);
+      // Вернуть книгу больше нечем — её источник отпущен, и один раз.
+      expect(storage.released, <BookSource>[testBook().source]);
 
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
+      // И срок сообщения, которого уже нет, ничего не отпускает снова.
+      await tester.pump(const Duration(seconds: 6));
+      expect(storage.released, hasLength(1));
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-47: сообщения, ждавшие очереди, уходят вместе', (
+      WidgetTester tester,
+    ) async {
+      await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      for (final String id in <String>['1', '2', '3']) {
+        await data.library.save(
+          testBook(id: 'book-$id', title: 'Книга $id', hash: 'hash-$id'),
+        );
+      }
+      final MemoryBookStorage storage = MemoryBookStorage();
+      await pumpShelf(tester, testServices(data: data, storage: storage));
+
+      // Сняли две книги подряд: второе сообщение ждёт, пока уйдёт
+      // первое.
+      for (final String id in <String>['1', '2']) {
+        await tester.tap(find.byKey(Key('library-menu-book-$id')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('book-action-remove')));
+        await tester.pumpAndSettle();
+      }
+      expect(find.textContaining('«Книга 1» убрана'), findsOneWidget);
+      expect(storage.released, isEmpty);
+
+      await tester.tap(find.byKey(const Key('library-book-book-3')));
+      await tester.pumpAndSettle();
+
+      // Ни показанного, ни ждавшего: оба источника отпущены.
+      expect(find.textContaining('убрана с полки'), findsNothing);
+      expect(storage.released.toSet(), <BookSource>{
+        testBook(id: 'book-1').source,
+        testBook(id: 'book-2').source,
+      });
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('убрана с полки'), findsNothing);
+      expect(storage.released, hasLength(2));
+
       await unmount(tester);
     });
   });

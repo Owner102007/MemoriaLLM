@@ -158,6 +158,12 @@ class _HomeShellState extends State<HomeShell> {
   /// Настройки стёрты мимо всего, что держит их в памяти: тема
   /// перечитывается, полка строится заново. Перезапуск не нужен.
   Future<void> _stateReset() async {
+    // Сообщение «убрана с полки» с кнопкой «Вернуть» относится к полке,
+    // которой больше нет: оставшись, оно вернуло бы книгу прежнего
+    // тестировщика.
+    ScaffoldMessenger.maybeOf(context)
+      ?..clearSnackBars()
+      ..removeCurrentSnackBar();
     await widget.themeController.reload();
     if (mounted) {
       setState(() => _resets++);

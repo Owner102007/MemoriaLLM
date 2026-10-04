@@ -69,6 +69,7 @@ class ArchiveReport {
     this.repeats = 0,
     this.skipped = 0,
     this.failed = const <ImportFailure>[],
+    this.placed = const <ArchivePlacement>[],
     this.refusal,
     this.stopped,
   });
@@ -96,6 +97,12 @@ class ArchiveReport {
 
   /// Книги, которые не встали на полку, с причиной у каждой.
   final List<ImportFailure> failed;
+
+  /// Книги архива, стоящие на полке после добавления, — и вставшие
+  /// сейчас, и стоявшие раньше, — в порядке архива, с категорией,
+  /// которую им назначил архив. Из них складывается эталонное состояние
+  /// (SNO-F-CFG-04).
+  final List<ArchivePlacement> placed;
 
   /// Почему архив не принят вовсе; `null` — принят.
   final String? refusal;
@@ -412,6 +419,18 @@ class LiteratureArchive {
 
     final List<Book> added = <Book>[];
     final List<ImportFailure> failed = <ImportFailure>[];
+    // SNO-F-CFG-04: куда архив кладёт каждую книгу, стоящую на полке.
+    final List<ArchivePlacement> placed = <ArchivePlacement>[];
+    void land(String hash, ArchiveBook book) {
+      placed.add(
+        ArchivePlacement(
+          fingerprint: hash,
+          title: book.title,
+          category: book.category,
+        ),
+      );
+    }
+
     int already = 0;
     int repeats = 0;
     String? stopped;
@@ -444,6 +463,7 @@ class LiteratureArchive {
           }
           if (await _onShelf(hash)) {
             landed.add(hash);
+            land(hash, planned);
             already++;
             continue;
           }
@@ -463,6 +483,7 @@ class LiteratureArchive {
           // заново нельзя: импорт отметил бы её открытой сейчас, и
           // полка в порядке «недавние» встала бы в порядке архива.
           landed.add(hash);
+          land(hash, planned);
           already++;
           continue;
         }
@@ -478,6 +499,7 @@ class LiteratureArchive {
               : () => _categoryId(category, categoryIds),
         );
         landed.add(hash);
+        land(hash, planned);
         if (known == null) {
           added.add(book);
         } else {
@@ -520,6 +542,7 @@ class LiteratureArchive {
       repeats: repeats,
       skipped: layout.skipped,
       failed: failed,
+      placed: placed,
       stopped: stopped,
     );
   }

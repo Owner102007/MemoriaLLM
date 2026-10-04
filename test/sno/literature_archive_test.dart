@@ -11,6 +11,7 @@ import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/shelf.dart';
+import 'package:memoria/domain/library/shelf_archive.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/infrastructure/files/file_fingerprint.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
@@ -251,6 +252,24 @@ void main() {
         '3/4 Анатомия · Атлас',
         '4/4 Физиология · Нормальная физиология',
       ]);
+      // SNO-F-CFG-04: архив называет место каждой вставшей книги — из
+      // этого складывается эталон.
+      expect(
+        <String>[
+          for (final ArchivePlacement item in report.placed)
+            '${item.category} · ${item.title}',
+        ],
+        <String>[
+          'Литература · Латинский язык',
+          'Анатомия · Анатомия человека, т 1',
+          'Анатомия · Атлас',
+          'Физиология · Нормальная физиология',
+        ],
+      );
+      expect(
+        report.placed.map((ArchivePlacement item) => item.fingerprint),
+        report.added.map((Book book) => book.fileHash),
+      );
     });
 
     test('SNO-F-LIT-01: книги — копии с верными отпечатками', () async {
@@ -389,6 +408,15 @@ void main() {
         expect(again.added, isEmpty);
         expect(again.already, 4);
         expect(again.failed, isEmpty);
+        // SNO-F-CFG-04: место названо и книгам, стоявшим раньше, — и
+        // это место архива, а не то, куда книгу унёс читатель.
+        expect(again.placed, hasLength(4));
+        expect(
+          again.placed
+              .firstWhere((ArchivePlacement item) => item.title == 'Атлас')
+              .category,
+          'Анатомия',
+        );
         expect(await data.library.books(), hasLength(4));
         expect(await data.categories.categories(), hasLength(3));
         // И не переставляет: полка — как её оставил читатель.
@@ -491,6 +519,8 @@ void main() {
       expect(report.failed, hasLength(1));
       expect(report.failed.single.name, '02 Атлас.pdf');
       expect(report.failed.single.reason, contains('контрольная сумма'));
+      // Книге, которая не встала, места в эталоне нет.
+      expect(report.placed, hasLength(3));
       expect(await shelf(), <String>[
         '—: ',
         'Литература: Латинский язык',

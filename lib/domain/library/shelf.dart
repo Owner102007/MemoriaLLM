@@ -53,13 +53,19 @@ String shelfSortTitle(ShelfSort sort) {
 ///
 /// Неизвестное имя откатывается к порядку по умолчанию: настройка могла
 /// приехать с устройства, где стоит версия новее.
-ShelfSort shelfSortFromName(String? name) {
+///
+/// [fallback] — порядок, пока читатель не выбрал свой: в сборках ветвей
+/// СНО2026 это «Как расставил» (SNO-F-CFG-04).
+ShelfSort shelfSortFromName(
+  String? name, {
+  ShelfSort fallback = ShelfSort.recent,
+}) {
   for (final ShelfSort sort in ShelfSort.values) {
     if (sort.name == name) {
       return sort;
     }
   }
-  return ShelfSort.recent;
+  return fallback;
 }
 
 /// Один участок полки: категория и её книги.

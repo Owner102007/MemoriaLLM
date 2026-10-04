@@ -108,16 +108,44 @@ void main() {
     expect(confirmed, 0);
   });
 
-  testWidgets('SNO-F-CFG-04: выключенная кнопка не срабатывает', (
+  /// Насколько кнопка заполнена, от нуля до единицы.
+  double fill(WidgetTester tester) {
+    final FractionallySizedBox box = tester.widget(
+      find.descendant(
+        of: find.byKey(key),
+        matching: find.byType(FractionallySizedBox),
+      ),
+    );
+    return box.widthFactor!;
+  }
+
+  testWidgets('SNO-F-CFG-04: пока держат, кнопка заполняется', (
+    WidgetTester tester,
+  ) async {
+    await pumpButton(tester, onConfirmed: () {});
+    expect(fill(tester), 0);
+
+    final TestGesture gesture = await press(tester);
+    await tester.pump(kResetHold ~/ 2);
+    expect(fill(tester), closeTo(0.5, 0.05));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(fill(tester), 0);
+  });
+
+  testWidgets('SNO-F-CFG-04: выключенная кнопка не заполняется', (
     WidgetTester tester,
   ) async {
     await pumpButton(tester, onConfirmed: null);
 
     final TestGesture gesture = await press(tester);
+    await tester.pump(kResetHold ~/ 2);
+    expect(fill(tester), 0);
     await tester.pump(kResetHold * 2);
     await gesture.up();
     await tester.pumpAndSettle();
 
-    expect(find.text('Удерживайте, чтобы сбросить'), findsOneWidget);
+    expect(fill(tester), 0);
   });
 }

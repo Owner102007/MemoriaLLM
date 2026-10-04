@@ -309,8 +309,20 @@ void main() {
       expect(archiveCategoryTitle('Литература (1).zip'), 'Литература');
       expect(archiveCategoryTitle('Литература (2) (1).zip'), 'Литература');
       expect(archiveCategoryTitle('02. Курс(3).zip'), 'Курс');
-      // Цифры без разделителя и год в скобках — часть названия.
+      expect(archiveCategoryTitle('1. Курс.zip'), 'Курс');
+      expect(archiveCategoryTitle('2) Курс.zip'), 'Курс');
+      expect(archiveCategoryTitle('3 - Курс.zip'), 'Курс');
+    });
+
+    test('SNO-F-LIT-04: число без нуля и знака — часть названия', () {
+      // Папки нумеруют ради порядка, а архив чаще всего один: «1 курс»
+      // — это первый курс, а не «курс» под номером один.
+      expect(archiveCategoryTitle('1 курс.zip'), '1 курс');
+      expect(archiveCategoryTitle('2 семестр (1).zip'), '2 семестр');
       expect(archiveCategoryTitle('1984.zip'), '1984');
+      expect(archiveCategoryTitle('3D-атлас.zip'), '3D-атлас');
+      expect(archiveCategoryTitle('01.zip'), '01');
+      // Год в скобках — не хвост повторной загрузки.
       expect(archiveCategoryTitle('Курс (2026).zip'), 'Курс (2026)');
     });
 

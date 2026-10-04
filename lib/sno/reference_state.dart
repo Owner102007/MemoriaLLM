@@ -5,11 +5,13 @@
 /// порядке, те же книги на тех же местах, те же настройки. Это состояние
 /// и есть эталон.
 ///
-/// **Эталон — полка, какой её положил архив с литературой.** Он
-/// запоминается сам, когда архив разложен ([ReferenceKeeper.remember]):
-/// из одного архива у всех устройств он выходит одинаковым, а
-/// расставленный руками — нет. Перестановки после распаковки в эталон
-/// не попадают; второй архив его дополняет, а не заменяет.
+/// **Эталон — полка, какой её кладёт архив с литературой.** Он
+/// запоминается сам, когда архив разложен ([ReferenceKeeper.remember]),
+/// и складывается из раскладки архива, а не из полки, какой её застали
+/// ([extendReference]): из одного архива у всех устройств он выходит
+/// одинаковым, а расставленный руками — нет. Перестановки после
+/// распаковки в эталон не попадают; второй архив его дополняет, а не
+/// заменяет.
 ///
 /// **Сброс** ([ReferenceKeeper.reset]) стирает всё, что оставил
 /// предыдущий тестировщик, — прогресс, цитаты, заметки, закладки,
@@ -34,6 +36,7 @@ import '../domain/library/book_source.dart';
 import '../domain/library/book_storage.dart';
 import '../domain/library/ids.dart';
 import '../domain/library/shelf.dart';
+import '../domain/library/shelf_archive.dart';
 import '../domain/settings/app_settings.dart';
 import '../infrastructure/database/app_database.dart';
 
@@ -438,6 +441,74 @@ String describeReference(ReferenceState reference) {
       'запомнено ${describeMoment(reference.savedAt)}';
 }
 
+/// Дополняет эталон книгами разложенного архива (SNO-ALG-CFG-02).
+///
+/// Эталон складывается из раскладки архива, а не из полки, какой её
+/// застали: книга встаёт в категорию, которую ей назначил архив, за
+/// книгами, уже записанными в эту категорию. Так эталон выходит одним
+/// и тем же на любом устройстве — и на том, где книги успели
+/// переставить, и на том, где архив добавляли прежней сборкой.
+///
+/// Книга, уже записанная в эталон, своего места не меняет: первый
+/// архив, положивший её, главнее. Категории идут в том порядке, в каком
+/// получили первую книгу; название категории — в написании эталона.
+///
+/// Отдаёт [known], если добавить нечего; `null` — эталона нет и
+/// запоминать нечего.
+ReferenceState? extendReference(
+  ReferenceState? known,
+  Iterable<ArchivePlacement> placed,
+  DateTime now,
+) {
+  final List<String> categories = <String>[...?known?.shelf.categories];
+  final List<ShelfBook> books = <ShelfBook>[...?known?.shelf.books];
+  final Map<String, String> spelling = <String, String>{
+    for (final String title in categories) title.toLowerCase(): title,
+  };
+  final Set<String> recorded = <String>{
+    for (final ShelfBook book in books) book.fingerprint,
+  };
+  final Map<String?, int> counts = <String?, int>{};
+  for (final ShelfBook book in books) {
+    counts[book.category] = (counts[book.category] ?? 0) + 1;
+  }
+  bool grown = false;
+  for (final ArchivePlacement item in placed) {
+    if (!recorded.add(item.fingerprint)) {
+      continue;
+    }
+    final String? asked = item.category;
+    String? category;
+    if (asked != null) {
+      category = spelling[asked.toLowerCase()];
+      if (category == null) {
+        category = asked;
+        spelling[asked.toLowerCase()] = asked;
+        categories.add(asked);
+      }
+    }
+    final int place = counts[category] ?? 0;
+    counts[category] = place + 1;
+    books.add(
+      ShelfBook(
+        fingerprint: item.fingerprint,
+        title: item.title,
+        category: category,
+        position: place,
+      ),
+    );
+    grown = true;
+  }
+  if (!grown) {
+    return known;
+  }
+  final ShelfState shelf = ShelfState(categories: categories, books: books);
+  return ReferenceState(
+    shelf: ShelfState(categories: categories, books: shelf.ordered()),
+    savedAt: now,
+  );
+}
+
 /// Хранит эталон, снимает состояние и сбрасывает к эталону
 /// (SNO-ALG-CFG-02).
 class ReferenceKeeper {
@@ -468,9 +539,7 @@ class ReferenceKeeper {
 
   /// Когда устройство сбрасывали в последний раз; `null` — никогда.
   Future<DateTime?> lastReset() async {
-    final String? stored = await _data.settings.read(
-      SnoSettingsKeys.lastReset,
-    );
+    final String? stored = await _data.settings.read(SnoSettingsKeys.lastReset);
     return stored == null ? null : DateTime.tryParse(stored);
   }
 
@@ -505,72 +574,16 @@ class ReferenceKeeper {
 
   /// Запоминает эталон после того, как архив разложен.
   ///
-  /// [added] — книги, которые этот архив поставил на полку. Если эталона
-  /// ещё нет, им становится полка целиком — такой, какой её положил
-  /// архив. Если есть — он дополняется новыми книгами и их категориями;
-  /// места книг, уже записанных в эталон, не трогаются: их могли
-  /// переставить после распаковки, а эталон — раскладка архива.
-  ///
-  /// Возвращает действующий эталон; `null` — запоминать нечего.
-  Future<ReferenceState?> remember(Iterable<Book> added) async {
+  /// [placed] — книги архива, стоящие на полке, с местом, которое им
+  /// назначил архив ([extendReference]). Возвращает действующий эталон;
+  /// `null` — запоминать нечего.
+  Future<ReferenceState?> remember(Iterable<ArchivePlacement> placed) async {
     final ReferenceState? known = await reference();
-    final ShelfState now = await _shelf();
-    if (known == null) {
-      if (now.books.isEmpty) {
-        return null;
-      }
-      return _save(ReferenceState(shelf: now, savedAt: _now()));
-    }
-    final Set<String> fresh = <String>{
-      for (final Book book in added) book.fileHash,
-    };
-    final Set<String> recorded = <String>{
-      for (final ShelfBook book in known.shelf.books) book.fingerprint,
-    };
-    final List<ShelfBook> extra = <ShelfBook>[
-      for (final ShelfBook book in now.books)
-        if (fresh.contains(book.fingerprint) &&
-            !recorded.contains(book.fingerprint))
-          book,
-    ];
-    if (extra.isEmpty) {
+    final ReferenceState? next = extendReference(known, placed, _now());
+    if (next == null || identical(next, known)) {
       return known;
     }
-    final Set<String> titles = <String>{
-      for (final String title in known.shelf.categories) title.toLowerCase(),
-    };
-    final List<String> categories = <String>[...known.shelf.categories];
-    final Map<String?, int> counts = <String?, int>{};
-    for (final ShelfBook book in known.shelf.books) {
-      final String? key = book.category?.toLowerCase();
-      counts[key] = (counts[key] ?? 0) + 1;
-    }
-    final List<ShelfBook> books = <ShelfBook>[...known.shelf.books];
-    for (final ShelfBook book in extra) {
-      final String? category = book.category;
-      final String? key = category?.toLowerCase();
-      if (category != null && titles.add(category.toLowerCase())) {
-        categories.add(category);
-      }
-      // Новая книга встаёт за книгами эталона в своей категории.
-      final int place = counts[key] ?? 0;
-      counts[key] = place + 1;
-      books.add(
-        ShelfBook(
-          fingerprint: book.fingerprint,
-          title: book.title,
-          category: category,
-          position: place,
-        ),
-      );
-    }
-    final ShelfState merged = ShelfState(categories: categories, books: books);
-    return _save(
-      ReferenceState(
-        shelf: ShelfState(categories: categories, books: merged.ordered()),
-        savedAt: _now(),
-      ),
-    );
+    return _save(next);
   }
 
   Future<ReferenceState> _save(ReferenceState reference) async {
@@ -703,15 +716,17 @@ class ReferenceKeeper {
       );
     });
 
-    // Функции к выделению из коробки — как у только что установленной
-    // сборки: отметка об их заведении стёрта вместе с настройками.
-    await _data.prompts.seedDefaultsOnce();
-
-    return ResetReport(
-      at: moment,
-      matches: (await snapshot()).matches(reference),
-      missing: missing,
-    );
+    // Сброс состоялся: всё, что дальше, отчёт о нём не отменяет.
+    bool matches = false;
+    try {
+      // Функции к выделению из коробки — как у только что установленной
+      // сборки: отметка об их заведении стёрта вместе с настройками.
+      await _data.prompts.seedDefaultsOnce();
+      matches = (await snapshot()).matches(reference);
+    } on Object {
+      // Сверка не удалась — сказано «отличается», а не «не сброшено».
+    }
+    return ResetReport(at: moment, matches: matches, missing: missing);
   }
 
   Future<bool> _available(BookRow row) async {

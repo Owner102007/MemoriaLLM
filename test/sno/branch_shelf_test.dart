@@ -109,16 +109,18 @@ void main() {
     /// Две книги: в порядке мест — «Яя», «Аа»; открывали последней «Аа».
     Future<void> twoBooks() async {
       await data.library.save(
-        testBook(id: 'z', title: 'Яя', hash: 'hash-z').copyWith(
-          shelfPosition: 0,
-          openedAt: DateTime.utc(2026, 10, 1),
-        ),
+        testBook(
+          id: 'z',
+          title: 'Яя',
+          hash: 'hash-z',
+        ).copyWith(shelfPosition: 0, openedAt: DateTime.utc(2026, 10, 1)),
       );
       await data.library.save(
-        testBook(id: 'a', title: 'Аа', hash: 'hash-a').copyWith(
-          shelfPosition: 1,
-          openedAt: DateTime.utc(2026, 10, 3),
-        ),
+        testBook(
+          id: 'a',
+          title: 'Аа',
+          hash: 'hash-a',
+        ).copyWith(shelfPosition: 1, openedAt: DateTime.utc(2026, 10, 3)),
       );
     }
 
@@ -165,6 +167,28 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(left(tester, 'a'), lessThan(left(tester, 'z')));
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: неизвестный порядок — исходный для сборки', (
+      WidgetTester tester,
+    ) async {
+      await twoBooks();
+      await data.settings.write(SettingsKeys.shelfSort, 'по-цвету-обложки');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LibraryScreen(
+            services: testServices(data: data),
+            canAddBooks: false,
+            defaultSort: ShelfSort.manual,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(left(tester, 'z'), lessThan(left(tester, 'a')));
+      expect(shelfSortFromName('по-цвету-обложки'), ShelfSort.recent);
 
       await unmount(tester);
     });

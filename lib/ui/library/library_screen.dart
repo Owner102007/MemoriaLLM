@@ -190,7 +190,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     setState(() {
-      _sort = stored == null ? widget.defaultSort : shelfSortFromName(stored);
+      _sort = shelfSortFromName(stored, fallback: widget.defaultSort);
     });
   }
 
@@ -307,7 +307,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _restoreBook(Book book) async {
     _removed.remove(book.id);
-    await widget.services.data.library.save(book);
+    final LibraryRepository library = widget.services.data.library;
+    // Книга уже на полке — её успели добавить снова (BUG-30). Снимок,
+    // сделанный при снятии, новее строки не станет: затирать её нечем.
+    if (await library.bookById(book.id) != null) {
+      return;
+    }
+    await library.save(book);
   }
 
   Future<void> _moveBook(

@@ -10,6 +10,7 @@ import '../domain/library/book.dart';
 import '../domain/library/book_file_picker.dart';
 import '../domain/library/device_scan.dart';
 import '../domain/library/scan_mark.dart';
+import '../domain/library/shelf_archive.dart';
 import '../domain/library/storage_access.dart';
 import '../domain/reading/reader_document.dart';
 import 'flags.dart';
@@ -311,6 +312,8 @@ class _TestingScreenState extends State<TestingScreen>
     // В раздел вернулись: за это время могли читать, выделять и
     // переставлять книги.
     if (widget.visible && !oldWidget.visible && _expanded) {
+      // Итог прошлого сброса к нынешнему состоянию уже не относится.
+      _resetResult = null;
       unawaited(_refreshReference());
     }
   }
@@ -364,16 +367,17 @@ class _TestingScreenState extends State<TestingScreen>
 
   /// Запоминает эталон после разложенного архива (SNO-F-CFG-04).
   ///
-  /// Эталон — полка, какой её положил архив: его запоминает сама
-  /// распаковка, а не кнопка.
+  /// Эталон — полка, какой её кладёт архив: его запоминает сама
+  /// распаковка, а не кнопка. В эталон идут все книги архива, стоящие
+  /// на полке, — и вставшие сейчас, и стоявшие раньше.
   Future<void> _rememberReference(List<ArchiveReport> unpacked) async {
     try {
-      await _keeper().remember(<Book>[
-        for (final ArchiveReport report in unpacked) ...report.added,
+      await _keeper().remember(<ArchivePlacement>[
+        for (final ArchiveReport report in unpacked) ...report.placed,
       ]);
     } on Object {
-      // Эталон не запомнился — книги при этом на полке, и следующий
-      // архив запомнит его заново.
+      // Эталон не запомнился — книги при этом на полке, и повторное
+      // добавление архива запомнит его заново.
     }
     await _refreshReference();
   }
@@ -814,10 +818,7 @@ class _TestingScreenState extends State<TestingScreen>
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
         child: Align(
           alignment: Alignment.centerLeft,
-          child: Text(
-            'Эталонное состояние',
-            style: theme.textTheme.titleSmall,
-          ),
+          child: Text('Эталонное состояние', style: theme.textTheme.titleSmall),
         ),
       ),
       if (reference == null)

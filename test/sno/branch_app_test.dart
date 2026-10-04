@@ -8,6 +8,7 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/device_scan.dart';
+import 'package:memoria/domain/library/shelf_archive.dart';
 import 'package:memoria/domain/library/storage_access.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
@@ -345,7 +346,18 @@ void main() {
       await ReferenceKeeper(
         data: data,
         storage: MemoryBookStorage(),
-      ).remember(await data.library.books());
+      ).remember(const <ArchivePlacement>[
+        ArchivePlacement(
+          fingerprint: 'hash-z',
+          title: 'Яя',
+          category: 'Литература',
+        ),
+        ArchivePlacement(
+          fingerprint: 'hash-a',
+          title: 'Аа',
+          category: 'Литература',
+        ),
+      ]);
       final ThemeController theme = await ThemeController.restore(
         data.settings,
       );

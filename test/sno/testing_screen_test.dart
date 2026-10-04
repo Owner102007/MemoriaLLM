@@ -11,6 +11,7 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/device_scan.dart';
+import 'package:memoria/domain/library/shelf_archive.dart';
 import 'package:memoria/domain/library/storage_access.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
@@ -1146,6 +1147,20 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    /// То, что о полке говорит архив: обе книги — в «Литературе».
+    const List<ArchivePlacement> laid = <ArchivePlacement>[
+      ArchivePlacement(
+        fingerprint: 'hash-a',
+        title: 'Пиковая дама',
+        category: 'Литература',
+      ),
+      ArchivePlacement(
+        fingerprint: 'hash-b',
+        title: 'Дубровский',
+        category: 'Литература',
+      ),
+    ];
+
     /// Полка из архива: категория и две книги в ней.
     Future<List<Book>> archiveShelf() async {
       await data.categories.save(
@@ -1213,8 +1228,12 @@ void main() {
         picked: archive,
         unpack: recording(
           unpacked,
-          report: (PickedFile file) =>
-              ArchiveReport(archive: file.name, total: 2, added: books),
+          report: (PickedFile file) => ArchiveReport(
+            archive: file.name,
+            total: 2,
+            added: books,
+            placed: laid,
+          ),
         ),
       );
       await openExperimenter(tester);
@@ -1240,7 +1259,8 @@ void main() {
       WidgetTester tester,
     ) async {
       tall(tester);
-      await keeper().remember(await archiveShelf());
+      await archiveShelf();
+      await keeper().remember(laid);
       // Следы тестировщика.
       await data.reading.savePosition(
         const ReadingPosition(bookId: 'a', page: 7),
@@ -1273,7 +1293,8 @@ void main() {
       WidgetTester tester,
     ) async {
       tall(tester);
-      await keeper().remember(await archiveShelf());
+      await archiveShelf();
+      await keeper().remember(laid);
       await data.reading.savePosition(
         const ReadingPosition(bookId: 'a', page: 7),
       );
@@ -1294,7 +1315,8 @@ void main() {
       WidgetTester tester,
     ) async {
       tall(tester);
-      await keeper().remember(await archiveShelf());
+      await archiveShelf();
+      await keeper().remember(laid);
       final Completer<void> gate = Completer<void>();
       await pumpSection(
         tester,
@@ -1334,7 +1356,8 @@ void main() {
       WidgetTester tester,
     ) async {
       tall(tester);
-      await keeper().remember(await archiveShelf());
+      await archiveShelf();
+      await keeper().remember(laid);
       await pumpSection(tester);
       await openExperimenter(tester);
       expect(find.text('Сейчас: совпадает с эталоном'), findsOneWidget);
@@ -1347,6 +1370,35 @@ void main() {
       await pumpSection(tester);
 
       expect(find.text('Сейчас: отличается от эталона'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CFG-04: отказанный архив эталоном не становится', (
+      WidgetTester tester,
+    ) async {
+      tall(tester);
+      // Полка, собранная прежней сборкой: эталона ещё нет.
+      await archiveShelf();
+      final List<PickedFile> unpacked = <PickedFile>[];
+      await pumpSection(
+        tester,
+        picked: archive,
+        unpack: recording(
+          unpacked,
+          report: (PickedFile file) =>
+              ArchiveReport(archive: file.name, refusal: 'это не ZIP-архив'),
+        ),
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('sno-reference-none')), findsOneWidget);
+      expect(await keeper().reference(), isNull);
 
       await unmount(tester);
     });

@@ -464,8 +464,12 @@ class BookImporter {
     // BUG-17: книга переехала на новый источник — прежний отпускается,
     // если он больше ничей. Иначе копились бы копии-сироты и
     // закреплённые ссылки, которых у приложения ограниченное число.
-    if (releaseReplaced && existing != null && existing.source != source) {
-      await _releaseUnused(existing.source);
+    // BUG-30: то же — у книги, вернувшейся из снятых: её прежний
+    // источник мог остаться неотпущенным, если приложение закрыли, пока
+    // книгу ещё можно было вернуть.
+    final Book? replaced = existing ?? removed;
+    if (releaseReplaced && replaced != null && replaced.source != source) {
+      await _releaseUnused(replaced.source);
     }
     return book;
   }

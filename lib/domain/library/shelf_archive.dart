@@ -42,6 +42,34 @@ class ArchiveBook {
   String toString() => 'ArchiveBook($category, $title)';
 }
 
+/// Книга архива, стоящая на полке, и место, которое ей назначил архив.
+///
+/// Из таких записей складывается эталонное состояние сборок ветвей
+/// СНО2026 (SNO-F-CFG-04): эталон — раскладка архива, а не полка, какой
+/// её застали. Поэтому место названо архивом, а книга — отпечатком:
+/// один и тот же архив даёт одну и ту же запись на любом устройстве.
+class ArchivePlacement {
+  /// Создаёт запись.
+  const ArchivePlacement({
+    required this.fingerprint,
+    required this.title,
+    required this.category,
+  });
+
+  /// Отпечаток файла книги.
+  final String fingerprint;
+
+  /// Название книги.
+  final String title;
+
+  /// Название категории, в которую книгу кладёт архив; `null` — «Без
+  /// категории».
+  final String? category;
+
+  @override
+  String toString() => 'ArchivePlacement($category, $title)';
+}
+
 /// Что архив кладёт на полку.
 class ArchiveLayout {
   /// Создаёт раскладку.
@@ -175,8 +203,11 @@ const String kArchiveCategoryFallback = 'Литература';
 /// - без хвоста повторной загрузки: «Литература (1).zip» — тот же
 ///   архив, скачанный второй раз, и вторая категория ему не положена
 ///   (число в скобках из одной-двух цифр; год в скобках — название);
-/// - без цифр порядка в начале, как у папок: «01 Литература» →
-///   «Литература».
+/// - без цифр порядка в начале: «01 Литература», «1. Литература» →
+///   «Литература». У архива правило строже, чем у папок: число без
+///   нуля впереди и без знака после него — часть названия, «1 курс»
+///   остаётся «1 курс». Папки нумеруют, чтобы расставить по порядку, а
+///   архив чаще всего один.
 ///
 /// Архив без имени даёт [kArchiveCategoryFallback]; архив, названный
 /// «Без категории», — сам раздел «Без категории».
@@ -189,9 +220,25 @@ String? archiveCategoryTitle(String archiveName) {
   if (name.toLowerCase().endsWith('.zip')) {
     name = name.substring(0, name.length - 4);
   }
-  name = stripOrderPrefix(name.replaceFirst(_copySuffix, ''));
-  return _categoryOf(name.isEmpty ? kArchiveCategoryFallback : name);
+  name = name.replaceFirst(_copySuffix, '').trim();
+  final String rest = name.replaceFirst(_archiveOrderPrefix, '').trim();
+  if (rest.isNotEmpty) {
+    name = rest;
+  }
+  if (name.isEmpty) {
+    return kArchiveCategoryFallback;
+  }
+  final String title = normalizeCategoryTitle(name);
+  return title.toLowerCase() == kUncategorizedTitle.toLowerCase()
+      ? null
+      : title;
 }
+
+/// Цифры порядка в имени архива: с нулём впереди («01 Курс») или со
+/// знаком после числа («1. Курс», «2) Курс», «3_Курс», «4 - Курс»).
+final RegExp _archiveOrderPrefix = RegExp(
+  r'^(?:0\d*(?:[.)_]\s*|\s*[-–—]\s+|\s+)|\d+(?:[.)_]\s*|\s*[-–—]\s+))',
+);
 
 /// Хвост повторной загрузки: « (1)», « (2) (1)».
 final RegExp _copySuffix = RegExp(r'(?:\s*\(\d{1,2}\))+\s*$');

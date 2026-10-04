@@ -8,7 +8,9 @@ import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
+import 'package:memoria/domain/library/shelf_archive.dart';
 import 'package:memoria/domain/prompts/selection_prompt.dart';
+import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
@@ -126,6 +128,23 @@ void main() {
     '—: ',
     'Литература: hash-l1',
     'Анатомия: hash-a1, hash-a2, hash-a3',
+  ];
+
+  ArchivePlacement laid(String id, String? category, {String? title}) {
+    return ArchivePlacement(
+      fingerprint: 'hash-$id',
+      title: title ?? 'Книга $id',
+      category: category,
+    );
+  }
+
+  /// То, что о той же полке говорит архив: какая книга в какой
+  /// категории, в порядке архива.
+  final List<ArchivePlacement> archive = <ArchivePlacement>[
+    laid('l1', 'Литература'),
+    laid('a1', 'Анатомия'),
+    laid('a2', 'Анатомия'),
+    laid('a3', 'Анатомия'),
   ];
 
   group('SNO-ALG-CFG-02: полка словами', () {
@@ -326,46 +345,11 @@ void main() {
     });
   });
 
-  group('SNO-F-CFG-04: эталон запоминается, когда архив разложен', () {
-    test('SNO-F-CFG-04: пустая полка эталоном не становится', () async {
-      expect(await keeper().remember(const <Book>[]), isNull);
-      expect(await keeper().reference(), isNull);
-    });
-
-    test('SNO-F-CFG-04: первый архив — эталон целиком', () async {
-      await archiveShelf();
-
-      final ReferenceState? reference = await keeper().remember(
-        await data.library.books(),
-      );
+  group('SNO-ALG-CFG-02: эталон складывается из раскладки архива', () {
+    test('SNO-ALG-CFG-02: первый архив — эталон целиком', () {
+      final ReferenceState? reference = extendReference(null, archive, saved);
 
       expect(reference!.shelf.categories, <String>['Литература', 'Анатомия']);
-      expect(reference.shelf.books, hasLength(4));
-      expect(reference.savedAt.isAtSameMomentAs(saved), isTrue);
-      // Эталон переживает перезапуск: он лежит в базе.
-      final ReferenceState? stored = await keeper().reference();
-      expect(stored!.shelf.sameAs(reference.shelf), isTrue);
-      expect((await keeper().snapshot()).matches(stored), isTrue);
-    });
-
-    test('SNO-F-CFG-04: второй архив дополняет эталон', () async {
-      await archiveShelf();
-      await keeper().remember(await data.library.books());
-      // Книгу эталона переставили — в эталон это не попадает.
-      await placeBook(data, 'a1', 'anat', position: 5);
-      await category('phys', 'Физиология', 2);
-      final Book added = await book('p1', categoryId: 'phys');
-      final Book tail = await book('a4', categoryId: 'anat', position: 9);
-
-      final ReferenceState? reference = await keeper(
-        now: DateTime.utc(2026, 10, 5),
-      ).remember(<Book>[added, tail]);
-
-      expect(reference!.shelf.categories, <String>[
-        'Литература',
-        'Анатомия',
-        'Физиология',
-      ]);
       expect(
         <String>[
           for (final ShelfBook item in reference.shelf.books)
@@ -376,30 +360,138 @@ void main() {
           'Анатомия 0 hash-a1',
           'Анатомия 1 hash-a2',
           'Анатомия 2 hash-a3',
+        ],
+      );
+      expect(reference.savedAt.isAtSameMomentAs(saved), isTrue);
+    });
+
+    test('SNO-ALG-CFG-02: пустой архив эталоном не становится', () {
+      expect(extendReference(null, const <ArchivePlacement>[], saved), isNull);
+    });
+
+    test('SNO-ALG-CFG-02: второй архив дополняет, а не заменяет', () {
+      final ReferenceState? first = extendReference(null, archive, saved);
+      final DateTime later = DateTime.utc(2026, 10, 5);
+
+      final ReferenceState? second = extendReference(first, <ArchivePlacement>[
+        // Книга первого архива во втором лежит в другой папке — её
+        // место в эталоне прежнее.
+        laid('a1', 'Физиология'),
+        laid('p1', 'Физиология'),
+        laid('a4', 'Анатомия'),
+        laid('w1', null),
+      ], later);
+
+      expect(second!.shelf.categories, <String>[
+        'Литература',
+        'Анатомия',
+        'Физиология',
+      ]);
+      expect(
+        <String>[
+          for (final ShelfBook item in second.shelf.books)
+            '${item.category ?? '—'} ${item.position} ${item.fingerprint}',
+        ],
+        <String>[
+          '— 0 hash-w1',
+          'Литература 0 hash-l1',
+          'Анатомия 0 hash-a1',
+          'Анатомия 1 hash-a2',
+          'Анатомия 2 hash-a3',
           'Анатомия 3 hash-a4',
           'Физиология 0 hash-p1',
         ],
       );
-      expect(
-        reference.savedAt.isAtSameMomentAs(DateTime.utc(2026, 10, 5)),
-        isTrue,
-      );
+      expect(second.savedAt.isAtSameMomentAs(later), isTrue);
     });
 
-    test('SNO-F-CFG-04: тот же архив ещё раз эталон не меняет', () async {
-      await archiveShelf();
-      final ReferenceState? first = await keeper().remember(
-        await data.library.books(),
+    test('SNO-ALG-CFG-02: тот же архив ещё раз эталон не меняет', () {
+      final ReferenceState? first = extendReference(null, archive, saved);
+
+      final ReferenceState? again = extendReference(
+        first,
+        archive,
+        DateTime.utc(2026, 10, 9),
       );
+
+      expect(identical(again, first), isTrue);
+    });
+
+    test('SNO-ALG-CFG-02: название категории — в написании эталона', () {
+      final ReferenceState? first = extendReference(null, archive, saved);
+
+      final ReferenceState? second = extendReference(first, <ArchivePlacement>[
+        laid('a4', 'АНАТОМИЯ'),
+      ], saved);
+
+      expect(second!.shelf.categories, <String>['Литература', 'Анатомия']);
+      expect(second.shelf.books.last.category, 'Анатомия');
+      expect(second.shelf.books.last.position, 3);
+    });
+
+    test('SNO-ALG-CFG-02: одна книга дважды в архиве — одно место', () {
+      final ReferenceState? reference = extendReference(
+        null,
+        <ArchivePlacement>[laid('x', 'А'), laid('x', 'Б'), laid('y', 'Б')],
+        saved,
+      );
+
+      expect(reference!.shelf.categories, <String>['А', 'Б']);
+      expect(reference.shelf.books, hasLength(2));
+    });
+  });
+
+  group('SNO-F-CFG-04: эталон запоминается, когда архив разложен', () {
+    test('SNO-F-CFG-04: без книг архива запоминать нечего', () async {
+      expect(await keeper().remember(const <ArchivePlacement>[]), isNull);
+      expect(await keeper().reference(), isNull);
+    });
+
+    test('SNO-F-CFG-04: эталон лежит в базе и совпадает с полкой', () async {
+      await archiveShelf();
+
+      final ReferenceState? reference = await keeper().remember(archive);
+
+      expect(reference!.shelf.books, hasLength(4));
+      // Эталон переживает перезапуск: он лежит в базе.
+      final ReferenceState? stored = await keeper().reference();
+      expect(stored!.shelf.sameAs(reference.shelf), isTrue);
+      expect(stored.savedAt.isAtSameMomentAs(saved), isTrue);
+      expect((await keeper().snapshot()).matches(stored), isTrue);
+    });
+
+    test('SNO-F-CFG-04: перестановка после архива в эталон не идёт', () async {
+      await archiveShelf();
+      await keeper().remember(archive);
       await placeBook(data, 'a3', 'lit', position: 4);
 
-      // Повторное добавление ничего не поставило на полку.
+      // Тот же архив ещё раз: все книги уже стоят на полке.
       final ReferenceState? again = await keeper(
         now: DateTime.utc(2026, 10, 9),
-      ).remember(const <Book>[]);
+      ).remember(archive);
 
-      expect(again!.shelf.sameAs(first!.shelf), isTrue);
-      expect(again.savedAt.isAtSameMomentAs(saved), isTrue);
+      expect(again!.savedAt.isAtSameMomentAs(saved), isTrue);
+      expect((await keeper().snapshot()).matches(again), isFalse);
+    });
+
+    test('SNO-F-CFG-04: полка прежней сборки эталоном не становится', () async {
+      // Архив разложили до того, как появился эталон: книга из корня
+      // стоит в «Без категории», а книги переставлены.
+      await category('anat', 'Анатомия', 0);
+      await book('l1');
+      await book('a3', categoryId: 'anat');
+      await book('a1', categoryId: 'anat', position: 1);
+      await book('a2', categoryId: 'anat', position: 2);
+
+      // Тот же архив новой сборкой: книги на полке уже стоят, а эталон
+      // — раскладка архива, одна и та же на любом устройстве.
+      final ReferenceState? reference = await keeper().remember(archive);
+      expect((await keeper().snapshot()).matches(reference!), isFalse);
+
+      final ResetReport report = await keeper().reset();
+
+      expect(report.matches, isTrue);
+      expect(await shelf(), archiveOrder);
     });
   });
 
@@ -407,9 +499,7 @@ void main() {
     test('SNO-ALG-CFG-02: эталон → следы читателя → сброс → эталон', () async {
       await archiveShelf();
       final ReferenceKeeper first = keeper();
-      final ReferenceState? reference = await first.remember(
-        await data.library.books(),
-      );
+      final ReferenceState? reference = await first.remember(archive);
       final String? node = await data.settings.read(SettingsKeys.nodeId);
       expect(await shelf(), archiveOrder);
 
@@ -456,6 +546,17 @@ void main() {
         (await data.categories.categoryById('anat'))!.copyWith(title: 'Анат'),
       );
       await data.prompts.deletePrompt(kTranslatePromptId);
+      // Выведенное из самих книг — не след читателя.
+      const PageTextKey texts = PageTextKey(
+        bookId: 'a1',
+        fingerprint: 'hash-a1',
+      );
+      await data.pageTexts.savePageTexts(texts, <int, String>{1: 'текст'});
+      await data.reading.saveBookFrame(
+        'a1',
+        const BookFrame(odd: CropBox.full, fingerprint: 'hash-a1'),
+      );
+      await data.library.setCoverPath('a1', '/covers/a1.png');
       expect((await first.snapshot()).matches(reference!), isFalse);
 
       final ResetReport report = await keeper(
@@ -493,6 +594,11 @@ void main() {
         ),
         <String>[kMeaningPromptId, kTranslatePromptId],
       );
+      // Текст страниц, посчитанная рамка и обложка — на месте: заново
+      // ничего не читается.
+      expect(await data.pageTexts.cachedPages(texts), hasLength(1));
+      expect(await data.reading.bookFrame('a1'), isNotNull);
+      expect((await data.library.bookById('a1'))!.coverPath, '/covers/a1.png');
       // Устройство — то же, эталон и время сброса — на месте.
       expect(await data.settings.read(SettingsKeys.nodeId), node);
       expect(await keeper().reference(), isNotNull);
@@ -506,9 +612,7 @@ void main() {
 
     test('SNO-F-CFG-04: второй сброс подряд ничего не меняет', () async {
       await archiveShelf();
-      final ReferenceState? reference = await keeper().remember(
-        await data.library.books(),
-      );
+      final ReferenceState? reference = await keeper().remember(archive);
       await keeper().reset();
       final List<Book> before = await data.library.books();
 
@@ -522,7 +626,7 @@ void main() {
 
     test('SNO-F-CFG-04: снятая книга возвращается на своё место', () async {
       await archiveShelf();
-      await keeper().remember(await data.library.books());
+      await keeper().remember(archive);
       await data.reading.savePosition(
         const ReadingPosition(bookId: 'a2', page: 5),
       );
@@ -547,7 +651,10 @@ void main() {
         position: 3,
         title: 'Атлас',
       );
-      await keeper().remember(await data.library.books());
+      await keeper().remember(<ArchivePlacement>[
+        ...archive,
+        laid('a9', 'Анатомия', title: 'Атлас'),
+      ]);
       await data.library.delete('a9');
       files.gone.add(lost.source);
 
@@ -568,7 +675,7 @@ void main() {
 
     test('SNO-F-CFG-04: книга на полке без файла названа', () async {
       await archiveShelf();
-      await keeper().remember(await data.library.books());
+      await keeper().remember(archive);
       files.gone.add(testBook(id: 'l1').source);
 
       final ResetReport report = await keeper().reset();
@@ -581,7 +688,7 @@ void main() {
 
     test('SNO-F-CFG-04: книга сверх эталона — в «Без категории»', () async {
       await archiveShelf();
-      await keeper().remember(await data.library.books());
+      await keeper().remember(archive);
       await book('x1', categoryId: 'anat', position: 0);
 
       final ResetReport report = await keeper().reset();
@@ -596,7 +703,7 @@ void main() {
 
     test('SNO-F-CFG-04: надгробие книги не из эталона стирается', () async {
       await archiveShelf();
-      await keeper().remember(await data.library.books());
+      await keeper().remember(archive);
       await book('x1');
       await data.library.delete('x1');
       expect(await data.library.removedBookByHash('hash-x1'), isNotNull);
@@ -705,7 +812,8 @@ void main() {
 
       final ArchiveReport first = await unpack().add(archive);
       final ReferenceKeeper keep = keeper(storage: storage);
-      final ReferenceState? reference = await keep.remember(first.added);
+      expect(first.placed, hasLength(4));
+      final ReferenceState? reference = await keep.remember(first.placed);
       expect(reference!.shelf.categories, <String>[
         'Литература',
         'Анатомия',
@@ -730,9 +838,10 @@ void main() {
       // Тот же архив ещё раз: книга вернулась прежней строкой и стоит
       // там, где её положил архив в первый раз.
       final ArchiveReport again = await unpack().add(archive);
-      await keep.remember(again.added);
+      await keep.remember(again.placed);
 
       expect(again.added.single.id, atlas.id);
+      expect(again.placed, hasLength(4));
       expect(await shelf(), laid);
       expect((await keep.snapshot()).matches(reference), isTrue);
     });

@@ -325,22 +325,39 @@ void main() {
     });
 
     test('BUG-30: живая книга с тем же файлом главнее снятой', () async {
-      // Надгробие прежней версии и живая книга с одним отпечатком:
-      // повторный выбор файла относится к живой.
+      // Надгробие, оставленное прежней версией, и живая книга с тем же
+      // отпечатком: повторный выбор файла относится к живой.
       await data.library.save(testBook(id: 'old', hash: 'hash-fixture'));
       await data.library.delete('old');
-      final Book live = await importer(
-        FakeReaderDocument(pages: <String>['текст']),
-      ).register(_picked);
-      expect(live.id, 'id-1');
+      await data.library.save(testBook(id: 'live', hash: 'hash-fixture'));
 
       final Book again = await importer(
         FakeReaderDocument(pages: <String>['текст']),
         id: 'id-2',
       ).register(_picked);
 
-      expect(again.id, 'id-1');
-      expect((await data.library.books()).single.id, 'id-1');
+      expect(again.id, 'live');
+      expect((await data.library.books()).single.id, 'live');
+      expect((await data.library.removedBookByHash('hash-fixture'))!.id, 'old');
+    });
+
+    test('BUG-30: прежний источник вернувшейся книги отпущен', () async {
+      // Приложение закрыли, пока книгу ещё можно было вернуть: источник
+      // снятой книги остался неотпущенным.
+      final RecordingStorage storage = RecordingStorage();
+      const BookSource old = FilePathSource('/старое/место.pdf');
+      await data.library.save(
+        testBook(id: 'kept', hash: 'hash-fixture').copyWith(source: old),
+      );
+      await data.library.delete('kept');
+
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(_picked);
+
+      expect(again.id, 'kept');
+      expect(storage.released, <BookSource>[old]);
     });
   });
 
