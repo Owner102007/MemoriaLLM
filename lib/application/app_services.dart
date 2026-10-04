@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import '../domain/library/archive_scan.dart';
 import '../domain/library/book_file_picker.dart';
 import '../domain/library/book_storage.dart';
 import '../domain/library/cover.dart';
@@ -8,6 +9,7 @@ import '../domain/reading/full_screen.dart';
 import '../domain/reading/reader_document.dart';
 import '../domain/reading/volume_keys.dart';
 import '../infrastructure/files/android_book_storage.dart';
+import '../infrastructure/files/archive_scanner.dart';
 import '../infrastructure/files/book_copy.dart';
 import '../infrastructure/files/cover_cache.dart';
 import '../infrastructure/files/fast_book_picker.dart';
@@ -38,6 +40,7 @@ class AppServices {
     required this.access,
     this.volumeKeys = const NoVolumeKeys(),
     this.window = const NoFullScreenWindow(),
+    this.archiveSearch = noArchiveSearch,
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -62,9 +65,9 @@ class AppServices {
     // есть настоящий путь и посредники не нужны; на Android пути нет
     // вовсе, и книга читается по закреплённой ссылке.
     //
-    // В сборке ветви СНО2026 книга при добавлении копируется в папку
-    // приложения (SNO-F-LIT-02): флаг — константа сборки, и в основном
-    // приложении хранилища те же, что были.
+    // В сборке ветви СНО2026 книга копируется в папку приложения
+    // (SNO-DIV-03): флаг — константа сборки, и в основном приложении
+    // хранилища те же, что были.
     final BookStorage storage = Platform.isAndroid
         ? AndroidBookStorage(alwaysCopy: Sno.literature)
         : const LocalBookStorage(
@@ -86,6 +89,10 @@ class AppServices {
       window: Platform.isWindows
           ? WindowsFullScreen()
           : const NoFullScreenWindow(),
+      // SNO-F-LIT-03: архивы с литературой ищет только сборка ветви.
+      // Условие — константа сборки: в основное приложение обход
+      // архивов не попадает.
+      archiveSearch: Sno.literature ? findArchivesInIsolate : noArchiveSearch,
     );
   }
 
@@ -119,4 +126,9 @@ class AppServices {
   /// Окно приложения: на ПК чтение разворачивается во весь экран
   /// (F-READ-35).
   final FullScreenWindow window;
+
+  /// Поиск архивов с книгами на устройстве (SNO-F-LIT-03): им
+  /// пользуется раздел «Тестирование» сборок ветвей СНО2026. В основном
+  /// приложении он ничего не ищет.
+  final ArchiveSearch archiveSearch;
 }

@@ -1,0 +1,25 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Добавка сборки ветви СНО2026 к общему манифесту `src/main`.
+
+         Доступ ко всем файлам нужен ветви ровно для одного: НАЙТИ
+         ZIP-архив с литературой там, где он лежит (SNO-F-LIT-03,
+         решение владельца П2 от 04.10.2026). В системном диалоге выбора
+         на телефоне архив искать трудно, а без этого доступа Android не
+         показывает приложению чужие файлы вовсе.
+
+         Приложение отбирает только ZIP-архивы, в которых лежат PDF.
+         Книги устройства оно не ищет и не показывает: раздела
+         «Устройство» в ветви нет (SNO-F-CFG-02), а свои PDF на полку не
+         добавляются. Доступ просится в одном месте — кнопкой «Разрешить
+         и найти» в разделе «Тестирование»; при запуске и на полке
+         приложение ничего не спрашивает.
+
+         Отказ ничего не ломает: архив выбирается системным диалогом. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <!-- До Android 11 ту же работу делает обычное разрешение на чтение
+         вместе с requestLegacyExternalStorage ниже. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+    <application android:requestLegacyExternalStorage="true"/>
+</manifest>

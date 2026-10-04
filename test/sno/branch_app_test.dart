@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
-import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
@@ -15,7 +15,7 @@ import 'package:memoria/ui/library/book_card.dart';
 import '../data/test_data.dart';
 import '../support/test_services.dart';
 
-/// SNO-F-CFG-01…03, SNO-F-LIT-02: приложение в сборе.
+/// SNO-F-CFG-01…03, SNO-F-LIT-02, SNO-F-LIT-03: приложение в сборе.
 ///
 /// Флаги ветви — константы сборки, поэтому один прогон тестов видит
 /// одно приложение из трёх. Основной прогон (`flutter test`) проверяет
@@ -149,10 +149,11 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-CFG-02: устройство не обходится, доступ не просится', (
+    testWidgets('SNO-F-CFG-02: книг устройства не ищут, доступ не просят', (
       WidgetTester tester,
     ) async {
       int scans = 0;
+      int searches = 0;
       final FakeStorageAccess access = FakeStorageAccess(
         current: StorageAccessState.denied,
       );
@@ -166,6 +167,10 @@ void main() {
             scans++;
             return fakeScan(const <ScannedFile>[]);
           },
+          archiveSearch: (List<String> roots) {
+            searches++;
+            return const Stream<FoundArchive>.empty();
+          },
         ),
       );
       await settle(tester);
@@ -175,7 +180,10 @@ void main() {
         await open(tester, section);
       }
 
-      expect(scans, 0, reason: 'обход устройства в ветви не запускается');
+      expect(scans, 0, reason: 'книги устройства в ветви не ищутся');
+      // SNO-F-LIT-03: архив ищет только блок «Для экспериментатора», и
+      // доступ просит только его кнопка.
+      expect(searches, 0, reason: 'архивы не ищутся, пока блок не раскрыт');
       expect(access.requests, 0, reason: 'доступ к файлам не просится');
 
       await unmount(tester);
@@ -193,7 +201,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-LIT-02: книга из «Тестирования» встаёт на полку', (
+    testWidgets('SNO-F-LIT-02: свой PDF из «Тестирования» на полку не встаёт', (
       WidgetTester tester,
     ) async {
       await pumpApp(
@@ -210,20 +218,55 @@ void main() {
       await open(tester, 'testing');
       await tester.tap(find.text('Для экспериментатора'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       await settle(tester);
 
-      final List<Book> books = await data.library.books();
-      expect(books, hasLength(1));
-      expect(books.single.categoryId, isNull);
-
-      await open(tester, 'library');
+      // Решение П3: книги приходят только архивом литературы.
+      expect(await data.library.books(), isEmpty);
       expect(
-        find.byKey(Key('library-book-${books.single.id}')),
+        find.textContaining('Не добавлено: «Анатомия.pdf».'),
         findsOneWidget,
       );
-      // И на полке с книгами добавления по-прежнему нет.
+      await tester.tap(find.text('Понятно'));
+      await settle(tester);
+
+      await open(tester, 'library');
+      expect(find.byKey(const Key('library-empty-branch')), findsOneWidget);
       expect(find.byType(AddBookCard), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: архивы устройства видны в «Тестировании»', (
+      WidgetTester tester,
+    ) async {
+      final List<List<String>> searches = <List<String>>[];
+      await pumpApp(
+        tester,
+        testServices(
+          data: data,
+          archiveSearch: (List<String> roots) {
+            searches.add(roots);
+            return Stream<FoundArchive>.fromIterable(<FoundArchive>[
+              FoundArchive(
+                path: '/device/Download/Литература.zip',
+                size: 1024 * 1024,
+                modifiedAt: DateTime.utc(2026, 10, 4, 12),
+                books: 21,
+              ),
+            ]);
+          },
+        ),
+      );
+
+      await open(tester, 'testing');
+      expect(searches, isEmpty);
+      await tester.tap(find.text('Для экспериментатора'));
+      await settle(tester);
+
+      expect(searches, hasLength(1));
+      expect(find.text('Литература.zip'), findsOneWidget);
+      expect(find.text('21 книга · 1,0 МБ · Download'), findsOneWidget);
 
       await unmount(tester);
     });

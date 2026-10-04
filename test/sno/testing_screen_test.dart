@@ -1,23 +1,25 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/library/book_importer.dart';
+import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
-import 'package:memoria/domain/library/book_source.dart';
+import 'package:memoria/domain/library/device_scan.dart';
+import 'package:memoria/domain/library/storage_access.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/literature_archive.dart';
 import 'package:memoria/sno/testing_screen.dart';
 
 import '../data/test_data.dart';
-import '../support/fake_reading.dart';
 import '../support/test_services.dart';
 
-/// SNO-F-CFG-03, SNO-F-LIT-02, SNO-F-LIT-01: раздел «Тестирование» сам по
+/// SNO-F-CFG-03, SNO-F-LIT-03, SNO-F-LIT-01: раздел «Тестирование» сам по
 /// себе.
 ///
 /// Раздел получает флаги параметром, поэтому проверяется одним
@@ -59,6 +61,53 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Приложение свернули и вернули на передний план — так выглядит
+  /// возвращение с системного экрана выдачи доступа.
+  Future<void> backToApp(WidgetTester tester) async {
+    for (final String state in <String>['paused', 'resumed']) {
+      await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+        'flutter/lifecycle',
+        const StringCodec().encodeMessage('AppLifecycleState.$state'),
+        (_) {},
+      );
+    }
+    await tester.pumpAndSettle();
+  }
+
+  /// Распаковка, которая записывает, что ей дали, и отвечает [report].
+  ArchiveUnpack recording(
+    List<PickedFile> seen, {
+    ArchiveReport Function(PickedFile file)? report,
+  }) {
+    return (
+      PickedFile file, {
+      void Function(ArchiveProgress progress)? onProgress,
+    }) async {
+      seen.add(file);
+      return report?.call(file) ?? ArchiveReport(archive: file.name);
+    };
+  }
+
+  const PickedFile archive = PickedFile(
+    name: 'Литература.zip',
+    path: '/picked/Литература.zip',
+  );
+
+  final FoundArchive found = FoundArchive(
+    path: '/device/Download/Литература.zip',
+    // 2,1 ГБ.
+    size: 2254857830,
+    modifiedAt: DateTime.utc(2026, 10, 4, 12),
+    books: 34,
+  );
+
+  final FoundArchive older = FoundArchive(
+    path: '/device/Download/Telegram/Старая литература.zip',
+    size: 5 * 1024 * 1024,
+    modifiedAt: DateTime.utc(2026, 9, 1, 12),
+    books: 2,
+  );
+
   group('SNO-F-CFG-03: раздел «Тестирование»', () {
     testWidgets('SNO-F-CFG-03: в разделе код устройства', (
       WidgetTester tester,
@@ -79,10 +128,10 @@ void main() {
       await pumpTesting(tester, testServices(data: data));
 
       expect(find.text('Для экспериментатора'), findsOneWidget);
-      expect(find.byKey(const Key('sno-add-pdf')), findsNothing);
+      expect(find.byKey(const Key('sno-add-archive')), findsNothing);
 
       await openExperimenter(tester);
-      expect(find.byKey(const Key('sno-add-pdf')), findsOneWidget);
+      expect(find.byKey(const Key('sno-add-archive')), findsOneWidget);
 
       await unmount(tester);
     });
@@ -117,158 +166,504 @@ void main() {
     });
   });
 
-  group('SNO-F-LIT-02: добавление PDF экспериментатором', () {
-    testWidgets('SNO-F-LIT-02: выбранные PDF встают в «Без категории»', (
+  group('SNO-F-LIT-03: архивы находятся на устройстве сами', () {
+    testWidgets('SNO-F-LIT-03: пока блок свёрнут, устройство не обходится', (
       WidgetTester tester,
     ) async {
+      final List<List<String>> searches = <List<String>>[];
+      final FakeStorageAccess access = FakeStorageAccess();
       await pumpTesting(
         tester,
         testServices(
           data: data,
-          batch: const <PickedFile>[
-            PickedFile(name: 'Анатомия.pdf', path: '/picked/Анатомия.pdf'),
-            PickedFile(name: 'Гистология.pdf', path: '/picked/Гистология.pdf'),
-          ],
-          // У каждой книги своё содержимое: иначе отпечатки совпали бы,
-          // и вторая книга была бы принята за первую.
-          storage: const PathBytesStorage(),
+          access: access,
+          archiveSearch: (List<String> roots) {
+            searches.add(roots);
+            return const Stream<FoundArchive>.empty();
+          },
         ),
       );
+
+      // Раздел построен вместе с приложением — и ничего не ищет.
+      expect(searches, isEmpty);
+
+      await openExperimenter(tester);
+      // Ищет там же, где сканер основного приложения: в его корнях.
+      expect(searches, <List<String>>[<String>['/device']]);
+      // Доступ уже есть — спрашивать нечего.
+      expect(access.requests, 0);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: найденные архивы стоят списком, новые сверху', (
+      WidgetTester tester,
+    ) async {
+      await pumpTesting(
+        tester,
+        // Обход отдал их в другом порядке — как лежат на диске.
+        testServices(data: data, archives: <FoundArchive>[older, found]),
+      );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
-      await tester.pumpAndSettle();
-
-      final List<Book> books = await data.library.books();
-      expect(books, hasLength(2));
-      expect(books.map((Book book) => book.title).toSet(), <String>{
-        'Анатомия',
-        'Гистология',
-      });
+      expect(find.text('Архивы с книгами на устройстве'), findsOneWidget);
+      expect(find.text('Литература.zip'), findsOneWidget);
+      expect(find.text('34 книги · 2,1 ГБ · Download'), findsOneWidget);
+      expect(find.text('Старая литература.zip'), findsOneWidget);
+      expect(find.text('2 книги · 5,0 МБ · Download/Telegram'), findsOneWidget);
       expect(
-        books.every((Book book) => book.categoryId == null),
-        isTrue,
-        reason: 'книги экспериментатора встают в «Без категории»',
+        tester.getTopLeft(find.text('Литература.zip')).dy,
+        lessThan(tester.getTopLeft(find.text('Старая литература.zip')).dy),
       );
-      expect(find.text('Добавлено книг: 2'), findsOneWidget);
-      // Добавление закончилось — кнопка снова готова.
-      expect(find.textContaining('Добавляю'), findsNothing);
+      // Обход кончился: ни «ищу», ни «не найдено».
+      expect(find.byKey(const Key('sno-archives-searching')), findsNothing);
+      expect(find.byKey(const Key('sno-archives-empty')), findsNothing);
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-LIT-02: диалог закрыли — ничего не случилось', (
+    testWidgets('SNO-F-LIT-03: архив из списка уходит в ту же распаковку', (
       WidgetTester tester,
     ) async {
-      await pumpTesting(
-        tester,
-        testServices(data: data, batch: const <PickedFile>[]),
+      final List<PickedFile> unpacked = <PickedFile>[];
+      final AppServices services = testServices(
+        data: data,
+        archives: <FoundArchive>[found],
       );
-      await openExperimenter(tester);
-
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
-      await tester.pumpAndSettle();
-
-      expect(await data.library.books(), isEmpty);
-      expect(find.byType(SnackBar), findsNothing);
-
-      await unmount(tester);
-    });
-
-    testWidgets('SNO-F-LIT-02: файл, который не открылся, назван с причиной', (
-      WidgetTester tester,
-    ) async {
       await pumpTesting(
         tester,
-        testServices(
-          data: data,
-          picked: const PickedFile(
-            name: 'Секрет.pdf',
-            path: '/picked/Секрет.pdf',
-          ),
-          opener: FakeDocumentOpener(
-            FakeReaderDocument(pages: <String>['текст']),
-            failure: const DocumentOpenException(
-              DocumentProblem.passwordRequired,
-              FilePathSource('/picked/Секрет.pdf'),
-            ),
+        services,
+        unpack: recording(
+          unpacked,
+          report: (PickedFile file) => ArchiveReport(
+            archive: file.name,
+            total: 34,
+            added: <Book>[testBook(id: 'a', hash: 'hash-a')],
           ),
         ),
       );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-archive-0')));
       await tester.pumpAndSettle();
 
-      expect(await data.library.books(), isEmpty);
-      // Причина сказана словами раздела: вводить пароль здесь негде, и
-      // звать к этому нельзя.
-      expect(
-        find.textContaining('«Секрет.pdf» — защищён паролем'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Введите'), findsNothing);
+      // Архив читается там, где лежит, — по пути; диалога выбора не было.
+      expect(unpacked.single.name, 'Литература.zip');
+      expect(unpacked.single.path, '/device/Download/Литература.zip');
+      expect(unpacked.single.uri, isNull);
+      expect(find.byKey(const Key('sno-archive-report')), findsOneWidget);
+      expect(find.text('Архив «Литература.zip»'), findsOneWidget);
+      expect(find.textContaining('Добавлено книг: 1.'), findsOneWidget);
 
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
       await unmount(tester);
     });
-  });
 
-  group('SNO-F-LIT-01: архив с книгами', () {
-    const PickedFile archive = PickedFile(
-      name: 'Литература.zip',
-      path: '/picked/Литература.zip',
-    );
-
-    Book shelved(String id, {String? categoryId}) {
-      final Book book = testBook(id: id, hash: 'hash-$id');
-      return categoryId == null ? book : book.copyWith(categoryId: categoryId);
-    }
-
-    testWidgets('SNO-F-LIT-02: кнопка называет и книги, и архив', (
+    testWidgets('SNO-F-LIT-03: архивов нет — сказано словами', (
       WidgetTester tester,
     ) async {
       await pumpTesting(tester, testServices(data: data));
       await openExperimenter(tester);
 
-      expect(find.text('Добавить книги или архив…'), findsOneWidget);
-      expect(find.textContaining('архив — по своим папкам'), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-empty')), findsOneWidget);
+      expect(
+        find.textContaining('Архивов с книгами не найдено.'),
+        findsOneWidget,
+      );
+      // Запасной путь и повтор остаются.
+      expect(find.byKey(const Key('sno-add-archive')), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-refresh')), findsOneWidget);
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-LIT-01: архив распаковывается, итог — окном', (
+    testWidgets('SNO-F-LIT-03: пока идёт обход, найденное уже в списке', (
       WidgetTester tester,
     ) async {
-      final List<String> unpacked = <String>[];
+      final StreamController<FoundArchive> scan =
+          StreamController<FoundArchive>();
       await pumpTesting(
         tester,
-        testServices(data: data, picked: archive),
-        unpack:
-            (
-              PickedFile file, {
-              void Function(ArchiveProgress progress)? onProgress,
-            }) async {
-              unpacked.add(file.name);
-              return ArchiveReport(
-                archive: file.name,
-                total: 3,
-                added: <Book>[
-                  shelved('a', categoryId: 'c1'),
-                  shelved('b', categoryId: 'c2'),
-                  shelved('c'),
-                ],
-                skipped: 2,
-              );
-            },
+        testServices(
+          data: data,
+          archiveSearch: (List<String> roots) => scan.stream,
+        ),
+      );
+      // Не `pumpAndSettle`: пока идёт обход, крутится индикатор.
+      await tester.tap(find.text('Для экспериментатора'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byKey(const Key('sno-archives-searching')), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-empty')), findsNothing);
+
+      scan.add(found);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Литература.zip'), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-searching')), findsOneWidget);
+
+      await scan.close();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('sno-archives-searching')), findsNothing);
+      expect(find.text('Литература.zip'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: «Искать заново» обходит устройство ещё раз', (
+      WidgetTester tester,
+    ) async {
+      int searches = 0;
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          archiveSearch: (List<String> roots) {
+            searches++;
+            // Архив появился между обходами: его только что скачали.
+            return Stream<FoundArchive>.fromIterable(<FoundArchive>[
+              if (searches > 1) found,
+            ]);
+          },
+        ),
+      );
+      await openExperimenter(tester);
+      expect(searches, 1);
+      expect(find.byKey(const Key('sno-archives-empty')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('sno-archives-refresh')));
+      await tester.pumpAndSettle();
+
+      expect(searches, 2);
+      expect(find.text('Литература.zip'), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-empty')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: оборванный обход назван, найденное остаётся', (
+      WidgetTester tester,
+    ) async {
+      Stream<FoundArchive> broken(List<String> roots) async* {
+        yield found;
+        throw const ScanFailure('диск отвалился');
+      }
+
+      await pumpTesting(
+        tester,
+        testServices(data: data, archiveSearch: broken),
       );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      expect(find.text('Литература.zip'), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-failure')), findsOneWidget);
+      expect(find.text('Поиск прервался: диск отвалился.'), findsOneWidget);
+      // «Не найдено» здесь было бы неправдой: обход до конца не дошёл.
+      expect(find.byKey(const Key('sno-archives-empty')), findsNothing);
+      expect(find.byKey(const Key('sno-archives-searching')), findsNothing);
+      expect(find.byKey(const Key('sno-archives-refresh')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: на ПК доступ не нужен и не просится', (
+      WidgetTester tester,
+    ) async {
+      final FakeStorageAccess access = FakeStorageAccess(
+        current: StorageAccessState.notRequired,
+        paths: const <String>[r'C:\Users\Paul'],
+      );
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          access: access,
+          archives: <FoundArchive>[
+            FoundArchive(
+              path: r'C:\Users\Paul\Downloads\Литература.zip',
+              size: 340 * 1024 * 1024,
+              modifiedAt: DateTime.utc(2026, 10, 4, 12),
+              books: 5,
+            ),
+          ],
+        ),
+      );
+      await openExperimenter(tester);
+
+      expect(access.requests, 0);
+      expect(find.byKey(const Key('sno-archives-access')), findsNothing);
+      expect(find.text('5 книг · 340 МБ · Downloads'), findsOneWidget);
+
+      await unmount(tester);
+    });
+  });
+
+  group('SNO-F-LIT-03: доступ к файлам на телефоне', () {
+    testWidgets('SNO-F-LIT-03: без доступа обхода нет, запрос — по кнопке', (
+      WidgetTester tester,
+    ) async {
+      int searches = 0;
+      final FakeStorageAccess access = FakeStorageAccess(
+        current: StorageAccessState.denied,
+      );
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          access: access,
+          archiveSearch: (List<String> roots) {
+            searches++;
+            return Stream<FoundArchive>.fromIterable(<FoundArchive>[found]);
+          },
+        ),
+      );
+      await openExperimenter(tester);
+
+      // Раздел объясняет, зачем доступ, и сам ничего не спрашивает.
+      expect(find.byKey(const Key('sno-archives-access')), findsOneWidget);
+      expect(
+        find.textContaining('Приложение ищет только ZIP-архивы с книгами.'),
+        findsOneWidget,
+      );
+      expect(access.requests, 0);
+      expect(searches, 0);
+      // Искать заново нечем, а выбрать вручную можно.
+      expect(find.byKey(const Key('sno-archives-refresh')), findsNothing);
+      expect(find.byKey(const Key('sno-add-archive')), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-empty')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('sno-archives-allow')));
+      await tester.pumpAndSettle();
+      expect(access.requests, 1);
+      // Системный экран открыт, ответа ещё нет.
+      expect(searches, 0);
+      expect(find.byKey(const Key('sno-archives-access')), findsOneWidget);
+
+      // Доступ дали и вернулись в приложение — обход пошёл сам.
+      access.current = StorageAccessState.granted;
+      await backToApp(tester);
+
+      expect(searches, 1);
+      expect(access.requests, 1);
+      expect(find.byKey(const Key('sno-archives-access')), findsNothing);
+      expect(find.text('Литература.zip'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: отказали — запрос сам не повторяется', (
+      WidgetTester tester,
+    ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
+      final FakeStorageAccess access = FakeStorageAccess(
+        current: StorageAccessState.denied,
+      );
+      await pumpTesting(
+        tester,
+        testServices(data: data, access: access, picked: archive),
+        unpack: recording(unpacked),
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-archives-allow')));
+      await tester.pumpAndSettle();
+      // Вернулись, ничего не разрешив.
+      await backToApp(tester);
+      await backToApp(tester);
+
+      expect(access.requests, 1, reason: 'приложение не настаивает');
+      expect(find.byKey(const Key('sno-archives-access')), findsOneWidget);
+
+      // Ручной выбор работает и без доступа.
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pumpAndSettle();
+      expect(unpacked.single.name, 'Литература.zip');
+      expect(find.byKey(const Key('sno-archive-report')), findsOneWidget);
+
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: вернулись в приложение — обход не повторён', (
+      WidgetTester tester,
+    ) async {
+      int searches = 0;
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          archiveSearch: (List<String> roots) {
+            searches++;
+            return const Stream<FoundArchive>.empty();
+          },
+        ),
+      );
+      await openExperimenter(tester);
+      expect(searches, 1);
+
+      // Доступ есть: возвращение из другого приложения ничего не меняет.
+      await backToApp(tester);
+      expect(searches, 1);
+
+      await unmount(tester);
+    });
+  });
+
+  group('SNO-F-LIT-02: свои PDF не добавляются', () {
+    testWidgets('SNO-F-LIT-02: PDF вместо архива на полку не встаёт', (
+      WidgetTester tester,
+    ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          picked: const PickedFile(
+            name: 'Анатомия.PDF',
+            path: '/picked/Анатомия.PDF',
+          ),
+          storage: const PathBytesStorage(),
+        ),
+        unpack: recording(unpacked),
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       await tester.pumpAndSettle();
 
-      expect(unpacked, <String>['Литература.zip']);
-      // Архив не пошёл в импорт PDF: книг от него на полке нет.
       expect(await data.library.books(), isEmpty);
+      expect(unpacked, isEmpty, reason: 'книгу не пробуют и распаковать');
+      expect(find.byKey(const Key('sno-archive-report')), findsOneWidget);
+      expect(find.text('Книги добавляются архивом'), findsOneWidget);
+      expect(
+        find.textContaining('Не добавлено: «Анатомия.PDF».'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('только из архива с литературой'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-02: PDF и архив вместе — встаёт только архив', (
+      WidgetTester tester,
+    ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          batch: const <PickedFile>[
+            PickedFile(name: 'Гистология.pdf', path: '/picked/Гистология.pdf'),
+            archive,
+          ],
+          storage: const PathBytesStorage(),
+        ),
+        unpack: recording(unpacked),
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pumpAndSettle();
+
+      expect(await data.library.books(), isEmpty);
+      expect(unpacked.single.name, 'Литература.zip');
+      expect(find.text('Архив «Литература.zip»'), findsOneWidget);
+      expect(
+        find.textContaining('Не добавлено: «Гистология.pdf».'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-02: кнопка и подписи книг не обещают', (
+      WidgetTester tester,
+    ) async {
+      await pumpTesting(tester, testServices(data: data));
+      await openExperimenter(tester);
+
+      expect(find.text('Выбрать вручную…'), findsOneWidget);
+      expect(find.textContaining('Добавить книги'), findsNothing);
+      expect(find.textContaining('PDF встают'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    test('SNO-F-LIT-02: книга узнаётся по имени файла', () {
+      expect(isBookName('Анатомия.pdf'), isTrue);
+      expect(isBookName('АНАТОМИЯ.PDF'), isTrue);
+      expect(isBookName('Литература.zip'), isFalse);
+      expect(isBookName('pdf'), isFalse);
+      expect(isBookName('Литература.pdf.zip'), isFalse);
+    });
+
+    test('SNO-F-LIT-02: отказ называет книги и говорит, как надо', () {
+      expect(
+        describeRefusedBooks(<String>['Анатомия.pdf']),
+        'Не добавлено: «Анатомия.pdf». В сборке для тестирования книги '
+        'встают на полку только из архива с литературой.',
+      );
+      expect(
+        describeRefusedBooks(<String>['А.pdf', 'Б.pdf']),
+        startsWith('Не добавлено: «А.pdf», «Б.pdf». '),
+      );
+    });
+
+    test('SNO-F-LIT-02: поимённо названы три книги, остальные числом', () {
+      final String text = describeRefusedBooks(<String>[
+        for (int i = 1; i <= 5; i++) 'Файл $i.pdf',
+      ]);
+      for (int i = 1; i <= kNamedFailures; i++) {
+        expect(text, contains('«Файл $i.pdf»'));
+      }
+      expect(text, isNot(contains('«Файл 4.pdf»')));
+      expect(text, contains(' и ещё 2. '));
+    });
+  });
+
+  group('SNO-F-LIT-01: архив с книгами', () {
+    Book shelved(String id, {String? categoryId}) {
+      final Book book = testBook(id: id, hash: 'hash-$id');
+      return categoryId == null ? book : book.copyWith(categoryId: categoryId);
+    }
+
+    testWidgets('SNO-F-LIT-01: архив распаковывается, итог — окном', (
+      WidgetTester tester,
+    ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
+      await pumpTesting(
+        tester,
+        testServices(data: data, picked: archive),
+        unpack: recording(
+          unpacked,
+          report: (PickedFile file) => ArchiveReport(
+            archive: file.name,
+            total: 3,
+            added: <Book>[
+              shelved('a', categoryId: 'c1'),
+              shelved('b', categoryId: 'c2'),
+              shelved('c'),
+            ],
+            skipped: 2,
+          ),
+        ),
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pumpAndSettle();
+
+      expect(unpacked.single.name, 'Литература.zip');
       expect(find.byKey(const Key('sno-archive-report')), findsOneWidget);
       expect(find.text('Архив «Литература.zip»'), findsOneWidget);
       expect(
@@ -282,19 +677,44 @@ void main() {
       await tester.tap(find.text('Понятно'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('sno-archive-report')), findsNothing);
-      // Распаковка закончилась — кнопка снова готова.
-      expect(find.textContaining('Распаковываю'), findsNothing);
+      // Распаковка закончилась — строки хода больше нет.
+      expect(find.byKey(const Key('sno-archive-busy')), findsNothing);
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-LIT-01: ход распаковки виден под кнопкой', (
+    testWidgets('SNO-F-LIT-01: диалог закрыли — ничего не случилось', (
+      WidgetTester tester,
+    ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
+      await pumpTesting(
+        tester,
+        testServices(data: data, batch: const <PickedFile>[]),
+        unpack: recording(unpacked),
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pumpAndSettle();
+
+      expect(unpacked, isEmpty);
+      expect(find.byKey(const Key('sno-archive-report')), findsNothing);
+      expect(find.byKey(const Key('sno-archive-busy')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-01: ход распаковки виден над списком', (
       WidgetTester tester,
     ) async {
       final Completer<void> gate = Completer<void>();
       await pumpTesting(
         tester,
-        testServices(data: data, picked: archive),
+        testServices(
+          data: data,
+          picked: archive,
+          archives: <FoundArchive>[found],
+        ),
         unpack:
             (
               PickedFile file, {
@@ -314,22 +734,33 @@ void main() {
       );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       // Не `pumpAndSettle`: пока идёт распаковка, крутится индикатор.
       await tester.pump();
       await tester.pump();
 
+      expect(find.byKey(const Key('sno-archive-busy')), findsOneWidget);
       expect(find.byKey(const Key('sno-archive-progress')), findsOneWidget);
-      expect(find.textContaining('Добавляю'), findsNothing);
       expect(find.text('Распаковываю архив: 12 из 34'), findsOneWidget);
       expect(find.text('Анатомия · Анатомия человека'), findsOneWidget);
       final LinearProgressIndicator bar = tester.widget(
         find.byType(LinearProgressIndicator),
       );
       expect(bar.value, closeTo(11 / 34, 1e-9));
-      // Второй раз кнопка не нажимается, пока идёт первая распаковка.
-      final ListTile tile = tester.widget(find.byKey(const Key('sno-add-pdf')));
-      expect(tile.enabled, isFalse);
+      // Пока идёт первая распаковка, вторую начать нечем: ни ручным
+      // выбором, ни из списка, ни новым обходом.
+      final TextButton pick = tester.widget(
+        find.byKey(const Key('sno-add-archive')),
+      );
+      expect(pick.onPressed, isNull);
+      final TextButton refresh = tester.widget(
+        find.byKey(const Key('sno-archives-refresh')),
+      );
+      expect(refresh.onPressed, isNull);
+      final ListTile listed = tester.widget(
+        find.byKey(const Key('sno-archive-0')),
+      );
+      expect(listed.enabled, isFalse);
 
       gate.complete();
       await tester.pumpAndSettle();
@@ -358,13 +789,13 @@ void main() {
       );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       await tester.pump();
       await tester.pump();
 
-      // До первой книги — не «Добавляю: 0 из 0».
+      // До первой книги — не «0 из 0».
       expect(find.text('Открываю архив «Литература.zip»…'), findsOneWidget);
-      expect(find.textContaining('Добавляю'), findsNothing);
+      expect(find.textContaining('Распаковываю'), findsNothing);
 
       gate.complete();
       await tester.pumpAndSettle();
@@ -374,7 +805,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-LIT-02: второе нажатие второй диалог не открывает', (
+    testWidgets('SNO-F-LIT-01: второе нажатие второй диалог не открывает', (
       WidgetTester tester,
     ) async {
       final AppServices base = testServices(data: data);
@@ -388,6 +819,7 @@ void main() {
           storage: base.storage,
           coverStore: base.coverStore,
           access: base.access,
+          archiveSearch: base.archiveSearch,
           covers: base.covers,
           deviceLibrary: base.deviceLibrary,
         ),
@@ -395,15 +827,15 @@ void main() {
       await openExperimenter(tester);
 
       // Диалог ещё открыт, а кнопку нажали снова.
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       await tester.pump();
       expect(picker.dialogs, hasLength(1));
 
       // Диалог закрыли — кнопка снова отвечает.
       picker.dialogs.single.complete(const <PickedFile>[]);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       await tester.pump();
       expect(picker.dialogs, hasLength(2));
       picker.dialogs.last.complete(const <PickedFile>[]);
@@ -417,14 +849,7 @@ void main() {
     ) async {
       await pumpTesting(
         tester,
-        testServices(
-          data: data,
-          batch: const <PickedFile>[
-            PickedFile(name: 'Гистология.pdf', path: '/picked/Гистология.pdf'),
-            archive,
-          ],
-          storage: const PathBytesStorage(),
-        ),
+        testServices(data: data, picked: archive),
         unpack:
             (
               PickedFile file, {
@@ -435,58 +860,85 @@ void main() {
       );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       await tester.pumpAndSettle();
 
-      // Книга, добавленная до архива, названа; сбой — тоже.
-      expect(find.textContaining('Книга добавлена'), findsOneWidget);
       expect(find.textContaining('Распаковка остановлена'), findsOneWidget);
-      // И кнопка не осталась занятой.
+      // И раздел не остался занятым.
       await tester.tap(find.text('Понятно'));
       await tester.pumpAndSettle();
-      final ListTile tile = tester.widget(find.byKey(const Key('sno-add-pdf')));
-      expect(tile.enabled, isTrue);
+      expect(find.byKey(const Key('sno-archive-busy')), findsNothing);
+      final TextButton pick = tester.widget(
+        find.byKey(const Key('sno-add-archive')),
+      );
+      expect(pick.onPressed, isNotNull);
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-LIT-02: PDF и архив выбраны вместе', (
+    testWidgets('SNO-F-LIT-01: не-архив получает отказ от распаковки', (
       WidgetTester tester,
     ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          // Архив без расширения — и любой другой файл не-книга: что
+          // это, решает распаковка, а не имя.
+          picked: const PickedFile(name: 'Литература', path: '/picked/x'),
+        ),
+        unpack: recording(
+          unpacked,
+          report: (PickedFile file) =>
+              ArchiveReport(archive: file.name, refusal: 'это не ZIP-архив'),
+        ),
+      );
+      await openExperimenter(tester);
+
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
+      await tester.pumpAndSettle();
+
+      expect(unpacked.single.name, 'Литература');
+      expect(
+        find.textContaining('Архив не добавлен: это не ZIP-архив.'),
+        findsOneWidget,
+      );
+      expect(await data.library.books(), isEmpty);
+
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-01: два архива — итог у каждого свой', (
+      WidgetTester tester,
+    ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
       await pumpTesting(
         tester,
         testServices(
           data: data,
           batch: const <PickedFile>[
-            PickedFile(name: 'Гистология.pdf', path: '/picked/Гистология.pdf'),
             archive,
+            PickedFile(name: 'Ещё.zip', path: '/picked/Ещё.zip'),
           ],
-          storage: const PathBytesStorage(),
         ),
-        unpack:
-            (
-              PickedFile file, {
-              void Function(ArchiveProgress progress)? onProgress,
-            }) async {
-              return ArchiveReport(
-                archive: file.name,
-                refusal: 'это не ZIP-архив',
-              );
-            },
+        unpack: recording(
+          unpacked,
+          report: (PickedFile file) =>
+              ArchiveReport(archive: file.name, total: 1, already: 1),
+        ),
       );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-add-pdf')));
+      await tester.tap(find.byKey(const Key('sno-add-archive')));
       await tester.pumpAndSettle();
 
-      // PDF встал на полку своим путём, архив ушёл в распаковку.
-      final List<Book> books = await data.library.books();
-      expect(books.single.title, 'Гистология');
-      expect(find.textContaining('Книга добавлена'), findsOneWidget);
-      expect(
-        find.textContaining('Архив не добавлен: это не ZIP-архив.'),
-        findsOneWidget,
-      );
+      expect(unpacked, hasLength(2));
+      expect(find.text('Архивы: 2'), findsOneWidget);
+      expect(find.textContaining('«Литература.zip»'), findsOneWidget);
+      expect(find.textContaining('«Ещё.zip»'), findsOneWidget);
 
       await tester.tap(find.text('Понятно'));
       await tester.pumpAndSettle();
@@ -596,33 +1048,8 @@ void main() {
       );
       expect(stopped, contains('добавьте архив ещё раз'));
     });
-  });
 
-  group('SNO-F-LIT-02: что сказать после добавления', () {
-    Book book(String id) => testBook(id: id, hash: 'hash-$id');
-
-    test('SNO-F-LIT-02: без отказов — то же, что в основном приложении', () {
-      final ImportReport report = ImportReport(
-        added: <Book>[book('a'), book('b')],
-        failed: const <ImportFailure>[],
-      );
-      expect(describeAddedPdfs(report), describeImportReport(report));
-      expect(describeAddedPdfs(report), 'Добавлено книг: 2');
-    });
-
-    test('SNO-F-LIT-02: отказ назван именем файла и причиной', () {
-      final ImportReport report = ImportReport(
-        added: <Book>[book('a')],
-        failed: const <ImportFailure>[
-          ImportFailure(name: 'Битый.pdf', reason: 'файл повреждён'),
-        ],
-      );
-      final String text = describeAddedPdfs(report);
-      expect(text, startsWith(describeImportReport(report)));
-      expect(text, contains('«Битый.pdf» — файл повреждён'));
-    });
-
-    test('SNO-F-LIT-02: причина движка сказана своими словами', () {
+    test('SNO-F-LIT-01: причина движка сказана своими словами', () {
       String reasonOf(DocumentProblem problem) {
         return describeAddFailure(
           ImportFailure(
@@ -650,22 +1077,6 @@ void main() {
         'не удалось прочесть',
       );
     });
-
-    test('SNO-F-LIT-02: поимённо названы три отказа, остальные числом', () {
-      final ImportReport report = ImportReport(
-        added: const <Book>[],
-        failed: <ImportFailure>[
-          for (int i = 1; i <= 5; i++)
-            ImportFailure(name: 'Файл $i.pdf', reason: 'не открылся'),
-        ],
-      );
-      final String text = describeAddedPdfs(report);
-      for (int i = 1; i <= kNamedFailures; i++) {
-        expect(text, contains('«Файл $i.pdf»'));
-      }
-      expect(text, isNot(contains('«Файл 4.pdf»')));
-      expect(text, contains('И ещё не добавлено: 2'));
-    });
   });
 
   group('SNO-F-CFG-03: код устройства', () {
@@ -679,7 +1090,7 @@ void main() {
 
 /// Диалог выбора, который остаётся открытым, пока тест его не закроет.
 class _HeldPicker implements BookFilePicker {
-  /// Открытые диалоги «книги и архивы», по порядку.
+  /// Открытые диалоги выбора архивов, по порядку.
   final List<Completer<List<PickedFile>>> dialogs =
       <Completer<List<PickedFile>>>[];
 
@@ -690,7 +1101,7 @@ class _HeldPicker implements BookFilePicker {
   Future<List<PickedFile>> pickPdfs() async => const <PickedFile>[];
 
   @override
-  Future<List<PickedFile>> pickBooksOrArchives() {
+  Future<List<PickedFile>> pickArchives() {
     final Completer<List<PickedFile>> dialog = Completer<List<PickedFile>>();
     dialogs.add(dialog);
     return dialog.future;

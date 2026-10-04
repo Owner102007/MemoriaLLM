@@ -79,7 +79,7 @@ void main() {
     });
   });
 
-  group('SNO-F-LIT-02: копия книги в папке приложения', () {
+  group('SNO-F-LIT-01: копия книги в папке приложения', () {
     late Directory books;
     late LocalBookStorage copying;
 
@@ -95,7 +95,7 @@ void main() {
       ];
     }
 
-    test('SNO-F-LIT-02: книга копируется, источник — своя копия', () async {
+    test('SNO-F-LIT-01: книга копируется, источник — своя копия', () async {
       final File book = writeBook('kniga.pdf', 3000);
       final BookSource source = await copying.adopt(
         PickedFile(name: 'kniga.pdf', path: book.path),
@@ -112,7 +112,7 @@ void main() {
       expect(names().where((String name) => name.endsWith('.part')), isEmpty);
     });
 
-    test('SNO-F-LIT-02: копия читается и после пропажи исходника', () async {
+    test('SNO-F-LIT-01: копия читается и после пропажи исходника', () async {
       final File book = writeBook('kniga.pdf', 5000);
       final BookSource source = await copying.adopt(
         PickedFile(name: 'kniga.pdf', path: book.path),
@@ -128,7 +128,7 @@ void main() {
       expect(buffer[0], 4000 % 251);
     });
 
-    test('SNO-F-LIT-02: тёзки из разных папок лежат порознь', () async {
+    test('SNO-F-LIT-01: тёзки из разных папок лежат порознь', () async {
       final Directory first = Directory('${temp.path}/a')..createSync();
       final Directory second = Directory('${temp.path}/b')..createSync();
       final File one = File('${first.path}/kniga.pdf')
@@ -150,7 +150,7 @@ void main() {
       expect(File(copyB.path).readAsBytesSync(), <int>[4, 5, 6, 7]);
     });
 
-    test('SNO-F-LIT-02: тот же файл повторно — та же копия', () async {
+    test('SNO-F-LIT-01: тот же файл повторно — та же копия', () async {
       final File book = writeBook('kniga.pdf', 1000);
       final PickedFile picked = PickedFile(name: 'kniga.pdf', path: book.path);
 
@@ -161,7 +161,7 @@ void main() {
       expect(names(), hasLength(1));
     });
 
-    test('SNO-F-LIT-02: та же книга из другой папки — одна копия', () async {
+    test('SNO-F-LIT-01: та же книга из другой папки — одна копия', () async {
       final Directory other = Directory('${temp.path}/other')..createSync();
       final File book = writeBook('kniga.pdf', 2000);
       final File twin = File('${other.path}/drugoe-imya.pdf')
@@ -180,7 +180,7 @@ void main() {
       expect(names(), hasLength(1));
     });
 
-    test('SNO-F-LIT-02: файл пересохранили — прежняя копия цела', () async {
+    test('SNO-F-LIT-01: файл пересохранили — прежняя копия цела', () async {
       final File book = writeBook('kniga.pdf', 2000);
       final PickedFile picked = PickedFile(name: 'kniga.pdf', path: book.path);
       final BookSource first = await copying.adopt(picked);
@@ -198,7 +198,7 @@ void main() {
       expect(File(before.path).readAsBytesSync(), was);
     });
 
-    test('SNO-F-LIT-02: выбрана сама копия — второй не делается', () async {
+    test('SNO-F-LIT-01: выбрана сама копия — второй не делается', () async {
       final File book = writeBook('kniga.pdf', 1000);
       final BookSource source = await copying.adopt(
         PickedFile(name: 'kniga.pdf', path: book.path),
@@ -214,7 +214,7 @@ void main() {
       expect(File(copy.path).lengthSync(), 1000);
     });
 
-    test('SNO-F-LIT-02: недописанное с прошлого раза выметается', () async {
+    test('SNO-F-LIT-01: недописанное с прошлого раза выметается', () async {
       // Приложение убили посреди переноса: в папке остался `.part`.
       books.createSync(recursive: true);
       final File stale = File('${books.path}/incoming-0123456789abcdef.part')
@@ -234,7 +234,7 @@ void main() {
       expect(names(), hasLength(2));
     });
 
-    test('SNO-F-LIT-02: снятая с полки копия удаляется', () async {
+    test('SNO-F-LIT-01: снятая с полки копия удаляется', () async {
       final File book = writeBook('kniga.pdf', 1000);
       final BookSource source = await copying.adopt(
         PickedFile(name: 'kniga.pdf', path: book.path),
@@ -246,7 +246,7 @@ void main() {
       expect(book.existsSync(), isTrue);
     });
 
-    test('SNO-F-LIT-02: исходника нет — ошибка, и копии не остаётся', () async {
+    test('SNO-F-LIT-01: исходника нет — ошибка, и копии не остаётся', () async {
       await expectLater(
         copying.adopt(
           PickedFile(name: 'net.pdf', path: '${temp.path}/net.pdf'),
@@ -369,7 +369,7 @@ void main() {
       expect(File(copy.path).readAsBytesSync(), bytes);
     });
 
-    test('SNO-F-LIT-02: в ветви книга переносится всегда', () async {
+    test('SNO-F-LIT-01: в ветви книга переносится всегда', () async {
       final File book = writeBook('учебник.pdf', 300 * 1024);
       final FakeDocumentGateway documents = FakeDocumentGateway(
         <String, String>{'content://doc/9': book.path},
@@ -394,7 +394,7 @@ void main() {
       expect(documents.openDescriptors, isEmpty);
     });
 
-    test('SNO-F-LIT-02: оборванный перенос файла не оставляет', () async {
+    test('SNO-F-LIT-01: оборванный перенос файла не оставляет', () async {
       // Дескриптор, с которого нельзя читать: конец трубы для записи.
       final ({int read, int write}) pipe = fd.createPipe();
       addTearDown(() => fd.closeDescriptor(pipe.read));
@@ -422,7 +422,7 @@ void main() {
       expect(documents.openDescriptors, isEmpty);
     });
 
-    test('SNO-F-LIT-02: в ветви файл с путём тоже копируется', () async {
+    test('SNO-F-LIT-01: в ветви файл с путём тоже копируется', () async {
       final File book = writeBook('свой.pdf', 2000);
       final AndroidBookStorage storage = AndroidBookStorage(
         documents: FakeDocumentGateway(const <String, String>{}),

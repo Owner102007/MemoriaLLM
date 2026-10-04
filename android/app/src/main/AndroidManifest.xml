@@ -1,11 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Разрешений на доступ к файлам здесь нет намеренно. Этот манифест
          общий для трёх приложений из одного кода (см. флейворы в
-         `build.gradle.kts`), а доступ ко всем файлам нужен только
-         основному — он объявлен в `src/full/AndroidManifest.xml`. Сборки
-         ветвей СНО2026 ничего не ищут на устройстве и не просят
-         (SNO-F-CFG-02): в их манифесте этих разрешений быть не должно,
-         и CI проверяет это по собранному APK. -->
+         `build.gradle.kts`), а зачем доступ нужен, у каждого сказано
+         своё: основное приложение ищет книги
+         (`src/full/AndroidManifest.xml`), сборки ветвей СНО2026 — только
+         архив с литературой (`src/sno2026core`, `src/sno2026test`;
+         SNO-F-LIT-03). CI проверяет разрешения по собранному APK. -->
     <application
         android:label="${appLabel}"
         android:name="${applicationName}"

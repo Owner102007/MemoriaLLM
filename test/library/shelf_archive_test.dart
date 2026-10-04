@@ -239,7 +239,7 @@ void main() {
     });
   });
 
-  test('SNO-F-LIT-02: архив узнаётся по имени файла', () {
+  test('SNO-F-LIT-01: архив узнаётся по имени файла', () {
     expect(isArchiveName('Литература.zip'), isTrue);
     expect(isArchiveName('ЛИТЕРАТУРА.ZIP'), isTrue);
     expect(isArchiveName('Анатомия.pdf'), isFalse);

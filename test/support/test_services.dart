@@ -2,6 +2,7 @@ import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/library/cover_service.dart';
 import 'package:memoria/application/library/device_library.dart';
+import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
@@ -31,6 +32,9 @@ import 'fake_reading.dart';
 /// [scanRunner] подменяет сам обход устройства — когда тесту надо решать,
 /// когда он кончится и чем: дойдёт до конца, оборвётся или будет идти,
 /// пока его не остановят. Без него обход «находит» [onDevice].
+///
+/// [archiveSearch] так же подменяет поиск архивов с книгами
+/// (SNO-F-LIT-03); без него поиск «находит» [archives].
 AppServices testServices({
   required AppData data,
   ReaderDocument? document,
@@ -44,6 +48,8 @@ AppServices testServices({
   FullScreenWindow window = const NoFullScreenWindow(),
   List<ScannedFile> onDevice = const <ScannedFile>[],
   ScanRunner? scanRunner,
+  List<FoundArchive> archives = const <FoundArchive>[],
+  ArchiveSearch? archiveSearch,
 }) {
   final ReaderDocument doc =
       document ?? FakeReaderDocument(pages: <String>['текст']);
@@ -59,6 +65,8 @@ AppServices testServices({
     access: grant,
     volumeKeys: volumeKeys,
     window: window,
+    // Изолята здесь нет по той же причине, что и у обхода книг ниже.
+    archiveSearch: archiveSearch ?? fakeArchiveSearch(archives),
     covers: CoverService(
       opener: FakeDocumentOpener(
         doc,
@@ -119,6 +127,11 @@ Stream<ScanEvent> fakeScan(List<ScannedFile> files) async* {
     yield ScanEvent(file: file, directory: '', visited: 0);
   }
   yield ScanEvent(directory: 'готово', visited: files.length);
+}
+
+/// Поиск архивов, который «нашёл» заранее заданные (SNO-F-LIT-03).
+ArchiveSearch fakeArchiveSearch(List<FoundArchive> archives) {
+  return (List<String> roots) => Stream<FoundArchive>.fromIterable(archives);
 }
 
 /// Разрешение на доступ к файлам, которым распоряжается тест.

@@ -348,7 +348,7 @@ class FakeBookFilePicker implements BookFilePicker {
   /// Сколько раз открывали диалог множественного выбора.
   int batchCalls = 0;
 
-  /// Сколько раз открывали диалог «книги и архивы».
+  /// Сколько раз открывали диалог выбора архивов.
   int archiveCalls = 0;
 
   @override
@@ -366,7 +366,7 @@ class FakeBookFilePicker implements BookFilePicker {
   }
 
   @override
-  Future<List<PickedFile>> pickBooksOrArchives() async {
+  Future<List<PickedFile>> pickArchives() async {
     archiveCalls++;
     final List<PickedFile>? batch = _batch;
     if (batch != null) {

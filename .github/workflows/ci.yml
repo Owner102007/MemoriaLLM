@@ -378,11 +378,11 @@ jobs:
           cp "build/app/outputs/flutter-apk/app-$FLAVOR-release.apk" "out/$FILE"
 
       # Проверяется собранное, а не исходники: у приложения ветви свой
-      # идентификатор и своё имя, и в его манифесте нет разрешений на
-      # доступ к файлам (SNO-F-CFG-01, SNO-F-CFG-02). У основного — всё
-      # прежнее, и разрешение на месте: это же доказывает, что проверка
-      # умеет его находить. Строки в двоичном манифесте лежат в UTF-8
-      # или в UTF-16 — ищутся обе записи.
+      # идентификатор и своё имя (SNO-F-CFG-01). Доступ ко всем файлам
+      # есть у всех трёх приложений: основное ищет книги, ветвь — архив
+      # с литературой (SNO-F-LIT-03); записи в чужие файлы и доступа к
+      # фото, видео и звуку нет ни у кого. Строки в двоичном манифесте
+      # лежат в UTF-8 или в UTF-16 — ищутся обе записи.
       - name: Что внутри APK
         if: steps.probe.outputs.ready == 'true'
         env:
@@ -427,11 +427,16 @@ jobs:
                                        'READ_MEDIA_',
                                        'requestLegacyExternalStorage')
                      if has(name)]
-          if branch and storage:
-              problems.append('в сборке ветви есть доступ к файлам: '
-                              + ', '.join(storage))
-          if not branch and 'MANAGE_EXTERNAL_STORAGE' not in storage:
-              problems.append('в основной сборке нет MANAGE_EXTERNAL_STORAGE')
+          # Читать файлы устройства — да: основное приложение ищет
+          # книги, ветвь — архив с литературой (SNO-F-LIT-03). Писать в
+          # чужие файлы и смотреть фото, видео и звук — нет, никому.
+          extra = [name for name in storage
+                   if name in ('WRITE_EXTERNAL_STORAGE', 'READ_MEDIA_')]
+          if extra:
+              problems.append('в сборке есть лишний доступ к файлам: '
+                              + ', '.join(extra))
+          if 'MANAGE_EXTERNAL_STORAGE' not in storage:
+              problems.append('в сборке нет MANAGE_EXTERNAL_STORAGE')
           if not branch and has('sno2026'):
               problems.append('в основной сборке есть след ветви sno2026')
           for problem in problems:

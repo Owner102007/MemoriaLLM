@@ -32,17 +32,17 @@ class FastBookPicker implements BookFilePicker {
     mimeTypes: <String>['application/pdf'],
   );
 
-  /// Фильтр «книги и архивы» (SNO-F-LIT-02).
+  /// Фильтр «архивы с книгами» (SNO-F-LIT-01).
   ///
   /// У ZIP на Android нет одного типа: разные файловые менеджеры и
   /// мессенджеры отдают его под разными именами, а скачанный файл часто
   /// приходит вовсе без типа — «просто байты». Перечислены все
-  /// известные; что из выбранного архив, решает имя файла.
-  static const XTypeGroup _booksAndArchives = XTypeGroup(
-    label: 'PDF и ZIP',
-    extensions: <String>['pdf', 'zip'],
+  /// известные. PDF в фильтре нет: свои книги в сборках для
+  /// тестирования не добавляются (решение П3).
+  static const XTypeGroup _archives = XTypeGroup(
+    label: 'ZIP',
+    extensions: <String>['zip'],
     mimeTypes: <String>[
-      'application/pdf',
       'application/zip',
       'application/x-zip-compressed',
       'application/x-zip',
@@ -74,10 +74,10 @@ class FastBookPicker implements BookFilePicker {
   }
 
   @override
-  Future<List<PickedFile>> pickBooksOrArchives() async {
+  Future<List<PickedFile>> pickArchives() async {
     final List<FastFilePickerPath>? files =
         await FastFilePicker.pickMultipleFiles(
-          acceptedTypeGroups: const <XTypeGroup>[_booksAndArchives],
+          acceptedTypeGroups: const <XTypeGroup>[_archives],
         );
     if (files == null) {
       return const <PickedFile>[];

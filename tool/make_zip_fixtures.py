@@ -233,6 +233,27 @@ def empty() -> bytes:
     return buffer.getvalue()
 
 
+NO_BOOKS = [
+    "Заметки.txt",
+    "Фото/снимок.jpg",
+    "Фото/Thumbs.db",
+]
+
+
+def no_books() -> bytes:
+    """Обычный архив, в котором нет ни одной книги: такой поиск архивов
+    с литературой (SNO-ALG-LIT-02) в списке не показывает."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for path in NO_BOOKS:
+            archive.writestr(
+                info(path, zipfile.ZIP_DEFLATED),
+                content(path),
+                compresslevel=6,
+            )
+    return buffer.getvalue()
+
+
 def bad_crc(stored: bytes) -> bytes:
     """Полка без сжатия, в которой испорчен один байт второй книги."""
     marker = content(BOOKS[1])
@@ -322,6 +343,7 @@ def main() -> None:
         "backslash.zip": backslash(),
         "twins_python.zip": twins(),
         "empty.zip": empty(),
+        "no_books.zip": no_books(),
         "truncated.zip": stored[: len(stored) * 6 // 10],
         "bad_crc.zip": bad_crc(stored),
         "not_a_zip.zip": b"This is not a zip archive.\n" * 4,
@@ -350,6 +372,12 @@ def main() -> None:
         "bzip2_python.zip",
         archives["bzip2_python.zip"],
         {path: path for path in BOOKS[:2]},
+    )
+
+    check(
+        "no_books.zip",
+        archives["no_books.zip"],
+        {path: path for path in NO_BOOKS},
     )
 
     for name, data in archives.items():

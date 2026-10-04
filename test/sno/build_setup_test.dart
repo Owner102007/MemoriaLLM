@@ -100,42 +100,70 @@ void main() {
     });
   });
 
-  group('SNO-F-CFG-02: разрешения на доступ к файлам', () {
+  group('SNO-F-LIT-03: разрешения на доступ к файлам', () {
     const List<String> storage = <String>[
       'MANAGE_EXTERNAL_STORAGE',
       'READ_EXTERNAL_STORAGE',
       'requestLegacyExternalStorage',
     ];
+    const List<String> flavors = <String>['full', 'sno2026core', 'sno2026test'];
 
-    test('SNO-F-CFG-02: в общем манифесте их нет', () {
+    test('SNO-F-LIT-03: в общем манифесте их нет', () {
+      // Зачем доступ нужен, у каждого приложения сказано своё — в
+      // манифесте его флейвора.
       final String shared = File('android/app/src/main/AndroidManifest.xml')
           .readAsStringSync();
       for (final String name in storage) {
         expect(
           shared,
           isNot(contains('android.permission.$name')),
-          reason: '$name достался бы и сборкам ветвей',
+          reason: name,
         );
         expect(shared, isNot(contains('android:$name')), reason: name);
       }
     });
 
-    test('SNO-F-CFG-02: они объявлены только у основного приложения', () {
-      final String full = File('android/app/src/full/AndroidManifest.xml')
-          .readAsStringSync();
-      expect(full, contains('android.permission.MANAGE_EXTERNAL_STORAGE'));
-      expect(full, contains('android.permission.READ_EXTERNAL_STORAGE'));
-      expect(full, contains('android:requestLegacyExternalStorage="true"'));
-      for (final String name in <String>['sno2026core', 'sno2026test']) {
-        final File own = File('android/app/src/$name/AndroidManifest.xml');
-        if (!own.existsSync()) {
-          continue;
-        }
+    test('SNO-F-LIT-03: читать файлы устройства может каждая сборка', () {
+      // Основное приложение ищет книги, ветвь — архив с литературой.
+      for (final String name in flavors) {
+        final String own = File('android/app/src/$name/AndroidManifest.xml')
+            .readAsStringSync();
         expect(
-          own.readAsStringSync(),
-          isNot(contains('EXTERNAL_STORAGE')),
-          reason: 'манифест флейвора $name',
+          own,
+          contains('android.permission.MANAGE_EXTERNAL_STORAGE'),
+          reason: 'флейвор $name',
         );
+        expect(
+          own,
+          contains('android.permission.READ_EXTERNAL_STORAGE'),
+          reason: 'флейвор $name',
+        );
+        expect(
+          own,
+          contains('android:requestLegacyExternalStorage="true"'),
+          reason: 'флейвор $name',
+        );
+      }
+    });
+
+    test('SNO-F-LIT-03: писать в чужие файлы и смотреть медиа — никому', () {
+      for (final String name in <String>['main', ...flavors]) {
+        final String own = File('android/app/src/$name/AndroidManifest.xml')
+            .readAsStringSync();
+        expect(
+          own,
+          isNot(contains('WRITE_EXTERNAL_STORAGE')),
+          reason: 'манифест $name',
+        );
+        expect(own, isNot(contains('READ_MEDIA_')), reason: 'манифест $name');
+      }
+    });
+
+    test('SNO-F-LIT-03: манифест ветви говорит, зачем ей доступ', () {
+      for (final String name in <String>['sno2026core', 'sno2026test']) {
+        final String own = File('android/app/src/$name/AndroidManifest.xml')
+            .readAsStringSync();
+        expect(own, contains('SNO-F-LIT-03'), reason: 'флейвор $name');
       }
     });
   });

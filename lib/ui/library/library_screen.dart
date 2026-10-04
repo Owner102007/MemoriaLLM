@@ -710,14 +710,14 @@ class _EmptyBranchShelf extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             Text(
-              'Литературы в поставке нет',
+              'Литература ещё не добавлена',
               style: theme.textTheme.headlineSmall,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
-              'Книги добавляет экспериментатор: Тестирование → '
-              'Для экспериментатора → Добавить книги или архив…',
+              'Книги приходят архивом. Экспериментатор: Тестирование → '
+              'Для экспериментатора — приложение найдёт архив само.',
               style: theme.textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),

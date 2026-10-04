@@ -14,28 +14,37 @@ import '../../domain/library/device_scan.dart';
 /// подтормаживал список, который в это время растёт на экране.
 typedef ScanSink = void Function(ScannedFile file);
 
-/// Обходит [roots] и отдаёт найденные PDF в [onFile].
+/// Обходит [roots] и отдаёт в [onFile] каждый файл, имя которого
+/// принимает [accept].
 ///
-/// Правила отбора живут в `domain/library/device_scan.dart`: сюда они
-/// приходят готовыми, и менять их надо там. Здесь остаётся то, чего в
-/// домене быть не может, — сам диск.
+/// Сам обход — один на всё, что ищут на устройстве: книги основного
+/// приложения ([scanForPdfs]) и архивы с литературой в сборках ветвей
+/// СНО2026 (`archive_scanner.dart`, SNO-ALG-LIT-02). Разница между ними —
+/// только в том, какое имя годится и что делать с найденным файлом.
+///
+/// Правила пропуска папок живут в `domain/library/device_scan.dart`.
+/// Скрытые файлы не отдаются никогда. [rootOrder] расставляет папки
+/// корня: папка с меньшим числом обходится раньше — так находки из
+/// «Загрузок» появляются в первые секунды, а не в конце обхода. Без него
+/// порядок прежний — как папки лежат на диске.
 ///
 /// Ошибки на отдельных ветках проглатываются намеренно: на телефоне
 /// половина папок закрыта даже с полным доступом, и упасть на первой из
 /// них значило бы не найти ничего вовсе.
-Future<int> scanForPdfs({
+Future<void> walkFiles({
   required List<String> roots,
-  required ScanSink onFile,
+  required bool Function(String name) accept,
+  required Future<void> Function(File file, String name) onFile,
   void Function(String directory, int visited)? onDirectory,
   bool Function()? isCancelled,
   int maxDepth = 24,
+  int Function(String name)? rootOrder,
 }) async {
   final Set<String> seen = <String>{};
   final List<_PendingDirectory> stack = <_PendingDirectory>[
     for (final String root in roots) _PendingDirectory(root, 0),
   ];
   int visited = 0;
-  int found = 0;
 
   while (stack.isNotEmpty) {
     if (isCancelled?.call() ?? false) {
@@ -56,37 +65,84 @@ Future<int> scanForPdfs({
       continue;
     }
 
+    final List<_PendingDirectory> children = <_PendingDirectory>[];
     for (final FileSystemEntity entry in entries) {
       final String name = _nameOf(entry.path);
       if (entry is Directory) {
         if (shouldSkipDirectory(path: entry.path, name: name)) {
           continue;
         }
-        stack.add(_PendingDirectory(entry.path, current.depth + 1));
+        children.add(_PendingDirectory(entry.path, current.depth + 1));
         continue;
       }
-      if (entry is! File || isHiddenName(name) || !looksLikePdfName(name)) {
+      if (entry is! File || isHiddenName(name) || !accept(name)) {
         continue;
       }
+      await onFile(entry, name);
+    }
+    if (rootOrder != null && current.depth == 0 && children.length > 1) {
+      // Со стопки снимается последнее положенное: папка, которой идти
+      // первой, кладётся последней. При равенстве порядок — как на
+      // диске, поэтому сравнение дополнено местом в списке.
+      final List<int> rank = <int>[
+        for (final _PendingDirectory child in children)
+          rootOrder(_nameOf(child.path)),
+      ];
+      final List<int> order = <int>[
+        for (int i = 0; i < children.length; i++) i,
+      ];
+      order.sort((int a, int b) {
+        final int byRank = rank[b].compareTo(rank[a]);
+        return byRank != 0 ? byRank : a.compareTo(b);
+      });
+      for (final int i in order) {
+        stack.add(children[i]);
+      }
+    } else {
+      stack.addAll(children);
+    }
+  }
+}
+
+/// Обходит [roots] и отдаёт найденные PDF в [onFile].
+///
+/// Правила отбора живут в `domain/library/device_scan.dart`: сюда они
+/// приходят готовыми, и менять их надо там. Здесь остаётся то, чего в
+/// домене быть не может, — сам диск ([walkFiles]).
+Future<int> scanForPdfs({
+  required List<String> roots,
+  required ScanSink onFile,
+  void Function(String directory, int visited)? onDirectory,
+  bool Function()? isCancelled,
+  int maxDepth = 24,
+}) async {
+  int found = 0;
+  await walkFiles(
+    roots: roots,
+    accept: looksLikePdfName,
+    onDirectory: onDirectory,
+    isCancelled: isCancelled,
+    maxDepth: maxDepth,
+    onFile: (File file, String name) async {
       final FileStat stat;
       try {
-        stat = await entry.stat();
+        stat = await file.stat();
       } on FileSystemException {
-        continue;
+        return;
       }
-      if (stat.size <= 0 || !await fileHasPdfSignature(entry)) {
-        continue;
+      if (stat.size <= 0 || !await fileHasPdfSignature(file)) {
+        return;
       }
       found++;
       onFile(
         ScannedFile(
-          path: entry.path,
+          path: file.path,
           size: stat.size,
           modifiedAt: stat.modified,
         ),
       );
-    }
-  }
+    },
+  );
   return found;
 }
 
@@ -133,8 +189,27 @@ Stream<ScanEvent> scanInIsolate(
   List<String> roots, {
   ScanEntryPoint entryPoint = _scanEntryPoint,
 }) {
+  return scanStreamInIsolate<ScanEvent>(
+    roots,
+    entryPoint: entryPoint,
+    decode: _decodeEvent,
+  );
+}
+
+/// Изолят обхода и поток того, что он шлёт, — общая часть [scanInIsolate]
+/// и поиска архивов (`archive_scanner.dart`, SNO-ALG-LIT-02).
+///
+/// [entryPoint] получает порт и корни и шлёт в порт простые списки;
+/// [decode] превращает список в событие. Последним изолят шлёт
+/// [kScanDone]. Сообщение, которого [decode] не узнал, считается ошибкой
+/// изолята: её он шлёт списком из текста и стека.
+Stream<T> scanStreamInIsolate<T>(
+  List<String> roots, {
+  required ScanEntryPoint entryPoint,
+  required T? Function(Object? message) decode,
+}) {
   final ReceivePort port = ReceivePort();
-  late final StreamController<ScanEvent> controller;
+  late final StreamController<T> controller;
   Isolate? isolate;
   StreamSubscription<dynamic>? listener;
   bool ended = false;
@@ -159,13 +234,13 @@ Stream<ScanEvent> scanInIsolate(
     unawaited(controller.close());
   }
 
-  controller = StreamController<ScanEvent>(
+  controller = StreamController<T>(
     onListen: () async {
       listener = port.listen((Object? message) {
         if (ended) {
           return;
         }
-        if (message == _kScanDone) {
+        if (message == kScanDone) {
           finish();
           return;
         }
@@ -175,7 +250,7 @@ Stream<ScanEvent> scanInIsolate(
           finish('обход остановился, не дойдя до конца');
           return;
         }
-        final ScanEvent? event = _decodeEvent(message);
+        final T? event = decode(message);
         if (event == null) {
           // Не находка и не отметка — значит, сообщение об ошибке:
           // изолят шлёт его списком из текста ошибки и стека.
@@ -207,7 +282,7 @@ Stream<ScanEvent> scanInIsolate(
 }
 
 /// Слово, которым изолят сообщает, что обошёл всё.
-const String _kScanDone = 'done';
+const String kScanDone = 'done';
 
 String _describeIsolateError(Object message) {
   if (message is List<Object?> && message.isNotEmpty) {
@@ -273,7 +348,7 @@ Future<void> _scanEntryPoint(List<Object> args) async {
       port.send(<Object>['dir', directory, visited]);
     },
   );
-  port.send(_kScanDone);
+  port.send(kScanDone);
 }
 
 ScanEvent? _decodeEvent(Object? message) {
