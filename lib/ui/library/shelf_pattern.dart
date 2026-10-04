@@ -6,9 +6,10 @@ import '../../domain/library/category_style.dart';
 
 /// Узор подложки категории.
 ///
-/// Рисуется **под** обложками и только под ними: заголовок категории и
-/// подписи книг остаются на обычном фоне темы. Смысл узора — дать глазу
-/// зацепку, по которой участок полки узнаётся до чтения названия.
+/// Рисуется **под** блоками участка: заголовок категории остаётся на
+/// обычном фоне темы, а подписи книг лежат на собственной подложке
+/// (BUG-14) — линии узора под буквами не проходят. Смысл узора — дать
+/// глазу зацепку, по которой участок полки узнаётся до чтения названия.
 ///
 /// Узоры абстрактные и «машинные»: сетки, трассы, потоки данных, сбои
 /// развёртки. Спокойный узор красится почти в цвет подложки, и его
@@ -287,20 +288,17 @@ class ShelfPatternPainter extends CustomPainter {
 
   /// Изометрическая сетка: город, снятый сверху.
   void _isoGrid(Canvas canvas, Size size, double shift, Paint line) {
-    final double span = size.width + size.height;
-    final double slope = math.tan(math.pi / 6);
-    for (double x = shift - span; x < span; x += step) {
+    final double reach = isoGridReach(size.height);
+    final Iterable<double> starts = isoGridStarts(
+      width: size.width,
+      height: size.height,
+      step: step,
+      shift: shift,
+    );
+    for (final double x in starts) {
       canvas
-        ..drawLine(
-          Offset(x, 0),
-          Offset(x + size.height / slope, size.height),
-          line,
-        )
-        ..drawLine(
-          Offset(x, 0),
-          Offset(x - size.height / slope, size.height),
-          line,
-        );
+        ..drawLine(Offset(x, 0), Offset(x + reach, size.height), line)
+        ..drawLine(Offset(x, 0), Offset(x - reach, size.height), line);
     }
     for (double x = shift - step; x < size.width + step; x += step * 2) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
@@ -504,6 +502,44 @@ class ShelfPatternPainter extends CustomPainter {
         old.step != step ||
         old.stroke != stroke ||
         old.glow != glow;
+  }
+}
+
+/// На сколько наклонная изометрической сетки уходит вбок, пока
+/// спускается на высоту участка [height].
+///
+/// Наклонные идут под 30° к горизонтали, поэтому вбок они уходят на
+/// `height / tan 30°` — в 1,73 раза дальше, чем вниз.
+double isoGridReach(double height) => height / math.tan(math.pi / 6);
+
+/// Где по верхнему краю участка начинаются наклонные изометрической
+/// сетки (BUG-05).
+///
+/// Из каждой точки выходят две наклонные — вправо вниз и влево вниз. К
+/// нижнему краю первая приходит на [isoGridReach] правее своего начала,
+/// вторая — на столько же левее. Значит, чтобы у нижнего края были обе,
+/// начала обязаны уходить на этот вылет **за оба края участка**. Прежде
+/// цикл уходил за края только на ширину плюс высоту — как если бы
+/// наклонные шли под 45°, — и у высокого участка в нижней части не
+/// оставалось ни тех, ни других.
+///
+/// Начала стоят на решётке `shift + k · step`: рисунок не съезжает, когда
+/// участок растёт на ряд книг, и вертикали сетки проходят через
+/// пересечения наклонных.
+Iterable<double> isoGridStarts({
+  required double width,
+  required double height,
+  required double step,
+  required double shift,
+}) sync* {
+  if (step <= 0 || width <= 0 || height <= 0) {
+    return;
+  }
+  final double reach = isoGridReach(height);
+  final int before = (reach / step).ceil() + 1;
+  final double end = width + reach + step;
+  for (int k = -before; shift + k * step < end; k++) {
+    yield shift + k * step;
   }
 }
 

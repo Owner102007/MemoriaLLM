@@ -166,6 +166,80 @@ void main() {
       return (top: count(0, band), bottom: count(height - band, height));
     }
 
+    test('BUG-05: наклонные начинаются за обоими краями участка', () {
+      // Правая наклонная, начатая в точке x, приходит к нижнему краю в
+      // x + вылет, левая — в x − вылет. Обе семьи обязаны закрыть нижний
+      // край целиком — и верхний тоже.
+      for (final Size size in <Size>[
+        const Size(120, 600),
+        const Size(31, 500),
+        const Size(240, 320),
+        const Size(1200, 40),
+        const Size(360, 2400),
+      ]) {
+        for (final double shift in <double>[0, 11.1, 29.9]) {
+          final List<double> starts = isoGridStarts(
+            width: size.width,
+            height: size.height,
+            step: 30,
+            shift: shift,
+          ).toList();
+          final double reach = isoGridReach(size.height);
+          final String where = '$size, сдвиг $shift';
+
+          expect(starts.first, lessThanOrEqualTo(0), reason: where);
+          expect(starts.last, greaterThanOrEqualTo(size.width), reason: where);
+          expect(
+            starts.first + reach,
+            lessThanOrEqualTo(0),
+            reason: 'правые наклонные у левого нижнего угла, $where',
+          );
+          expect(
+            starts.last - reach,
+            greaterThanOrEqualTo(size.width),
+            reason: 'левые наклонные у правого нижнего угла, $where',
+          );
+          for (int i = 1; i < starts.length; i++) {
+            expect(starts[i] - starts[i - 1], closeTo(30, 1e-6));
+          }
+        }
+      }
+    });
+
+    test('BUG-05: рисунок не съезжает, когда участок растёт', () {
+      // Начала стоят на решётке «сдвиг + k · шаг» при любой высоте:
+      // добавили ряд книг — линии у верхнего края остались на месте.
+      double phase(double height) {
+        final double first = isoGridStarts(
+          width: 300,
+          height: height,
+          step: 30,
+          shift: 11.1,
+        ).first;
+        return (first - 11.1) % 30;
+      }
+
+      for (final double height in <double>[200, 517, 1033]) {
+        final double value = phase(height);
+        expect(
+          value < 1e-6 || (30 - value) < 1e-6,
+          isTrue,
+          reason: 'высота $height, сдвиг решётки $value',
+        );
+      }
+    });
+
+    test('BUG-05: вырожденный участок начал не даёт', () {
+      expect(
+        isoGridStarts(width: 0, height: 100, step: 30, shift: 0),
+        isEmpty,
+      );
+      expect(
+        isoGridStarts(width: 100, height: 100, step: 0, shift: 0),
+        isEmpty,
+      );
+    });
+
     test('BUG-05: низ высокого участка закрашен, как верх', () async {
       // Раздел «Без категории» у всех рисуется этим узором, и участок в
       // несколько рядов книг заметно выше своей ширины. Наклонные идут

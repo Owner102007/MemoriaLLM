@@ -8,6 +8,7 @@ import '../../domain/library/scan_mark.dart';
 import '../../domain/library/shelf.dart';
 import '../../domain/reading/navigation.dart';
 import 'scan_tag.dart';
+import 'shelf_caption.dart';
 
 /// Один блок полки: книга.
 ///
@@ -46,7 +47,6 @@ class BookCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
     return Semantics(
       button: true,
       label: book.title,
@@ -72,16 +72,9 @@ class BookCard extends StatelessWidget {
                 onMenu: onMenu,
               ),
             ),
-            const SizedBox(height: 6),
-            SizedBox(
-              height: 30,
-              child: Text(
-                book.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
-              ),
-            ),
+            // BUG-14: подпись на своей подложке — под буквами лежит
+            // поверхность темы, а не узор категории.
+            ShelfCaption(text: book.title),
           ],
         ),
       ),
@@ -320,15 +313,7 @@ class AddBookCard extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 6),
-        SizedBox(
-          height: 30,
-          child: Text(
-            'Добавить книги',
-            maxLines: 2,
-            style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
-          ),
-        ),
+        const ShelfCaption(text: 'Добавить книги'),
       ],
     );
   }

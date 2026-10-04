@@ -112,9 +112,10 @@ Future<MoveTarget?> askWhereToMove(
           _MoveOption(
             key: Key('move-to-${category.id}'),
             title: category.title,
-            colour: Color(
-              categoryStyleFor(category.title).backgroundOn(palette),
-            ),
+            // BUG-33: тот же средний цвет участка, что у кружка в шапке
+            // полки. По одной подложке кислотную категорию от спокойной
+            // соседки не отличить.
+            colour: Color(categoryStyleFor(category.title).weightOn(palette)),
             selected: current == category.id,
             onTap: () =>
                 Navigator.of(context).pop(MoveTarget(categoryId: category.id)),
