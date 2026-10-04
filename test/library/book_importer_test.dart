@@ -7,6 +7,7 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
+import 'package:memoria/domain/library/shelf.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/infrastructure/files/file_fingerprint.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
@@ -341,6 +342,72 @@ void main() {
       final Book? again = await data.library.bookById(first.id);
       expect(again!.categoryId, 'fiction');
       expect((await data.library.books()).length, 1);
+    });
+  });
+
+  group('BUG-20: место новой книги на полке', () {
+    /// Импортёр, у которого каждый файл — своя книга.
+    BookImporter placing() {
+      int seen = 0;
+      return BookImporter(
+        library: data.library,
+        storage: const LocalBookStorage(),
+        opener: FakeDocumentOpener(FakeReaderDocument(pages: <String>['раз'])),
+        fingerprint: (BookHandle book) async => 'hash-new-${seen++}',
+        newId: () => 'new-$seen',
+        now: () => DateTime.utc(2026, 10, 4, 12),
+      );
+    }
+
+    PickedFile named(String name) {
+      return PickedFile(path: 'test/fixtures/basic_text.pdf', name: name);
+    }
+
+    /// Книги категории в порядке «Как расставил».
+    Future<List<String>> manualOrder(String? categoryId) async {
+      final List<Book> books = <Book>[
+        for (final Book book in await data.library.books())
+          if (book.categoryId == categoryId) book,
+      ];
+      return <String>[
+        for (final Book book in sortBooks(books, ShelfSort.manual)) book.title,
+      ];
+    }
+
+    test('BUG-20: новая книга встаёт последней в своей категории', () async {
+      await data.library.save(testBook(id: 'a', title: 'Аа', hash: 'hash-a'));
+      await data.library.save(testBook(id: 'b', title: 'Яя', hash: 'hash-b'));
+      await placeBook(data, 'a', 'study');
+      await placeBook(data, 'b', 'study', position: 1);
+
+      await placing().register(named('Мм.pdf'), categoryId: 'study');
+
+      // Читатель расставил «Аа» и «Яя» руками; новая книга не вправе
+      // встать между ними или перед ними.
+      expect(await manualOrder('study'), <String>['Аа', 'Яя', 'Мм']);
+    });
+
+    test('BUG-20: пачка встаёт в том порядке, в каком выбрана', () async {
+      await placing().registerAll(<PickedFile>[
+        named('В.pdf'),
+        named('А.pdf'),
+        named('Б.pdf'),
+      ]);
+
+      expect(await manualOrder(null), <String>['В', 'А', 'Б']);
+    });
+
+    test('BUG-20: место считается в своей категории', () async {
+      await data.library.save(testBook(id: 'a', title: 'Аа', hash: 'hash-a'));
+      await placeBook(data, 'a', 'study', position: 7);
+
+      final Book book = await placing().register(
+        named('Мм.pdf'),
+        categoryId: 'fiction',
+      );
+
+      // В «fiction» книг нет — новая встаёт первой, а не восьмой.
+      expect(book.shelfPosition, 0);
     });
   });
 
