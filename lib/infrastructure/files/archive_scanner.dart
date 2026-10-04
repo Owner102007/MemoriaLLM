@@ -51,6 +51,11 @@ Future<int> scanForArchives({
   return found;
 }
 
+/// Оглавление архива с литературой — килобайты: книг в нём десятки.
+/// Архив, у которого оглавление больше этого, — не литература, и
+/// читать его оглавление ради счёта книг незачем.
+const int kProbeDirectoryLimit = 4 * 1024 * 1024;
+
 /// Смотрит, архив ли [file] с книгами; `null` — нет.
 ///
 /// Читается только оглавление — оно стоит в конце файла, и архив в
@@ -58,11 +63,11 @@ Future<int> scanForArchives({
 /// книг считает то же правило, что раскладывает архив по полке
 /// (`layoutShelfArchive`): список обещает ровно то, что встанет.
 ///
-/// Не ZIP, оборванный, повреждённый, многотомный и нечитаемый файл —
-/// не архив с книгами: в список он не попадает, и причину здесь никто
-/// не называет. Архив с паролем и с чужим сжатием в список попадает:
-/// оглавление у него читается, а отказ словами он получит при
-/// распаковке.
+/// Не ZIP, оборванный, повреждённый, многотомный и нечитаемый файл и
+/// архив с оглавлением больше [kProbeDirectoryLimit] — не архив с
+/// книгами: в список он не попадает, и причину здесь никто не называет.
+/// Архив с паролем и с чужим сжатием в список попадает: оглавление у
+/// него читается, а отказ словами он получит при распаковке.
 Future<FoundArchive?> probeArchive(File file) async {
   FileBookHandle? handle;
   try {
@@ -71,7 +76,10 @@ Future<FoundArchive?> probeArchive(File file) async {
       return null;
     }
     handle = await FileBookHandle.open(FilePathSource(file.path));
-    final ZipArchive archive = await ZipArchive.read(handle);
+    final ZipArchive archive = await ZipArchive.read(
+      handle,
+      directoryLimit: kProbeDirectoryLimit,
+    );
     final int books = layoutShelfArchive(<String>[
       for (final ZipEntry entry in archive.entries) entry.name,
     ]).books.length;
@@ -89,7 +97,12 @@ Future<FoundArchive?> probeArchive(File file) async {
     // который не прочёлся, просто не показан.
     return null;
   } finally {
-    await handle?.close();
+    try {
+      await handle?.close();
+    } on Object {
+      // Файл не закрылся (вынули карту памяти) — тоже не повод
+      // обрывать обход остальных папок.
+    }
   }
 }
 

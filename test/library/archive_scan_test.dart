@@ -128,14 +128,14 @@ void main() {
     test('SNO-ALG-LIT-02: архив в самом корне', () {
       expect(
         archivePlace('/storage/emulated/0/Литература.zip', phone),
-        'в корне памяти',
+        'в корневой папке',
       );
       // Черта в конце корня ничего не меняет.
       expect(
         archivePlace('/storage/emulated/0/x.zip', <String>[
           '/storage/emulated/0/',
         ]),
-        'в корне памяти',
+        'в корневой папке',
       );
     });
 
@@ -159,6 +159,29 @@ void main() {
         ]),
         'Download',
       );
+    });
+
+    test('SNO-ALG-LIT-02: папка на карте памяти названа вместе с картой', () {
+      const List<String> volumes = <String>[
+        '/storage/emulated/0',
+        '/storage/1A2B-3C4D',
+      ];
+      // Иначе «Download» в памяти и «Download» на карте не различить.
+      expect(
+        archivePlace('/storage/emulated/0/Download/x.zip', volumes),
+        'Download',
+      );
+      expect(
+        archivePlace('/storage/1A2B-3C4D/Download/x.zip', volumes),
+        '1A2B-3C4D/Download',
+      );
+      expect(archivePlace('/storage/1A2B-3C4D/x.zip', volumes), '1A2B-3C4D');
+    });
+
+    test('SNO-ALG-LIT-02: корень диска — тоже корень', () {
+      expect(archivePlace('/x.zip', <String>['/']), 'в корневой папке');
+      expect(archivePlace('/Книги/x.zip', <String>['/']), 'Книги');
+      expect(archivePlace(r'D:\Книги\x.zip', <String>[r'D:\']), 'Книги');
     });
 
     test('SNO-ALG-LIT-02: похожее начало пути — не тот же корень', () {

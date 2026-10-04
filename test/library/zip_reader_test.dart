@@ -354,6 +354,26 @@ void main() {
     });
   });
 
+  group('SNO-ALG-LIT-02: предел оглавления', () {
+    test('SNO-ALG-LIT-02: оглавление больше предела не читается', () async {
+      final BookHandle handle = await FileBookHandle.open(
+        const FilePathSource('$_fixtures/shelf_stored.zip'),
+      );
+      try {
+        // Поиск архивов с книгами заглядывает в каждый ZIP на устройстве
+        // и ставит предел ниже обычного.
+        await expectLater(
+          ZipArchive.read(handle, directoryLimit: 64),
+          throwsA(zipProblem(ZipProblem.damaged)),
+        );
+        // С обычным пределом тот же архив читается.
+        expect((await ZipArchive.read(handle)).entries, hasLength(6));
+      } finally {
+        await handle.close();
+      }
+    });
+  });
+
   group('SNO-ALG-LIT-01: кодировки и суммы', () {
     test('SNO-ALG-LIT-01: CRC-32 — как у всех', () {
       // Проверочное значение из описания алгоритма.

@@ -88,6 +88,12 @@ void main() {
     };
   }
 
+  /// Строка найденного архива: она названа самим архивом, а не местом
+  /// в списке.
+  Finder listed(FoundArchive archive) {
+    return find.byKey(ValueKey<String>('sno-archive:${archive.path}'));
+  }
+
   const PickedFile archive = PickedFile(
     name: 'Литература.zip',
     path: '/picked/Литература.zip',
@@ -189,7 +195,9 @@ void main() {
 
       await openExperimenter(tester);
       // Ищет там же, где сканер основного приложения: в его корнях.
-      expect(searches, <List<String>>[<String>['/device']]);
+      expect(searches, <List<String>>[
+        <String>['/device'],
+      ]);
       // Доступ уже есть — спрашивать нечего.
       expect(access.requests, 0);
 
@@ -244,7 +252,7 @@ void main() {
       );
       await openExperimenter(tester);
 
-      await tester.tap(find.byKey(const Key('sno-archive-0')));
+      await tester.tap(listed(found));
       await tester.pumpAndSettle();
 
       // Архив читается там, где лежит, — по пути; диалога выбора не было.
@@ -298,18 +306,143 @@ void main() {
       expect(find.byKey(const Key('sno-archives-searching')), findsOneWidget);
       expect(find.byKey(const Key('sno-archives-empty')), findsNothing);
 
+      scan.add(older);
+      await tester.pump();
+      await tester.pump();
+      expect(listed(older), findsOneWidget);
+      expect(find.byKey(const Key('sno-archives-searching')), findsOneWidget);
+
+      // Архив новее найден позже — и встаёт в конец: строка, уже
+      // стоящая на экране, из-под пальца не уезжает.
+      final double before = tester.getTopLeft(listed(older)).dy;
       scan.add(found);
       await tester.pump();
       await tester.pump();
-      expect(find.text('Литература.zip'), findsOneWidget);
-      expect(find.byKey(const Key('sno-archives-searching')), findsOneWidget);
+      expect(tester.getTopLeft(listed(older)).dy, before);
+      expect(
+        tester.getTopLeft(listed(found)).dy,
+        greaterThan(tester.getTopLeft(listed(older)).dy),
+      );
 
+      // Обход кончился — список встаёт в свой порядок: новые сверху.
       await scan.close();
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('sno-archives-searching')), findsNothing);
-      expect(find.text('Литература.zip'), findsOneWidget);
+      expect(
+        tester.getTopLeft(listed(found)).dy,
+        lessThan(tester.getTopLeft(listed(older)).dy),
+      );
 
       await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: нажатие достаётся архиву, а не месту в списке', (
+      WidgetTester tester,
+    ) async {
+      final List<PickedFile> unpacked = <PickedFile>[];
+      final StreamController<FoundArchive> scan =
+          StreamController<FoundArchive>();
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          archiveSearch: (List<String> roots) => scan.stream,
+        ),
+        unpack: recording(unpacked),
+      );
+      await tester.tap(find.text('Для экспериментатора'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      scan.add(older);
+      await tester.pump();
+      await tester.pump();
+
+      // Палец лёг на архив, и, пока он не поднят, обход нашёл ещё один
+      // и кончился: список встал в свой порядок, и на этом месте
+      // теперь другой архив.
+      final TestGesture finger = await tester.startGesture(
+        tester.getCenter(listed(older)),
+      );
+      await tester.pump();
+      scan.add(found);
+      await scan.close();
+      await tester.pump();
+      await tester.pump();
+      await finger.up();
+      await tester.pumpAndSettle();
+
+      expect(
+        unpacked.map((PickedFile file) => file.name).toList(),
+        anyOf(isEmpty, <String>['Старая литература.zip']),
+        reason: 'нажатие не должно достаться архиву, вставшему на это место',
+      );
+
+      if (unpacked.isNotEmpty) {
+        await tester.tap(find.text('Понятно'));
+        await tester.pumpAndSettle();
+      }
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: ответ прежнего обхода в список не попадает', (
+      WidgetTester tester,
+    ) async {
+      final StreamController<FoundArchive> first =
+          StreamController<FoundArchive>();
+      int searches = 0;
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          archiveSearch: (List<String> roots) {
+            searches++;
+            return searches == 1
+                ? first.stream
+                : Stream<FoundArchive>.fromIterable(<FoundArchive>[found]);
+          },
+        ),
+      );
+      await tester.tap(find.text('Для экспериментатора'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const Key('sno-archives-searching')), findsOneWidget);
+
+      // Первый обход ещё идёт, а экспериментатор начал новый.
+      await tester.tap(find.byKey(const Key('sno-archives-refresh')));
+      await tester.pumpAndSettle();
+      expect(searches, 2);
+      expect(first.hasListener, isFalse, reason: 'прежний обход остановлен');
+      expect(listed(found), findsOneWidget);
+      expect(listed(older), findsNothing);
+      expect(find.byKey(const Key('sno-archives-searching')), findsNothing);
+
+      // Не `await`: у отписанного потока «закрыто» приходит мимо
+      // подменённого времени widget-теста.
+      unawaited(first.close());
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: раздел закрыли — обход остановлен', (
+      WidgetTester tester,
+    ) async {
+      final StreamController<FoundArchive> scan =
+          StreamController<FoundArchive>();
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          archiveSearch: (List<String> roots) => scan.stream,
+        ),
+      );
+      await tester.tap(find.text('Для экспериментатора'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(scan.hasListener, isTrue);
+
+      await unmount(tester);
+
+      expect(scan.hasListener, isFalse);
+      unawaited(scan.close());
     });
 
     testWidgets('SNO-F-LIT-03: «Искать заново» обходит устройство ещё раз', (
@@ -757,10 +890,8 @@ void main() {
         find.byKey(const Key('sno-archives-refresh')),
       );
       expect(refresh.onPressed, isNull);
-      final ListTile listed = tester.widget(
-        find.byKey(const Key('sno-archive-0')),
-      );
-      expect(listed.enabled, isFalse);
+      final ListTile row = tester.widget(listed(found));
+      expect(row.enabled, isFalse);
 
       gate.complete();
       await tester.pumpAndSettle();

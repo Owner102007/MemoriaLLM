@@ -210,6 +210,42 @@ void main() {
     });
   });
 
+  group('SNO-ALG-LIT-02: несколько корней', () {
+    test('SNO-ALG-LIT-02: первый названный корень обходится первым', () async {
+      // Встроенная память названа раньше карты — и архив из её
+      // «Загрузок» не ждёт, пока обойдут всю карту.
+      final Directory memory = Directory(p.join(root.path, 'memory'));
+      final Directory card = Directory(p.join(root.path, 'card'));
+      await place('shelf_stored.zip', 'memory/Download/в памяти.zip');
+      await place('shelf_stored.zip', 'card/Download/на карте.zip');
+      await place('shelf_stored.zip', 'card/Книги/на карте глубже.zip');
+
+      final List<String> order = <String>[];
+      await scanForArchives(
+        roots: <String>[memory.path, card.path],
+        onArchive: (FoundArchive archive) => order.add(archive.name),
+      );
+
+      expect(order, <String>[
+        'в памяти.zip',
+        'на карте.zip',
+        'на карте глубже.zip',
+      ]);
+    });
+
+    test('SNO-ALG-LIT-02: один сбойный файл обход не обрывает', () async {
+      await place('shelf_stored.zip', 'Download/Литература.zip');
+      await place('truncated.zip', 'Download/оборванный.zip');
+      await place('not_a_zip.zip', 'Documents/текст.zip');
+      await place('shelf_stored.zip', 'Zzz/ещё литература.zip');
+
+      expect(await counts(), <String, int>{
+        p.join('Download', 'Литература.zip'): 4,
+        p.join('Zzz', 'ещё литература.zip'): 4,
+      });
+    });
+  });
+
   group('SNO-ALG-LIT-02: поиск в изоляте', () {
     // Время здесь настоящее — это обычный тест, не widget-тест, — и
     // изолят в нём живёт так же, как на устройстве.

@@ -112,29 +112,44 @@ int compareFoundArchives(FoundArchive left, FoundArchive right) {
 ///
 /// «Download/Telegram», а не `/storage/emulated/0/Download/Telegram`:
 /// начало пути у всех архивов одно и ничего не говорит. Архив в самом
-/// корне назван «в корне памяти»; архив вне корней — полной папкой.
+/// корне назван «в корневой папке»; архив вне корней — полной папкой.
+///
+/// Корней бывает несколько — встроенная память и карта. Папка на
+/// первом названа как есть, на остальных — с именем корня впереди:
+/// иначе «Download» в памяти и «Download» на карте не различить.
 String archivePlace(String path, List<String> roots) {
   final String normal = path.replaceAll(r'\', '/');
   final int slash = normal.lastIndexOf('/');
   final String folder = slash < 0 ? '' : normal.substring(0, slash);
   String? best;
-  for (final String root in roots) {
-    String base = root.replaceAll(r'\', '/');
-    while (base.length > 1 && base.endsWith('/')) {
-      base = base.substring(0, base.length - 1);
-    }
+  int bestAt = -1;
+  for (int i = 0; i < roots.length; i++) {
+    final String base = _withoutTrailingSlash(roots[i].replaceAll(r'\', '/'));
     final bool inside = folder == base || folder.startsWith('$base/');
     if (inside && (best == null || base.length > best.length)) {
       best = base;
+      bestAt = i;
     }
   }
   if (best == null) {
     return folder;
   }
-  if (folder.length == best.length) {
-    return 'в корне памяти';
+  final String inner = folder.length == best.length
+      ? ''
+      : folder.substring(best.length + 1);
+  if (bestAt == 0) {
+    return inner.isEmpty ? 'в корневой папке' : inner;
   }
-  return folder.substring(best.length + 1);
+  final String volume = best.substring(best.lastIndexOf('/') + 1);
+  return inner.isEmpty ? volume : '$volume/$inner';
+}
+
+String _withoutTrailingSlash(String path) {
+  String base = path;
+  while (base.endsWith('/')) {
+    base = base.substring(0, base.length - 1);
+  }
+  return base;
 }
 
 /// «1 книга», «2 книги», «5 книг».
@@ -154,7 +169,7 @@ String describeBookCount(int count) {
   return '$count $word';
 }
 
-/// Размер файла словами: «2,1 ГБ», «340 МБ», «12 КБ».
+/// Размер файла словами: «2,1 ГБ», «340 МБ», «1,5 КБ».
 ///
 /// До сотни единиц — с одним знаком после запятой, дальше — целым
 /// числом: «2,1 ГБ» от «2,9 ГБ» отличить важно, «340,2 МБ» от «340 МБ» —

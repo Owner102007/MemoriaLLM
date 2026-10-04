@@ -144,7 +144,7 @@ const int _extra64 = 0x0001;
 const int _extraUnicodePath = 0x7075;
 
 /// Оглавление больше этого — не оглавление, а мусор на его месте.
-const int _maxDirectorySize = 64 * 1024 * 1024;
+const int zipDirectoryLimit = 64 * 1024 * 1024;
 
 /// Открытый архив: оглавление прочитано, записи распаковываются по одной.
 class ZipArchive {
@@ -159,7 +159,16 @@ class ZipArchive {
   ///
   /// Бросает [ZipException]: не ZIP, оборван, повреждён, многотомный.
   /// Сам [handle] не закрывает — им распоряжается тот, кто его открыл.
-  static Future<ZipArchive> read(BookHandle handle) async {
+  ///
+  /// [directoryLimit] — оглавление больше этого не читается вовсе
+  /// ([ZipProblem.damaged]). Поиск архивов с книгами (SNO-ALG-LIT-02)
+  /// ставит предел ниже обычного: он заглядывает в каждый ZIP на
+  /// устройстве, и чужой архив в сотни тысяч записей не должен стоить
+  /// ему сотен мегабайт памяти.
+  static Future<ZipArchive> read(
+    BookHandle handle, {
+    int directoryLimit = zipDirectoryLimit,
+  }) async {
     final int length = handle.length;
     if (length < _endSize) {
       throw await _noDirectory(handle);
@@ -226,7 +235,7 @@ class ZipArchive {
     if (count < 0 ||
         directorySize < 0 ||
         directoryOffset < 0 ||
-        directorySize > _maxDirectorySize ||
+        directorySize > directoryLimit ||
         directoryOffset + directorySize > directoryEnd) {
       throw const ZipException(ZipProblem.damaged);
     }

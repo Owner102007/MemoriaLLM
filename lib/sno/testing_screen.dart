@@ -233,6 +233,10 @@ class _TestingScreenState extends State<TestingScreen>
   /// нового, не принимается.
   int _searchRun = 0;
 
+  /// Открывается ли системный экран доступа: второе нажатие, пока он
+  /// открывается, второго экрана не заводит.
+  bool _asking = false;
+
   @override
   void initState() {
     super.initState();
@@ -276,9 +280,10 @@ class _TestingScreenState extends State<TestingScreen>
   /// вручную. На ПК доступ не нужен.
   Future<void> _search() async {
     final int run = ++_searchRun;
-    final StreamSubscription<FoundArchive>? previous = _searching;
+    // Отписка останавливает прежний обход сразу, и ждать её незачем:
+    // запоздавший ответ прежнего обхода отсекает его номер.
+    unawaited(_searching?.cancel());
     _searching = null;
-    await previous?.cancel();
     final StorageAccessState access = await widget.services.access.state();
     if (!mounted || run != _searchRun) {
       return;
@@ -307,11 +312,9 @@ class _TestingScreenState extends State<TestingScreen>
         if (!mounted || run != _searchRun) {
           return;
         }
-        // Список растёт, пока идёт обход, и остаётся в своём порядке:
-        // новые сверху.
-        final List<FoundArchive> found = <FoundArchive>[..._found, archive];
-        found.sort(compareFoundArchives);
-        setState(() => _found = found);
+        // Пока идёт обход, находка встаёт в конец списка: строки, уже
+        // стоящие на экране, из-под пальца не уезжают.
+        setState(() => _found = <FoundArchive>[..._found, archive]);
       },
       onError: (Object error) {
         if (!mounted || run != _searchRun) {
@@ -326,7 +329,13 @@ class _TestingScreenState extends State<TestingScreen>
         if (!mounted || run != _searchRun) {
           return;
         }
-        setState(() => _phase = ArchiveSearchPhase.finished);
+        // Обход кончился — список встаёт в свой порядок: новые сверху.
+        final List<FoundArchive> found = <FoundArchive>[..._found];
+        found.sort(compareFoundArchives);
+        setState(() {
+          _found = found;
+          _phase = ArchiveSearchPhase.finished;
+        });
       },
     );
   }
@@ -338,7 +347,15 @@ class _TestingScreenState extends State<TestingScreen>
   /// ([didChangeAppLifecycleState]). Сразу оно спрашивается на случай,
   /// когда доступ дан без ухода из приложения.
   Future<void> _allowAndSearch() async {
-    await widget.services.access.request();
+    if (_asking) {
+      return;
+    }
+    _asking = true;
+    try {
+      await widget.services.access.request();
+    } finally {
+      _asking = false;
+    }
     if (!mounted) {
       return;
     }
@@ -563,9 +580,12 @@ class _TestingScreenState extends State<TestingScreen>
             ],
           ),
         ),
-      for (final (int index, FoundArchive archive) in _found.indexed)
+      for (final FoundArchive archive in _found)
         ListTile(
-          key: Key('sno-archive-$index'),
+          // Строка названа архивом, а не местом в списке: нажатие,
+          // начатое на одном архиве, не достанется другому, если
+          // список за это время вырос или встал в свой порядок.
+          key: ValueKey<String>('sno-archive:${archive.path}'),
           leading: const Icon(Icons.folder_zip_outlined),
           title: Text(
             archive.name,
@@ -575,8 +595,6 @@ class _TestingScreenState extends State<TestingScreen>
           subtitle: Text(describeFoundArchive(archive, _roots)),
           trailing: const Icon(Icons.chevron_right),
           enabled: !_busy,
-          // Архив назван самим собой, а не местом в списке: пока идёт
-          // обход, список растёт и места сдвигаются.
           onTap: () => unawaited(_addFound(archive)),
         ),
       if (_phase == ArchiveSearchPhase.searching)
@@ -644,8 +662,13 @@ class _TestingScreenState extends State<TestingScreen>
   ///
   /// Архив читается там, где лежит, по пути: на телефоне доступ к нему
   /// даёт то же разрешение, с которым он найден.
-  Future<void> _addFound(FoundArchive archive) {
-    return _addArchives(<PickedFile>[
+  Future<void> _addFound(FoundArchive archive) async {
+    // Пока открыт диалог ручного выбора, второе добавление не
+    // начинается: иначе выбранное в диалоге молча пропало бы.
+    if (_picking) {
+      return;
+    }
+    await _addArchives(<PickedFile>[
       PickedFile(name: archive.name, path: archive.path),
     ]);
   }
