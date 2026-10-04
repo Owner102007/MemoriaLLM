@@ -5,9 +5,25 @@
 /// строками. Искать по нему «как есть» бессмысленно — фраза из двух слов
 /// не найдётся, если между словами оказался перенос строки. Поэтому текст
 /// сначала нормализуется, поиск идёт по нормализованному, а найденное
-/// возвращается с координатами в исходном тексте: они понадобятся
-/// подсветке в S6.
+/// возвращается с координатами в исходном тексте: по ним строится
+/// подсветка на странице.
+///
+/// **Сравнение — без регистра, без разницы между `ё` и `е` и с оглядкой
+/// на буквы-двойники** (F-TEXT-04, ALG-TXT-07). Текстовый слой книги,
+/// прошедшей распознавание, сплошь и рядом несёт латинские буквы на
+/// месте кириллических: `сердце` записано как `cepдцe`, и на экране их
+/// не отличить. Двойники сворачиваются тем же правилом, что у поиска по
+/// книгам устройства ([kHomoglyphFolding]) — но, в отличие от него,
+/// совпадение, которое держится только на свёртке, принимается лишь в
+/// слове, написанном двумя алфавитами разом. Иначе `рот` находился бы в
+/// `hypothesis`, а `вас` — в `bacillus`: в учебнике с латинскими
+/// терминами это не редкость, а шум на каждой странице.
+///
+/// Все виды текста — показанный, без регистра, свёрнутый — одной длины,
+/// знак в знак: место совпадения в одном есть место в любом другом.
 library;
+
+import '../library/search_text.dart';
 
 /// Текст страницы, подготовленный к поиску.
 class SearchableText {
@@ -136,10 +152,102 @@ class SearchHit {
 /// поиск начинается с двух непробельных символов.
 bool isSearchableQuery(String query) => query.trim().length >= 2;
 
+/// Латинские двойники кириллических букв по кодам знаков.
+final Map<int, int> _lookalikes = <int, int>{
+  for (final MapEntry<String, String> pair in kHomoglyphFolding.entries)
+    pair.key.codeUnitAt(0): pair.value.codeUnitAt(0),
+};
+
+/// Снимает регистр, не меняя длины строки.
+///
+/// У редких букв длина при смене регистра меняется (`İ`). Тогда регистр
+/// снимается познаково, а такая буква остаётся как была: место
+/// совпадения в исходном тексте важнее, чем находка по ней.
+String _lowered(String text) {
+  final String lowered = text.toLowerCase();
+  if (lowered.length == text.length) {
+    return lowered;
+  }
+  final StringBuffer out = StringBuffer();
+  for (int i = 0; i < text.length; i++) {
+    final String char = text[i];
+    final String low = char.toLowerCase();
+    out.write(low.length == 1 ? low : char);
+  }
+  return out.toString();
+}
+
+/// Текст без регистра и без разницы между `ё` и `е`. Длина прежняя.
+String plainSearchText(String text) => _lowered(text).replaceAll('ё', 'е');
+
+/// [plain] со свёрнутыми буквами-двойниками: кириллические `а`, `е`,
+/// `о`, `р`, `с` и остальные из [kHomoglyphFolding] становятся
+/// латинскими. Длина прежняя.
+String foldedSearchText(String plain) {
+  List<int>? units;
+  for (int i = 0; i < plain.length; i++) {
+    final int? twin = _lookalikes[plain.codeUnitAt(i)];
+    if (twin != null) {
+      units ??= List<int>.of(plain.codeUnits);
+      units[i] = twin;
+    }
+  }
+  return units == null ? plain : String.fromCharCodes(units);
+}
+
+bool _isLatin(int unit) =>
+    (unit >= 0x41 && unit <= 0x5A) || (unit >= 0x61 && unit <= 0x7A);
+
+bool _isCyrillic(int unit) => unit >= 0x400 && unit <= 0x4FF;
+
+bool _isLetter(int unit) => _isLatin(unit) || _isCyrillic(unit);
+
+/// Честно ли совпадение, найденное по свёрнутому тексту.
+///
+/// [shown] — текст как он есть, [plain] — он же без регистра и `ё`,
+/// [needle] — запрос в том же виде, [at] — место совпадения. Знаки,
+/// совпавшие и без свёртки, вопросов не вызывают. Знак, совпавший только
+/// как двойник, принимается, если слово вокруг него написано двумя
+/// алфавитами разом: так выглядит ошибка распознавания, а не другое
+/// слово.
+bool _isHonestMatch(String shown, String plain, String needle, int at) {
+  final int end = at + needle.length;
+  int i = at;
+  while (i < end) {
+    if (plain.codeUnitAt(i) == needle.codeUnitAt(i - at)) {
+      i++;
+      continue;
+    }
+    int from = i;
+    while (from > 0 && _isLetter(shown.codeUnitAt(from - 1))) {
+      from--;
+    }
+    int to = i + 1;
+    while (to < shown.length && _isLetter(shown.codeUnitAt(to))) {
+      to++;
+    }
+    bool latin = false;
+    bool cyrillic = false;
+    for (int k = from; k < to; k++) {
+      final int unit = shown.codeUnitAt(k);
+      latin = latin || _isLatin(unit);
+      cyrillic = cyrillic || _isCyrillic(unit);
+    }
+    if (!latin || !cyrillic) {
+      return false;
+    }
+    // Слово целиком проверено: дальше — следующее.
+    i = to;
+  }
+  return true;
+}
+
 /// Ищет [query] в тексте одной страницы.
 ///
 /// Поиск нечувствителен к регистру, если [caseSensitive] ложно, и всегда
-/// нечувствителен к тому, как в файле расставлены переносы строк.
+/// нечувствителен к тому, как в файле расставлены переносы строк. Без
+/// учёта регистра он не различает и `ё` с `е`, а буквы-двойники сводит
+/// вместе там, где слово написано двумя алфавитами (см. описание файла).
 /// [snippetRadius] — сколько символов контекста показать с каждой стороны.
 List<SearchHit> findInPageText({
   required int pageNumber,
@@ -154,10 +262,11 @@ List<SearchHit> findInPageText({
     return const <SearchHit>[];
   }
   final SearchableText prepared = SearchableText.of(pageText);
-  final String haystack = caseSensitive
-      ? prepared.text
-      : prepared.text.toLowerCase();
-  final String pattern = caseSensitive ? needle : needle.toLowerCase();
+  final String shown = prepared.text;
+  final String plain = caseSensitive ? shown : plainSearchText(shown);
+  final String plainNeedle = caseSensitive ? needle : plainSearchText(needle);
+  final String haystack = caseSensitive ? shown : foldedSearchText(plain);
+  final String pattern = caseSensitive ? needle : foldedSearchText(plainNeedle);
 
   final List<SearchHit> hits = <SearchHit>[];
   int from = 0;
@@ -166,14 +275,21 @@ List<SearchHit> findInPageText({
     if (at < 0) {
       break;
     }
+    if (!caseSensitive && !_isHonestMatch(shown, plain, plainNeedle, at)) {
+      // Совпало только двойниками, а слово написано одним алфавитом:
+      // это другое слово. Следующее совпадение может начинаться внутри
+      // этого — шаг на один знак.
+      from = at + 1;
+      continue;
+    }
     final int end = at + pattern.length;
     final int snippetStart = at - snippetRadius < 0 ? 0 : at - snippetRadius;
-    final int snippetEnd = end + snippetRadius > prepared.text.length
-        ? prepared.text.length
+    final int snippetEnd = end + snippetRadius > shown.length
+        ? shown.length
         : end + snippetRadius;
-    final String core = prepared.text.substring(snippetStart, snippetEnd);
+    final String core = shown.substring(snippetStart, snippetEnd);
     final String prefix = snippetStart > 0 ? '…' : '';
-    final String suffix = snippetEnd < prepared.text.length ? '…' : '';
+    final String suffix = snippetEnd < shown.length ? '…' : '';
     hits.add(
       SearchHit(
         pageNumber: pageNumber,

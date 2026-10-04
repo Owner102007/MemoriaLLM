@@ -11,6 +11,7 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/device_files.dart';
 import 'package:memoria/domain/prompts/selection_prompt.dart';
+import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/infrastructure/database/app_database.dart';
@@ -56,8 +57,14 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 10: текста страниц книги тогда не было.
+  Future<void> undoPageTexts(AppData data) async {
+    await data.database.customStatement('DROP TABLE page_texts');
+  }
+
   /// Откатывает базу к версии 9: рамки обрезки книги тогда не было.
   Future<void> undoBookFrames(AppData data) async {
+    await undoPageTexts(data);
     await data.database.customStatement('DROP TABLE book_frames');
   }
 
@@ -142,8 +149,50 @@ void main() {
       await columnsOf(data, 'selection_prompts'),
       containsAll(<String>['book_id', 'is_primary', 'hlc', 'node_id']),
     );
+    expect(
+      await columnsOf(data, 'page_texts'),
+      containsAll(<String>['book_id', 'page', 'content']),
+    );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('F-TEXT-04: база версии 10 доезжает до 11 с текстом страниц', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    // Рамка книги посчитана до обновления — она обязана его пережить.
+    const BookFrame frame = BookFrame(
+      odd: CropBox(left: 0.14, top: 0.1, right: 0.86, bottom: 0.9),
+      samples: 16,
+    );
+    await first.reading.saveBookFrame('book-1', frame);
+    await undoPageTexts(first);
+    await first.database.customStatement('PRAGMA user_version = 10');
+    expect(await columnsOf(first, 'page_texts'), isEmpty);
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(
+      await columnsOf(second, 'page_texts'),
+      containsAll(<String>['fingerprint', 'algorithm_version']),
+    );
+    expect(await second.reading.bookFrame('book-1'), frame);
+
+    // Таблица заводится пустой: текст страниц неоткуда перенести, он
+    // извлекается из файла при первом открытии книги.
+    const PageTextKey key = PageTextKey(
+      bookId: 'book-1',
+      fingerprint: 'hash-1',
+    );
+    expect(await second.pageTexts.cachedPages(key), isEmpty);
+
+    // И после миграции текст страниц пишется и читается.
+    await second.pageTexts.savePageTexts(key, <int, String>{7: 'тройка'});
+    expect(await second.pageTexts.pageTexts(key, from: 1, to: 9), <int, String>{
+      7: 'тройка',
+    });
+    await second.close();
   });
 
   test('F-READ-15: база версии 9 доезжает до 10 с рамкой книги', () async {

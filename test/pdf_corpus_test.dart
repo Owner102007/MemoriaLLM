@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/application/reading/book_text.dart';
 import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/application/reading/page_frames.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
@@ -1436,4 +1437,253 @@ void main() {
       expect(pageContentInBook(book: book, page: 1), book.forPage(1));
     });
   });
+
+  group('F-TEXT-04: текст книги в кэше', () {
+    /// Запросы, которые в корпусе что-то находят: слова, обрывки слов,
+    /// фраза через перенос строки, цифры — и один, которого нет нигде.
+    const List<String> queries = <String>[
+      'page',
+      'Memoria page',
+      'token',
+      'the',
+      'ar',
+      '12',
+      'lazy dog. Marker1',
+      'такого здесь нет',
+    ];
+
+    BookTextCache cacheOf(
+      ReaderDocument document,
+      MemoryPageTextStore store,
+      String name,
+    ) {
+      return BookTextCache(
+        document: document,
+        store: store,
+        bookId: name,
+        fingerprint: name,
+      );
+    }
+
+    test('F-TEXT-04: поиск по кэшу совпадает с поиском по документу', () async {
+      int compared = 0;
+      for (final String name in _readable.keys) {
+        final ReaderDocument document = await open(name);
+        final MemoryPageTextStore store = MemoryPageTextStore();
+        // Кэш наполняется фоновым проходом — и открывается заново, как
+        // при втором открытии книги: поиск читает уже только базу.
+        final BookTextCache filling = cacheOf(document, store, name);
+        filling.startPass(from: 1);
+        await filling.passDone();
+        expect(filling.isComplete, isTrue, reason: name);
+        expect(store.rowCount(name), document.pageCount, reason: name);
+
+        final DocumentSearch live = DocumentSearch(
+          document: document,
+          hitLimit: 5000,
+        );
+        final DocumentSearch cached = DocumentSearch(
+          document: document,
+          cache: cacheOf(document, store, name),
+          hitLimit: 5000,
+        );
+        addTearDown(live.dispose);
+        addTearDown(cached.dispose);
+        for (final String query in queries) {
+          await live.start(query);
+          await cached.start(query);
+          final String where = '$name, запрос «$query»';
+          expect(cached.hits, live.hits, reason: where);
+          expect(cached.scannedPages, live.scannedPages, reason: where);
+          expect(cached.bookHasNoText, live.bookHasNoText, reason: where);
+          compared += live.hits.length;
+        }
+      }
+      expect(compared, greaterThan(1000), reason: 'сравнивать было что');
+    }, timeout: const Timeout(Duration(minutes: 10)));
+
+    test('F-TEXT-04: текст из кэша — тот же, что отдаёт движок', () async {
+      // Места найденного считаются по тексту страницы; подсветка строится
+      // по слою текста движка. Разойдись они хоть на знак — подсветка
+      // уехала бы от найденного.
+      for (final String name in <String>[
+        'basic_text.pdf',
+        'two_columns.pdf',
+        'cjk.pdf',
+        'rtl.pdf',
+        'book_120_pages.pdf',
+      ]) {
+        final ReaderDocument document = await open(name);
+        final BookTextCache cache = cacheOf(
+          document,
+          MemoryPageTextStore(),
+          name,
+        );
+        final int pages = document.pageCount;
+        final Map<int, String> first = await cache.textsOf(1, pages);
+        final Map<int, String> second = await cache.textsOf(1, pages);
+        for (int page = 1; page <= pages; page++) {
+          final PageTextLayout layout = await document.pageTextLayout(page);
+          expect(first[page], layout.text, reason: '$name, страница $page');
+          expect(second[page], layout.text, reason: '$name, страница $page');
+        }
+      }
+    });
+
+    test('F-TEXT-04: второй поиск по книге идёт без движка', () async {
+      final _CountingDocument document = _CountingDocument(
+        await open('book_120_pages.pdf'),
+      );
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, store, 'book'),
+      );
+      addTearDown(search.dispose);
+
+      // Книга только что открыта: измерена одна первая страница.
+      await search.start('book-token-117');
+      expect(search.hits.single.pageNumber, 117);
+      expect(document.textReads, 120);
+
+      // «book-token-3» — ещё и начало «book-token-30»: первая находка —
+      // на третьей странице.
+      await search.start('book-token-3');
+      expect(search.hits.first.pageNumber, 3);
+      expect(search.scannedPages, 120);
+      expect(document.textReads, 120, reason: 'движок не понадобился');
+      expect(store.textQueries, greaterThan(0));
+    });
+
+    test('F-TEXT-04: скан — кэш пустой, и это не ошибка', () async {
+      final ReaderDocument document = await open('scan_no_text.pdf');
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final BookTextCache cache = cacheOf(document, store, 'scan');
+      cache.startPass(from: 1);
+      await cache.passDone();
+
+      expect(cache.isComplete, isTrue);
+      expect(cache.cachedSize, 0);
+
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cache,
+      );
+      addTearDown(search.dispose);
+      await search.start('что угодно');
+      expect(search.bookHasNoText, isTrue);
+    });
+
+    test('F-TEXT-04: замеры — вес текста, проход, поиск', () async {
+      // Числа уходят в журнал прогона строками «ЗАМЕР F-TEXT-04» и оттуда
+      // — в PROGRESS.md; с порогом здесь не сравниваются: раннер шумит.
+      double ms(Stopwatch watch) => watch.elapsedMicroseconds / 1000;
+
+      for (final String name in <String>[
+        'book_120_pages.pdf',
+        'huge_1200_pages.pdf',
+        'scan_no_text.pdf',
+      ]) {
+        final ReaderDocument document = await open(name);
+        final MemoryPageTextStore store = MemoryPageTextStore();
+
+        // Первый поиск — по книге, которую ещё никто не читал.
+        final DocumentSearch first = DocumentSearch(
+          document: document,
+          cache: cacheOf(document, store, name),
+          hitLimit: 5000,
+        );
+        final Stopwatch cold = Stopwatch()..start();
+        await first.start('page');
+        cold.stop();
+        first.dispose();
+
+        // Второй — по запомненному.
+        final BookTextCache cache = cacheOf(document, store, name);
+        final DocumentSearch second = DocumentSearch(
+          document: document,
+          cache: cache,
+          hitLimit: 5000,
+        );
+        final Stopwatch warm = Stopwatch()..start();
+        await second.start('page');
+        warm.stop();
+        expect(second.hits, first.hits, reason: name);
+        second.dispose();
+
+        // Фоновый проход по книге, которую ещё никто не читал.
+        final BookTextCache fresh = cacheOf(
+          document,
+          MemoryPageTextStore(),
+          name,
+        );
+        final Stopwatch pass = Stopwatch()..start();
+        fresh.startPass(from: 1);
+        await fresh.passDone();
+        pass.stop();
+
+        stdout.writeln(
+          'ЗАМЕР F-TEXT-04 | $name | страниц ${document.pageCount} | '
+          'текста ${cache.cachedSize} знаков | '
+          'проход ${ms(pass).toStringAsFixed(1)} мс | '
+          'первый поиск ${ms(cold).toStringAsFixed(1)} мс | '
+          'второй поиск ${ms(warm).toStringAsFixed(1)} мс',
+        );
+        expect(fresh.isComplete, isTrue, reason: name);
+      }
+    }, timeout: const Timeout(Duration(minutes: 5)));
+  });
+}
+
+/// Документ, который считает, сколько раз у него просили текст страницы.
+class _CountingDocument implements ReaderDocument {
+  _CountingDocument(this._inner);
+
+  final ReaderDocument _inner;
+
+  /// Сколько раз читали текст страниц — всего.
+  int textReads = 0;
+
+  @override
+  String get sourceName => _inner.sourceName;
+
+  @override
+  int get pageCount => _inner.pageCount;
+
+  @override
+  PageGeometry geometry(int pageNumber) => _inner.geometry(pageNumber);
+
+  @override
+  Future<void> measure(Iterable<int> pageNumbers) =>
+      _inner.measure(pageNumbers);
+
+  @override
+  Future<String> pageText(int pageNumber) {
+    textReads++;
+    return _inner.pageText(pageNumber);
+  }
+
+  @override
+  Future<List<TextBox>> pageTextBoxes(int pageNumber) =>
+      _inner.pageTextBoxes(pageNumber);
+
+  @override
+  Future<PageTextLayout> pageTextLayout(int pageNumber) =>
+      _inner.pageTextLayout(pageNumber);
+
+  @override
+  Future<List<OutlineEntry>> outline() => _inner.outline();
+
+  @override
+  Future<PageRaster?> renderPage(
+    int pageNumber, {
+    required int width,
+    required int height,
+  }) => _inner.renderPage(pageNumber, width: width, height: height);
+
+  @override
+  Object? get engineDocument => _inner.engineDocument;
+
+  @override
+  Future<void> close() => _inner.close();
 }

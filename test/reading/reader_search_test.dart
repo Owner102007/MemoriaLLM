@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
+import 'package:memoria/application/reading/book_text.dart';
 import 'package:memoria/application/reading/reader_controller.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/reading/full_screen.dart';
+import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/search_dock.dart';
@@ -19,12 +21,13 @@ import '../support/fake_reading.dart';
 import '../support/page_text.dart';
 import '../support/test_services.dart';
 
-/// Шаг 08: поиск по книге на экране чтения.
+/// Шаги 08 и 09: поиск по книге на экране чтения.
 ///
 /// Сам лист с настоящим PDFium в widget-тестах не строится; здесь
 /// проверяется то, что от него не зависит: куда ведёт переход к
-/// найденному, что делают кнопки громкости при открытом поиске и
-/// сколько места панель оставляет листу.
+/// найденному, что делают кнопки громкости при открытом поиске,
+/// сколько места панель оставляет листу и откуда поиск берёт текст
+/// страниц (F-TEXT-04).
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -210,6 +213,130 @@ void main() {
       expect(label(tester), '3 / 6');
 
       await unmount(tester);
+    });
+  });
+
+  group('F-TEXT-04: текст книги в кэше', () {
+    const PageTextKey key = PageTextKey(
+      bookId: 'book-1',
+      fingerprint: 'hash-1',
+    );
+
+    int reads(FakeReaderDocument document) {
+      int total = 0;
+      for (final int count in document.textReads.values) {
+        total += count;
+      }
+      return total;
+    }
+
+    testWidgets('фоновый проход запоминает книгу после открытия', (
+      WidgetTester tester,
+    ) async {
+      final FakeReaderDocument document = threes();
+      await pumpReader(tester, document: document);
+
+      // Сразу после открытия проход не идёт: движок занят страницей.
+      expect(reads(document), 0);
+      expect(await data.pageTexts.cachedPages(key), isEmpty);
+
+      await tester.pump(kTextPassDelay);
+      await tester.pump();
+
+      expect(reads(document), 6);
+      expect((await data.pageTexts.cachedPages(key)).keys.toSet(), <int>{
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+      });
+      expect(await data.pageTexts.pageTexts(key, from: 5, to: 5), <int, String>{
+        5: 'и снова тройка',
+      });
+
+      // Поиск после этого к движку не ходит вовсе.
+      await scaffoldOf(tester).search.start('тройка');
+      await tester.pumpAndSettle();
+      expect(scaffoldOf(tester).search.hits.length, 2);
+      expect(reads(document), 6);
+
+      await unmount(tester);
+    });
+
+    testWidgets('поиск сразу после открытия находит слово из конца книги', (
+      WidgetTester tester,
+    ) async {
+      final FakeReaderDocument document = threes();
+      await pumpReader(tester, document: document);
+
+      // Проход ещё не начинался — поиск читает книгу сам и запоминает.
+      await scaffoldOf(tester).search.start('снова');
+      await tester.pumpAndSettle();
+      expect(scaffoldOf(tester).search.hits.single.pageNumber, 5);
+      expect(reads(document), 6);
+      expect((await data.pageTexts.cachedPages(key)).length, 6);
+
+      // Второй поиск — уже по запомненному.
+      await scaffoldOf(tester).search.start('окончание');
+      await tester.pumpAndSettle();
+      expect(scaffoldOf(tester).search.hits.single.pageNumber, 6);
+      expect(reads(document), 6, reason: 'книгу второй раз не читали');
+
+      // И проходу после него читать нечего.
+      await tester.pump(kTextPassDelay);
+      await tester.pump();
+      expect(reads(document), 6);
+
+      await unmount(tester);
+    });
+
+    testWidgets('в скане поиск говорит, что текста нет', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester, document: FakeReaderDocument.blank(3));
+      stateOf(tester).openSearch();
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('search-field')), 'слово');
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+
+      expect(find.text('В этой книге нет текста: это скан.'), findsOneWidget);
+      expect(find.text('Ничего не найдено.'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('в книге с текстом пустой результат — «ничего не найдено»', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester, document: threes());
+      stateOf(tester).openSearch();
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('search-field')), 'тролль');
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ничего не найдено.'), findsOneWidget);
+      expect(find.text('В этой книге нет текста: это скан.'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('закрытая книга проход не продолжает', (
+      WidgetTester tester,
+    ) async {
+      final FakeReaderDocument document = threes();
+      await pumpReader(tester, document: document);
+
+      // Книгу закрыли раньше, чем проход начался.
+      await unmount(tester);
+      await tester.pump(kTextPassDelay);
+
+      expect(reads(document), 0);
     });
   });
 

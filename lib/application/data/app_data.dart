@@ -8,6 +8,7 @@ import '../../domain/library/book_category.dart';
 import '../../domain/library/device_files.dart';
 import '../../domain/llm/llm_query.dart';
 import '../../domain/prompts/selection_prompt.dart';
+import '../../domain/reading/page_text.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
 import '../../domain/sync/hlc.dart';
@@ -20,6 +21,7 @@ import '../../infrastructure/repositories/drift_category_repository.dart';
 import '../../infrastructure/repositories/drift_device_file_repository.dart';
 import '../../infrastructure/repositories/drift_library_repository.dart';
 import '../../infrastructure/repositories/drift_llm_history_repository.dart';
+import '../../infrastructure/repositories/drift_page_text_repository.dart';
 import '../../infrastructure/repositories/drift_prompt_repository.dart';
 import '../../infrastructure/repositories/drift_reading_repository.dart';
 
@@ -36,6 +38,7 @@ class AppData {
     required this.library,
     required this.categories,
     required this.reading,
+    required this.pageTexts,
     required this.annotations,
     required this.llmHistory,
     required this.prompts,
@@ -70,6 +73,7 @@ class AppData {
       library: library,
       categories: DriftCategoryRepository(database, clock, library),
       reading: DriftReadingRepository(database, clock),
+      pageTexts: DriftPageTextRepository(database),
       annotations: DriftAnnotationRepository(database, clock),
       llmHistory: DriftLlmHistoryRepository(database, clock),
       prompts: prompts,
@@ -95,6 +99,10 @@ class AppData {
 
   /// Прогресс и настройки чтения.
   final ReadingRepository reading;
+
+  /// Текст страниц книг: производное, лежит только на этом устройстве
+  /// и не синхронизируется (F-TEXT-04).
+  final PageTextRepository pageTexts;
 
   /// Цитаты, заметки и закладки.
   final AnnotationRepository annotations;

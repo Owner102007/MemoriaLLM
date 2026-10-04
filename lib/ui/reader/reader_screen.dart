@@ -8,6 +8,7 @@ import 'package:pdfrx/pdfrx.dart';
 import '../../application/app_services.dart';
 import '../../application/library/book_importer.dart';
 import '../../application/reading/book_selection.dart';
+import '../../application/reading/book_text.dart';
 import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
 import '../../domain/annotations/annotations.dart';
@@ -88,6 +89,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late Book _book = widget.book;
   ReaderController? _controller;
   DocumentSearch? _search;
+
+  /// Текст страниц книги: кэш устройства и движок за ним (F-TEXT-04).
+  /// По нему ищет [_search], и его же наполняет фоновый проход.
+  BookTextCache? _texts;
+  Timer? _textPassTimer;
   DocumentOpenException? _failure;
   bool _loading = true;
 
@@ -248,6 +254,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _lifecycle = AppLifecycleListener(
       onInactive: () => unawaited(_controller?.flush()),
       onDetach: () => unawaited(_controller?.flush()),
+      // F-TEXT-04: свёрнутое приложение книгу в фоне не читает — батарея
+      // дороже; вернулись — проход продолжается с того, что осталось.
+      onHide: _stopTextPass,
+      onShow: _scheduleTextPass,
     );
     unawaited(_restoreDeviceSettings());
     // Набор промптов слушается живьём: правка мастер-набора в настройках
@@ -720,6 +730,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _flowNow.dispose();
     _lifecycle?.dispose();
     unawaited(_promptsWatch?.cancel());
+    _textPassTimer?.cancel();
+    _texts?.close();
     _search?.dispose();
     final ReaderController? controller = _controller;
     _controller = null;
@@ -766,16 +778,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return;
       }
       controller.addListener(_onControllerChanged);
+      // F-TEXT-04: текст страниц берётся из кэша устройства, а чего в
+      // нём нет — читается движком и по дороге запоминается. Поиск от
+      // этого не перечитывает книгу на каждый запрос.
+      final BookTextCache texts = BookTextCache(
+        document: controller.document,
+        store: widget.services.data.pageTexts,
+        bookId: _book.id,
+        fingerprint: _book.fileHash,
+      );
       // Найденное приходит по мере поиска: совпадения на открытой
       // странице подсвечиваются, как только до неё дошла очередь.
       final DocumentSearch search = DocumentSearch(
         document: controller.document,
+        cache: texts,
       )..addListener(_refreshHitRects);
+      _texts?.close();
       setState(() {
         _controller = controller;
+        _texts = texts;
         _search = search;
         _loading = false;
       });
+      _scheduleTextPass();
       _syncVolumeKeys();
       _applyWantedFullScreen();
       _offerZoneHint();
@@ -795,6 +820,34 @@ class _ReaderScreenState extends State<ReaderScreen> {
         unawaited(_setFullScreen(false, remember: false));
       }
     }
+  }
+
+  /// Начинает фоновый проход по тексту книги — не сразу, а дав книге
+  /// открыться (F-TEXT-04, ALG-TXT-09).
+  ///
+  /// Первые секунды движок занят первой страницей и рамкой книги, и
+  /// проход им не соперник. Идёт он от места чтения вперёд; что уже
+  /// запомнено — пропускает, так что повторное открытие книги
+  /// продолжает с того, на чём остановилось прошлое.
+  void _scheduleTextPass() {
+    _textPassTimer?.cancel();
+    if (!mounted || _texts == null) {
+      return;
+    }
+    _textPassTimer = Timer(kTextPassDelay, () {
+      _textPassTimer = null;
+      final ReaderController? controller = _controller;
+      if (mounted && controller != null) {
+        _texts?.startPass(from: controller.page);
+      }
+    });
+  }
+
+  /// Останавливает фоновый проход: приложение свернули.
+  void _stopTextPass() {
+    _textPassTimer?.cancel();
+    _textPassTimer = null;
+    _texts?.stopPass();
   }
 
   /// Привязывает книгу к заново выбранному файлу.

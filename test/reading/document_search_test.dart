@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/application/reading/book_text.dart';
 import 'package:memoria/application/reading/document_search.dart';
 import 'package:memoria/domain/reading/text_search.dart';
 
@@ -127,6 +128,188 @@ void main() {
     expect(document.textReads.length, 25);
     expect(document.textReads.values.every((int count) => count == 1), isTrue);
     search.dispose();
+  });
+
+  group('F-TEXT-04: поиск по кэшу текста', () {
+    BookTextCache cacheOf(FakeReaderDocument document, MemoryPageTextStore s) {
+      return BookTextCache(
+        document: document,
+        store: s,
+        bookId: 'book-1',
+        fingerprint: 'hash-1',
+      );
+    }
+
+    int reads(FakeReaderDocument document) {
+      int total = 0;
+      for (final int count in document.textReads.values) {
+        total += count;
+      }
+      return total;
+    }
+
+    test('второй поиск идёт без обращения к движку', () async {
+      final FakeReaderDocument document = _book(pages: 60);
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, MemoryPageTextStore()),
+      );
+
+      await search.start('Германн');
+      expect(search.hits.single.pageNumber, 5);
+      expect(reads(document), 60, reason: 'первый поиск наполнил кэш');
+
+      await search.start('страницы 42');
+      expect(search.hits.single.pageNumber, 42);
+      expect(search.scannedPages, 60);
+      expect(reads(document), 60, reason: 'книгу второй раз не читали');
+      search.dispose();
+    });
+
+    test('слово с непосещённой страницы находится сразу', () async {
+      // Книгу только что открыли: ни одной страницы в кэше нет, читатель
+      // стоит на первой, а слово — в самом конце.
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>[
+          ...List<String>.filled(119, 'обычный текст'),
+          'здесь лежит редкое слово',
+        ],
+      );
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, MemoryPageTextStore()),
+      );
+
+      await search.start('редкое');
+
+      expect(search.hits.single.pageNumber, 120);
+      expect(search.unscannedPages, 0);
+      search.dispose();
+    });
+
+    test('по кэшу находится то же, что по документу', () async {
+      final List<String> pages = List<String>.generate(
+        45,
+        (int i) => i.isEven
+            ? 'Тройка, семёрка,\r\nтуз — страница ${i + 1}'
+            : 'ничего особенного ${i + 1}',
+      );
+      final DocumentSearch live = DocumentSearch(
+        document: FakeReaderDocument(pages: pages),
+      );
+      final FakeReaderDocument document = FakeReaderDocument(pages: pages);
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      // Кэш наполнен наполовину и заранее: поиск идёт и по базе, и по
+      // движку.
+      await cacheOf(document, store).textsOf(10, 30);
+      final DocumentSearch cached = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, store),
+      );
+
+      const List<String> queries = <String>[
+        'семёрка, туз',
+        'ОСОБЕННОГО',
+        'нет',
+      ];
+      for (final String query in queries) {
+        await live.start(query);
+        await cached.start(query);
+        expect(cached.hits, live.hits, reason: 'запрос «$query»');
+        expect(
+          <String>[for (final SearchHit hit in cached.hits) hit.snippet],
+          <String>[for (final SearchHit hit in live.hits) hit.snippet],
+        );
+        expect(cached.scannedPages, live.scannedPages);
+      }
+      live.dispose();
+      cached.dispose();
+    });
+
+    test('неполный поиск называет остаток, и он убывает', () async {
+      final FakeReaderDocument document = _book(pages: 40);
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, MemoryPageTextStore()),
+      );
+      final List<int> left = <int>[];
+      search.addListener(() {
+        if (search.isRunning) {
+          left.add(search.unscannedPages);
+        }
+      });
+
+      expect(search.pageCount, 40);
+      await search.start('текст');
+
+      // Первое сообщение — до первой страницы, дальше — после каждой
+      // пачки, кроме последней.
+      expect(left, <int>[40, 32, 24, 16, 8]);
+      expect(search.unscannedPages, 0);
+      expect(search.isRunning, isFalse);
+      search.dispose();
+    });
+
+    test('скан без текста: искать не в чем — так и сказано', () async {
+      final FakeReaderDocument document = FakeReaderDocument.blank(12);
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, store),
+      );
+
+      await search.start('что угодно');
+
+      expect(search.isEmptyResult, isTrue);
+      expect(search.bookHasNoText, isTrue);
+      expect(store.rowCount('book-1'), 12, reason: 'пустой кэш — не ошибка');
+      search.dispose();
+    });
+
+    test('книга с текстом, но без находок — не скан', () async {
+      final DocumentSearch search = DocumentSearch(document: _book());
+      await search.start('тролль');
+      expect(search.isEmptyResult, isTrue);
+      expect(search.bookHasNoText, isFalse);
+
+      // И без кэша скан опознаётся так же.
+      final DocumentSearch scan = DocumentSearch(
+        document: FakeReaderDocument.blank(3),
+      );
+      await scan.start('тролль');
+      expect(scan.bookHasNoText, isTrue);
+      // Слишком короткий запрос книгу не просматривал — судить не о чем.
+      await scan.start('а');
+      expect(scan.bookHasNoText, isFalse);
+      search.dispose();
+      scan.dispose();
+    });
+
+    test('нечитаемая страница не обрывает поиск и с кэшем', () async {
+      final _BrokenPageDocument document = _BrokenPageDocument();
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, MemoryPageTextStore()),
+      );
+      await search.start('цель');
+      expect(search.hits.single.pageNumber, 3);
+      expect(search.scannedPages, 3);
+      search.dispose();
+    });
+
+    test('база отказала — поиск идёт движком, как раньше', () async {
+      final FakeReaderDocument document = _book();
+      final MemoryPageTextStore store = MemoryPageTextStore()
+        ..failReads = true
+        ..failWrites = true;
+      final DocumentSearch search = DocumentSearch(
+        document: document,
+        cache: cacheOf(document, store),
+      );
+      await search.start('Германн');
+      expect(search.hits.single.pageNumber, 5);
+      search.dispose();
+    });
   });
 }
 

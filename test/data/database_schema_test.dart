@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — десятая: рамка обрезки книги', () {
+  test('версия схемы — одиннадцатая: текст страниц книги', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 10);
+    expect(appSchemaVersion, 11);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -62,6 +62,7 @@ void main() {
         'device_files',
         'selection_prompts',
         'book_frames',
+        'page_texts',
       ]),
     );
   });
@@ -124,6 +125,26 @@ void main() {
         'algorithm_version',
       ]),
     );
+  });
+
+  test('F-TEXT-04: текст страниц полей CRDT не несёт', () async {
+    // Текст страниц — производное: наш код извлёк его из файла, а не
+    // создал читатель. В слияние он не идёт и в облако не уходит.
+    final List<String> columns = await _columnNames(
+      data.database,
+      'page_texts',
+    );
+    expect(columns, isNot(contains('hlc')));
+    expect(columns, isNot(contains('node_id')));
+    expect(columns, isNot(contains('modified')));
+    expect(columns, isNot(contains('is_deleted')));
+    expect(columns, <String>[
+      'book_id',
+      'page',
+      'content',
+      'fingerprint',
+      'algorithm_version',
+    ]);
   });
 
   test('цитата носит своё место в тексте страницы', () async {

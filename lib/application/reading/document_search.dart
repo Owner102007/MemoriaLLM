@@ -2,21 +2,30 @@ import 'package:flutter/foundation.dart';
 
 import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/text_search.dart';
+import 'book_text.dart';
 
 /// Поиск по всей книге.
 ///
 /// Текст страниц движок отдаёт по одной, и на книге в тысячу страниц
 /// это заметная работа. Поэтому поиск идёт постранично, отдаёт найденное
-/// по ходу дела, уступает управление интерфейсу между страницами и
+/// по ходу дела, уступает управление интерфейсу между пачками страниц и
 /// честно отменяется: человек, начавший печатать новый запрос, не должен
 /// ждать конца старого.
+///
+/// **Текст берётся из кэша** (F-TEXT-04, ALG-TXT-09), если он дан:
+/// запомненные страницы читаются из базы пачкой, остальные — движком, и
+/// по дороге запоминаются. Книга, запомненная целиком, ищется без
+/// единого обращения к движку. Без кэша поиск читает документ напрямую
+/// — так, как делал всегда; найденное в обоих случаях одно и то же.
 class DocumentSearch extends ChangeNotifier {
   /// Создаёт поиск по документу.
   DocumentSearch({
     required ReaderDocument document,
+    BookTextCache? cache,
     this.hitLimit = 300,
     this.pagesPerYield = 8,
-  }) : _document = document;
+  }) : _document = document,
+       _cache = cache;
 
   /// Сколько совпадений собирать, прежде чем остановиться.
   ///
@@ -24,15 +33,18 @@ class DocumentSearch extends ChangeNotifier {
   /// совпадений столько, запрос надо уточнять, а не пролистывать.
   final int hitLimit;
 
-  /// Через сколько страниц уступать управление интерфейсу.
+  /// Сколько страниц просматривается одной пачкой: после неё найденное
+  /// отдаётся интерфейсу, и ему уступается управление.
   final int pagesPerYield;
 
   final ReaderDocument _document;
+  final BookTextCache? _cache;
 
   String _query = '';
   List<SearchHit> _hits = const <SearchHit>[];
   bool _isRunning = false;
   bool _reachedLimit = false;
+  bool _sawText = false;
   int _scannedPages = 0;
   int _session = 0;
 
@@ -51,6 +63,18 @@ class DocumentSearch extends ChangeNotifier {
   /// Сколько страниц просмотрено.
   int get scannedPages => _scannedPages;
 
+  /// Число страниц книги.
+  int get pageCount => _document.pageCount;
+
+  /// Сколько страниц ещё не просмотрено.
+  ///
+  /// Неполный поиск — честное состояние, а не отказ (F-TEXT-04):
+  /// найденное показано, остаток назван числом и убывает.
+  int get unscannedPages {
+    final int left = _document.pageCount - _scannedPages;
+    return left < 0 ? 0 : left;
+  }
+
   /// Доля просмотренного, от 0 до 1.
   double get progress {
     final int total = _document.pageCount;
@@ -67,6 +91,17 @@ class DocumentSearch extends ChangeNotifier {
   /// Ничего не нашли.
   bool get isEmptyResult => isFinished && _hits.isEmpty;
 
+  /// Книга просмотрена целиком, и текста в ней не оказалось вовсе: это
+  /// скан без текстового слоя (F-TEXT-04).
+  ///
+  /// «Ничего не найдено» здесь было бы неправдой: искать было не в чем.
+  bool get bookHasNoText =>
+      isFinished &&
+      isSearchableQuery(_query) &&
+      !_reachedLimit &&
+      !_sawText &&
+      _scannedPages >= _document.pageCount;
+
   /// Запускает поиск. Предыдущий, если он шёл, отменяется.
   Future<void> start(String query) async {
     _session++;
@@ -75,6 +110,7 @@ class DocumentSearch extends ChangeNotifier {
     _hits = const <SearchHit>[];
     _scannedPages = 0;
     _reachedLimit = false;
+    _sawText = false;
 
     if (!isSearchableQuery(_query)) {
       _isRunning = false;
@@ -87,37 +123,41 @@ class DocumentSearch extends ChangeNotifier {
 
     final List<SearchHit> found = <SearchHit>[];
     final int total = _document.pageCount;
-    for (int page = 1; page <= total; page++) {
+    final int step = pagesPerYield < 1 ? 1 : pagesPerYield;
+    for (int from = 1; from <= total; from += step) {
       if (session != _session) {
         return; // запрос сменился — этот прогон больше никому не нужен
       }
-      String text = '';
-      try {
-        text = await _document.pageText(page);
-      } on Object {
-        // Одна нечитаемая страница не должна обрывать поиск по книге.
-        text = '';
-      }
+      final int to = from + step - 1 > total ? total : from + step - 1;
+      final Map<int, String> texts = await _textsOf(from, to);
       if (session != _session) {
         return;
       }
-      if (text.isNotEmpty) {
-        found.addAll(
-          findInPageText(
-            pageNumber: page,
-            pageText: text,
-            query: _query,
-            limit: hitLimit - found.length,
-          ),
-        );
+      for (int page = from; page <= to; page++) {
+        final String text = texts[page] ?? '';
+        if (text.isNotEmpty) {
+          if (!_sawText && text.trim().isNotEmpty) {
+            _sawText = true;
+          }
+          found.addAll(
+            findInPageText(
+              pageNumber: page,
+              pageText: text,
+              query: _query,
+              limit: hitLimit - found.length,
+            ),
+          );
+        }
+        _scannedPages = page;
+        if (found.length >= hitLimit) {
+          _reachedLimit = true;
+          break;
+        }
       }
-      _scannedPages = page;
-
-      if (found.length >= hitLimit) {
-        _reachedLimit = true;
+      if (_reachedLimit) {
         break;
       }
-      if (page % pagesPerYield == 0) {
+      if (to < total) {
         _hits = List<SearchHit>.unmodifiable(found);
         notifyListeners();
         await Future<void>.delayed(Duration.zero);
@@ -132,6 +172,25 @@ class DocumentSearch extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Текст страниц с [from] по [to]: из кэша, если он дан, иначе прямо
+  /// из документа.
+  Future<Map<int, String>> _textsOf(int from, int to) async {
+    final BookTextCache? cache = _cache;
+    if (cache != null) {
+      return cache.textsOf(from, to);
+    }
+    final Map<int, String> texts = <int, String>{};
+    for (int page = from; page <= to; page++) {
+      try {
+        texts[page] = await _document.pageText(page);
+      } on Object {
+        // Одна нечитаемая страница не должна обрывать поиск по книге.
+        texts[page] = '';
+      }
+    }
+    return texts;
+  }
+
   /// Отменяет поиск и очищает результаты.
   void clear() {
     _session++;
@@ -139,6 +198,7 @@ class DocumentSearch extends ChangeNotifier {
     _hits = const <SearchHit>[];
     _isRunning = false;
     _reachedLimit = false;
+    _sawText = false;
     _scannedPages = 0;
     notifyListeners();
   }

@@ -18,8 +18,9 @@ part 'app_database.g.dart';
 /// месте и подсвечивает его. 9 — нахлёст полос и ширина полоски соседней
 /// страницы в настройках книги (шаг 05, F-READ-12 и F-READ-13). 10 — рамка
 /// обрезки книги (шаг 06, F-READ-15): своя таблица устройства, без полей
-/// CRDT.
-const int appSchemaVersion = 10;
+/// CRDT. 11 — текст страниц книги (шаг 09, F-TEXT-04): ещё одна таблица
+/// устройства, тоже производное и тоже без полей CRDT.
+const int appSchemaVersion = 11;
 
 /// База данных приложения.
 ///
@@ -41,6 +42,7 @@ const int appSchemaVersion = 10;
     DeviceFiles,
     SelectionPrompts,
     BookFrames,
+    PageTexts,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -125,6 +127,12 @@ class AppDatabase extends _$AppDatabase {
           // считается при первом открытии книги с включённой обрезкой.
           // Рамка, выставленная руками, остаётся в настройках книги.
           await m.createTable(bookFrames);
+        }
+        if (from < 11) {
+          // Таблица заводится пустой: текст страниц неоткуда перенести,
+          // он извлекается из файла при первом же открытии книги — в
+          // фоне и по мере поиска.
+          await m.createTable(pageTexts);
         }
       },
       beforeOpen: (OpeningDetails details) async {

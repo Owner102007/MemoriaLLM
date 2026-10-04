@@ -274,10 +274,14 @@ class _SearchPanelState extends State<SearchPanel> {
   ///
   /// На полупрозрачной полосе — основным цветом текста: вторичный над
   /// чужой страницей контраст не держит (`kSearchPanelOpacity`).
-  Widget _statusText(ThemeData theme, DocumentSearch search) {
+  Widget _statusText(
+    ThemeData theme,
+    DocumentSearch search, {
+    bool brief = false,
+  }) {
     final TextStyle? style = theme.textTheme.bodySmall;
     return Text(
-      _status(search),
+      _status(search, brief: brief),
       key: const Key('search-status'),
       maxLines: widget.translucent ? 1 : null,
       overflow: widget.translucent ? TextOverflow.ellipsis : null,
@@ -434,7 +438,7 @@ class _SearchPanelState extends State<SearchPanel> {
                 padding: const EdgeInsets.only(left: 8, right: 12),
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: _statusText(theme, search),
+                  child: _statusText(theme, search, brief: true),
                 ),
               ),
             )
@@ -446,7 +450,15 @@ class _SearchPanelState extends State<SearchPanel> {
     );
   }
 
-  String _status(DocumentSearch search) {
+  /// Состояние поиска словами.
+  ///
+  /// [brief] — для строки счёта в полосе: число найденного там уже
+  /// стоит, и повторять его незачем.
+  ///
+  /// Неполный поиск — честное состояние (F-TEXT-04): остаток назван
+  /// числом и убывает. Книга без текстового слоя — тоже: «ничего не
+  /// найдено» в скане было бы неправдой, искать там не в чем.
+  String _status(DocumentSearch search, {bool brief = false}) {
     if (search.query.isEmpty) {
       return 'Введите хотя бы два символа.';
     }
@@ -454,11 +466,21 @@ class _SearchPanelState extends State<SearchPanel> {
       return 'Слишком короткий запрос: нужно хотя бы два символа.';
     }
     if (search.isRunning) {
-      return 'Просмотрено страниц: ${search.scannedPages}. '
+      final int left = search.unscannedPages;
+      if (brief) {
+        return 'не просмотрено: $left';
+      }
+      return 'Не просмотрено страниц: $left. '
           'Найдено: ${search.hits.length}.';
+    }
+    if (search.bookHasNoText) {
+      return 'В этой книге нет текста: это скан.';
     }
     if (search.hits.isEmpty) {
       return 'Ничего не найдено.';
+    }
+    if (brief) {
+      return search.reachedLimit ? 'показаны первые' : '';
     }
     final String suffix = search.reachedLimit
         ? ' Показаны первые — уточните запрос.'

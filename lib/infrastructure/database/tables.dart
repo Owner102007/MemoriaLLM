@@ -509,6 +509,39 @@ class BookFrames extends Table {
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId};
 }
 
+/// Текст страниц книги (F-TEXT-04, ALG-TXT-09).
+///
+/// **Без полей CRDT намеренно.** Текст страницы — производное: наш код
+/// извлёк его из файла, а не создал читатель. В облако он не уходит, на
+/// втором устройстве извлекается заново, а после смены алгоритма
+/// извлечения перечитывается сам — по номеру версии в строке
+/// (ALG-DATA-09). Строка заводится и у страницы без текста: пустой
+/// текст — тоже ответ, и за ним к движку больше не ходят.
+@DataClassName('PageTextRow')
+class PageTexts extends Table {
+  /// Книга. Вычищена книга — уходит и её текст.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Номер страницы, начиная с единицы.
+  IntColumn get page => integer()();
+
+  /// Текст страницы — ровно таким, каким его отдал движок: места
+  /// найденного считаются по нему.
+  TextColumn get content => text()();
+
+  /// Отпечаток файла, из которого текст извлечён: книгу можно привязать
+  /// к другому файлу, и текст прежнего ему не годится.
+  TextColumn get fingerprint =>
+      text().withDefault(const Constant<String>(''))();
+
+  /// Версия алгоритма, которым текст извлечён.
+  IntColumn get algorithmVersion => integer()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{bookId, page};
+}
+
 /// Локальные настройки приложения. Без полей CRDT: они не
 /// синхронизируются намеренно — см. `AppSettingsRepository`.
 @DataClassName('AppSettingRow')

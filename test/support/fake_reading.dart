@@ -5,6 +5,7 @@ import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/cover.dart';
+import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/reading/text_geometry.dart';
@@ -168,6 +169,100 @@ class FakeDocumentOpener implements DocumentOpener {
     }
     return document;
   }
+}
+
+/// Хранилище текста страниц в памяти (F-TEXT-04).
+///
+/// Ведёт себя как настоящее: страница, запомненная по другому отпечатку
+/// или другой версией алгоритма, для ключа не существует, а запись
+/// ложится поверх неё. Умеет отказывать — кэш текста обязан это
+/// переживать.
+class MemoryPageTextStore implements PageTextRepository {
+  final Map<String, Map<int, _StoredPage>> _books =
+      <String, Map<int, _StoredPage>>{};
+
+  /// Отказывать ли на чтении.
+  bool failReads = false;
+
+  /// Отказывать ли на записи.
+  bool failWrites = false;
+
+  /// Сколько раз читали текст страниц пачкой.
+  int textQueries = 0;
+
+  /// Сколько раз записывали и сколько страниц записано всего.
+  int saveCount = 0;
+  int savedPages = 0;
+
+  /// Сколько строк лежит у книги — любых версий и отпечатков.
+  int rowCount(String bookId) => _books[bookId]?.length ?? 0;
+
+  @override
+  Future<Map<int, int>> cachedPages(PageTextKey key) async {
+    if (failReads) {
+      throw StateError('база не читается');
+    }
+    final Map<int, _StoredPage> pages =
+        _books[key.bookId] ?? const <int, _StoredPage>{};
+    return <int, int>{
+      for (final MapEntry<int, _StoredPage> entry in pages.entries)
+        if (entry.value.fits(key)) entry.key: entry.value.text.length,
+    };
+  }
+
+  @override
+  Future<Map<int, String>> pageTexts(
+    PageTextKey key, {
+    required int from,
+    required int to,
+  }) async {
+    if (failReads) {
+      throw StateError('база не читается');
+    }
+    textQueries++;
+    final Map<int, _StoredPage> pages =
+        _books[key.bookId] ?? const <int, _StoredPage>{};
+    return <int, String>{
+      for (final MapEntry<int, _StoredPage> entry in pages.entries)
+        if (entry.key >= from && entry.key <= to && entry.value.fits(key))
+          entry.key: entry.value.text,
+    };
+  }
+
+  @override
+  Future<void> savePageTexts(PageTextKey key, Map<int, String> texts) async {
+    if (failWrites) {
+      throw StateError('база не пишется');
+    }
+    saveCount++;
+    savedPages += texts.length;
+    final Map<int, _StoredPage> pages = _books.putIfAbsent(
+      key.bookId,
+      () => <int, _StoredPage>{},
+    );
+    for (final MapEntry<int, String> entry in texts.entries) {
+      pages[entry.key] = _StoredPage(
+        text: entry.value,
+        fingerprint: key.fingerprint,
+        version: key.version,
+      );
+    }
+  }
+}
+
+class _StoredPage {
+  const _StoredPage({
+    required this.text,
+    required this.fingerprint,
+    required this.version,
+  });
+
+  final String text;
+  final String fingerprint;
+  final int version;
+
+  bool fits(PageTextKey key) =>
+      fingerprint == key.fingerprint && version == key.version;
 }
 
 /// Хранилище позиций в памяти.
