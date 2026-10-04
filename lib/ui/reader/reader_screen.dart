@@ -786,6 +786,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         store: widget.services.data.pageTexts,
         bookId: _book.id,
         fingerprint: _book.fileHash,
+        onBookRead: _bookRead,
       );
       // Найденное приходит по мере поиска: совпадения на открытой
       // странице подсвечиваются, как только до неё дошла очередь.
@@ -841,6 +842,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _texts?.startPass(from: controller.page);
       }
     });
+  }
+
+  /// Книга прочитана проходом целиком — признак скана сверяется с тем,
+  /// что в ней нашлось на самом деле (F-DEV-13).
+  ///
+  /// При импорте на текст смотрят первые страницы: книгу с картинками в
+  /// начале и текстом дальше он назвал бы сканом, а книгу, которую не
+  /// смог прочесть, не назвал бы никак. Теперь ответ точный, и метка на
+  /// обложке ему следует.
+  void _bookRead(bool hasText) {
+    if (!mounted || _book.hasTextLayer == hasText) {
+      return;
+    }
+    _book = _book.copyWith(hasTextLayer: hasText);
+    unawaited(widget.services.data.library.setTextLayer(_book.id, hasText));
   }
 
   /// Останавливает фоновый проход: приложение свернули.

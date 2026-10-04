@@ -27,6 +27,10 @@ import 'fake_reading.dart';
 /// [opener] подменяет открывателя книги для чтения — когда тесту надо
 /// решать самому, откроется ли книга и когда. Обложек и обхода устройства
 /// это не касается.
+///
+/// [scanRunner] подменяет сам обход устройства — когда тесту надо решать,
+/// когда он кончится и чем: дойдёт до конца, оборвётся или будет идти,
+/// пока его не остановят. Без него обход «находит» [onDevice].
 AppServices testServices({
   required AppData data,
   ReaderDocument? document,
@@ -39,6 +43,7 @@ AppServices testServices({
   VolumeKeys volumeKeys = const NoVolumeKeys(),
   FullScreenWindow window = const NoFullScreenWindow(),
   List<ScannedFile> onDevice = const <ScannedFile>[],
+  ScanRunner? scanRunner,
 }) {
   final ReaderDocument doc =
       document ?? FakeReaderDocument(pages: <String>['текст']);
@@ -77,7 +82,7 @@ AppServices testServices({
       // временем `flutter test` не дожидается, а проверять здесь надо
       // экран, а не файловую систему. Настоящий обход проверяется
       // отдельно, на дереве во временной папке.
-      runner: (List<String> roots) => fakeScan(onDevice),
+      runner: scanRunner ?? (List<String> roots) => fakeScan(onDevice),
     ),
   );
 }

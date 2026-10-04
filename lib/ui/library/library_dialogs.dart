@@ -4,6 +4,7 @@ import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/library/category_style.dart';
 import '../../domain/library/ids.dart';
+import '../../domain/library/scan_mark.dart';
 import '../../domain/theme/app_palette.dart';
 import '../theme/palette_scope.dart';
 
@@ -79,7 +80,7 @@ Future<BookAction?> askBookAction(BuildContext context, Book book) {
 String _describeBook(Book book) {
   final List<String> parts = <String>[
     if (book.pageCount != null) 'страниц: ${book.pageCount}',
-    if (book.hasTextLayer == false) 'скан без текстового слоя',
+    if (isMarkedScan(book.hasTextLayer)) 'скан без текстового слоя',
   ];
   return parts.isEmpty ? 'книга на полке' : parts.join(' · ');
 }

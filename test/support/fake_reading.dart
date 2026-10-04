@@ -438,9 +438,7 @@ class MemoryBookStorage implements BookStorage {
 /// Нужен там, где книга на полке и файл в хранилище должны быть одной и
 /// той же книгой: перепривязка сверяет отпечатки (BUG-19), и книга с
 /// выдуманным отпечатком для неё — чужой файл.
-Future<String> memoryBookHash([
-  List<int> bytes = const <int>[37, 80, 68, 70],
-]) {
+Future<String> memoryBookHash([List<int> bytes = const <int>[37, 80, 68, 70]]) {
   return bookFingerprint(MemoryBookHandle(bytes));
 }
 

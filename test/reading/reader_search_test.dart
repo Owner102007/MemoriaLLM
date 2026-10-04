@@ -338,6 +338,36 @@ void main() {
 
       expect(reads(document), 0);
     });
+
+    testWidgets('F-DEV-13: прочитанная книга с текстом — не скан', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester, document: threes());
+      // Книга заведена без признака: при импорте узнать не удалось.
+      expect((await data.library.bookById('book-1'))!.hasTextLayer, isNull);
+
+      await tester.pump(kTextPassDelay);
+      await tester.pump();
+      await tester.pump();
+
+      expect((await data.library.bookById('book-1'))!.hasTextLayer, isTrue);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-DEV-13: прочитанный целиком скан назван сканом', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(tester, document: FakeReaderDocument.blank(4));
+
+      await tester.pump(kTextPassDelay);
+      await tester.pump();
+      await tester.pump();
+
+      expect((await data.library.bookById('book-1'))!.hasTextLayer, isFalse);
+
+      await unmount(tester);
+    });
   });
 
   group('F-TEXT-11: панель рядом со страницей на широком окне', () {

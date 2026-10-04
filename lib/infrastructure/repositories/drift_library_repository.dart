@@ -130,6 +130,14 @@ class DriftLibraryRepository implements LibraryRepository {
   }
 
   @override
+  Future<void> setTextLayer(String bookId, bool hasTextLayer) async {
+    await _touch(
+      bookId,
+      BooksCompanion(hasTextLayer: Value<bool?>(hasTextLayer)),
+    );
+  }
+
+  @override
   Future<void> clearCategory(String categoryId) async {
     final Hlc stamp = _clock.issue();
     final String mark = stamp.toString();

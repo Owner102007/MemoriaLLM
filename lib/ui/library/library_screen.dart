@@ -24,10 +24,30 @@ import 'library_dialogs.dart';
 /// которые никуда не разложили.
 class LibraryScreen extends StatefulWidget {
   /// Создаёт экран.
-  const LibraryScreen({required this.services, super.key});
+  const LibraryScreen({
+    required this.services,
+    this.onAddBooks,
+    this.onReading,
+    super.key,
+  });
 
   /// Службы приложения.
   final AppServices services;
+
+  /// Просьба показать книги устройства, чтобы добавить их на полку
+  /// (F-APP-02). Аргумент — категория, чей «+» нажали; `null` — кнопка в
+  /// шапке или на пустой полке.
+  ///
+  /// Оболочка этим переключает раздел. Без обработчика полка открывает
+  /// экран книг устройства поверх себя, как делала до разделов: так она
+  /// живёт в тестах и там, где оболочки нет.
+  final ValueChanged<String?>? onAddBooks;
+
+  /// Читатель открыл книгу (`true`) или закрыл её (`false`).
+  ///
+  /// Оболочка передаёт это разделу «Устройство»: пока книгу читают,
+  /// обход и разборка стоят — движок и диск отданы странице.
+  final ValueChanged<bool>? onReading;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -160,14 +180,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  /// Открывает экран книг, лежащих на устройстве.
+  /// Открывает книги, лежащие на устройстве.
   ///
   /// С S5.5 «+» ведёт сюда, а не в системный диалог. Разница в том, кто
   /// ищет книгу: прежде — читатель, вспоминая, в какой папке она лежит;
   /// теперь — приложение, показывая всё, что нашлось, с обложками и
   /// поиском. Системный диалог никуда не делся и стоит на том же экране
   /// кнопкой в шапке: разрешения может не быть, а книгу добавить надо.
+  ///
+  /// С шага 10 книги устройства — раздел главной навигации (F-APP-02):
+  /// полка просит оболочку переключиться на него и называет категорию.
   Future<void> _addBooks(String? categoryId) async {
+    final ValueChanged<String?>? onAddBooks = widget.onAddBooks;
+    if (onAddBooks != null) {
+      onAddBooks(categoryId);
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => DeviceBooksScreen(
@@ -365,12 +393,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// записывалось и тут, до открытия: одно открытие считалось дважды, а
   /// книга с потерянным файлом поднималась в «Сначала недавние».
   Future<void> _openBook(Book book) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (BuildContext context) =>
-            ReaderScreen(book: book, services: widget.services),
-      ),
-    );
+    widget.onReading?.call(true);
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (BuildContext context) =>
+              ReaderScreen(book: book, services: widget.services),
+        ),
+      );
+    } finally {
+      widget.onReading?.call(false);
+    }
   }
 
   void _say(String message) {
@@ -402,7 +435,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _scaffold(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Библиотека'),
+        title: const Text('Полка'),
         actions: <Widget>[
           PopupMenuButton<ShelfSort>(
             key: const Key('library-sort'),

@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../../application/library/cover_service.dart';
 import '../../domain/library/book.dart';
+import '../../domain/library/scan_mark.dart';
 import '../../domain/library/shelf.dart';
 import '../../domain/reading/navigation.dart';
+import 'scan_tag.dart';
 
 /// Один блок полки: книга.
 ///
@@ -137,6 +139,17 @@ class _CoverFrame extends StatelessWidget {
             },
           ),
           _Spine(thickness: spineThickness(book)),
+          // F-DEV-13: скан виден на самой обложке, а не только в меню
+          // книги. Внизу слева: правый верхний угол занят кнопкой меню,
+          // а вдоль левого края идёт корешок.
+          if (isMarkedScan(book.hasTextLayer))
+            Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8, bottom: 4),
+                child: ScanTag(key: Key('library-scan-${book.id}')),
+              ),
+            ),
           if (progress > 0)
             Align(
               alignment: Alignment.bottomCenter,

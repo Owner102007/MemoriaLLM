@@ -3,6 +3,7 @@ import '../../domain/library/book_file_picker.dart';
 import '../../domain/library/book_source.dart';
 import '../../domain/library/book_storage.dart';
 import '../../domain/library/ids.dart';
+import '../../domain/library/scan_mark.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../infrastructure/files/file_fingerprint.dart';
 
@@ -22,6 +23,39 @@ class ImportReport {
 
   /// Всё ли получилось.
   bool get isClean => failed.isEmpty;
+
+  /// Вставшие на полку сканы без текстового слоя (F-DEV-13).
+  List<Book> get scans => <Book>[
+    for (final Book book in added)
+      if (isMarkedScan(book.hasTextLayer)) book,
+  ];
+}
+
+/// Что сказать читателю после добавления книг.
+///
+/// F-DEV-13: о скане говорится **сразу**, а не когда читатель попробует
+/// выделить в нём слово. Одна книга — названа она сама; пачка — число
+/// сканов одной строкой: перечислять их поимённо в сообщении, которое
+/// висит несколько секунд, незачем — у каждого метка на обложке.
+String describeImportReport(ImportReport report) {
+  if (report.added.isEmpty) {
+    return 'Не удалось добавить ни одной книги из ${report.total}';
+  }
+  final List<Book> scans = report.scans;
+  if (report.isClean && report.added.length == 1) {
+    return scans.isEmpty
+        ? 'Книга добавлена'
+        : '«${scans.single.title}» — скан: $kScanExplanation';
+  }
+  final String head = report.isClean
+      ? 'Добавлено книг: ${report.added.length}'
+      : 'Добавлено ${report.added.length} из ${report.total}; '
+            'не открылось: ${report.failed.length}';
+  if (scans.isEmpty) {
+    return head;
+  }
+  return '$head. Сканов без текста: ${scans.length} — в них не работают '
+      'выделение, поиск и функции';
 }
 
 /// Файл, который не удалось завести.

@@ -401,9 +401,8 @@ void main() {
 
       // Другое издание или файл после распознавания: та же книга с
       // другим отпечатком. Запретить это нельзя — можно только спросить.
-      final Book relinked = await stranger(
-        storage: storage,
-      ).relink(book, other, onMismatch: (RelinkMismatch _) async => true);
+      final Book relinked = await stranger(storage: storage)
+          .relink(book, other, onMismatch: (RelinkMismatch _) async => true);
 
       expect(relinked.id, book.id);
       expect(relinked.title, book.title);
@@ -448,9 +447,8 @@ void main() {
       final Book loose = testBook(hash: '');
       await data.library.save(loose);
 
-      final Book relinked = await stranger(
-        storage: RecordingStorage(),
-      ).relink(loose, other);
+      final Book relinked = await stranger(storage: RecordingStorage())
+          .relink(loose, other);
 
       expect(relinked.id, loose.id);
       expect(relinked.fileHash, 'hash-чужой');

@@ -10,6 +10,7 @@ import 'package:memoria/domain/library/drag_scroll.dart';
 import 'package:memoria/domain/library/shelf.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/ui/library/book_card.dart';
+import 'package:memoria/ui/library/device_books_screen.dart';
 import 'package:memoria/ui/library/library_screen.dart';
 
 import '../data/test_data.dart';
@@ -613,6 +614,89 @@ void main() {
       await pumpShelf(tester, testServices(data: data));
 
       expect(find.byKey(const Key('shelf-menu-')), findsNothing);
+
+      await unmount(tester);
+    });
+  });
+
+  group('F-APP-02: полка внутри оболочки с разделами', () {
+    testWidgets('F-APP-02: полка просит раздел, а не открывает экран', (
+      WidgetTester tester,
+    ) async {
+      await data.categories.save(_category('study', 'Учёба'));
+      final List<String?> asked = <String?>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LibraryScreen(
+            services: testServices(data: data),
+            onAddBooks: asked.add,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('library-open-file')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('library-add-study')));
+      await tester.pumpAndSettle();
+
+      // Кнопка шапки категории не называет, «+» — называет свою.
+      expect(asked, <String?>[null, 'study']);
+      expect(find.byType(DeviceBooksScreen), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: полка говорит, когда книгу открыли и закрыли', (
+      WidgetTester tester,
+    ) async {
+      await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      await data.library.save(testBook());
+      final List<bool> reading = <bool>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LibraryScreen(
+            services: testServices(data: data),
+            onReading: reading.add,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('library-book-book-1')));
+      await tester.pumpAndSettle();
+      expect(reading, <bool>[true]);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(reading, <bool>[true, false]);
+
+      await unmount(tester);
+    });
+  });
+
+  group('F-DEV-13: скан на полке', () {
+    testWidgets('F-DEV-13: скан помечен на обложке', (
+      WidgetTester tester,
+    ) async {
+      await data.library.save(testBook().copyWith(hasTextLayer: false));
+      await pumpShelf(tester, testServices(data: data));
+
+      expect(find.byKey(const Key('library-scan-book-1')), findsOneWidget);
+      expect(find.text('скан'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-DEV-13: книга с текстом и книга без признака — без метки', (
+      WidgetTester tester,
+    ) async {
+      await data.library.save(testBook().copyWith(hasTextLayer: true));
+      await data.library.save(testBook(id: 'book-2', hash: 'hash-2'));
+      await pumpShelf(tester, testServices(data: data));
+
+      expect(find.byType(BookCard), findsNWidgets(2));
+      expect(find.text('скан'), findsNothing);
 
       await unmount(tester);
     });

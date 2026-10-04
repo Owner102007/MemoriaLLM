@@ -198,10 +198,7 @@ void main() {
       // Прежде поток не закрывался вовсе: обход «шёл» вечно.
       expect(events, isEmpty);
       expect(errors.single, isA<ScanFailure>());
-      expect(
-        (errors.single as ScanFailure).reason,
-        contains('диск отвалился'),
-      );
+      expect((errors.single as ScanFailure).reason, contains('диск отвалился'));
     });
 
     test('BUG-16: изолят, вышедший без «готово», — тоже обрыв', () async {

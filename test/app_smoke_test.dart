@@ -45,6 +45,7 @@ void main() {
 
     expect(find.text('Memoria LLM HB'), findsOneWidget);
     expect(find.byKey(const Key('nav-library')), findsOneWidget);
+    expect(find.byKey(const Key('nav-device')), findsOneWidget);
     expect(find.byKey(const Key('nav-settings')), findsOneWidget);
     expect(find.byKey(const Key('library-open-file')), findsOneWidget);
 
@@ -95,15 +96,17 @@ void main() {
     expect(find.byKey(const Key('library-open-file-empty')), findsOneWidget);
     expect(find.byKey(const Key('library-shelf')), findsNothing);
 
-    // Кнопка на пустой полке ведёт на экран книг устройства. Ничего не
-    // выбрав, читатель возвращается назад — и полка обязана остаться
-    // пустой, а не завестись сама собой.
+    // Кнопка на пустой полке ведёт в раздел «Устройство» (F-APP-02).
+    // Ничего не выбрав, читатель возвращается назад — и полка обязана
+    // остаться пустой, а не завестись сама собой.
     await tester.tap(find.byKey(const Key('library-open-file-empty')));
     await tester.pumpAndSettle();
-    expect(find.text('Книги на устройстве'), findsOneWidget);
+    expect(find.byKey(const Key('device-pick-files')), findsOneWidget);
+    expect(find.byKey(const Key('library-open-file-empty')), findsNothing);
 
-    await tester.pageBack();
+    await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('library-open-file-empty')), findsOneWidget);
     expect(find.byKey(const Key('library-shelf')), findsNothing);
 
     await unmount(tester);

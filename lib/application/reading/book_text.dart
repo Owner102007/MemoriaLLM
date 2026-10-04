@@ -47,6 +47,7 @@ class BookTextCache {
     required String fingerprint,
     int version = kPageTextVersion,
     this.passBatch = kTextPassBatch,
+    this.onBookRead,
   }) : _document = document,
        _store = store,
        _key = PageTextKey(
@@ -57,6 +58,15 @@ class BookTextCache {
 
   /// Сколько страниц проход записывает одним разом.
   final int passBatch;
+
+  /// Зовётся, когда проход кончился, а книга запомнена целиком
+  /// (F-DEV-13): `true` — в ней есть текст, `false` — нет ни знака.
+  ///
+  /// При импорте на текст проверяются только первые страницы, и книга с
+  /// картинками в начале и текстом дальше называется сканом зря. Кэш
+  /// знает ответ точно — когда прочитана вся книга, — и говорит его
+  /// тому, кто ведёт признак на полке.
+  final void Function(bool hasText)? onBookRead;
 
   final ReaderDocument _document;
   final PageTextRepository _store;
@@ -100,6 +110,16 @@ class BookTextCache {
       total += size;
     }
     return total;
+  }
+
+  /// Есть ли в книге текст — по прочитанному, а не по первым страницам
+  /// (F-DEV-13). `null`, пока книга не запомнена целиком: о книге,
+  /// которую не дочитали или не смогли прочесть, ответа нет.
+  bool? get readVerdict {
+    if (pageCount <= 0 || !isComplete) {
+      return null;
+    }
+    return cachedSize > 0;
   }
 
   /// Идёт ли сейчас фоновый проход.
@@ -246,6 +266,12 @@ class BookTextCache {
     }
     // Остановленный проход прочитанное не выбрасывает.
     await _save(batch);
+    // Проход дошёл до конца, и книга запомнена вся — про её текст теперь
+    // известно точно. Остановленный и закрытый молчат.
+    final bool? verdict = readVerdict;
+    if (verdict != null && !_closed && run == _passRun) {
+      onBookRead?.call(verdict);
+    }
   }
 
   /// Текст страницы из движка; `null` — страница не прочиталась.
@@ -295,7 +321,11 @@ class BookTextCache {
     for (final MapEntry<int, String> entry in texts.entries) {
       _unsaved.remove(entry.key);
       if (saved) {
-        _cached[entry.key] = entry.value.length;
+        // Страница из одних пробелов — страница без текста: по этим
+        // длинам кэш отвечает, есть ли в книге текст (F-DEV-13).
+        _cached[entry.key] = entry.value.trim().isEmpty
+            ? 0
+            : entry.value.length;
       }
     }
   }

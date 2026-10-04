@@ -7,8 +7,10 @@ import '../../domain/library/book_source.dart';
 import '../../domain/library/category_style.dart';
 import '../../domain/library/cover.dart';
 import '../../domain/library/device_files.dart';
+import '../../domain/library/scan_mark.dart';
 import '../../domain/theme/app_palette.dart';
 import '../theme/palette_scope.dart';
+import 'scan_tag.dart';
 import 'shelf_pattern.dart';
 
 /// Карточка книги, найденной на устройстве.
@@ -122,6 +124,16 @@ class _DeviceBookCardState extends State<DeviceBookCard> {
                         icon: Icons.check,
                         label: 'на полке',
                         color: theme.colorScheme.secondary,
+                      ),
+                    ),
+                  // F-DEV-13: скан назван сканом до того, как книгу
+                  // поставили на полку. Только твёрдое «текста нет»: пока
+                  // разборка до файла не дошла, метки нет.
+                  if (isMarkedScan(widget.entry.primary.hasTextLayer))
+                    Align(
+                      alignment: Alignment.bottomLeft,
+                      child: ScanTag(
+                        key: Key('device-scan-${widget.entry.primary.path}'),
                       ),
                     ),
                   if (widget.selected)

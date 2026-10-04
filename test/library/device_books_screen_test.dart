@@ -1,19 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/domain/library/book.dart';
+import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/device_files.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
+import 'package:memoria/infrastructure/files/device_scanner.dart';
 import 'package:memoria/infrastructure/files/file_fingerprint.dart';
 import 'package:memoria/ui/library/device_book_card.dart';
 import 'package:memoria/ui/library/device_books_screen.dart';
 
 import '../data/test_data.dart';
+import '../support/fake_reading.dart';
 import '../support/test_services.dart';
 
 /// Экран «Книги на устройстве».
@@ -247,6 +252,348 @@ void main() {
         findsOneWidget,
       );
       expect(find.byKey(const Key('device-pick-empty')), findsOneWidget);
+
+      await unmount(tester);
+    });
+  });
+
+  group('F-DEV-13: скан назван сканом', () {
+    const String path = '/device/Книги/Атлас.pdf';
+
+    testWidgets('F-DEV-13: скан помечен на карточке', (
+      WidgetTester tester,
+    ) async {
+      // Ни на одной странице текста нет — разборка это увидит.
+      await pumpScreen(
+        tester,
+        testServices(
+          data: data,
+          document: FakeReaderDocument.blank(3),
+          onDevice: <ScannedFile>[onDisk(path)],
+        ),
+      );
+
+      expect(find.byKey(const Key('device-scan-$path')), findsOneWidget);
+      expect(find.text('скан'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-DEV-13: книга с текстом метки не получает', (
+      WidgetTester tester,
+    ) async {
+      await pumpScreen(
+        tester,
+        testServices(data: data, onDevice: <ScannedFile>[onDisk(path)]),
+      );
+
+      expect(find.byType(DeviceBookCard), findsOneWidget);
+      expect(find.text('скан'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-DEV-13: при добавлении скана сказано, что в нём не так', (
+      WidgetTester tester,
+    ) async {
+      await pumpScreen(
+        tester,
+        testServices(
+          data: data,
+          document: FakeReaderDocument.blank(3),
+          onDevice: <ScannedFile>[onDisk(path)],
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('device-card-$path')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('device-add')));
+      await tester.pumpAndSettle();
+
+      expect((await data.library.books()).single.hasTextLayer, isFalse);
+      expect(find.textContaining('скан: текст не распознан'), findsOneWidget);
+      expect(
+        find.textContaining('выделение, поиск и функции'),
+        findsOneWidget,
+      );
+
+      await unmount(tester);
+    });
+  });
+
+  group('BUG-16: оборванный обход', () {
+    testWidgets('BUG-16: причина названа, и обход можно повторить', (
+      WidgetTester tester,
+    ) async {
+      final ScannedFile file = onDisk('/device/Книги/Онегин.pdf');
+      Stream<ScanEvent> broken() async* {
+        throw const ScanFailure('нет доступа к папке');
+      }
+
+      final List<Stream<ScanEvent>> runs = <Stream<ScanEvent>>[
+        broken(),
+        fakeScan(<ScannedFile>[file]),
+      ];
+      await pumpScreen(
+        tester,
+        testServices(
+          data: data,
+          scanRunner: (List<String> roots) => runs.removeAt(0),
+        ),
+      );
+
+      // Прежде здесь вечно висело «Смотрим устройство…».
+      expect(find.byKey(const Key('device-scan-failure')), findsOneWidget);
+      expect(find.textContaining('нет доступа к папке'), findsOneWidget);
+      expect(find.textContaining('Смотрим устройство'), findsNothing);
+      // И пустой список не выдаётся за «PDF не нашлось»: обход не дошёл.
+      expect(find.textContaining('PDF на устройстве не нашлось'), findsNothing);
+      expect(find.textContaining('Обход устройства прервался'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('device-rescan')));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('device-scan-failure')), findsNothing);
+      expect(find.byType(DeviceBookCard), findsOneWidget);
+
+      await unmount(tester);
+    });
+  });
+
+  group('F-APP-02: раздел «Устройство»', () {
+    /// Обход, который идёт, пока его не остановят: по событию за раз.
+    late List<StreamController<ScanEvent>> feeds;
+
+    setUp(() => feeds = <StreamController<ScanEvent>>[]);
+    tearDown(() async {
+      for (final StreamController<ScanEvent> feed in feeds) {
+        await feed.close();
+      }
+    });
+
+    AppServices endless() {
+      return testServices(
+        data: data,
+        scanRunner: (List<String> roots) {
+          final StreamController<ScanEvent> feed =
+              StreamController<ScanEvent>();
+          feeds.add(feed);
+          return feed.stream;
+        },
+      );
+    }
+
+    Future<void> pumpSection(
+      WidgetTester tester,
+      AppServices services, {
+      bool visible = true,
+      bool paused = false,
+      String? categoryId,
+      VoidCallback? onClearCategory,
+      VoidCallback? onAdded,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DeviceBooksScreen(
+            services: services,
+            section: true,
+            visible: visible,
+            paused: paused,
+            categoryId: categoryId,
+            onClearCategory: onClearCategory,
+            onAdded: onAdded,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('F-APP-02: у раздела своё название', (
+      WidgetTester tester,
+    ) async {
+      await pumpSection(tester, testServices(data: data));
+
+      expect(find.text('Устройство'), findsOneWidget);
+      expect(find.text('Книги на устройстве'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: уход в другой раздел обход не останавливает', (
+      WidgetTester tester,
+    ) async {
+      final AppServices services = endless();
+      await pumpSection(tester, services);
+      expect(services.deviceLibrary.isScanning, isTrue);
+
+      await pumpSection(tester, services, visible: false);
+
+      expect(services.deviceLibrary.isScanning, isTrue);
+      expect(feeds.length, 1, reason: 'обход тот же, а не новый');
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: при идущем обходе возвращение нового не заводит', (
+      WidgetTester tester,
+    ) async {
+      final AppServices services = endless();
+      await pumpSection(tester, services);
+      await pumpSection(tester, services, visible: false);
+      await pumpSection(tester, services);
+
+      expect(feeds.length, 1);
+      expect(services.deviceLibrary.isScanning, isTrue);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: возвращение после обхода — новый обход', (
+      WidgetTester tester,
+    ) async {
+      int scans = 0;
+      final AppServices services = testServices(
+        data: data,
+        scanRunner: (List<String> roots) {
+          scans++;
+          return fakeScan(<ScannedFile>[onDisk('/device/Онегин.pdf')]);
+        },
+      );
+      await pumpSection(tester, services);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(scans, 1);
+
+      await pumpSection(tester, services, visible: false);
+      expect(scans, 1);
+      await pumpSection(tester, services);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      expect(scans, 2);
+      expect(find.byType(DeviceBookCard), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: открытая книга останавливает обход', (
+      WidgetTester tester,
+    ) async {
+      final AppServices services = endless();
+      await pumpSection(tester, services);
+      feeds.single.add(
+        ScanEvent(
+          file: onDisk('/device/Онегин.pdf'),
+          directory: '',
+          visited: 0,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Смотрим устройство:'), findsOneWidget);
+
+      await pumpSection(tester, services, paused: true);
+
+      expect(services.deviceLibrary.isScanning, isFalse);
+      // Строка хода убрана: обхода, о котором она говорила, больше нет.
+      expect(find.textContaining('Смотрим устройство:'), findsNothing);
+      // BUG-06: остановка ничего не испортила — найденное записано.
+      expect((await data.deviceFiles.files()).single.missing, isFalse);
+
+      // Книгу закрыли — обход начинается заново.
+      await pumpSection(tester, services);
+      expect(feeds.length, 2);
+      expect(services.deviceLibrary.isScanning, isTrue);
+
+      // Разборка найденного файла идёт с паузами — даём ей кончиться.
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: раздел не на виду обход не начинает', (
+      WidgetTester tester,
+    ) async {
+      final AppServices services = endless();
+      await pumpSection(tester, services, visible: false);
+      expect(feeds, isEmpty);
+
+      await pumpSection(tester, services);
+      expect(feeds.length, 1);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: названа категория, в которую лягут книги', (
+      WidgetTester tester,
+    ) async {
+      await data.categories.save(
+        BookCategory(
+          id: 'study',
+          title: 'Учёба',
+          position: 0,
+          createdAt: DateTime.utc(2026, 8, 20),
+        ),
+      );
+      int cleared = 0;
+      const String path = '/device/Книги/Онегин.pdf';
+      await pumpSection(
+        tester,
+        testServices(data: data, onDevice: <ScannedFile>[onDisk(path)]),
+        categoryId: 'study',
+        onClearCategory: () => cleared++,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('device-target')), findsOneWidget);
+      expect(find.textContaining('«Учёба»'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('device-target-clear')));
+      await tester.pumpAndSettle();
+      expect(cleared, 1);
+
+      // Книга ложится в названную категорию.
+      await tester.tap(find.byKey(const Key('device-card-$path')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('device-add')));
+      await tester.pumpAndSettle();
+      expect((await data.library.books()).single.categoryId, 'study');
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: без категории строки о ней нет', (
+      WidgetTester tester,
+    ) async {
+      await pumpSection(tester, testServices(data: data));
+
+      expect(find.byKey(const Key('device-target')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-APP-02: добавленные книги — повод показать полку', (
+      WidgetTester tester,
+    ) async {
+      int added = 0;
+      const String path = '/device/Книги/Онегин.pdf';
+      await pumpSection(
+        tester,
+        testServices(data: data, onDevice: <ScannedFile>[onDisk(path)]),
+        onAdded: () => added++,
+      );
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('device-card-$path')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('device-add')));
+      await tester.pumpAndSettle();
+
+      expect(added, 1);
+      expect((await data.library.books()).length, 1);
 
       await unmount(tester);
     });

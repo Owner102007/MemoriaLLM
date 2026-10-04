@@ -223,9 +223,8 @@ void main() {
     await data.settings.write(SettingsKeys.readingFullScreen, 'true');
     // Отпечаток — как у файла, который покажут заново: перепривязка
     // сверяет их (BUG-19), и выдуманный был бы чужим файлом.
-    final Book book = testBook(
-      hash: await memoryBookHash(),
-    ).copyWith(source: _gone);
+    final Book book = testBook(hash: await memoryBookHash())
+        .copyWith(source: _gone);
     await data.library.save(book);
     await tester.pumpWidget(
       MaterialApp(

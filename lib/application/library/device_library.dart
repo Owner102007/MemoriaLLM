@@ -110,9 +110,27 @@ class DeviceLibrary {
   Stream<ScanProgress> scan() {
     final StreamController<ScanProgress> progress =
         StreamController<ScanProgress>();
-    unawaited(_runScan(progress));
-    progress.onCancel = stopScan;
+    // Конец обхода заводится здесь, а не внутри него: отписка от потока
+    // останавливает **свой** обход, а не тот, что идёт сейчас. Поток
+    // зовёт `onCancel` и когда закрывается сам, и прежний обход, доживая,
+    // остановил бы новый, который его сменил.
+    final Completer<_ScanEnd> finished = Completer<_ScanEnd>();
+    unawaited(_runScan(progress, finished));
+    progress.onCancel = () => _stopRun(finished);
     return progress.stream;
+  }
+
+  /// Останавливает обход [run] — и только его.
+  Future<void> _stopRun(Completer<_ScanEnd> run) async {
+    if (identical(_finished, run)) {
+      await stopScan();
+      return;
+    }
+    // Обход ещё не начался или уже сменён другим: объявляется его конец,
+    // а до идущего сейчас ему дела нет.
+    if (!run.isCompleted) {
+      run.complete(const _ScanEnd.stopped());
+    }
   }
 
   /// Останавливает обход.
@@ -218,7 +236,10 @@ class DeviceLibrary {
   /// Забывает список файлов и индекс: разрешение отозвано.
   Future<void> forgetDevice() => _files.forgetEverything();
 
-  Future<void> _runScan(StreamController<ScanProgress> progress) async {
+  Future<void> _runScan(
+    StreamController<ScanProgress> progress,
+    Completer<_ScanEnd> finished,
+  ) async {
     final StorageAccessState state = await _access.state();
     if (!state.allowsScan) {
       progress.add(
@@ -276,7 +297,14 @@ class DeviceLibrary {
     while (_finished != null) {
       await stopScan();
     }
-    final Completer<_ScanEnd> finished = Completer<_ScanEnd>();
+    if (finished.isCompleted) {
+      // Отписались раньше, чем обход начался: начинать его незачем.
+      progress.add(
+        const ScanProgress(found: 0, visitedDirectories: 0, done: true),
+      );
+      await progress.close();
+      return;
+    }
     _finished = finished;
     // Подписка живёт в переменной, а не только в поле: так она заводится
     // и закрывается в одной функции — и видно, что забыть её закрытие

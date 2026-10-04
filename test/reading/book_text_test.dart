@@ -341,6 +341,120 @@ void main() {
     });
   });
 
+  group('F-DEV-13: что известно о тексте прочитанной книги', () {
+    BookTextCache listening(
+      FakeReaderDocument document,
+      MemoryPageTextStore store,
+      List<bool> heard,
+    ) {
+      return BookTextCache(
+        document: document,
+        store: store,
+        bookId: bookId,
+        fingerprint: hash,
+        onBookRead: heard.add,
+      );
+    }
+
+    test('F-DEV-13: книга без единого знака — скан', () async {
+      final List<bool> heard = <bool>[];
+      final BookTextCache cache = listening(
+        FakeReaderDocument.blank(30),
+        MemoryPageTextStore(),
+        heard,
+      );
+      expect(cache.readVerdict, isNull, reason: 'книгу ещё не читали');
+
+      cache.startPass(from: 1);
+      await cache.passDone();
+
+      expect(cache.readVerdict, isFalse);
+      expect(heard, <bool>[false]);
+    });
+
+    test('F-DEV-13: текст в глубине книги находится', () async {
+      // Первые двадцать пять страниц — картинки: проверка при импорте
+      // смотрит двадцать и назвала бы книгу сканом.
+      final List<bool> heard = <bool>[];
+      final BookTextCache cache = listening(
+        FakeReaderDocument(
+          pages: <String>[
+            for (int page = 1; page <= 40; page++) page <= 25 ? '' : 'текст',
+          ],
+        ),
+        MemoryPageTextStore(),
+        heard,
+      );
+
+      cache.startPass(from: 1);
+      await cache.passDone();
+
+      expect(cache.readVerdict, isTrue);
+      expect(heard, <bool>[true]);
+    });
+
+    test('F-DEV-13: страницы из одних пробелов — не текст', () async {
+      final List<bool> heard = <bool>[];
+      final BookTextCache cache = listening(
+        FakeReaderDocument(pages: const <String>[' ', '\n', '']),
+        MemoryPageTextStore(),
+        heard,
+      );
+
+      cache.startPass(from: 1);
+      await cache.passDone();
+
+      expect(heard, <bool>[false]);
+    });
+
+    test('F-DEV-13: непрочитанная книга ответа не даёт', () async {
+      // Вторая страница не читается: «не знаю» — не «скан».
+      final List<bool> heard = <bool>[];
+      final BookTextCache cache = listening(
+        _BrokenPageDocument(),
+        MemoryPageTextStore(),
+        heard,
+      );
+
+      cache.startPass(from: 1);
+      await cache.passDone();
+
+      expect(cache.readVerdict, isNull);
+      expect(heard, isEmpty);
+    });
+
+    test('F-DEV-13: остановленный проход молчит', () async {
+      final List<bool> heard = <bool>[];
+      final BookTextCache cache = listening(
+        book(),
+        MemoryPageTextStore(),
+        heard,
+      );
+
+      cache.startPass(from: 1);
+      cache.stopPass();
+      await pumpEventQueue();
+
+      expect(heard, isEmpty);
+    });
+
+    test('F-DEV-13: запомненная прежде книга отвечает сразу', () async {
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final FakeReaderDocument document = book(pages: 4);
+      final BookTextCache first = cacheOf(document, store);
+      first.startPass(from: 1);
+      await first.passDone();
+
+      final List<bool> heard = <bool>[];
+      final BookTextCache second = listening(document, store, heard);
+      second.startPass(from: 1);
+      await second.passDone();
+
+      expect(heard, <bool>[true]);
+      expect(reads(document), 4, reason: 'второй раз движок не нужен');
+    });
+  });
+
   group('F-TEXT-04: база отказала — книга читается', () {
     test('не читается: текст приходит из движка', () async {
       final FakeReaderDocument document = book(pages: 8);

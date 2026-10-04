@@ -6,6 +6,7 @@ import '../../application/app_services.dart';
 import '../../application/library/book_importer.dart';
 import '../../application/library/device_library.dart';
 import '../../domain/library/book.dart';
+import '../../domain/library/book_category.dart';
 import '../../domain/library/book_file_picker.dart';
 import '../../domain/library/device_files.dart';
 import '../../domain/library/device_scan.dart';
@@ -24,15 +25,55 @@ import 'storage_permission_view.dart';
 /// Разрешения может не быть, и это не тупик: экран честно объясняет, зачем
 /// оно, и рядом оставляет прежний путь — выбрать файлы по одному
 /// системным диалогом.
+///
+/// **С шага 10 это раздел главной навигации** (F-APP-02), а не экран
+/// поверх полки. Раздел живёт всё время, пока открыто приложение, и
+/// отсюда три вещи, которых у экрана не было. Он знает, виден ли он
+/// ([visible]) и не занят ли читатель книгой ([paused]). Обход начинается,
+/// когда раздел открыли, **идёт дальше, когда из него ушли** в другой
+/// раздел, и останавливается, когда открыли книгу или свернули
+/// приложение: разборка уступает читателю и диск, и движок. А остановка
+/// больше ничего не портит (BUG-06).
+///
+/// Без [section] экран ведёт себя по-старому — открывается поверх полки
+/// и закрывается сам, когда книги добавлены: так он живёт в тестах и
+/// там, где оболочки с разделами нет.
 class DeviceBooksScreen extends StatefulWidget {
   /// Создаёт экран.
-  const DeviceBooksScreen({required this.services, this.categoryId, super.key});
+  const DeviceBooksScreen({
+    required this.services,
+    this.categoryId,
+    this.section = false,
+    this.visible = true,
+    this.paused = false,
+    this.onClearCategory,
+    this.onAdded,
+    super.key,
+  });
 
   /// Службы приложения.
   final AppServices services;
 
   /// Категория, в которую попадут выбранные книги.
   final String? categoryId;
+
+  /// Раздел главной навигации, а не экран поверх полки: без стрелки
+  /// «назад» и с коротким названием.
+  final bool section;
+
+  /// Виден ли раздел сейчас. Обход начинается, когда он становится
+  /// видимым.
+  final bool visible;
+
+  /// Занят ли читатель книгой: пока она открыта, обход и разборка стоят.
+  final bool paused;
+
+  /// Читатель снял категорию, названную кнопкой «+» на полке.
+  final VoidCallback? onClearCategory;
+
+  /// Книги встали на полку. Раздел этим просит показать её; экран без
+  /// этого обработчика закрывается сам.
+  final VoidCallback? onAdded;
 
   @override
   State<DeviceBooksScreen> createState() => _DeviceBooksScreenState();
@@ -66,13 +107,59 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
   List<DeviceBookEntry>? _found;
   Set<String> _shelfHashes = const <String>{};
 
+  /// Приложение свёрнуто: обход и разборка стоят.
+  bool _background = false;
+
+  /// Обход остановили мы сами — открытой книгой или сворачиванием. Когда
+  /// помеха уйдёт, он начнётся заново.
+  bool _interrupted = false;
+
+  /// Название категории, в которую лягут книги; `null` — не названа.
+  String? _categoryTitle;
+
   DeviceLibrary get _device => widget.services.deviceLibrary;
+
+  /// Можно ли сейчас обходить устройство и разбирать файлы.
+  bool get _mayWork => !widget.paused && !_background;
+
+  /// Идёт ли обход прямо сейчас.
+  bool get _scanning => _scan != null && !(_progress?.done ?? false);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_start());
+    unawaited(_loadCategory());
+    if (widget.visible && _mayWork) {
+      unawaited(_start());
+    }
+  }
+
+  @override
+  void didUpdateWidget(DeviceBooksScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.categoryId != oldWidget.categoryId) {
+      unawaited(_loadCategory());
+    }
+    if (widget.paused && !oldWidget.paused) {
+      // Книгу открыли: движок и диск — её.
+      unawaited(_pause());
+      return;
+    }
+    if (!_mayWork) {
+      return;
+    }
+    final bool cameBack = widget.visible && !oldWidget.visible;
+    final bool released = !widget.paused && oldWidget.paused;
+    if (released && _ready) {
+      // Книгу закрыли: разборка продолжает с того, на чём встала.
+      unawaited(_indexLoop());
+    }
+    if (widget.visible && (cameBack || (released && _interrupted))) {
+      // Раздел открыли заново — или книгу закрыли, а обход был оборван
+      // ею. Полка за это время могла измениться, устройство — тоже.
+      unawaited(_start(rescan: true));
+    }
   }
 
   @override
@@ -92,11 +179,78 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
     // приложение висело в фоне. Узнать об этом иначе нельзя: система о
     // таком не сообщает.
     if (state == AppLifecycleState.resumed) {
-      unawaited(_start());
+      _background = false;
+      if (!_mayWork) {
+        return;
+      }
+      if (_ready) {
+        unawaited(_indexLoop());
+      }
+      if (widget.visible) {
+        unawaited(_start(rescan: _interrupted));
+      }
+      return;
+    }
+    // Свернули: обход и разборка останавливаются. `inactive` сюда не
+    // входит намеренно — на ПК это всего лишь окно без фокуса, и читатель
+    // по-прежнему на него смотрит.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      _background = true;
+      unawaited(_pause());
     }
   }
 
-  Future<void> _start() async {
+  /// Останавливает обход: читатель открыл книгу или свернул приложение.
+  ///
+  /// Разборка остановится сама — её цикл смотрит на [_mayWork]. Строка
+  /// хода убирается: обхода, о котором она говорила, больше нет.
+  Future<void> _pause() async {
+    final StreamSubscription<ScanProgress>? scan = _scan;
+    if (scan == null) {
+      return;
+    }
+    final bool wasScanning = _scanning;
+    _scan = null;
+    if (wasScanning) {
+      _interrupted = true;
+      if (mounted) {
+        setState(() => _progress = null);
+      }
+    }
+    await scan.cancel();
+    await _device.stopScan();
+  }
+
+  /// Узнаёт название категории, в которую лягут книги.
+  Future<void> _loadCategory() async {
+    final String? id = widget.categoryId;
+    if (id == null) {
+      if (_categoryTitle != null && mounted) {
+        setState(() => _categoryTitle = null);
+      }
+      return;
+    }
+    String? title;
+    final List<BookCategory> all = await widget.services.data.categories
+        .categories();
+    for (final BookCategory category in all) {
+      if (category.id == id) {
+        title = category.title;
+        break;
+      }
+    }
+    if (mounted && widget.categoryId == id) {
+      setState(() => _categoryTitle = title);
+    }
+  }
+
+  /// Проверяет доступ и начинает работу.
+  ///
+  /// [rescan] — обойти устройство заново, даже если раздел уже открывали:
+  /// так он обновляется при каждом возвращении в него.
+  Future<void> _start({bool rescan = false}) async {
     final StorageAccessState access = await _device.accessState();
     if (!mounted) {
       return;
@@ -117,11 +271,14 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
       }
       return;
     }
-    if (_ready && !changed) {
+    if (_ready && !changed && !rescan) {
       return;
     }
     _ready = true;
     await _loadShelf();
+    if (!mounted) {
+      return;
+    }
     _watch ??= _device.watchFiles().listen((List<DeviceFileRecord> records) {
       if (!mounted) {
         return;
@@ -133,7 +290,11 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
       }
     });
     unawaited(_indexLoop());
-    await _rescan();
+    // Обход, который ещё идёт, заново не начинается: читатель ушёл на
+    // полку и вернулся — обход всё это время шёл и своё доделает.
+    if (!_scanning) {
+      await _rescan();
+    }
   }
 
   Future<void> _loadShelf() async {
@@ -151,6 +312,13 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
 
   Future<void> _rescan() async {
     await _scan?.cancel();
+    if (!mounted || !_mayWork) {
+      return;
+    }
+    _interrupted = false;
+    // Строка хода — про этот обход, а не про прошлый: пока новый не
+    // сказал первого слова, прежнего «готово» на экране быть не должно.
+    setState(() => _progress = null);
     _scan = _device.scan().listen((ScanProgress progress) {
       if (!mounted) {
         return;
@@ -173,7 +341,9 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
     }
     _indexing = true;
     try {
-      while (mounted) {
+      // Пока читатель в книге или приложение свёрнуто, разборка стоит:
+      // текст первых страниц читает тот же движок, что рисует страницу.
+      while (mounted && _mayWork) {
         final int meta = await _device.indexBatch(upTo: IndexStage.meta);
         if (meta == 0) {
           final int text = await _device.indexBatch(
@@ -256,28 +426,30 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(_describe(report))));
+    // F-DEV-13: о скане сказано сразу. Такое сообщение длиннее обычного
+    // и висит дольше — его надо успеть прочесть.
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(describeImportReport(report)),
+        duration: report.scans.isEmpty
+            ? const Duration(seconds: 4)
+            : const Duration(seconds: 8),
+      ),
+    );
+    if (report.added.isEmpty) {
+      return;
+    }
     // Книги встали на полку — читателю здесь больше делать нечего, и он
-    // хочет увидеть результат. Но если экран открыт первым (так бывает
-    // только в тесте), возвращаться некуда, и закрывать последний экран
-    // нельзя: приложение осталось бы без единого.
-    if (report.added.isNotEmpty && Navigator.of(context).canPop()) {
+    // хочет увидеть результат. Раздел просит оболочку показать полку;
+    // экран поверх полки закрывается сам. Но если он открыт первым (так
+    // бывает только в тесте), возвращаться некуда, и закрывать последний
+    // экран нельзя: приложение осталось бы без единого.
+    final VoidCallback? onAdded = widget.onAdded;
+    if (onAdded != null) {
+      onAdded();
+    } else if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
-  }
-
-  String _describe(ImportReport report) {
-    if (report.added.isEmpty) {
-      return 'Не удалось добавить ни одной книги из ${report.total}';
-    }
-    if (report.isClean) {
-      return report.added.length == 1
-          ? 'Книга добавлена'
-          : 'Добавлено книг: ${report.added.length}';
-    }
-    return 'Добавлено ${report.added.length} из ${report.total}; '
-        'не открылось: ${report.failed.length}';
   }
 
   @override
@@ -285,7 +457,10 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
     final List<DeviceBookEntry> shown = _entries();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Книги на устройстве'),
+        // Раздел — не экран поверх полки: возвращаться из него некуда,
+        // и стрелки «назад» у него нет (F-APP-02).
+        automaticallyImplyLeading: !widget.section,
+        title: Text(widget.section ? 'Устройство' : 'Книги на устройстве'),
         actions: <Widget>[
           IconButton(
             key: const Key('device-pick-files'),
@@ -295,13 +470,33 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
           ),
         ],
       ),
-      body: _body(shown),
+      body: _withTarget(_body(shown)),
       bottomNavigationBar: _picked.isEmpty
           ? null
           : _AddBar(
               count: _picked.length,
               onAdd: () => unawaited(_addPicked(shown)),
             ),
+    );
+  }
+
+  /// Ставит над содержимым строку о том, куда лягут книги.
+  ///
+  /// Категорию называет кнопка «+» на полке. Прежде экран открывался
+  /// поверх полки ради одного добавления, и забыть, куда добавляешь, было
+  /// некогда; раздел живёт долго, и то, что решено не здесь, должно быть
+  /// видно здесь — и над списком, и над объяснением про доступ: «Выбрать
+  /// файлы вручную» кладёт книги туда же.
+  Widget _withTarget(Widget body) {
+    final String? title = _categoryTitle;
+    if (title == null) {
+      return body;
+    }
+    return Column(
+      children: <Widget>[
+        _TargetLine(title: title, onClear: widget.onClearCategory),
+        Expanded(child: body),
+      ],
     );
   }
 
@@ -329,7 +524,10 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
             ),
           ),
         ),
-        _ProgressLine(progress: _progress, found: shown.length),
+        _ProgressLine(
+          progress: _progress,
+          onRetry: () => unawaited(_rescan()),
+        ),
         Expanded(child: _grid(shown)),
       ],
     );
@@ -340,6 +538,7 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
       return _EmptyDevice(
         searching: _query.trim().isNotEmpty,
         scanning: !(_progress?.done ?? false),
+        failed: _progress?.interrupted ?? false,
         onPickManually: () => unawaited(_pickManually()),
       );
     }
@@ -389,20 +588,96 @@ class _DeviceBooksScreenState extends State<DeviceBooksScreen>
   }
 }
 
-/// Строка о том, как идёт обход.
+/// Строка о том, куда лягут добавленные книги.
+class _TargetLine extends StatelessWidget {
+  const _TargetLine({required this.title, required this.onClear});
+
+  final String title;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 4, 0),
+      child: Row(
+        children: <Widget>[
+          Icon(
+            Icons.folder_outlined,
+            size: 16,
+            color: theme.colorScheme.secondary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Книги лягут в категорию «$title»',
+              key: const Key('device-target'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+          if (onClear != null)
+            IconButton(
+              key: const Key('device-target-clear'),
+              icon: const Icon(Icons.close, size: 18),
+              tooltip: 'Не в категорию',
+              visualDensity: VisualDensity.compact,
+              onPressed: onClear,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Строка о том, как идёт обход — или почему он оборвался.
 class _ProgressLine extends StatelessWidget {
-  const _ProgressLine({required this.progress, required this.found});
+  const _ProgressLine({required this.progress, required this.onRetry});
 
   final ScanProgress? progress;
-  final int found;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
     final ScanProgress? state = progress;
+    final ThemeData theme = Theme.of(context);
+    final String? failure = state?.failure;
+    if (failure != null) {
+      // BUG-16: обход оборвался. Прежде на этом месте вечно висело
+      // «Смотрим устройство…»; теперь названа причина и есть повтор.
+      // Найденное до обрыва остаётся в списке.
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 4, 2),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              Icons.error_outline,
+              size: 14,
+              color: theme.colorScheme.secondary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Обход прервался: $failure',
+                key: const Key('device-scan-failure'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            TextButton(
+              key: const Key('device-rescan'),
+              onPressed: onRetry,
+              child: const Text('Повторить'),
+            ),
+          ],
+        ),
+      );
+    }
     if (state == null || state.done) {
       return const SizedBox(height: 4);
     }
-    final ThemeData theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
       child: Row(
@@ -464,11 +739,15 @@ class _EmptyDevice extends StatelessWidget {
   const _EmptyDevice({
     required this.searching,
     required this.scanning,
+    required this.failed,
     required this.onPickManually,
   });
 
   final bool searching;
   final bool scanning;
+
+  /// Обход оборвался (BUG-16): «ничего не нашлось» было бы неправдой.
+  final bool failed;
   final VoidCallback onPickManually;
 
   @override
@@ -483,6 +762,10 @@ class _EmptyDevice extends StatelessWidget {
       message =
           'Смотрим устройство. Книги появятся по мере того, '
           'как находятся.';
+    } else if (failed) {
+      message =
+          'Обход устройства прервался, и книг он найти не успел. '
+          'Повторите его или выберите книгу вручную.';
     } else {
       message =
           'PDF на устройстве не нашлось. Книгу всегда можно выбрать '

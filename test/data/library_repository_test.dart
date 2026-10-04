@@ -56,6 +56,21 @@ void main() {
     expect(loaded?.openedAt, when);
   });
 
+  test('F-DEV-13: признак текста правится, не трогая остального', () async {
+    await data.library.save(testBook());
+    await placeBook(data, 'book-1', null, position: 3);
+
+    await data.library.setTextLayer('book-1', false);
+
+    final Book? loaded = await data.library.bookById('book-1');
+    expect(loaded?.hasTextLayer, isFalse);
+    // Место на полке — то, что записала полка, пока книгу читали.
+    expect(loaded?.shelfPosition, 3);
+
+    await data.library.setTextLayer('book-1', true);
+    expect((await data.library.bookById('book-1'))?.hasTextLayer, isTrue);
+  });
+
   test('удаление оставляет надгробие, а не стирает строку', () async {
     await data.library.save(testBook());
     await data.library.delete('book-1');

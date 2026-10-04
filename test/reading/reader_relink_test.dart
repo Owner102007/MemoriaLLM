@@ -107,9 +107,8 @@ void main() {
   ) async {
     // Отпечаток книги — тот же, что у файла, который покажут заново:
     // файл переехал, а не подменён (BUG-19).
-    final Book book = testBook(
-      hash: await memoryBookHash(),
-    ).copyWith(source: _gone);
+    final Book book = testBook(hash: await memoryBookHash())
+        .copyWith(source: _gone);
     await data.library.save(book);
 
     final _MissingThenFound opener = _MissingThenFound();
