@@ -111,16 +111,52 @@ void main() {
       expect(decisions, isEmpty);
     });
 
-    test('вернувшийся файл перестаёт быть пропавшим', () {
+    test('BUG-06: вернувшийся файл возвращается в разборку', () {
       final List<ScanDecision> decisions = reconcileScan(
         known: <DeviceFileRecord>[known('/sd/книга.pdf', missing: true)],
         found: <ScannedFile>[file('/sd/книга.pdf')],
         seenAt: later,
       );
 
-      expect(decisions.single.verdict, ScanVerdict.unchanged);
+      // Не «без изменений»: строку в индексе убрали, когда файл пропал,
+      // и «прежний» файл в индекс не вернулся бы никогда.
+      expect(decisions.single.verdict, ScanVerdict.returned);
       expect(decisions.single.record.missing, isFalse);
+      // Отпечаток и метаданные считать заново незачем — карту памяти
+      // вынимают и вставляют обратно.
       expect(decisions.single.record.fingerprint, 'hash-1');
+      // А текст первых страниц читается ещё раз: в записи его нет.
+      expect(decisions.single.record.stage, IndexStage.meta);
+    });
+
+    test('BUG-06: вернувшийся без разборки остаётся на своей ступени', () {
+      final List<ScanDecision> decisions = reconcileScan(
+        known: <DeviceFileRecord>[
+          known(
+            '/sd/книга.pdf',
+            missing: true,
+            hash: null,
+            stage: IndexStage.name,
+          ),
+        ],
+        found: <ScannedFile>[file('/sd/книга.pdf')],
+        seenAt: later,
+      );
+
+      expect(decisions.single.verdict, ScanVerdict.returned);
+      expect(decisions.single.record.stage, IndexStage.name);
+    });
+
+    test('вернувшийся изменённым разбирается с нуля', () {
+      final List<ScanDecision> decisions = reconcileScan(
+        known: <DeviceFileRecord>[known('/sd/книга.pdf', missing: true)],
+        found: <ScannedFile>[file('/sd/книга.pdf', size: 2000)],
+        seenAt: later,
+      );
+
+      expect(decisions.single.verdict, ScanVerdict.changed);
+      expect(decisions.single.record.missing, isFalse);
+      expect(decisions.single.record.fingerprint, isNull);
     });
   });
 

@@ -856,22 +856,50 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// ссылку — книга при этом никуда не делась: место чтения, цитаты и
   /// заметки принадлежат ей, а не файлу. Поэтому «файл недоступен» — это
   /// не тупик с кнопкой «назад», а предложение показать файл заново.
+  ///
+  /// BUG-19: файл при этом обязан быть тем же. Если отпечаток не совпал,
+  /// читатель спрошен ([_confirmOtherFile]); отказался — книга остаётся
+  /// как была, и экран возвращается к прежнему сообщению.
   Future<void> _relink() async {
     final PickedFile? file = await widget.services.picker.pickPdf();
     if (file == null || !mounted) {
       return;
     }
-    setState(() {
-      _loading = true;
-      _failure = null;
-    });
+    final DocumentOpenException? before = _failure;
+    // Ждём — колесо; не ждём — прежнее сообщение о том, что случилось.
+    void waiting(bool on) {
+      if (mounted) {
+        setState(() {
+          _loading = on;
+          _failure = on ? null : before;
+        });
+      }
+    }
+
+    waiting(true);
     final BookImporter importer = BookImporter(
       library: widget.services.data.library,
       storage: widget.services.storage,
       opener: widget.services.opener,
     );
     try {
-      _book = await importer.relink(_book, file);
+      _book = await importer.relink(
+        _book,
+        file,
+        onMismatch: (RelinkMismatch mismatch) async {
+          // Пока читатель думает, ждать нечего: под вопросом стоит
+          // прежний экран, а не колесо, которое ничего не делает.
+          waiting(false);
+          final bool agreed = await _confirmOtherFile(mismatch);
+          if (agreed) {
+            waiting(true);
+          }
+          return agreed;
+        },
+      );
+    } on RelinkRefused {
+      waiting(false);
+      return;
     } on DocumentOpenException catch (error) {
       if (mounted) {
         setState(() {
@@ -884,6 +912,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (mounted) {
       await _open();
     }
+  }
+
+  /// Спрашивает, привязать ли книгу к файлу с другим отпечатком (BUG-19).
+  ///
+  /// Ответа «да» по умолчанию нет: закрытый мимо кнопок вопрос — отказ.
+  Future<bool> _confirmOtherFile(RelinkMismatch mismatch) async {
+    if (!mounted) {
+      return false;
+    }
+    final bool? agreed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        key: const Key('relink-mismatch'),
+        title: const Text('Это другой файл'),
+        content: SingleChildScrollView(
+          child: Text(describeRelinkMismatch(mismatch)),
+        ),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('relink-pick-other'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Выбрать другой'),
+          ),
+          FilledButton(
+            key: const Key('relink-force'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Привязать всё равно'),
+          ),
+        ],
+      ),
+    );
+    return agreed ?? false;
   }
 
   void _onControllerChanged() {

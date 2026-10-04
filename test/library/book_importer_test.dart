@@ -285,10 +285,10 @@ void main() {
         FakeReaderDocument(pages: <String>['текст']),
       ).register(_picked);
 
+      // Отпечаток тот же: файл переехал, а не подменён.
       final Book relinked =
           await importer(
             FakeReaderDocument(pages: <String>['текст', 'ещё']),
-            hash: 'hash-другой',
             id: 'id-2',
           ).relink(
             book,
@@ -329,6 +329,147 @@ void main() {
       );
 
       expect(storage.released, <BookSource>[FilePathSource(_picked.path!)]);
+    });
+  });
+
+  group('BUG-19: перепривязка к другому файлу', () {
+    const PickedFile other = PickedFile(
+      path: 'test/fixtures/two_columns.pdf',
+      name: 'чужая.pdf',
+    );
+
+    Future<Book> shelved({RecordingStorage? storage}) {
+      return importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        storage: storage,
+      ).register(_picked);
+    }
+
+    BookImporter stranger({RecordingStorage? storage}) {
+      return importer(
+        FakeReaderDocument(pages: <String>['чужой', 'текст', 'совсем']),
+        hash: 'hash-чужой',
+        storage: storage,
+      );
+    }
+
+    test('BUG-19: чужой файл без согласия книгу не меняет', () async {
+      final RecordingStorage storage = RecordingStorage();
+      final Book book = await shelved(storage: storage);
+
+      // Прежде отпечаток считался и ни с чем не сравнивался: место
+      // чтения, цитаты и заметки молча уезжали к чужому файлу.
+      await expectLater(
+        stranger(storage: storage).relink(book, other),
+        throwsA(isA<RelinkRefused>()),
+      );
+
+      final Book? saved = await data.library.bookById(book.id);
+      expect(saved!.fileHash, 'hash-fixture');
+      expect((saved.source as FilePathSource).path, _picked.path);
+      expect(saved.pageCount, 1);
+      // Принятый было файл отпущен, а прежний источник книги — нет.
+      expect(storage.released, <BookSource>[FilePathSource(other.path!)]);
+    });
+
+    test('BUG-19: читатель спрошен и отказался — книга прежняя', () async {
+      final Book book = await shelved();
+      final List<RelinkMismatch> asked = <RelinkMismatch>[];
+
+      await expectLater(
+        stranger().relink(
+          book,
+          other,
+          onMismatch: (RelinkMismatch mismatch) async {
+            asked.add(mismatch);
+            return false;
+          },
+        ),
+        throwsA(isA<RelinkRefused>()),
+      );
+
+      expect(asked.single.fileName, 'чужая.pdf');
+      expect(asked.single.pagesBefore, 1);
+      expect(asked.single.pagesNow, 3);
+      final Book? saved = await data.library.bookById(book.id);
+      expect(saved!.fileHash, 'hash-fixture');
+    });
+
+    test('BUG-19: с согласия книга привязывается, и она та же', () async {
+      final RecordingStorage storage = RecordingStorage();
+      final Book book = await shelved(storage: storage);
+
+      // Другое издание или файл после распознавания: та же книга с
+      // другим отпечатком. Запретить это нельзя — можно только спросить.
+      final Book relinked = await stranger(
+        storage: storage,
+      ).relink(book, other, onMismatch: (RelinkMismatch _) async => true);
+
+      expect(relinked.id, book.id);
+      expect(relinked.title, book.title);
+      expect(relinked.fileHash, 'hash-чужой');
+      expect(relinked.pageCount, 3);
+      expect((relinked.source as FilePathSource).path, other.path);
+      expect(storage.released, <BookSource>[FilePathSource(_picked.path!)]);
+      expect((await data.library.books()).length, 1);
+    });
+
+    test('BUG-19: тот же файл читателя не спрашивает', () async {
+      final Book book = await shelved();
+      bool asked = false;
+
+      await importer(FakeReaderDocument(pages: <String>['текст'])).relink(
+        book,
+        other,
+        onMismatch: (RelinkMismatch _) async {
+          asked = true;
+          return false;
+        },
+      );
+
+      expect(asked, isFalse);
+    });
+
+    test('BUG-19: отказ не отнимает у книги прежний источник', () async {
+      // Файл выбрали по прежнему пути, а внутри он другой. Отказ не
+      // должен отпускать источник, который у книги был.
+      final RecordingStorage storage = RecordingStorage();
+      final Book book = await shelved(storage: storage);
+
+      await expectLater(
+        stranger(storage: storage).relink(book, _picked),
+        throwsA(isA<RelinkRefused>()),
+      );
+
+      expect(storage.released, isEmpty);
+    });
+
+    test('BUG-19: книга без отпечатка привязывается, как прежде', () async {
+      final Book loose = testBook(hash: '');
+      await data.library.save(loose);
+
+      final Book relinked = await stranger(
+        storage: RecordingStorage(),
+      ).relink(loose, other);
+
+      expect(relinked.id, loose.id);
+      expect(relinked.fileHash, 'hash-чужой');
+    });
+
+    test('BUG-19: вопрос называет обе книги числом страниц', () {
+      final String text = describeRelinkMismatch(
+        RelinkMismatch(
+          book: testBook().copyWith(pageCount: 412),
+          fileName: 'чужая.pdf',
+          pagesNow: 398,
+        ),
+      );
+
+      expect(text, contains('Пиковая дама'));
+      expect(text, contains('страниц: 412'));
+      expect(text, contains('чужая.pdf'));
+      expect(text, contains('страниц: 398'));
+      expect(text, contains('могут указывать не туда'));
     });
   });
 

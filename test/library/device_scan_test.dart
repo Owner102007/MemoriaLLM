@@ -6,6 +6,14 @@ import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
 import 'package:path/path.dart' as p;
 
+/// Изолят обхода, который падает, не найдя ничего (BUG-16).
+Future<void> crashingScan(List<Object> args) async {
+  throw StateError('диск отвалился');
+}
+
+/// Изолят обхода, который выходит молча, не сказав «готово» (BUG-16).
+void silentScan(List<Object> args) {}
+
 /// Обход устройства на дереве, собранном прямо в тесте.
 ///
 /// Телефона у сессии нет, но правила отбора — это чистая работа с
@@ -154,6 +162,55 @@ void main() {
       // Первая папка обошлась, вторая — уже нет. Точное число здесь не
       // важно: важно, что обход слушается и не идёт до конца.
       expect(found.length, lessThan(5));
+    });
+  });
+
+  group('BUG-16: обход в изоляте', () {
+    // Время здесь настоящее — это обычный тест, не widget-тест, — и
+    // изолят в нём живёт так же, как на устройстве.
+    Future<(List<ScanEvent>, List<Object>)> run(
+      ScanEntryPoint? entryPoint,
+    ) async {
+      final List<Object> errors = <Object>[];
+      final Stream<ScanEvent> stream = entryPoint == null
+          ? scanInIsolate(<String>[root.path])
+          : scanInIsolate(<String>[root.path], entryPoint: entryPoint);
+      final List<ScanEvent> events = await stream
+          .handleError((Object error) => errors.add(error))
+          .toList();
+      return (events, errors);
+    }
+
+    test('обход в изоляте доходит до конца без ошибки', () async {
+      await writePdf('Книги/Онегин.pdf');
+
+      final (List<ScanEvent> events, List<Object> errors) = await run(null);
+
+      expect(errors, isEmpty);
+      expect(events.where((ScanEvent e) => e.file != null).length, 1);
+    });
+
+    test('BUG-16: упавший изолят закрывает поток ошибкой', () async {
+      final (List<ScanEvent> events, List<Object> errors) = await run(
+        crashingScan,
+      );
+
+      // Прежде поток не закрывался вовсе: обход «шёл» вечно.
+      expect(events, isEmpty);
+      expect(errors.single, isA<ScanFailure>());
+      expect(
+        (errors.single as ScanFailure).reason,
+        contains('диск отвалился'),
+      );
+    });
+
+    test('BUG-16: изолят, вышедший без «готово», — тоже обрыв', () async {
+      final (List<ScanEvent> events, List<Object> errors) = await run(
+        silentScan,
+      );
+
+      expect(events, isEmpty);
+      expect(errors.single, isA<ScanFailure>());
     });
   });
 }

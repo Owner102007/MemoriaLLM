@@ -221,7 +221,11 @@ void main() {
     // Сообщение об ошибке во весь монитор ни к чему, а выйти из режима
     // оттуда было бы нечем: клавиши чтения живут на странице.
     await data.settings.write(SettingsKeys.readingFullScreen, 'true');
-    final Book book = testBook().copyWith(source: _gone);
+    // Отпечаток — как у файла, который покажут заново: перепривязка
+    // сверяет их (BUG-19), и выдуманный был бы чужим файлом.
+    final Book book = testBook(
+      hash: await memoryBookHash(),
+    ).copyWith(source: _gone);
     await data.library.save(book);
     await tester.pumpWidget(
       MaterialApp(

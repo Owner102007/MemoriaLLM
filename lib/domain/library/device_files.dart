@@ -169,6 +169,14 @@ enum ScanVerdict {
   /// Файл прежний: открывать его заново незачем.
   unchanged,
 
+  /// Файл числился пропавшим и нашёлся прежним (BUG-06).
+  ///
+  /// Отпечаток и метаданные у него остаются — их незачем считать заново.
+  /// А вот строку в индексе поиска убрали, когда он пропал, и текста для
+  /// неё в записи нет: файл возвращается в индекс по имени и метаданным
+  /// сразу, а текст первых страниц разборка читает ещё раз.
+  returned,
+
   /// Файла больше нет на месте.
   gone,
 }
@@ -223,7 +231,22 @@ List<ScanDecision> reconcileScan({
     final bool same =
         previous.size == file.size &&
         previous.modifiedAt.isAtSameMomentAs(file.modifiedAt);
-    if (same) {
+    if (same && previous.missing) {
+      // BUG-06: прежде вернувшийся файл получал «без изменений» — и в
+      // индекс не возвращался: поиск по устройству его больше не находил.
+      decisions.add(
+        ScanDecision(
+          ScanVerdict.returned,
+          previous.copyWith(
+            seenAt: seenAt,
+            missing: false,
+            stage: previous.stage.reached(IndexStage.text)
+                ? IndexStage.meta
+                : previous.stage,
+          ),
+        ),
+      );
+    } else if (same) {
       decisions.add(
         ScanDecision(
           ScanVerdict.unchanged,

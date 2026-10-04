@@ -50,9 +50,10 @@ class DeviceLibrary {
   /// Сколько страниц смотрит разборка текста.
   ///
   /// Ищутся первые непустые: у скана первая страница часто обложка, у
-  /// книги — титул. Дальше двадцатой не заглядываем: если на двадцати
-  /// страницах текста нет вовсе, его нет и дальше.
-  static const int kTextProbePages = 20;
+  /// книги — титул. Число то же, что у импорта на полку (F-DEV-13):
+  /// одна книга не может быть сканом в одном месте и книгой с текстом
+  /// в другом.
+  static const int kTextProbePages = kTextLayerProbePages;
 
   /// Сколько непустых страниц довольно для индекса.
   static const int kTextPages = 5;
@@ -83,7 +84,7 @@ class DeviceLibrary {
   final DateTime Function() _now;
 
   StreamSubscription<ScanEvent>? _scan;
-  Completer<void>? _finished;
+  Completer<_ScanEnd>? _finished;
 
   /// Идёт ли обход прямо сейчас.
   bool get isScanning => _scan != null;
@@ -100,7 +101,12 @@ class DeviceLibrary {
   /// Обходит устройство и записывает найденное.
   ///
   /// Возвращает поток состояний: сколько найдено, сколько папок пройдено.
-  /// Последнее состояние — с [ScanProgress.done].
+  /// Последнее состояние — с [ScanProgress.done]; у обхода, который
+  /// оборвался, в нём названа причина ([ScanProgress.failure]).
+  ///
+  /// Обход один: пока идёт прежний, новый его останавливает. Остановка
+  /// ничего не портит (BUG-06) — найденное записано, а пропавшим не
+  /// объявляется никто.
   Stream<ScanProgress> scan() {
     final StreamController<ScanProgress> progress =
         StreamController<ScanProgress>();
@@ -114,16 +120,19 @@ class DeviceLibrary {
   /// Отписка от потока не приводит к `onDone` — значит, тот, кто ждёт
   /// конца обхода, ждал бы вечно. Поэтому конец объявляется здесь же:
   /// остановленный обход обязан закончиться так же честно, как дошедший
-  /// до края.
+  /// до края. Но **дошедшим до края он от этого не становится** (BUG-06):
+  /// найденное записывается, а судить о пропавших по нему нельзя.
   Future<void> stopScan() async {
     final StreamSubscription<ScanEvent>? scan = _scan;
     _scan = null;
-    await scan?.cancel();
-    final Completer<void>? finished = _finished;
+    final Completer<_ScanEnd>? finished = _finished;
     _finished = null;
+    // Конец объявляется раньше отписки: отписка ждёт, пока умрёт изолят,
+    // а тот, кто ждёт конца обхода, ждать этого не обязан.
     if (finished != null && !finished.isCompleted) {
-      finished.complete();
+      finished.complete(const _ScanEnd.stopped());
     }
+    await scan?.cancel();
   }
 
   /// Разбирает следующую порцию файлов.
@@ -261,7 +270,13 @@ class DeviceLibrary {
     // чем база успевает их принять, и две транзакции внахлёст ничего не
     // ускорят, зато сделают порядок записи непредсказуемым.
     Future<void> writes = Future<void>.value();
-    final Completer<void> finished = Completer<void>();
+    // Прежний обход, если он ещё идёт, останавливается: два обхода разом
+    // писали бы в базу наперегонки, а поле с подпиской у службы одно.
+    // Циклом — потому что, пока ждали остановки, мог завестись третий.
+    while (_finished != null) {
+      await stopScan();
+    }
+    final Completer<_ScanEnd> finished = Completer<_ScanEnd>();
     _finished = finished;
     // Подписка живёт в переменной, а не только в поле: так она заводится
     // и закрывается в одной функции — и видно, что забыть её закрытие
@@ -290,40 +305,57 @@ class DeviceLibrary {
       },
       onDone: () {
         if (!finished.isCompleted) {
-          finished.complete();
+          finished.complete(const _ScanEnd.complete());
         }
       },
       onError: (Object error) {
         // Обход упал целиком — редкость, но список от этого не должен
-        // осыпаться: то, что успели найти, уже записано.
+        // осыпаться: то, что успели найти, записывается, а пропавшим не
+        // объявляется никто. И обход при этом **кончается** (BUG-16):
+        // причина уходит на экран, а не в никуда.
         if (!finished.isCompleted) {
-          finished.complete();
+          finished.complete(_ScanEnd.failed(_describeScanError(error)));
         }
       },
       cancelOnError: true,
     );
     _scan = events;
 
-    await finished.future;
-    _scan = null;
-    _finished = null;
+    final _ScanEnd end = await finished.future;
+    if (identical(_finished, finished)) {
+      _scan = null;
+      _finished = null;
+    }
     await writes;
     await flush();
 
     // Пропавшие: те, кого знали, но в этом обходе не встретили.
-    final List<DeviceFileRecord> gone = <DeviceFileRecord>[
-      for (final DeviceFileRecord record in known)
-        if (!visitedPaths.contains(record.path) && !record.missing) record,
-    ];
-    if (gone.isNotEmpty) {
-      await _files.applyScan(<ScanDecision>[
-        for (final DeviceFileRecord record in gone)
-          ScanDecision(ScanVerdict.gone, record.copyWith(missing: true)),
-      ]);
+    //
+    // BUG-06: судить о пропавших можно только по обходу, который дошёл
+    // до конца. Остановленный на полпути и упавший не видели половины
+    // папок — и прежде все файлы из них объявлялись пропавшими, а их
+    // строки стирались из индекса: уйти с экрана посреди обхода значило
+    // сломать поиск по устройству.
+    if (end.complete) {
+      final List<DeviceFileRecord> gone = <DeviceFileRecord>[
+        for (final DeviceFileRecord record in known)
+          if (!visitedPaths.contains(record.path) && !record.missing) record,
+      ];
+      if (gone.isNotEmpty) {
+        await _files.applyScan(<ScanDecision>[
+          for (final DeviceFileRecord record in gone)
+            ScanDecision(ScanVerdict.gone, record.copyWith(missing: true)),
+        ]);
+      }
     }
 
     progress.add(
-      ScanProgress(found: found, visitedDirectories: directories, done: true),
+      ScanProgress(
+        found: found,
+        visitedDirectories: directories,
+        done: true,
+        failure: end.failure,
+      ),
     );
     // Отписка не ждётся, и это не небрежность. Поток к этому моменту уже
     // кончился, отписка от него — формальность; а вот **ждать** её между
@@ -375,12 +407,14 @@ class DeviceLibrary {
       final int limit = document.pageCount < kTextProbePages
           ? document.pageCount
           : kTextProbePages;
+      bool unread = limit <= 0;
       for (int page = 1; page <= limit; page++) {
         final String content;
         try {
           content = (await document.pageText(page)).trim();
         } on Object {
           // Одна нечитаемая страница — не повод считать книгу сканом.
+          unread = true;
           continue;
         }
         if (content.isEmpty) {
@@ -395,22 +429,55 @@ class DeviceLibrary {
       }
       final String body = text.toString();
       return _Indexed(
-        record.copyWith(stage: IndexStage.text, hasTextLayer: pages > 0),
+        // F-DEV-13: ответов три. Страницы не прочитались, и текста не
+        // нашлось — это «не знаю», а не скан: признак остаётся пустым.
+        record.copyWith(
+          stage: IndexStage.text,
+          hasTextLayer: textLayerVerdict(found: pages > 0, unread: unread),
+        ),
         // Текст уходит живым: приводить его к виду индекса — дело
         // репозитория, и делается это в одном месте.
         body: body.length > kTextBudget ? body.substring(0, kTextBudget) : body,
       );
     } on Object {
       // Книга не открылась движком. Она остаётся в списке и находится по
-      // имени: обещать по ней поиск в тексте было бы неправдой.
-      return _Indexed(
-        record.copyWith(stage: IndexStage.text, hasTextLayer: false),
-        body: '',
-      );
+      // имени: обещать по ней поиск в тексте было бы неправдой. Но и
+      // сканом она от этого не становится (F-DEV-13): прежде сюда
+      // писалось «текста нет», и с меткой на карточке не открывшаяся
+      // книга была бы названа сканом. Признак остаётся пустым — «не знаю».
+      return _Indexed(record.copyWith(stage: IndexStage.text), body: '');
     } finally {
       await document?.close();
     }
   }
+}
+
+/// Чем кончился обход (BUG-06, BUG-16).
+///
+/// Три конца, и путать их нельзя: только дошедший до края обход знает,
+/// каких файлов больше нет.
+class _ScanEnd {
+  /// Обход дошёл до конца.
+  const _ScanEnd.complete() : complete = true, failure = null;
+
+  /// Обход остановили: ушли с экрана, открыли книгу, свернули приложение.
+  const _ScanEnd.stopped() : complete = false, failure = null;
+
+  /// Обход оборвался сам.
+  const _ScanEnd.failed(String reason) : complete = false, failure = reason;
+
+  /// Обойдены ли все папки.
+  final bool complete;
+
+  /// Причина обрыва; `null` — обрыва не было.
+  final String? failure;
+}
+
+String _describeScanError(Object error) {
+  if (error is ScanFailure) {
+    return error.reason;
+  }
+  return '$error';
 }
 
 class _Indexed {

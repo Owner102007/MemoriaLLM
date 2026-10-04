@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,8 @@ import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/device_files.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
+import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/infrastructure/files/device_scanner.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
@@ -51,6 +54,24 @@ void main() {
 
   Future<void> runScan(DeviceLibrary device) async {
     await device.scan().toList();
+  }
+
+  /// Служба, чей обход идёт так, как велит тест: по событию за раз.
+  DeviceLibrary buildWith(ScanRunner runner) {
+    return DeviceLibrary(
+      files: data.deviceFiles,
+      access: FakeStorageAccess(),
+      storage: _PathBookStorage(const <String, List<int>>{}),
+      opener: FakeDocumentOpener(
+        FakeReaderDocument(pages: const <String>['страница книги']),
+      ),
+      runner: runner,
+      now: () => DateTime.utc(2026, 9, 6),
+    );
+  }
+
+  ScanEvent foundEvent(ScannedFile file) {
+    return ScanEvent(file: file, directory: '', visited: 0);
   }
 
   group('обход', () {
@@ -117,6 +138,143 @@ void main() {
     });
   });
 
+  group('BUG-06: прерванный обход', () {
+    test('BUG-06: остановленный обход никого не объявляет пропавшим', () async {
+      final ScannedFile near = onDisk('/device/А/ближняя.pdf');
+      final ScannedFile far = onDisk('/device/Я/дальняя.pdf');
+      await runScan(build(files: <ScannedFile>[near, far]));
+
+      // Второй обход дошёл до первой книги — и читатель ушёл с экрана.
+      final StreamController<ScanEvent> feed = StreamController<ScanEvent>();
+      final DeviceLibrary device = buildWith((List<String> roots) {
+        return feed.stream;
+      });
+      final Future<List<ScanProgress>> steps = device.scan().toList();
+      feed.add(foundEvent(near));
+      await pumpEventQueue();
+      await device.stopScan();
+      final List<ScanProgress> seen = await steps;
+      await feed.close();
+
+      expect(seen.last.done, isTrue);
+      expect(seen.last.interrupted, isFalse, reason: 'остановка — не сбой');
+      final List<DeviceFileRecord> records = await data.deviceFiles.files();
+      expect(records.length, 2);
+      expect(
+        records.where((DeviceFileRecord r) => r.missing),
+        isEmpty,
+        reason: 'до второй книги обход не дошёл — судить о ней нельзя',
+      );
+      // И индекс цел: книга, до которой не дошли, находится по-прежнему.
+      expect(await data.deviceFiles.search('дальняя'), <String>[far.path]);
+      expect(device.isScanning, isFalse);
+    });
+
+    test('BUG-06: остановленный обход записывает то, что нашёл', () async {
+      final ScannedFile fresh = onDisk('/device/новая.pdf');
+      final StreamController<ScanEvent> feed = StreamController<ScanEvent>();
+      final DeviceLibrary device = buildWith((List<String> roots) {
+        return feed.stream;
+      });
+      final Future<List<ScanProgress>> steps = device.scan().toList();
+      feed.add(foundEvent(fresh));
+      await pumpEventQueue();
+      await device.stopScan();
+      await steps;
+      await feed.close();
+
+      expect((await data.deviceFiles.files()).single.path, fresh.path);
+    });
+
+    test('BUG-06: вернувшийся файл снова находится поиском', () async {
+      final ScannedFile file = onDisk('/device/Книги/Онегин.pdf');
+      await runScan(build(files: <ScannedFile>[file]));
+      // Карту памяти вынули: обход дошёл до конца и файла не встретил.
+      await runScan(build(files: const <ScannedFile>[]));
+      expect(await data.deviceFiles.search('Онегин'), isEmpty);
+
+      // Вставили обратно.
+      await runScan(build(files: <ScannedFile>[file]));
+
+      final DeviceFileRecord record = (await data.deviceFiles.files()).single;
+      expect(record.missing, isFalse);
+      // Именно по индексу, а не через `find`: тот подстраховался бы
+      // вторым проходом по похожим именам и дефект бы спрятал.
+      expect(await data.deviceFiles.search('Онегин'), <String>[file.path]);
+    });
+
+    test('новый обход останавливает прежний', () async {
+      final StreamController<ScanEvent> first = StreamController<ScanEvent>();
+      final List<Stream<ScanEvent>> runs = <Stream<ScanEvent>>[
+        first.stream,
+        fakeScan(<ScannedFile>[onDisk('/device/вторая.pdf')]),
+      ];
+      final DeviceLibrary device = buildWith((List<String> roots) {
+        return runs.removeAt(0);
+      });
+
+      final Future<List<ScanProgress>> stale = device.scan().toList();
+      await pumpEventQueue();
+      final List<ScanProgress> fresh = await device.scan().toList();
+
+      expect((await stale).last.done, isTrue);
+      expect(fresh.last.done, isTrue);
+      expect(fresh.last.found, 1);
+      expect(device.isScanning, isFalse);
+      await first.close();
+    });
+  });
+
+  group('BUG-16: сбой в обходе', () {
+    Stream<ScanEvent> broken(ScannedFile file) async* {
+      yield foundEvent(file);
+      throw const ScanFailure('диск отвалился');
+    }
+
+    test('BUG-16: упавший обход кончается и называет причину', () async {
+      final ScannedFile seen = onDisk('/device/успели.pdf');
+      final DeviceLibrary device = buildWith((List<String> roots) {
+        return broken(seen);
+      });
+
+      final List<ScanProgress> steps = await device.scan().toList();
+
+      expect(steps.last.done, isTrue, reason: 'обход не висит вечно');
+      expect(steps.last.interrupted, isTrue);
+      expect(steps.last.failure, 'диск отвалился');
+      expect(device.isScanning, isFalse);
+    });
+
+    test('BUG-16: найденное до сбоя записано, пропавших нет', () async {
+      final ScannedFile near = onDisk('/device/А/ближняя.pdf');
+      final ScannedFile far = onDisk('/device/Я/дальняя.pdf');
+      await runScan(build(files: <ScannedFile>[near, far]));
+
+      await runScan(buildWith((List<String> roots) => broken(near)));
+
+      final List<DeviceFileRecord> records = await data.deviceFiles.files();
+      expect(records.length, 2);
+      expect(records.where((DeviceFileRecord r) => r.missing), isEmpty);
+    });
+
+    test('BUG-16: после сбоя обход можно повторить', () async {
+      final ScannedFile file = onDisk('/device/книга.pdf');
+      final List<Stream<ScanEvent>> runs = <Stream<ScanEvent>>[
+        broken(file),
+        fakeScan(<ScannedFile>[file, onDisk('/device/ещё.pdf')]),
+      ];
+      final DeviceLibrary device = buildWith((List<String> roots) {
+        return runs.removeAt(0);
+      });
+
+      expect((await device.scan().toList()).last.interrupted, isTrue);
+      final List<ScanProgress> again = await device.scan().toList();
+
+      expect(again.last.interrupted, isFalse);
+      expect((await data.deviceFiles.files()).length, 2);
+    });
+  });
+
   group('разборка', () {
     test('вторая ступень даёт отпечаток и заголовок', () async {
       final DeviceLibrary device = build(
@@ -161,6 +319,33 @@ void main() {
 
       final DeviceFileRecord record = (await data.deviceFiles.files()).single;
       expect(record.hasTextLayer, isFalse);
+    });
+
+    test('F-DEV-13: не открывшаяся книга — не скан', () async {
+      // Прежде ей писалось «текста нет», и с меткой на карточке она
+      // была бы названа сканом. «Не знаю» — пустой признак.
+      final ScannedFile file = onDisk('/device/не-открылась.pdf');
+      final DeviceLibrary device = DeviceLibrary(
+        files: data.deviceFiles,
+        access: FakeStorageAccess(),
+        storage: _PathBookStorage(const <String, List<int>>{}),
+        opener: FakeDocumentOpener(
+          FakeReaderDocument.blank(1),
+          failure: DocumentOpenException(
+            DocumentProblem.damaged,
+            FilePathSource(file.path),
+          ),
+        ),
+        runner: (List<String> roots) => fakeScan(<ScannedFile>[file]),
+        now: () => DateTime.utc(2026, 9, 5),
+      );
+      await runScan(device);
+      await device.indexBatch(upTo: IndexStage.meta);
+      await device.indexBatch(upTo: IndexStage.text);
+
+      final DeviceFileRecord record = (await data.deviceFiles.files()).single;
+      expect(record.stage, IndexStage.text, reason: 'на второй круг не идёт');
+      expect(record.hasTextLayer, isNull);
     });
 
     test('нечитаемый файл не заходит на второй круг', () async {

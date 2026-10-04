@@ -70,6 +70,13 @@ class DriftDeviceFileRepository implements DeviceFileRepository {
             // только именем.
             await _write(decision.record);
             await _reindex(decision.record, body: '');
+          case ScanVerdict.returned:
+            // BUG-06: файл числился пропавшим, и его строку из индекса
+            // убрали. Имя и метаданные возвращаются в индекс сразу; текст
+            // первых страниц разборка дочитает сама — ступень у записи
+            // для этого уже опущена.
+            await _write(decision.record);
+            await _reindex(decision.record, body: '');
           case ScanVerdict.unchanged:
             await _write(decision.record);
           case ScanVerdict.gone:

@@ -109,22 +109,38 @@ Future<bool> fileHasPdfSignature(File file) async {
   }
 }
 
+/// Что запускается в изоляте обхода. Подменяется в тестах: настоящему
+/// обходу упасть не на чем, а проверить надо именно падение (BUG-16).
+typedef ScanEntryPoint = FutureOr<void> Function(List<Object> args);
+
 /// Обход в отдельном изоляте с потоком находок.
 ///
 /// Поток закрывается сам, когда обход закончен. Отмена — обычная отписка:
 /// изолят убивается, и полусотня оставшихся папок не обходится вовсе.
 ///
-/// В `flutter test` изоляты не используются: время там подменено, и ждать
-/// настоящий изолят тест не станет. Поэтому сценарии проверяются на
-/// [scanForPdfs] напрямую, а эта обёртка остаётся тонкой настолько,
-/// чтобы в ней нечему было сломаться.
-Stream<ScanEvent> scanInIsolate(List<String> roots) {
+/// **Упавший обход тоже кончается** (BUG-16). Изолят заводится с
+/// `onError` и `onExit`: необработанная ошибка и выход без слова «готово»
+/// закрывают поток ошибкой [ScanFailure]. Прежде о них не узнавал никто —
+/// поток не закрывался, обход считался идущим, и строка «Смотрим
+/// устройство…» висела вечно. Всё идёт через один порт: порядок сообщений
+/// одного отправителя сохраняется, и «готово» не обгонит выход изолята.
+///
+/// В widget-тестах изоляты не используются: время там подменено, и ждать
+/// настоящий изолят тест не станет. Сценарии обхода проверяются на
+/// [scanForPdfs] напрямую, а сама обёртка — обычным тестом, где время
+/// настоящее.
+Stream<ScanEvent> scanInIsolate(
+  List<String> roots, {
+  ScanEntryPoint entryPoint = _scanEntryPoint,
+}) {
   final ReceivePort port = ReceivePort();
   late final StreamController<ScanEvent> controller;
   Isolate? isolate;
   StreamSubscription<dynamic>? listener;
+  bool ended = false;
 
   Future<void> stop() async {
+    ended = true;
     await listener?.cancel();
     listener = null;
     port.close();
@@ -132,24 +148,66 @@ Stream<ScanEvent> scanInIsolate(List<String> roots) {
     isolate = null;
   }
 
+  void finish([String? failure]) {
+    if (ended) {
+      return;
+    }
+    ended = true;
+    if (failure != null) {
+      controller.addError(ScanFailure(failure));
+    }
+    unawaited(controller.close());
+  }
+
   controller = StreamController<ScanEvent>(
     onListen: () async {
-      isolate = await Isolate.spawn(_scanEntryPoint, <Object>[
-        port.sendPort,
-        roots,
-      ]);
       listener = port.listen((Object? message) {
+        if (ended) {
+          return;
+        }
+        if (message == _kScanDone) {
+          finish();
+          return;
+        }
+        if (message == null) {
+          // Изолят вышел, а «готово» не сказал: его убила система или он
+          // кончился сам, не дойдя до конца.
+          finish('обход остановился, не дойдя до конца');
+          return;
+        }
         final ScanEvent? event = _decodeEvent(message);
         if (event == null) {
-          unawaited(controller.close());
+          // Не находка и не отметка — значит, сообщение об ошибке:
+          // изолят шлёт его списком из текста ошибки и стека.
+          finish(_describeIsolateError(message));
           return;
         }
         controller.add(event);
       });
+      try {
+        isolate = await Isolate.spawn<List<Object>>(
+          entryPoint,
+          <Object>[port.sendPort, roots],
+          onError: port.sendPort,
+          onExit: port.sendPort,
+        );
+      } on Object catch (error) {
+        finish('обход не запустился: $error');
+      }
     },
     onCancel: stop,
   );
   return controller.stream;
+}
+
+/// Слово, которым изолят сообщает, что обошёл всё.
+const String _kScanDone = 'done';
+
+String _describeIsolateError(Object message) {
+  if (message is List<Object?> && message.isNotEmpty) {
+    return '${message.first}';
+  }
+  return '$message';
 }
 
 /// Что пришло из обхода: найденный файл или отметка о продвижении.
@@ -209,11 +267,11 @@ Future<void> _scanEntryPoint(List<Object> args) async {
       port.send(<Object>['dir', directory, visited]);
     },
   );
-  port.send('done');
+  port.send(_kScanDone);
 }
 
 ScanEvent? _decodeEvent(Object? message) {
-  if (message is! List<Object?>) {
+  if (message is! List<Object?> || message.isEmpty) {
     return null;
   }
   final Object? kind = message.first;

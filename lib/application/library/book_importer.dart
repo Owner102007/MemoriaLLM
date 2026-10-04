@@ -36,6 +36,67 @@ class ImportFailure {
   final String reason;
 }
 
+/// Выбранный заново файл — не тот, к которому была привязана книга
+/// (BUG-19): отпечатки не совпали.
+class RelinkMismatch {
+  /// Создаёт описание расхождения.
+  const RelinkMismatch({
+    required this.book,
+    required this.fileName,
+    required this.pagesNow,
+  });
+
+  /// Книга, которую привязывают.
+  final Book book;
+
+  /// Имя выбранного файла.
+  final String fileName;
+
+  /// Сколько страниц в выбранном файле.
+  final int pagesNow;
+
+  /// Сколько страниц было в прежнем; `null` — не знаем.
+  int? get pagesBefore => book.pageCount;
+}
+
+/// Перепривязка не состоялась: файл другой, а читатель на него не
+/// согласился (BUG-19). Книга осталась как была.
+class RelinkRefused implements Exception {
+  /// Создаёт отказ.
+  const RelinkRefused(this.mismatch);
+
+  /// В чём расхождение.
+  final RelinkMismatch mismatch;
+
+  @override
+  String toString() => 'RelinkRefused(${mismatch.fileName})';
+}
+
+/// Вопрос читателю: привязать ли книгу к другому файлу.
+typedef RelinkConsent = Future<bool> Function(RelinkMismatch mismatch);
+
+/// Что сказать читателю, когда выбранный файл — другой (BUG-19).
+///
+/// Числа страниц названы потому, что это единственное, что читатель
+/// может сверить сам: отпечаток ему ничего не говорит.
+String describeRelinkMismatch(RelinkMismatch mismatch) {
+  final int? before = mismatch.pagesBefore;
+  final String was = before == null ? '' : ' (страниц: $before)';
+  final StringBuffer text = StringBuffer()
+    ..write('«${mismatch.book.title}» была привязана к другому файлу$was. ')
+    ..write('В выбранном — «${mismatch.fileName}» — ')
+    ..write('страниц: ${mismatch.pagesNow}, и содержимое у него другое.')
+    ..write('\n\n')
+    ..write('Если это та же книга — другое издание или файл после ')
+    ..write('распознавания, — привяжите его: место чтения, цитаты и ')
+    ..write('заметки останутся при книге.');
+  if (before != null && before != mismatch.pagesNow) {
+    text.write(' При другом числе страниц они могут указывать не туда.');
+  }
+  text.write(' Если книга другая, выберите другой файл.');
+  return text.toString();
+}
+
 /// Заводит выбранные файлы в библиотеке.
 ///
 /// У книги должен быть постоянный идентификатор, иначе некуда записать
@@ -142,14 +203,52 @@ class BookImporter {
   /// на ссылку. Идентификатор книги остаётся прежним, поэтому место
   /// чтения, цитаты и заметки не теряются: они принадлежат книге, а не
   /// файлу.
-  Future<Book> relink(Book book, PickedFile file) async {
+  ///
+  /// BUG-19: именно поэтому файл обязан быть **тем же**. Отпечаток
+  /// выбранного файла сверяется с отпечатком книги; прежде он считался и
+  /// не сравнивался ни с чем, и место чтения, цитаты и заметки молча
+  /// привязывались к чужому файлу. Не совпал — спрашивается [onMismatch]:
+  /// другое издание и файл после распознавания — та же книга с другим
+  /// отпечатком, и запретить такую привязку нельзя. Без согласия
+  /// бросается [RelinkRefused], и книга остаётся как была.
+  ///
+  /// У книги без отпечатка сверять не с чем — она привязывается, как
+  /// прежде.
+  Future<Book> relink(
+    Book book,
+    PickedFile file, {
+    RelinkConsent? onMismatch,
+  }) async {
     final BookSource source = await _storage.adopt(file);
     final BookSource previous = book.source;
     final Book relinked;
     try {
-      relinked = await _save(source, book.title, book);
+      relinked = await _save(
+        source,
+        book.title,
+        book,
+        check: (String hash, int pageCount) async {
+          if (book.fileHash.isEmpty || book.fileHash == hash) {
+            return;
+          }
+          final RelinkMismatch mismatch = RelinkMismatch(
+            book: book,
+            fileName: file.name,
+            pagesNow: pageCount,
+          );
+          final bool agreed = onMismatch != null && await onMismatch(mismatch);
+          if (!agreed) {
+            throw RelinkRefused(mismatch);
+          }
+        },
+      );
     } on Object {
-      await _storage.release(source);
+      // Принятое отпускается — но не тогда, когда это и есть прежний
+      // источник книги: файл выбрали тот же, и отпустить его значило бы
+      // отнять у книги то, что у неё было.
+      if (previous != source) {
+        await _storage.release(source);
+      }
       rethrow;
     }
     if (previous != source) {
@@ -167,11 +266,15 @@ class BookImporter {
   /// полке импорт не переставляет: читатель мог унести её в другую
   /// категорию руками, и повторный выбор того же файла — не повод
   /// отменять это решение.
+  ///
+  /// [check] зовётся, когда файл уже прочитан, а в базу ещё ничего не
+  /// записано: бросив ошибку, он отменяет запись (BUG-19).
   Future<Book> _save(
     BookSource source,
     String title,
     Book? known, {
     String? categoryId,
+    Future<void> Function(String hash, int pageCount)? check,
   }) async {
     final BookHandle handle = await _storage.open(source);
     final String hash;
@@ -187,13 +290,14 @@ class BookImporter {
 
     final ReaderDocument document = await _opener.open(source);
     final int pageCount;
-    final bool textLayer;
+    final bool? textLayer;
     try {
       pageCount = document.pageCount;
       textLayer = await hasTextLayer(document);
     } finally {
       await document.close();
     }
+    await check?.call(hash, pageCount);
 
     final DateTime moment = _now();
     final Book book = existing == null

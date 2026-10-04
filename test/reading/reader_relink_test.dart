@@ -33,10 +33,83 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   }
 
-  testWidgets('файл недоступен — книга ждёт, а не пропадает', (
+  Future<void> pumpGone(WidgetTester tester, Book book) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderScreen(
+          book: book,
+          services: AppServices(
+            data: data,
+            opener: _MissingThenFound(),
+            picker: FakeBookFilePicker(_found),
+            storage: MemoryBookStorage(),
+            coverStore: MemoryCoverStore(),
+            access: FakeStorageAccess(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('BUG-19: чужой файл — вопрос, и отказ книгу не меняет', (
+    WidgetTester tester,
+  ) async {
+    // Отпечаток книги выдуман — выбранный файл для неё чужой.
+    final Book book = testBook().copyWith(source: _gone, pageCount: 412);
+    await data.library.save(book);
+    await pumpGone(tester, book);
+
+    await tester.tap(find.byKey(const Key('reader-relink')));
+    await tester.pumpAndSettle();
+
+    // Прежде книга молча привязывалась к чему угодно.
+    expect(find.byKey(const Key('relink-mismatch')), findsOneWidget);
+    expect(find.textContaining('страниц: 412'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('relink-pick-other')));
+    await tester.pumpAndSettle();
+
+    // Книга осталась как была, и файл можно показать ещё раз.
+    expect(find.byKey(const Key('relink-mismatch')), findsNothing);
+    expect(find.byKey(const Key('reader-relink')), findsOneWidget);
+    final Book? saved = await data.library.bookById(book.id);
+    expect(saved!.source, _gone);
+    expect(saved.fileHash, book.fileHash);
+
+    await unmount(tester);
+  });
+
+  testWidgets('BUG-19: «Привязать всё равно» привязывает и открывает', (
     WidgetTester tester,
   ) async {
     final Book book = testBook().copyWith(source: _gone);
+    await data.library.save(book);
+    await pumpGone(tester, book);
+
+    await tester.tap(find.byKey(const Key('reader-relink')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('relink-force')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('reader-relink')), findsNothing);
+    expect(find.byKey(const Key('reader-failure-message')), findsNothing);
+    final Book? saved = await data.library.bookById(book.id);
+    expect(saved!.id, book.id);
+    expect(saved.source, const FilePathSource(_foundPath));
+    expect(saved.fileHash, await memoryBookHash());
+
+    await unmount(tester);
+  });
+
+  testWidgets('файл недоступен — книга ждёт, а не пропадает', (
+    WidgetTester tester,
+  ) async {
+    // Отпечаток книги — тот же, что у файла, который покажут заново:
+    // файл переехал, а не подменён (BUG-19).
+    final Book book = testBook(
+      hash: await memoryBookHash(),
+    ).copyWith(source: _gone);
     await data.library.save(book);
 
     final _MissingThenFound opener = _MissingThenFound();

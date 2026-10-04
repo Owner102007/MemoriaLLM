@@ -323,7 +323,39 @@ void main() {
 
     test('нечитаемая страница не прячет текст книги', () async {
       expect(await hasTextLayer(_BrokenFirstPageDocument()), isTrue);
-      expect(await hasTextLayer(_UnreadableDocument()), isFalse);
+    });
+
+    test('F-DEV-13: книга, которая не прочиталась, — «не знаю»', () async {
+      // Не «скан»: с меткой на обложке это было бы враньё.
+      expect(await hasTextLayer(_UnreadableDocument()), isNull);
+    });
+
+    test('F-DEV-13: прочитанная книга без текста — скан', () async {
+      expect(await hasTextLayer(FakeReaderDocument.blank(3)), isFalse);
+    });
+
+    test('F-DEV-13: текст после первых страниц находится', () async {
+      // Обложка и шмуцтитулы картинками, текст — с седьмой страницы:
+      // прежняя проверка смотрела пять страниц и называла книгу сканом.
+      final FakeReaderDocument document = FakeReaderDocument(
+        pages: <String>[
+          for (int page = 1; page <= 30; page++) page < 7 ? '' : 'текст',
+        ],
+      );
+      expect(await hasTextLayer(document), isTrue);
+    });
+
+    test('F-DEV-13: дальше двадцатой страницы проверка не ходит', () async {
+      final FakeReaderDocument document = FakeReaderDocument.blank(60);
+      expect(await hasTextLayer(document), isFalse);
+      expect(document.textReads.length, kTextLayerProbePages);
+    });
+
+    test('F-DEV-13: три ответа проверки', () {
+      expect(textLayerVerdict(found: true, unread: false), isTrue);
+      expect(textLayerVerdict(found: true, unread: true), isTrue);
+      expect(textLayerVerdict(found: false, unread: false), isFalse);
+      expect(textLayerVerdict(found: false, unread: true), isNull);
     });
 
     test('база отказала — поиск идёт движком, как раньше', () async {

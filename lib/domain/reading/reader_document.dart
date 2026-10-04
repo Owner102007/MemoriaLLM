@@ -328,27 +328,61 @@ abstract interface class DocumentOpener {
   Future<ReaderDocument> open(BookSource source, {String? password});
 }
 
-/// Есть ли в документе текстовый слой.
+/// Сколько первых страниц смотрит проверка текстового слоя (F-DEV-13).
 ///
-/// Проверяются первые [probePages] страниц, а не одна: у сканов первая
-/// страница часто обложка, а у книг с текстом — титул без текста вовсе.
-/// И не все страницы: на книге в тысячу страниц это заметная пауза при
-/// импорте ради ответа, который виден уже на пятой.
-Future<bool> hasTextLayer(ReaderDocument document, {int probePages = 5}) async {
+/// Не одна: у сканов первая страница часто обложка, а у книг с текстом —
+/// титул без текста вовсе. И не все: на книге в тысячу страниц это
+/// заметная пауза при импорте. Если на двадцати страницах текста нет
+/// вовсе, его почти наверняка нет и дальше — а «почти» поправляет
+/// фоновый проход по тексту книги, когда прочитает её целиком.
+///
+/// Число одно на полку и на книги устройства: прежде импорт смотрел
+/// пять страниц, а разборка устройства — двадцать, и одна и та же книга
+/// могла быть сканом в одном месте и книгой с текстом в другом.
+const int kTextLayerProbePages = 20;
+
+/// Ответ на вопрос «есть ли в книге текст» по тому, что увидели.
+///
+/// Ответов три, а не два (F-DEV-13). [found] — нашлась страница с
+/// текстом: текст есть. Не нашлась, и все просмотренные страницы
+/// прочитаны: текста нет, это скан. Не нашлась, а хоть одна страница не
+/// прочиталась ([unread]) — «не знаю», `null`: назвать сканом книгу,
+/// которую не удалось прочесть, значило бы соврать читателю меткой на
+/// обложке. Тот же урок, что у поиска по книге: «нет текста» и «не
+/// прочитал» — разные ответы.
+bool? textLayerVerdict({required bool found, required bool unread}) {
+  if (found) {
+    return true;
+  }
+  return unread ? null : false;
+}
+
+/// Есть ли в документе текстовый слой: `true` — есть, `false` — это
+/// скан, `null` — узнать не удалось (ALG-PDF-24).
+///
+/// Проверяются первые [probePages] страниц; правило ответа —
+/// [textLayerVerdict].
+Future<bool?> hasTextLayer(
+  ReaderDocument document, {
+  int probePages = kTextLayerProbePages,
+}) async {
   final int limit = document.pageCount < probePages
       ? document.pageCount
       : probePages;
+  bool unread = limit <= 0;
   for (int page = 1; page <= limit; page++) {
     final String text;
     try {
       text = await document.pageText(page);
     } on Object {
-      // Страница не прочиталась — судим по остальным.
+      // Страница не прочиталась — судим по остальным, но «сканом» книгу
+      // после этого уже не назвать.
+      unread = true;
       continue;
     }
     if (text.trim().isNotEmpty) {
       return true;
     }
   }
-  return false;
+  return textLayerVerdict(found: false, unread: unread);
 }

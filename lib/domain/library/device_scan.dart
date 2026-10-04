@@ -182,6 +182,7 @@ class ScanProgress {
     required this.visitedDirectories,
     this.currentDirectory = '',
     this.done = false,
+    this.failure,
   });
 
   /// Сколько PDF найдено.
@@ -196,7 +197,33 @@ class ScanProgress {
   /// Обход закончен.
   final bool done;
 
+  /// Почему обход оборвался; `null` — он идёт или дошёл до конца.
+  ///
+  /// BUG-16: прежде упавший обход не кончался вовсе — строка «Смотрим
+  /// устройство…» висела, а новых книг не было. Оборванный обход — тоже
+  /// конец, и у него есть причина, которую можно показать, и «Повторить».
+  final String? failure;
+
+  /// Обход кончился, не дойдя до конца.
+  bool get interrupted => failure != null;
+
   @override
   String toString() =>
-      'ScanProgress(found: $found, dirs: $visitedDirectories, done: $done)';
+      'ScanProgress(found: $found, dirs: $visitedDirectories, done: $done'
+      '${failure == null ? '' : ', failure: $failure'})';
+}
+
+/// Обход оборвался: упал изолят или отвалился диск (BUG-16).
+///
+/// Приходит ошибкой в потоке находок. То, что обход успел найти, к этому
+/// мигу уже отдано и остаётся в силе.
+class ScanFailure implements Exception {
+  /// Создаёт ошибку.
+  const ScanFailure(this.reason);
+
+  /// Что случилось — словами, которые можно показать читателю.
+  final String reason;
+
+  @override
+  String toString() => 'ScanFailure($reason)';
 }
