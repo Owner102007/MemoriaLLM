@@ -34,21 +34,24 @@ jobs:
       - name: Кодогенерация drift
         run: dart run build_runner build
 
+      # `--flavor full` — основное приложение (шаг 12): в проекте три
+      # флейвора, и без названного флейвора сборка не знает, какой из
+      # трёх APK отдать. Сборки ветвей СНО2026 релизом не выпускаются.
       - name: Собрать APK
         run: |
-          flutter build apk --release \
+          flutter build apk --release --flavor full \
             --dart-define=APP_VERSION="$GITHUB_REF_NAME" \
             --dart-define=APP_COMMIT="$GITHUB_SHA"
 
-      - run: flutter build appbundle --release
+      - run: flutter build appbundle --release --flavor full
 
       - name: Назвать файлы по версии
         run: |
           set -eu
           mkdir -p out
-          cp build/app/outputs/flutter-apk/app-release.apk \
+          cp build/app/outputs/flutter-apk/app-full-release.apk \
             "out/memoria-${GITHUB_REF_NAME}.apk"
-          cp build/app/outputs/bundle/release/app-release.aab \
+          cp build/app/outputs/bundle/fullRelease/app-full-release.aab \
             "out/memoria-${GITHUB_REF_NAME}.aab"
 
       - name: Выложить артефакты

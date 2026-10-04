@@ -5,6 +5,19 @@
 #include "flutter_window.h"
 #include "utils.h"
 
+// Имя окна (SNO-F-CFG-01). У сборок ветвей СНО2026 оно своё — то же, что
+// под иконкой на телефоне и в `appNameFor` (`lib/sno/flags.dart`); какая
+// ветвь собирается, говорит `CMakeLists.txt` раннера. Буквы вне ASCII
+// записаны кодами: файл без BOM, и компилятор прочёл бы кириллицу в
+// кодовой странице машины сборки.
+#if defined(SNO_BRANCH_II)
+#define MEMORIA_WINDOW_TITLE L"Memoria \u00B7 \u0421\u041D\u041E2026 \u00B7 II"
+#elif defined(SNO_BRANCH_I)
+#define MEMORIA_WINDOW_TITLE L"Memoria \u00B7 \u0421\u041D\u041E2026 \u00B7 I"
+#else
+#define MEMORIA_WINDOW_TITLE L"Memoria LLM HB"
+#endif
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   // Attach to console when present (e.g., 'flutter run') or create a
@@ -27,7 +40,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"Memoria LLM HB", origin, size)) {
+  if (!window.Create(MEMORIA_WINDOW_TITLE, origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

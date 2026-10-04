@@ -145,6 +145,25 @@ jobs:
           set -o pipefail
           flutter test --reporter expanded 2>&1 | tee /tmp/tests.txt
 
+      # Флаги ветви СНО2026 — константы сборки (`lib/sno/flags.dart`):
+      # в одном прогоне тестов раздел «Тестирование» либо есть, либо
+      # нет. Основной прогон выше проверил основное приложение; здесь
+      # тесты `test/sno` собираются ещё дважды — ветвью I и ветвью II
+      # (SNO-ALG-CFG-01). Упавшая ветвь не отменяет вторую.
+      - name: Тесты ветвей СНО2026
+        id: sno
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          : > /tmp/sno.txt
+          status=0
+          for branch in I II; do
+            echo "=== SNO_BRANCH=$branch ===" | tee -a /tmp/sno.txt
+            flutter test test/sno --dart-define=SNO_BRANCH="$branch" \
+              --reporter expanded 2>&1 | tee -a /tmp/sno.txt || status=1
+          done
+          exit "$status"
+
       # Принцип 4: номер сессии выдаётся один раз и имеет статус. Оба
       # уже случившихся сбоя — S4.1 и S5.4, выданные дважды, — эта
       # проверка поймала бы в день, когда их написали. План лежит вне
@@ -169,8 +188,9 @@ jobs:
           # помечает расширенный отчёт. Без этого сессия разработки видит
           # «-2» и не видит, что именно упало: логи прогона закрыты для
           # неавторизованных, а аннотации — единственное, что видно всем.
-          if [ -s /tmp/tests.txt ]; then
-            { grep -B 100 -A 30 '\[E\]' /tmp/tests.txt || true; } \
+          if [ -s /tmp/tests.txt ] || [ -s /tmp/sno.txt ]; then
+            { cat /tmp/tests.txt /tmp/sno.txt 2>/dev/null \
+                | grep -B 100 -A 30 '\[E\]' || true; } \
               | head -n 200 > /tmp/failures.txt
           fi
           for pair in 'Форматирование:/tmp/fmt.txt' \
@@ -178,6 +198,7 @@ jobs:
                       'Анализ:/tmp/analyze.txt' \
                       'Упавшие тесты:/tmp/failures.txt' \
                       'Тесты:/tmp/tests.txt' \
+                      'Тесты ветвей:/tmp/sno.txt' \
                       'Номера сессий:/tmp/sessions.txt'; do
             title="${pair%%:*}"
             file="${pair#*:}"
@@ -208,6 +229,7 @@ jobs:
                       'codegen:/tmp/codegen.txt' \
                       'analyze:/tmp/analyze.txt' \
                       'tests:/tmp/tests.txt' \
+                      'sno:/tmp/sno.txt' \
                       'sessions:/tmp/sessions.txt'; do
             file="${pair#*:}"
             [ -s "$file" ] && cp "$file" "/tmp/report/${pair%%:*}.txt"
@@ -216,14 +238,15 @@ jobs:
           # («EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK» со стеком)
           # печатается **до** строки с меткой [E], и на двух строках
           # контекста от него не остаётся ничего.
-          if [ -s /tmp/tests.txt ]; then
-            { grep -B 100 -A 30 '\[E\]' /tmp/tests.txt || true; } \
+          if [ -s /tmp/tests.txt ] || [ -s /tmp/sno.txt ]; then
+            { cat /tmp/tests.txt /tmp/sno.txt 2>/dev/null \
+                | grep -B 100 -A 30 '\[E\]' || true; } \
               > /tmp/report/failures.txt
             # Замеры скорости (F-READ-02) корпус-тесты печатают строками
             # «ЗАМЕР». Идут они в середине прогона и в хвост вывода не
             # попадают, а числа нужны в PROGRESS.md — поэтому вынимаются
             # отдельным файлом и уезжают в отчёт своим разделом.
-            { grep -a 'ЗАМЕР' /tmp/tests.txt || true; } \
+            { grep -a 'ЗАМЕР' /tmp/tests.txt 2>/dev/null || true; } \
               > /tmp/report/measures.txt
           fi
           echo "${{ job.status }}" > /tmp/report/status.txt
@@ -246,6 +269,7 @@ jobs:
                         'Кодогенерация:/tmp/codegen.txt' \
                         'Анализ:/tmp/analyze.txt' \
                         'Тесты:/tmp/tests.txt' \
+                        'Тесты ветвей:/tmp/sno.txt' \
                         'Номера сессий:/tmp/sessions.txt'; do
               title="${pair%%:*}"
               file="${pair#*:}"
@@ -260,10 +284,48 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # Три приложения из одного кода (SNO-F-CFG-01, SNO-ALG-CFG-01):
+  # основное и две ветви для тестировщиков исследования СНО2026. У
+  # каждого свой флейвор Android (идентификатор, имя, иконка,
+  # разрешения) и своё значение `SNO_BRANCH` (поведение приложения) —
+  # задаются они вместе, здесь.
+  #
+  # Сборки ветвей в этом прогоне — проверочные: литературы внутри нет,
+  # пароля теста тоже. Сборки для участников собираются иначе.
   android:
-    name: Сборка APK
+    name: Сборка APK · ${{ matrix.title }}
     needs: analyze
     runs-on: ubuntu-latest
+    strategy:
+      # Упавшая сборка ветви не отменяет остальные: по одному прогону
+      # должно быть видно, что сломано, а что нет.
+      fail-fast: false
+      matrix:
+        include:
+          - title: основное
+            flavor: full
+            branch: ''
+            suffix: main
+            package: io.github.owner102007.memoria
+            label: Memoria LLM HB
+            artifact: memoria-android-apk
+            file: memoria.apk
+          - title: ветвь I
+            flavor: sno2026core
+            branch: I
+            suffix: sno2026.I
+            package: io.github.owner102007.memoria.sno2026.core
+            label: Memoria · СНО2026 · I
+            artifact: memoria-sno2026-I-android-apk
+            file: memoria-sno2026-I.apk
+          - title: ветвь II
+            flavor: sno2026test
+            branch: II
+            suffix: sno2026.II
+            package: io.github.owner102007.memoria.sno2026.test
+            label: Memoria · СНО2026 · II
+            artifact: memoria-sno2026-II-android-apk
+            file: memoria-sno2026-II.apk
     steps:
       - name: Забрать репозиторий
         uses: actions/checkout@v7
@@ -299,24 +361,120 @@ jobs:
 
       - name: Собрать APK
         if: steps.probe.outputs.ready == 'true'
+        env:
+          FLAVOR: ${{ matrix.flavor }}
+          SNO_BRANCH: ${{ matrix.branch }}
+          SUFFIX: ${{ matrix.suffix }}
+          FILE: ${{ matrix.file }}
         run: |
+          set -eu
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
           flutter build apk --release \
-            --dart-define=APP_VERSION="$version-main" \
+            --flavor "$FLAVOR" \
+            --dart-define=SNO_BRANCH="$SNO_BRANCH" \
+            --dart-define=APP_VERSION="$version-$SUFFIX" \
             --dart-define=APP_COMMIT="$GITHUB_SHA"
+          mkdir -p out
+          cp "build/app/outputs/flutter-apk/app-$FLAVOR-release.apk" "out/$FILE"
+
+      # Проверяется собранное, а не исходники: у приложения ветви свой
+      # идентификатор и своё имя, и в его манифесте нет разрешений на
+      # доступ к файлам (SNO-F-CFG-01, SNO-F-CFG-02). У основного — всё
+      # прежнее, и разрешение на месте: это же доказывает, что проверка
+      # умеет его находить. Строки в двоичном манифесте лежат в UTF-8
+      # или в UTF-16 — ищутся обе записи.
+      - name: Что внутри APK
+        if: steps.probe.outputs.ready == 'true'
+        env:
+          FILE: ${{ matrix.file }}
+          SNO_BRANCH: ${{ matrix.branch }}
+          PACKAGE: ${{ matrix.package }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          python3 - "out/$FILE" <<'PY'
+          import os
+          import sys
+          import zipfile
+
+          manifest = zipfile.ZipFile(sys.argv[1]).read('AndroidManifest.xml')
+          branch = os.environ['SNO_BRANCH']
+          package = os.environ['PACKAGE']
+          label = os.environ['LABEL']
+
+
+          def has(text):
+              return (text.encode('utf-8') in manifest
+                      or text.encode('utf-16-le') in manifest)
+
+
+          def exact(text):
+              # Строка целиком, а не начало более длинной: в пуле строк
+              # двоичного манифеста за строкой стоит нулевой знак.
+              return has(text + '\0')
+
+
+          problems = []
+          if not exact(package):
+              problems.append(f'идентификатор не {package}')
+          if not exact(label):
+              problems.append(f'имя приложения не «{label}»')
+          storage = [name for name in ('MANAGE_EXTERNAL_STORAGE',
+                                       'READ_EXTERNAL_STORAGE') if has(name)]
+          if branch and storage:
+              problems.append('в сборке ветви есть разрешения: '
+                              + ', '.join(storage))
+          if not branch and 'MANAGE_EXTERNAL_STORAGE' not in storage:
+              problems.append('в основной сборке нет MANAGE_EXTERNAL_STORAGE')
+          if not branch and has('sno2026'):
+              problems.append('в основной сборке есть след ветви sno2026')
+          for problem in problems:
+              print(f'::error title=Что внутри APK::{problem}')
+          print(f'{sys.argv[1]}: {package}, «{label}», '
+                f'разрешения на файлы: {storage or "нет"}')
+          sys.exit(1 if problems else 0)
+          PY
 
       - name: Выложить APK
         if: steps.probe.outputs.ready == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: memoria-android-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: ${{ matrix.artifact }}
+          path: out/${{ matrix.file }}
           if-no-files-found: error
 
+  # Те же три приложения для Windows. Флейворов там нет: ветвь называют
+  # переменная окружения `SNO_BRANCH` (заголовок окна, см.
+  # `windows/runner`) и то же значение в `--dart-define` (поведение и
+  # своя папка данных). MSIX — только у основного: ветви в Store не идут.
   windows:
-    name: Сборка Windows и MSIX
+    name: Сборка Windows · ${{ matrix.title }}
     needs: analyze
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - title: основное
+            branch: ''
+            suffix: main
+            label: Memoria LLM HB
+            artifact: memoria-windows
+            zip: memoria-windows-portable.zip
+            msix: true
+          - title: ветвь I
+            branch: I
+            suffix: sno2026.I
+            label: Memoria · СНО2026 · I
+            artifact: memoria-sno2026-I-windows
+            zip: memoria-sno2026-I-windows.zip
+            msix: false
+          - title: ветвь II
+            branch: II
+            suffix: sno2026.II
+            label: Memoria · СНО2026 · II
+            artifact: memoria-sno2026-II-windows
+            zip: memoria-sno2026-II-windows.zip
+            msix: false
     steps:
       - name: Забрать репозиторий
         uses: actions/checkout@v7
@@ -347,30 +505,74 @@ jobs:
       - name: Собрать Windows
         if: steps.probe.outputs.ready == 'true'
         shell: bash
+        env:
+          # Читает CMake раннера: от неё зависит заголовок окна.
+          SNO_BRANCH: ${{ matrix.branch }}
+          SUFFIX: ${{ matrix.suffix }}
         run: |
+          set -eu
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
           flutter build windows --release \
-            --dart-define=APP_VERSION="$version-main" \
+            --dart-define=SNO_BRANCH="$SNO_BRANCH" \
+            --dart-define=APP_VERSION="$version-$SUFFIX" \
             --dart-define=APP_COMMIT="$GITHUB_SHA"
+
+      # Заголовок окна — строка внутри memoria.exe, в UTF-16 и с нулевым
+      # знаком в конце. У сборки ветви он свой, у основной — прежний, и
+      # следа ветви в ней нет (SNO-F-CFG-01).
+      - name: Что внутри memoria.exe
+        if: steps.probe.outputs.ready == 'true'
+        shell: bash
+        env:
+          SNO_BRANCH: ${{ matrix.branch }}
+          LABEL: ${{ matrix.label }}
+          PYTHONUTF8: '1'
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          path = 'build/windows/x64/runner/Release/memoria.exe'
+          data = open(path, 'rb').read()
+          branch = os.environ['SNO_BRANCH']
+          label = os.environ['LABEL']
+
+
+          def has(text):
+              return text.encode('utf-16-le') in data
+
+
+          problems = []
+          if not has(label + '\0'):
+              problems.append(f'заголовок окна не «{label}»')
+          if not branch and has('\u0421\u041d\u041e2026'):
+              problems.append('в основной сборке есть заголовок ветви')
+          for problem in problems:
+              print(f'::error title=Что внутри memoria.exe::{problem}')
+          print(f'{path}: «{label}»')
+          sys.exit(1 if problems else 0)
+          PY
 
       - name: Портативный ZIP
         if: steps.probe.outputs.ready == 'true'
         shell: pwsh
+        env:
+          ZIP: ${{ matrix.zip }}
         run: |
           Compress-Archive -Path build/windows/x64/runner/Release/* `
-            -DestinationPath memoria-windows-portable.zip -Force
+            -DestinationPath $env:ZIP -Force
 
       - name: Упаковать MSIX
-        if: steps.probe.outputs.ready == 'true'
+        if: steps.probe.outputs.ready == 'true' && matrix.msix
         run: dart run msix:create --store
 
       - name: Выложить сборки
         if: steps.probe.outputs.ready == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: memoria-windows
+          name: ${{ matrix.artifact }}
           path: |
-            memoria-windows-portable.zip
+            ${{ matrix.zip }}
             build/windows/x64/runner/Release/*.msix
           if-no-files-found: error
 
@@ -413,7 +615,7 @@ jobs:
             echo "- страница прогона:"
             echo "  $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > out/report.md
-          for name in failures analyze format codegen measures tests sessions; do
+          for name in failures analyze format codegen measures tests sno sessions; do
             file="logs/$name.txt"
             [ -s "$file" ] || continue
             {
@@ -450,14 +652,30 @@ jobs:
       # Имена файлов постоянные — иначе ссылка «скачать последнее» будет
       # меняться от сборки к сборке, а весь смысл именно в том, чтобы она
       # не менялась никогда.
+      #
+      # Рядом с основным приложением лежат проверочные сборки ветвей
+      # СНО2026 (SNO-F-CFG-01): владелец ставит их тем же скриптом, что
+      # и основное. Литературы и пароля теста в них нет — прятать
+      # нечего. Сборки для участников сюда не попадают.
       - name: Постоянные имена файлов
         run: |
           set -eu
           mkdir -p out
-          apk=$(find dist -name '*.apk' | head -1)
-          zip=$(find dist -name '*-portable.zip' | head -1)
-          cp "$apk" out/memoria.apk
-          cp "$zip" out/memoria-windows.zip
+          take() {
+            file=$(find dist -name "$1" | head -1)
+            if [ -z "$file" ]; then
+              echo "::error::в артефактах прогона нет $1"
+              exit 1
+            fi
+            cp "$file" "out/$2"
+          }
+          take memoria.apk memoria.apk
+          take memoria-windows-portable.zip memoria-windows.zip
+          for branch in I II; do
+            take "memoria-sno2026-$branch.apk" "memoria-sno2026-$branch.apk"
+            take "memoria-sno2026-$branch-windows.zip" \
+              "memoria-sno2026-$branch-windows.zip"
+          done
           ls -l out
 
       # Тег `latest` переезжает на свежий коммит main. Релиз помечен
@@ -477,6 +695,11 @@ jobs:
 
             - Android: `releases/download/latest/memoria.apk`
             - Windows: `releases/download/latest/memoria-windows.zip`
+
+            Файлы `memoria-sno2026-I…` и `memoria-sno2026-II…` —
+            проверочные сборки ветвей для исследования СНО2026: то же
+            приложение с другим набором разделов, ставится рядом с
+            основным. Читателю они не нужны.
 
             Это черновик между этапами. Если нужна стабильная точка —
             берите релиз этапа со страницы релизов.

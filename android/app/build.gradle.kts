@@ -25,6 +25,40 @@ android {
         versionName = flutter.versionName
     }
 
+    // Три приложения из одного кода (SNO-F-CFG-01, SNO-ALG-CFG-01).
+    //
+    // `full` — основное приложение: идентификатор прежний, обновляется
+    // поверх установленного. `sno2026core` и `sno2026test` — ветви I и II
+    // для тестировщиков исследования СНО2026: свой идентификатор, своё
+    // имя и своя иконка с плашкой, поэтому ставятся рядом с основным и
+    // данных его не видят.
+    //
+    // Флейвор отвечает только за то, что знает сам Android: идентификатор,
+    // имя, иконку и разрешения (см. `src/full/AndroidManifest.xml`). Всё
+    // поведение приложения решает `--dart-define=SNO_BRANCH=I` или `II`
+    // (`lib/sno/flags.dart`) — флейвор и это значение задаются сборке
+    // вместе.
+    //
+    // Основной флейвор не назван `main`: это имя у Gradle занято общим
+    // набором исходников.
+    flavorDimensions += "app"
+    productFlavors {
+        create("full") {
+            dimension = "app"
+            manifestPlaceholders["appLabel"] = "Memoria LLM HB"
+        }
+        create("sno2026core") {
+            dimension = "app"
+            applicationIdSuffix = ".sno2026.core"
+            manifestPlaceholders["appLabel"] = "Memoria · СНО2026 · I"
+        }
+        create("sno2026test") {
+            dimension = "app"
+            applicationIdSuffix = ".sno2026.test"
+            manifestPlaceholders["appLabel"] = "Memoria · СНО2026 · II"
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

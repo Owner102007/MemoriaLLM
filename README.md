@@ -152,9 +152,16 @@ flutter pub get
 flutter analyze
 flutter test
 
-flutter build apk --release       # Android
-flutter build windows --release   # Windows (только на Windows)
+flutter build apk --release --flavor full   # Android
+flutter build windows --release             # Windows (только на Windows)
 ```
+
+`--flavor full` — основное приложение. В проекте есть ещё два флейвора,
+`sno2026core` и `sno2026test`: это сборки для тестировщиков исследования
+«СНО2026» — то же приложение с другим набором разделов (без поиска книг
+на устройстве, с разделом «Тестирование»), которое ставится рядом с
+основным. Им вместе с флейвором передают `--dart-define=SNO_BRANCH=I`
+или `II`; что именно включает ветвь, записано в `lib/sno/flags.dart`.
 
 Нужен Flutter стабильного канала и JDK 17 для Android. Проприетарных
 зависимостей нет: Google Play Services не используются, вход через Google

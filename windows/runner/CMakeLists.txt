@@ -30,6 +30,17 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_BUILD=${FLUTT
 # Disable Windows macros that collide with C++ standard library functions.
 target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
+# Сборка ветви СНО2026 (SNO-F-CFG-01): у окна ветви своё имя, чтобы
+# экспериментатор не спутал её с основным приложением. Ветвь называет
+# переменная окружения SNO_BRANCH — та же, что CI передаёт в
+# `--dart-define`; без неё собирается основное приложение. Имена окон —
+# в `main.cpp`.
+if("$ENV{SNO_BRANCH}" STREQUAL "I")
+  target_compile_definitions(${BINARY_NAME} PRIVATE "SNO_BRANCH_I")
+elseif("$ENV{SNO_BRANCH}" STREQUAL "II")
+  target_compile_definitions(${BINARY_NAME} PRIVATE "SNO_BRANCH_II")
+endif()
+
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
