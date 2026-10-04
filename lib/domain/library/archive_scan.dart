@@ -96,7 +96,9 @@ int archiveRootOrder(String name) {
 /// Порядок архивов в списке: новые сверху, при равенстве — по имени.
 ///
 /// Экспериментатор ищет архив, который только что получил, — он и
-/// должен стоять первым.
+/// должен стоять первым. В этот порядок список встаёт, когда обход
+/// кончился; пока он идёт, находки стоят в порядке находок — строки не
+/// уезжают из-под пальца.
 int compareFoundArchives(FoundArchive left, FoundArchive right) {
   final int byTime = right.modifiedAt.compareTo(left.modifiedAt);
   if (byTime != 0) {

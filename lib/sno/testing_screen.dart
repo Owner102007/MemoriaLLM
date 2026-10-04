@@ -353,13 +353,12 @@ class _TestingScreenState extends State<TestingScreen>
     _asking = true;
     try {
       await widget.services.access.request();
+      if (mounted) {
+        await _search();
+      }
     } finally {
       _asking = false;
     }
-    if (!mounted) {
-      return;
-    }
-    await _search();
   }
 
   /// Выбор архива системным диалогом — запасной путь.

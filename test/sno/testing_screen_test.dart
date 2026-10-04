@@ -373,18 +373,52 @@ void main() {
 
       expect(
         unpacked.map((PickedFile file) => file.name).toList(),
-        anyOf(isEmpty, <String>['Старая литература.zip']),
+        <String>['Старая литература.zip'],
         reason: 'нажатие не должно достаться архиву, вставшему на это место',
       );
 
-      if (unpacked.isNotEmpty) {
-        await tester.tap(find.text('Понятно'));
-        await tester.pumpAndSettle();
-      }
+      await tester.tap(find.text('Понятно'));
+      await tester.pumpAndSettle();
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-LIT-03: ответ прежнего обхода в список не попадает', (
+    testWidgets('SNO-F-LIT-03: начатый раньше поиск новому не мешает', (
+      WidgetTester tester,
+    ) async {
+      // Доступ спрашивается не мгновенно; пока первый поиск ждёт
+      // ответа, экспериментатор начал второй.
+      final _GatedAccess access = _GatedAccess();
+      int searches = 0;
+      await pumpTesting(
+        tester,
+        testServices(
+          data: data,
+          access: access,
+          archiveSearch: (List<String> roots) {
+            searches++;
+            return Stream<FoundArchive>.fromIterable(<FoundArchive>[found]);
+          },
+        ),
+      );
+      await openExperimenter(tester);
+      await tester.tap(find.byKey(const Key('sno-archives-refresh')));
+      await tester.pump();
+      expect(access.asked, hasLength(2));
+      expect(searches, 0);
+
+      // Ответы пришли оба — и первый поиск, уже отменённый вторым,
+      // обхода не начинает: архив в списке один раз.
+      access.asked[0].complete(StorageAccessState.granted);
+      access.asked[1].complete(StorageAccessState.granted);
+      await tester.pumpAndSettle();
+
+      expect(searches, 1);
+      expect(listed(found), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-LIT-03: «Искать заново» останавливает прежний обход', (
       WidgetTester tester,
     ) async {
       final StreamController<FoundArchive> first =
@@ -413,7 +447,6 @@ void main() {
       expect(searches, 2);
       expect(first.hasListener, isFalse, reason: 'прежний обход остановлен');
       expect(listed(found), findsOneWidget);
-      expect(listed(older), findsNothing);
       expect(find.byKey(const Key('sno-archives-searching')), findsNothing);
 
       // Не `await`: у отписанного потока «закрыто» приходит мимо
@@ -1217,6 +1250,27 @@ void main() {
       expect(deviceCodeOf(''), '');
     });
   });
+}
+
+/// Доступ к файлам, который отвечает, когда велит тест.
+class _GatedAccess implements StorageAccess {
+  /// Вопросы о состоянии, по порядку; тест отвечает на каждый сам.
+  final List<Completer<StorageAccessState>> asked =
+      <Completer<StorageAccessState>>[];
+
+  @override
+  Future<StorageAccessState> state() {
+    final Completer<StorageAccessState> answer =
+        Completer<StorageAccessState>();
+    asked.add(answer);
+    return answer.future;
+  }
+
+  @override
+  Future<void> request() async {}
+
+  @override
+  Future<List<String>> roots() async => const <String>['/device'];
 }
 
 /// Диалог выбора, который остаётся открытым, пока тест его не закроет.
