@@ -4,15 +4,18 @@ import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
 import 'package:memoria/domain/library/archive_scan.dart';
+import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/library/storage_access.dart';
+import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/testing_screen.dart';
 import 'package:memoria/ui/app.dart';
 import 'package:memoria/ui/library/book_card.dart';
 
 import '../data/test_data.dart';
+import '../support/fake_reading.dart';
 import '../support/test_services.dart';
 
 /// SNO-F-CFG-01…03, SNO-F-LIT-02, SNO-F-LIT-03: приложение в сборе.
@@ -268,6 +271,41 @@ void main() {
       expect(find.text('Литература.zip'), findsOneWidget);
       expect(find.text('21 книга · 1,0 МБ · Download'), findsOneWidget);
 
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-46: книгу с пропавшим файлом к своему PDF не привязать', (
+      WidgetTester tester,
+    ) async {
+      // Копия книги пропала из папки приложения: на ПК её можно удалить
+      // руками. Решение П3: свои PDF в сборке ветви не добавляются —
+      // значит, и выбрать «файл заново» у такой книги нельзя.
+      final Book book = testBook();
+      await data.library.save(book);
+      await pumpApp(
+        tester,
+        testServices(
+          data: data,
+          opener: FakeDocumentOpener(
+            FakeReaderDocument(pages: <String>['текст']),
+            failure: DocumentOpenException(
+              DocumentProblem.missing,
+              book.source,
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('library-book-book-1')));
+      await settle(tester);
+
+      expect(find.byKey(const Key('reader-failure-message')), findsOneWidget);
+      expect(find.byKey(const Key('reader-relink')), findsNothing);
+      expect(find.text('Выбрать файл заново'), findsNothing);
+      expect(find.byKey(const Key('reader-readd-archive')), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await settle(tester);
       await unmount(tester);
     });
 

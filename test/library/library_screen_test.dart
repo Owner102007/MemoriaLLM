@@ -15,6 +15,7 @@ import 'package:memoria/ui/library/book_card.dart';
 import 'package:memoria/ui/library/device_books_screen.dart';
 import 'package:memoria/ui/library/library_screen.dart';
 import 'package:memoria/ui/library/shelf_pattern.dart';
+import 'package:memoria/ui/reader/reader_screen.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
@@ -570,6 +571,66 @@ void main() {
       expect((await data.library.books()).single.id, 'book-2');
       expect(storage.released, isEmpty);
 
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-47: сообщение уходит само, когда вернуть уже нельзя', (
+      WidgetTester tester,
+    ) async {
+      await data.library.save(testBook());
+      final MemoryBookStorage storage = MemoryBookStorage();
+      await pumpShelf(tester, testServices(data: data, storage: storage));
+
+      await tester.tap(find.byKey(const Key('library-menu-book-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('book-action-remove')));
+      await tester.pumpAndSettle();
+
+      // Пока «Вернуть» на экране, файл книги не отпущен: вернуть её
+      // можно вместе с файлом.
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.text('Вернуть'), findsOneWidget);
+      expect(storage.released, isEmpty);
+
+      // Окно отмены закрылось — сообщение ушло само. Прежде оно висело,
+      // пока его не смахнут: у сообщения с кнопкой срок не действовал.
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.text('Вернуть'), findsNothing);
+      expect(find.textContaining('убрана с полки'), findsNothing);
+      expect(storage.released.single, testBook().source);
+
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-47: открытая книга сообщением не закрыта', (
+      WidgetTester tester,
+    ) async {
+      await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      await data.library.save(testBook());
+      await data.library.save(
+        testBook(id: 'book-2', title: 'Дубровский', hash: 'hash-2'),
+      );
+      final MemoryBookStorage storage = MemoryBookStorage();
+      await pumpShelf(tester, testServices(data: data, storage: storage));
+
+      await tester.tap(find.byKey(const Key('library-menu-book-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('book-action-remove')));
+      await tester.pumpAndSettle();
+      expect(find.text('Вернуть'), findsOneWidget);
+
+      // Сняли одну книгу и сразу открыли другую: сообщение не должно
+      // лечь на страницу и на ползунок под ней.
+      await tester.tap(find.byKey(const Key('library-book-book-2')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ReaderScreen), findsOneWidget);
+      expect(find.text('Вернуть'), findsNothing);
+      expect(find.textContaining('убрана с полки'), findsNothing);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
       await unmount(tester);
     });
   });

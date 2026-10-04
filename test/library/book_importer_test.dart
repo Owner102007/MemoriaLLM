@@ -230,6 +230,27 @@ void main() {
     });
   });
 
+  group('BUG-30: снятая и добавленная снова книга', () {
+    test('BUG-30: книга получает прежнюю строку, а не новую', () async {
+      final Book first = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+      ).register(_picked);
+      await data.library.delete(first.id);
+      expect(await data.library.books(), isEmpty);
+
+      final Book again = await importer(
+        FakeReaderDocument(pages: <String>['текст']),
+        id: 'id-2',
+      ).register(_picked);
+
+      // Прежде книга заводилась второй строкой с новым идентификатором:
+      // надгробие оставалось, а место чтения и цитаты — при нём.
+      expect(again.id, first.id);
+      expect((await data.library.books()).single.id, first.id);
+      expect(await data.library.bookById('id-2'), isNull);
+    });
+  });
+
   group('импорт пачкой', () {
     /// Импортёр, у которого каждый файл получает свой отпечаток и свой
     /// идентификатор: иначе пачка схлопнется в одну книгу.
