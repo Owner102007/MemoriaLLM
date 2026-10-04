@@ -371,11 +371,9 @@ void main() {
       await finger.up();
       await tester.pumpAndSettle();
 
-      expect(
-        unpacked.map((PickedFile file) => file.name).toList(),
-        <String>['Старая литература.zip'],
-        reason: 'нажатие не должно достаться архиву, вставшему на это место',
-      );
+      expect(unpacked.map((PickedFile file) => file.name).toList(), <String>[
+        'Старая литература.zip',
+      ], reason: 'нажатие не должно достаться архиву, вставшему на это место');
 
       await tester.tap(find.text('Понятно'));
       await tester.pumpAndSettle();
