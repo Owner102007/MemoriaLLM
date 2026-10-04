@@ -196,7 +196,10 @@ class CategoryShelf extends StatelessWidget {
           if (section.books.isEmpty) ...<Widget>[
             const SizedBox(height: 6),
             Text(
-              'Пока пусто. Нажмите «+», чтобы выбрать книги.',
+              // Без «+» звать к нему нельзя (SNO-F-CFG-02).
+              onAdd == null
+                  ? 'Пока пусто.'
+                  : 'Пока пусто. Нажмите «+», чтобы выбрать книги.',
               style: theme.textTheme.bodySmall,
             ),
           ],

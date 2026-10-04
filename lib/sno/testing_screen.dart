@@ -6,6 +6,7 @@ import '../application/app_services.dart';
 import '../application/build_info.dart';
 import '../application/library/book_importer.dart';
 import '../domain/library/book_file_picker.dart';
+import '../domain/reading/reader_document.dart';
 import 'flags.dart';
 
 /// Сколько знаков идентификатора устройства показывается.
@@ -24,6 +25,24 @@ String deviceCodeOf(String nodeId) {
 /// Сколько неудач названо в сообщении поимённо.
 const int kNamedFailures = 3;
 
+/// Почему файл не встал на полку — словами для экспериментатора.
+///
+/// Слова свои, а не из `describeDocumentProblem`: тот текст написан для
+/// экрана чтения и зовёт ввести пароль, а здесь вводить его негде. И
+/// «не PDF» названо прямо: движок отличить чужой файл от битого PDF не
+/// умеет, и сказать можно только про оба сразу.
+String describeAddFailure(ImportFailure failure) {
+  return switch (failure.problem) {
+    DocumentProblem.passwordRequired ||
+    DocumentProblem.wrongPassword => 'защищён паролем',
+    DocumentProblem.damaged => 'не PDF или файл повреждён',
+    DocumentProblem.empty => 'файл пустой',
+    DocumentProblem.missing => 'до файла не добраться',
+    DocumentProblem.unknown => 'не удалось открыть',
+    null => failure.reason,
+  };
+}
+
 /// Что сказать экспериментатору после «Добавить PDF…» (SNO-F-LIT-02).
 ///
 /// Отличие от сообщения основного приложения одно: файл, который не
@@ -33,7 +52,7 @@ const int kNamedFailures = 3;
 String describeAddedPdfs(ImportReport report) {
   final StringBuffer text = StringBuffer(describeImportReport(report));
   for (final ImportFailure failure in report.failed.take(kNamedFailures)) {
-    text.write('\n«${failure.name}» — ${failure.reason}');
+    text.write('\n«${failure.name}» — ${describeAddFailure(failure)}');
   }
   final int rest = report.failed.length - kNamedFailures;
   if (rest > 0) {

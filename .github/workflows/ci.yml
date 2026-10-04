@@ -371,7 +371,7 @@ jobs:
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
           flutter build apk --release \
             --flavor "$FLAVOR" \
-            --dart-define=SNO_BRANCH="$SNO_BRANCH" \
+            --dart-define=SNO_BRANCH="${SNO_BRANCH:-}" \
             --dart-define=APP_VERSION="$version-$SUFFIX" \
             --dart-define=APP_COMMIT="$GITHUB_SHA"
           mkdir -p out
@@ -397,7 +397,8 @@ jobs:
           import zipfile
 
           manifest = zipfile.ZipFile(sys.argv[1]).read('AndroidManifest.xml')
-          branch = os.environ['SNO_BRANCH']
+          # Пустая переменная до процесса может не дойти вовсе.
+          branch = os.environ.get('SNO_BRANCH', '')
           package = os.environ['PACKAGE']
           label = os.environ['LABEL']
 
@@ -418,10 +419,16 @@ jobs:
               problems.append(f'идентификатор не {package}')
           if not exact(label):
               problems.append(f'имя приложения не «{label}»')
+          # Всё, чем приложение могло бы добраться до чужих файлов:
+          # разрешения на хранилище и на медиа, старый режим доступа.
           storage = [name for name in ('MANAGE_EXTERNAL_STORAGE',
-                                       'READ_EXTERNAL_STORAGE') if has(name)]
+                                       'READ_EXTERNAL_STORAGE',
+                                       'WRITE_EXTERNAL_STORAGE',
+                                       'READ_MEDIA_',
+                                       'requestLegacyExternalStorage')
+                     if has(name)]
           if branch and storage:
-              problems.append('в сборке ветви есть разрешения: '
+              problems.append('в сборке ветви есть доступ к файлам: '
                               + ', '.join(storage))
           if not branch and 'MANAGE_EXTERNAL_STORAGE' not in storage:
               problems.append('в основной сборке нет MANAGE_EXTERNAL_STORAGE')
@@ -513,7 +520,7 @@ jobs:
           set -eu
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
           flutter build windows --release \
-            --dart-define=SNO_BRANCH="$SNO_BRANCH" \
+            --dart-define=SNO_BRANCH="${SNO_BRANCH:-}" \
             --dart-define=APP_VERSION="$version-$SUFFIX" \
             --dart-define=APP_COMMIT="$GITHUB_SHA"
 
@@ -534,7 +541,8 @@ jobs:
 
           path = 'build/windows/x64/runner/Release/memoria.exe'
           data = open(path, 'rb').read()
-          branch = os.environ['SNO_BRANCH']
+          # Пустая переменная до процесса может не дойти вовсе.
+          branch = os.environ.get('SNO_BRANCH', '')
           label = os.environ['LABEL']
 
 

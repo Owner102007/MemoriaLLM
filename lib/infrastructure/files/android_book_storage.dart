@@ -1,7 +1,5 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
-
 import '../../domain/library/book_file_picker.dart';
 import '../../domain/library/book_source.dart';
 import '../../domain/library/book_storage.dart';
@@ -75,7 +73,7 @@ class AndroidBookStorage implements BookStorage {
       // Ветвь СНО2026: книга живёт внутри приложения. Закреплять ссылку
       // незачем — после переноса она не понадобится.
       final int source = await _documents.openDescriptor(uri);
-      return _copyToBooks(uri, file.name, source);
+      return _copyToBooks(uri, source);
     }
 
     final bool persisted = await _documents.persist(uri);
@@ -91,7 +89,7 @@ class AndroidBookStorage implements BookStorage {
 
     // Дескриптор уже открыт и всё равно нужен для переноса — закрывать
     // его, чтобы тут же открыть заново, незачем.
-    final BookSource copy = await _copyToBooks(uri, file.name, descriptor);
+    final BookSource copy = await _copyToBooks(uri, descriptor);
     // Ссылка больше не нужна: книга у нас, а закреплённых ссылок Android
     // держит ограниченное число на приложение.
     if (persisted) {
@@ -148,19 +146,24 @@ class AndroidBookStorage implements BookStorage {
   /// Потоково переносит книгу в папку приложения.
   ///
   /// Дескриптор закрывается здесь же: он был нужен ровно на время
-  /// переноса.
-  Future<BookSource> _copyToBooks(
-    String uri,
-    String name,
-    int descriptor,
-  ) async {
-    final Directory books = await _booksDirectory();
-    final String destination = p.join(books.path, copyFileName(uri, name));
+  /// переноса. Пишется файл `.part`, готовым он получает имя по
+  /// отпечатку содержимого (`book_copy.dart`): оборванный перенос не
+  /// оставляет обрезанного файла под именем книги.
+  Future<BookSource> _copyToBooks(String uri, int descriptor) async {
+    final String destination;
     try {
-      await copyDescriptorToFile(
-        descriptor: descriptor,
-        destination: destination,
-      );
+      final Directory books = await _booksDirectory();
+      final File part = File(incomingPathIn(books, uri));
+      try {
+        await copyDescriptorToFile(
+          descriptor: descriptor,
+          destination: part.path,
+        );
+        destination = await settleCopy(part: part, books: books);
+      } on Object {
+        await discardPart(part);
+        rethrow;
+      }
     } finally {
       await _documents.closeDescriptor(descriptor);
     }

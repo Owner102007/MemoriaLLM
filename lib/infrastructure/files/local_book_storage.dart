@@ -41,7 +41,6 @@ class LocalBookStorage implements BookStorage {
     }
     final String copy = await copyFileInto(
       source: path,
-      name: file.name,
       books: await copyInto(),
     );
     return FilePathSource(copy, owned: true);

@@ -192,8 +192,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(await data.library.books(), isEmpty);
-      expect(find.textContaining('«Секрет.pdf»'), findsOneWidget);
-      expect(find.textContaining('защищена паролем'), findsOneWidget);
+      // Причина сказана словами раздела: вводить пароль здесь негде, и
+      // звать к этому нельзя.
+      expect(
+        find.textContaining('«Секрет.pdf» — защищён паролем'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Введите'), findsNothing);
 
       await unmount(tester);
     });
@@ -221,6 +226,35 @@ void main() {
       final String text = describeAddedPdfs(report);
       expect(text, startsWith(describeImportReport(report)));
       expect(text, contains('«Битый.pdf» — файл повреждён'));
+    });
+
+    test('SNO-F-LIT-02: причина движка сказана своими словами', () {
+      String reasonOf(DocumentProblem problem) {
+        return describeAddFailure(
+          ImportFailure(
+            name: 'x.pdf',
+            reason: describeDocumentProblem(problem),
+            problem: problem,
+          ),
+        );
+      }
+
+      expect(reasonOf(DocumentProblem.passwordRequired), 'защищён паролем');
+      expect(reasonOf(DocumentProblem.wrongPassword), 'защищён паролем');
+      // Чужой файл и битый PDF движок не различает — названы оба.
+      expect(reasonOf(DocumentProblem.damaged), 'не PDF или файл повреждён');
+      expect(reasonOf(DocumentProblem.empty), 'файл пустой');
+      for (final DocumentProblem problem in DocumentProblem.values) {
+        expect(reasonOf(problem), isNotEmpty, reason: '$problem');
+        expect(reasonOf(problem), isNot(contains('Введите')));
+      }
+      // Отказ не от движка — причина как есть.
+      expect(
+        describeAddFailure(
+          const ImportFailure(name: 'x.pdf', reason: 'не удалось прочесть'),
+        ),
+        'не удалось прочесть',
+      );
     });
 
     test('SNO-F-LIT-02: поимённо названы три отказа, остальные числом', () {

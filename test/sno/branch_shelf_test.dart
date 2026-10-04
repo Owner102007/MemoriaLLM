@@ -82,6 +82,26 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-CFG-02: пустая категория не зовёт нажать «+»', (
+      WidgetTester tester,
+    ) async {
+      await data.categories.save(
+        BookCategory(
+          id: 'study',
+          title: 'Учёба',
+          position: 0,
+          createdAt: DateTime.utc(2026, 8, 20),
+        ),
+      );
+      await pumpShelf(tester, testServices(data: data), canAddBooks: false);
+
+      expect(find.text('Учёба'), findsOneWidget);
+      expect(find.text('Пока пусто.'), findsOneWidget);
+      expect(find.textContaining('Нажмите «+»'), findsNothing);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-CFG-02: с признаком добавления полка прежняя', (
       WidgetTester tester,
     ) async {

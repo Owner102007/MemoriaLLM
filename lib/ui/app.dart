@@ -122,6 +122,11 @@ class _HomeShellState extends State<HomeShell> {
 
   /// Полка просит книги устройства: раздел и категория для них.
   void _addBooks(String? categoryId) {
+    if (!_visible.contains(AppSection.device)) {
+      // В сборке ветви раздела нет (SNO-F-CFG-02), и полка сюда не
+      // зовёт; переключиться на раздел, которого нет, нельзя.
+      return;
+    }
     setState(() {
       _targetCategory = categoryId;
       _section = AppSection.device;

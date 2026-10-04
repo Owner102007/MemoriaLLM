@@ -61,13 +61,19 @@ String describeImportReport(ImportReport report) {
 /// Файл, который не удалось завести.
 class ImportFailure {
   /// Создаёт запись об отказе.
-  const ImportFailure({required this.name, required this.reason});
+  const ImportFailure({required this.name, required this.reason, this.problem});
 
   /// Имя файла — по нему читатель поймёт, о какой книге речь.
   final String name;
 
   /// Что именно случилось, человеческими словами.
   final String reason;
+
+  /// Причина, названная движком; `null` — отказ не от движка (файл не
+  /// прочитался вовсе). Нужна там, где о причине говорят своими словами:
+  /// [reason] написан для экрана чтения и зовёт ввести пароль, а при
+  /// добавлении книги вводить его негде.
+  final DocumentProblem? problem;
 }
 
 /// Выбранный заново файл — не тот, к которому была привязана книга
@@ -189,9 +195,23 @@ class BookImporter {
       // Приняли файл, а прочесть не смогли: отпускаем принятое, чтобы
       // не копить в папке приложения копии нечитаемых книг и не держать
       // закреплённых ссылок в никуда.
-      await _storage.release(source);
+      //
+      // BUG-45: но не тогда, когда этот источник принадлежит книге, уже
+      // стоящей на полке. Так бывает, когда её файл выбрали снова: копия
+      // названа по содержимому, закреплённая ссылка — та же самая.
+      // Отпустить такой источник значило бы удалить копию книги или
+      // отозвать её ссылку из-за одного неудачного открытия.
+      if (!await _onShelf(source)) {
+        await _storage.release(source);
+      }
       rethrow;
     }
+  }
+
+  /// Стоит ли на полке книга с источником [source].
+  Future<bool> _onShelf(BookSource source) async {
+    final List<Book> books = await _library.books();
+    return books.any((Book book) => book.source == source);
   }
 
   /// Заводит сразу несколько выбранных файлов.
@@ -219,6 +239,7 @@ class BookImporter {
           ImportFailure(
             name: file.name,
             reason: describeDocumentProblem(error.problem),
+            problem: error.problem,
           ),
         );
       } on Object {
