@@ -22,12 +22,18 @@ class Thinned<T> {
   Timer? _timer;
   T? _pending;
   bool _waiting = false;
+  bool _disposed = false;
 
-  /// Новое значение.
+  /// Новое значение. После [dispose] не делает ничего.
   void add(T value) {
+    if (_disposed) {
+      return;
+    }
     if (_timer == null) {
-      _emit(value);
+      // Срок — раньше записи: значение, пришедшее из самой записи,
+      // встаёт в очередь, а не пишется вторым подряд.
       _timer = Timer(gap, _fire);
+      _emit(value);
       return;
     }
     _pending = value;
@@ -60,6 +66,7 @@ class Thinned<T> {
 
   /// Бросает отложенное: писать больше некуда.
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     _timer = null;
     _pending = null;

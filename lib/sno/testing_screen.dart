@@ -341,7 +341,13 @@ class _TestingScreenState extends State<TestingScreen>
     if (!mounted) {
       return;
     }
-    setState(() {});
+    setState(() {
+      // SNO-F-CFG-03: номер блока, набранный руками, живёт одну запись —
+      // следующая начинает счёт блоков заново.
+      if (_session?.phase != RecordingPhase.recording) {
+        _blockNumber = null;
+      }
+    });
     // Сессию завершили: заряд и место под «Старт записи» — уже не те,
     // что были сорок минут назад.
     if (_session?.phase == RecordingPhase.idle) {

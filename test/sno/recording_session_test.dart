@@ -541,7 +541,16 @@ void main() {
         'stopped_by': 'auto',
         'duration_ms': forty.inMilliseconds,
         'late_ms': 11 * 60 * 1000,
+        // SNO-F-REC-10: время вышло, пока участника не было, — запись
+        // кончилась в его отсутствие, хоть узнали об этом по возвращении.
+        'in_background': true,
       });
+      expect(kit.session.state!.inBackground, isTrue);
+      // В итог отлучка входит только до конца записи: ушёл на десятой
+      // минуте, запись кончилась на сороковой.
+      expect(kit.session.away!.count, 1);
+      expect(kit.session.away!.totalMs, 30 * 60 * 1000);
+      expect(kit.session.away!.hiddenMs, 30 * 60 * 1000);
       kit.session.dispose();
     });
 

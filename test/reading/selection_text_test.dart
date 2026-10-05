@@ -127,6 +127,47 @@ void main() {
       expect(containsWholeWord('self${mark}made', 'self-made'), isFalse);
       expect(containsWholeWord('что угодно', ''), isFalse);
     });
+
+    test('BUG-51: написания сравниваются без регистра и без разницы между '
+        'ё и е', () {
+      final String text = 'Трёх$markмерный';
+      expect(hyphenSpellings(text), <String>{'трех-мерный'});
+      // Буквы самого текста при этом остаются как были.
+      expect(
+        leavingText(text, hyphenated: hyphenSpellings(text)),
+        'Трёх-мерный',
+      );
+      expect(
+        containsWholeWord(spellingKey('ТРЁХ-мерный куб'), 'трех-мерный'),
+        isTrue,
+      );
+    });
+
+    test('BUG-51: буква с приставленным знаком — одно слово', () {
+      // «й», записанная буквой «и» и отдельной краткой (U+0306).
+      const String breve = '\u0306';
+      // Слово продолжается после краткой: целым «бело-серыи» здесь нет.
+      expect(containsWholeWord('бело-серыи$breveшии', 'бело-серыи'), isFalse);
+      // Половина слова с такой буквой у переноса не теряется.
+      expect(hyphenSpellings('краи$breve$markне'), <String>{'краи$breve-не'});
+    });
+
+    test('BUG-51: один знак переноса — не выделение', () {
+      final BookSelection only = BookSelection(
+        pageNumber: 1,
+        start: 4,
+        end: 5,
+        text: mark,
+      );
+      expect(only.isEmpty, isTrue);
+      final BookSelection word = BookSelection(
+        pageNumber: 1,
+        start: 0,
+        end: 9,
+        text: 'пере$markнос',
+      );
+      expect(word.isEmpty, isFalse);
+    });
   });
 
   group('BUG-51: что знает книга', () {
@@ -192,6 +233,60 @@ void main() {
       store.failReads = true;
 
       expect(await cache.leaving('self${mark}made'), 'selfmade');
+      cache.close();
+    });
+
+    test('BUG-51: о том же слове книгу второй раз не читают', () async {
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final BookTextCache cache = cacheOf(book(), store);
+      cache.startPass(from: 1);
+      await cache.passDone();
+
+      // Слово, которого с дефисом в книге нет: просмотрена вся книга.
+      expect(await cache.leaving('micro${mark}scope'), 'microscope');
+      final int once = store.textQueries;
+      expect(once, greaterThan(0));
+      // Второй вопрос о нём же в базу не ходит; о найденном — тоже.
+      expect(await cache.leaving('micro${mark}scope'), 'microscope');
+      expect(await cache.leaving('self${mark}made'), 'self-made');
+      final int twice = store.textQueries;
+      expect(await cache.leaving('self${mark}made'), 'self-made');
+      expect(await cache.leaving('a micro${mark}scope'), 'a microscope');
+      expect(store.textQueries, twice);
+      cache.close();
+    });
+
+    test('BUG-51: страница дочиталась позже — слово находится', () async {
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final FakeReaderDocument document = book();
+      final BookTextCache cache = cacheOf(document, store);
+      // Запомнена только первая страница: слова с дефисом на ней нет.
+      await cache.textsOf(1, 1);
+      expect(await cache.leaving('self${mark}made'), 'selfmade');
+
+      // Проход дочитал книгу: третья страница знает слово с дефисом.
+      cache.startPass(from: 1);
+      await cache.passDone();
+      expect(await cache.leaving('self${mark}made'), 'self-made');
+      cache.close();
+    });
+
+    test('BUG-51: одно выделение спрашивают сразу трое — книга читается '
+        'один раз', () async {
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final BookTextCache cache = cacheOf(book(), store);
+      cache.startPass(from: 1);
+      await cache.passDone();
+      final int before = store.textQueries;
+
+      final List<String> answers = await Future.wait(<Future<String>>[
+        cache.leaving('micro${mark}scope'),
+        cache.leaving('micro${mark}scope'),
+        cache.leaving('micro${mark}scope'),
+      ]);
+
+      expect(answers, <String>['microscope', 'microscope', 'microscope']);
+      expect(store.textQueries, before + 1);
       cache.close();
     });
 
@@ -315,7 +410,7 @@ void main() {
       await actions.saveQuote(whole());
       await actions.acted('note', whole());
       await actions.saveNote(whole(), 'проверить');
-      actions.cancelled();
+      await actions.cancelled();
 
       expect(log.types, <String>[
         'select.end',
@@ -354,10 +449,51 @@ void main() {
         await actions.settled(whole());
         await actions.acted('copy', whole());
         await actions.saveQuote(whole());
+        await actions.cancelled();
+        await actions.copiedLoose('текст');
 
         expect(log.events, isEmpty);
+        // Вне записи событие даже не собирают.
+        expect(log.asked, 0);
         expect(annotations.savedQuotes, hasLength(1));
       },
     );
+
+    test('SNO-F-REC-02: выделение сняли, пока его текст считался, — в '
+        'журнале оно всё равно раньше своего снятия', () async {
+      // Текст выделения с переносом считается по книге и не сразу.
+      final Future<void> selected = actions.settled(whole());
+      final Future<void> dropped = actions.cancelled();
+      await Future.wait(<Future<void>>[selected, dropped]);
+
+      expect(log.types, <String>['select.end', 'select.cancel']);
+    });
+
+    test('BUG-51: заметка сохраняет цитату, какой её показало окно', () async {
+      final Note note = await actions.saveNote(
+        whole(),
+        'проверить',
+        text: 'показанное в окне',
+      );
+
+      expect(annotations.savedQuotes.single.content, 'показанное в окне');
+      expect(note.quoteId, annotations.savedQuotes.single.id);
+    });
+
+    test('SNO-F-REC-02: скопированное в ленте — действием с текстом и '
+        'пометкой ленты', () async {
+      final String clean = await actions.leaving('micro${mark}scope');
+      await actions.copiedLoose(clean);
+
+      expect(clean, 'microscope');
+      final Map<String, Object?> copied = log
+          .dataOf(SnoEventType.selectionAction)
+          .single;
+      expect(copied, <String, Object?>{
+        'action': 'copy',
+        'flow': 'ribbon',
+        'text': 'microscope',
+      });
+    });
   });
 }

@@ -364,6 +364,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     if (!_searchOpen) {
       _logPanel('search', open: true);
     }
+    // Панели чтения поиск на узком экране прячет: это их закрытие.
+    if (!_wide && _chromeVisible) {
+      _logPanel('chrome', open: false);
+    }
     setState(() {
       _searchOpen = true;
       _browsing = false;
@@ -419,6 +423,9 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     final Future<void> done = search.start(query, also: queries.sublist(1));
     if (!_searchOpen) {
       _logPanel('search', open: true);
+    }
+    if (!_wide && _chromeVisible) {
+      _logPanel('chrome', open: false);
     }
     setState(() {
       _searchOpen = true;

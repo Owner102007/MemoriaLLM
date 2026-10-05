@@ -20,7 +20,9 @@ import 'text_search.dart';
 
 final String _mark = String.fromCharCode(kLineBreakHyphen);
 
-final RegExp _wordChar = RegExp(r'[\p{L}\p{N}]', unicode: true);
+/// Знак слова: буква, цифра или знак, который к букве приставлен, —
+/// «й», записанная буквой и отдельной краткой, остаётся одним словом.
+final RegExp _wordChar = RegExp(r'[\p{L}\p{N}\p{M}]', unicode: true);
 
 bool _isWordChar(String text, int index) {
   return index >= 0 && index < text.length && _wordChar.hasMatch(text[index]);
@@ -46,8 +48,13 @@ bool hasLineBreakMark(String text) => text.contains(_mark);
   return (left: text.substring(from, at), right: text.substring(at + 1, to));
 }
 
+/// Вид слова, в котором написания сравниваются: без регистра и без
+/// разницы между `ё` и `е` — как в поиске по книге. «Трёх», знак,
+/// «мерный» узнаёт своё написание и в книге, где набрано «трех-мерный».
+String spellingKey(String word) => plainSearchText(word);
+
 /// Написания с дефисом для слов [text], разрезанных знаком переноса, —
-/// строчными буквами.
+/// в виде для сравнения ([spellingKey]).
 ///
 /// О каждом из них надо спросить книгу: встречается ли оно в ней
 /// целиком. Те, что встречаются, отдаются в [leavingText].
@@ -57,7 +64,7 @@ Set<String> hyphenSpellings(String text) {
   while (at >= 0) {
     final ({String left, String right})? halves = _halvesAt(text, at);
     if (halves != null) {
-      spellings.add('${halves.left}-${halves.right}'.toLowerCase());
+      spellings.add(spellingKey('${halves.left}-${halves.right}'));
     }
     at = text.indexOf(_mark, at + 1);
   }
@@ -68,8 +75,8 @@ Set<String> hyphenSpellings(String text) {
 ///
 /// На месте знака не остаётся ничего: «остео», знак, «логия» →
 /// «остеология». Дефис встаёт там, где слово с дефисом есть в
-/// [hyphenated] — написаниях, которые книга знает целыми (строчными
-/// буквами, как их отдаёт [hyphenSpellings]): «сердечно», знак,
+/// [hyphenated] — написаниях, которые книга знает целыми (в виде для
+/// сравнения, как их отдаёт [hyphenSpellings]): «сердечно», знак,
 /// «сосудистая» → «сердечно-сосудистая». Без [hyphenated] дефисов не
 /// будет вовсе — так чинятся цитаты, сохранённые до исправления, и
 /// текст книги, которая ещё не прочитана.
@@ -85,7 +92,9 @@ String leavingText(String text, {Set<String> hyphenated = const <String>{}}) {
     if (hyphenated.isNotEmpty) {
       final ({String left, String right})? halves = _halvesAt(text, at);
       if (halves != null &&
-          hyphenated.contains('${halves.left}-${halves.right}'.toLowerCase())) {
+          hyphenated.contains(
+            spellingKey('${halves.left}-${halves.right}'),
+          )) {
         out.write('-');
       }
     }
@@ -97,7 +106,7 @@ String leavingText(String text, {Set<String> hyphenated = const <String>{}}) {
 }
 
 /// Встречается ли слово [word] в тексте [haystack] целиком — не куском
-/// более длинного слова. Оба — строчными буквами.
+/// более длинного слова. Оба — в виде для сравнения ([spellingKey]).
 bool containsWholeWord(String haystack, String word) {
   if (word.isEmpty) {
     return false;

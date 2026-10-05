@@ -22,6 +22,7 @@ import '../../domain/reading/reader_document.dart';
 import '../../domain/reading/reader_gestures.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/reading/selection_query.dart';
+import '../../domain/reading/selection_text.dart';
 import '../../domain/reading/sheet_arrangement.dart';
 import '../../domain/reading/sheet_placement.dart';
 import '../../domain/reading/sheet_transform.dart';
@@ -260,7 +261,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Журнал действий участника; `null` — в этой сборке записи нет
   /// (SNO-F-REC-02).
-  ActionLog? get _log => widget.services.recording;
+  ///
+  /// Экран, который уже закрывают, в журнал не пишет: полка записала
+  /// `book.close` в миг, когда участник ушёл, а экран живёт ещё треть
+  /// секунды, пока уезжает, — книга, досчитавшаяся за это время,
+  /// открылась бы в журнале после собственного закрытия.
+  ActionLog? get _log {
+    return _route?.isActive == false ? null : widget.services.recording;
+  }
+
+  /// Маршрут этого экрана: по нему видно, что экран уже закрывают.
+  ModalRoute<Object?>? _route;
 
   /// Действия над выделенным: что уходит из книги и что пишется в
   /// журнал (BUG-51, SNO-F-REC-02).
@@ -270,6 +281,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// за которой показа так и не случилось, к чужому показу не идёт.
   String _cause = 'open';
   DateTime _causeAt = DateTime.now();
+  int _causeRun = 0;
 
   /// Сколько причина ждёт своего показа.
   static const Duration _causeLife = Duration(seconds: 3);
@@ -307,14 +319,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _selectSaid = false;
   bool _selectActed = false;
 
-  /// Шёл ли поиск по книге и с какого мига — для события запроса.
+  /// Шёл ли поиск по книге, по какому запросу и с какого мига — для
+  /// события запроса.
   bool _searchRan = false;
+  String _searchFor = '';
   final Stopwatch _searchTime = Stopwatch();
 
   /// Говорит, чем вызван следующий показ страницы (SNO-F-REC-02).
-  void _because(String cause) {
+  ///
+  /// Отвечает номером причины — по нему её снимают ([_dropCause]),
+  /// когда действие кончилось.
+  int _because(String cause) {
     _cause = cause;
     _causeAt = DateTime.now();
+    return ++_causeRun;
+  }
+
+  /// Действие с причиной номер [run] кончилось: если показа за ним не
+  /// случилось — последняя страница, режим без выигрыша, пометка на
+  /// этой же странице, — причина чужому показу не достаётся. Причину,
+  /// названную позже, не трогает.
+  void _dropCause(int run) {
+    if (run == _causeRun) {
+      _causeAt = DateTime.fromMillisecondsSinceEpoch(0);
+    }
   }
 
   /// Режим показа для журнала: в ленте режимов нет.
@@ -476,8 +504,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     if (search.isRunning) {
-      if (!_searchRan) {
+      // Запрос сменили, не дождавшись прежнего: время считается от
+      // нового, а не от первого из сменённых.
+      if (!_searchRan || _searchFor != search.query) {
         _searchRan = true;
+        _searchFor = search.query;
         _searchTime
           ..reset()
           ..start();
@@ -489,7 +520,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     _searchRan = false;
     _searchTime.stop();
-    if (!log.recording || search.query.isEmpty) {
+    // Запрос, по которому не искали — стёрли до одной буквы, пока шёл
+    // прежний, — запросом не считается.
+    if (!log.recording || !isSearchableQuery(search.query)) {
       return;
     }
     log.log(
@@ -537,7 +570,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _selectTimer?.cancel();
     _selectTimer = null;
     if (_selectSaid && !_selectActed) {
-      _actions?.cancelled();
+      unawaited(_actions?.cancelled());
     }
     _selectSaid = false;
     _selectActed = false;
@@ -610,6 +643,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _route = ModalRoute.of(context);
     _screen = MediaQuery.sizeOf(context);
     _offerArea();
     // Маршрут сообщает сюда же, когда поверх него что-то открыли или
@@ -1003,8 +1037,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _logDeviceSetting('page_flow', flow.name);
     final ReaderController? shown = _controller;
     if (shown != null) {
-      _because('flow');
+      final int run = _because('flow');
       _notePlace(shown);
+      _dropCause(run);
     }
     // В ленте слоя подсветки нет: совпадений там не показать.
     _refreshHitRects();
@@ -1028,8 +1063,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
-    _because('mode');
+    final int run = _because('mode');
     final DisplayModeOutcome outcome = await controller.setDisplayMode(mode);
+    _dropCause(run);
     if (outcome == DisplayModeOutcome.noGain) {
       _explainNoGain(mode);
       return;
@@ -1217,8 +1253,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     }
     _placeSaid = null;
-    _because('open');
+    final int run = _because('open');
     _notePlace(controller);
+    _dropCause(run);
   }
 
   /// Начинает фоновый проход по тексту книги — не сразу, а дав книге
@@ -1558,7 +1595,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// показывается готовый запрос со всеми подстановками. Заодно это
   /// единственный способ увидеть глазами, тот ли абзац достался
   /// контекстом.
-  Future<void> _onPrompt(SelectionPrompt prompt) async {
+  /// Идёт ли действие над выделением: текст выделения с переносом
+  /// считается по книге, и второе нажатие той же кнопки, пришедшее за
+  /// это время, вторым действием не становится — две цитаты, два окна
+  /// заметки.
+  bool _acting = false;
+
+  Future<void> _once(Future<void> Function() action) async {
+    if (_acting) {
+      return;
+    }
+    _acting = true;
+    try {
+      await action();
+    } finally {
+      _acting = false;
+    }
+  }
+
+  Future<void> _onPrompt(SelectionPrompt prompt) {
+    return _once(() => _prompt(prompt));
+  }
+
+  Future<void> _prompt(SelectionPrompt prompt) async {
     final BookSelection? selection = _selection;
     final SelectionActions? actions = _actions;
     if (selection == null || actions == null) {
@@ -1590,7 +1649,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// Сохраняет выделенное цитатой (BUG-51: без знака переноса — текст
   /// и абзац вокруг него берутся у [SelectionActions]).
-  Future<void> _onQuote() async {
+  Future<void> _onQuote() => _once(_quote);
+
+  Future<void> _quote() async {
     final BookSelection? selection = _selection;
     final SelectionActions? actions = _actions;
     if (selection == null || actions == null) {
@@ -1611,7 +1672,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// себе противоречит» без того, чему она противоречит, через месяц не
   /// значит ничего. Цитата заводится **после** того, как читатель написал
   /// заметку: отменённое окно не должно оставлять за собой следов.
-  Future<void> _onNote() async {
+  Future<void> _onNote() => _once(_note);
+
+  Future<void> _note() async {
     final BookSelection? selection = _selection;
     final SelectionActions? actions = _actions;
     if (selection == null || actions == null) {
@@ -1631,7 +1694,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (body == null || !mounted) {
       return;
     }
-    await actions.saveNote(selection, body);
+    await actions.saveNote(selection, body, text: quoted);
     if (!mounted) {
       return;
     }
@@ -1639,7 +1702,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _say('Заметка сохранена');
   }
 
-  Future<void> _onCopy() async {
+  Future<void> _onCopy() => _once(_copy);
+
+  Future<void> _copy() async {
     final BookSelection? selection = _selection;
     final SelectionActions? actions = _actions;
     if (selection == null || actions == null) {
@@ -1837,12 +1902,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       SnoEventType.annotationJump,
       data: <String, Object?>{'page': target.page},
     );
-    _because('annotation');
+    final int run = _because('annotation');
     await _showMark(
       page: target.page,
       start: target.textStart,
       end: target.textEnd,
     );
+    _dropCause(run);
   }
 
   /// Переход на страницу; `false` — его обогнал следующий (BUG-11).
@@ -1902,12 +1968,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     switch (action) {
       case ReaderTap.previousFragment:
         _dismissSelection();
-        _because('tap_zone');
-        unawaited(controller.previousFragment());
+        _turn('tap_zone', controller.previousFragment);
       case ReaderTap.nextFragment:
         _dismissSelection();
-        _because('tap_zone');
-        unawaited(controller.nextFragment());
+        _turn('tap_zone', controller.nextFragment);
       case ReaderTap.dismissSelection:
         _dismissSelection();
       case ReaderTap.toggleChrome:
@@ -1928,7 +1992,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
-    _because(cause);
     // Читатель листает клавишей или кнопкой — подсказка о зонах ему уже
     // не нужна (F-READ-23).
     _dismissZoneHint();
@@ -1940,13 +2003,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ? controller.nextSheetStart
           : controller.previousSheetStart;
       if (target != null) {
-        unawaited(_goToPage(target));
+        _turn(cause, () => _goToPage(target));
       }
       return;
     }
-    unawaited(
-      forward ? controller.nextFragment() : controller.previousFragment(),
+    _turn(
+      cause,
+      forward ? controller.nextFragment : controller.previousFragment,
     );
+  }
+
+  /// Листает действием [step] и называет журналу причину [cause]
+  /// (SNO-F-REC-02). Листать некуда — причина снимается.
+  void _turn(String cause, Future<bool> Function() step) {
+    final int run = _because(cause);
+    unawaited(step().whenComplete(() => _dropCause(run)));
   }
 
   Future<void> _openSettings() async {
@@ -2465,7 +2536,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (selectable && text.isCopyAllowed && text.hasSelectedText)
         ContextMenuButtonItem(
           type: ContextMenuButtonType.copy,
-          onPressed: () => unawaited(text.copyTextSelection()),
+          onPressed: () => unawaited(_copyRibbonSelection(text)),
         ),
       if (selectable && !text.isSelectingAllText)
         ContextMenuButtonItem(
@@ -2489,6 +2560,53 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
       ),
     );
+  }
+
+  /// «Копировать» в ленте (BUG-51).
+  ///
+  /// Сам просмотрщик кладёт в буфер текст страницы как есть — со
+  /// знаком, которым движок отмечает перенос слова. Поэтому текст
+  /// берётся у него, чистится тем же правилом, что цитата и заметка, и
+  /// в буфер его кладём мы. Выделение после этого снимается — как у
+  /// просмотрщика.
+  Future<void> _copyRibbonSelection(PdfTextSelectionDelegate text) async {
+    if (!text.isCopyAllowed) {
+      return;
+    }
+    final String raw = await text.getSelectedText();
+    final SelectionActions? actions = _actions;
+    final String clean = actions == null
+        ? leavingText(raw)
+        : await actions.leaving(raw);
+    if (clean.isEmpty) {
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: clean));
+    // SNO-F-REC-02: места в тексте страницы у выделения ленты нет —
+    // действие пишется с текстом и пометкой ленты.
+    unawaited(actions?.copiedLoose(clean));
+    await text.clearTextSelection();
+  }
+
+  /// `Ctrl+C` в ленте: просмотрщик скопировал бы сам, мимо правила
+  /// (BUG-51). Остальные клавиши остаются ему.
+  bool? _onRibbonKey(
+    PdfViewerKeyHandlerParams params,
+    LogicalKeyboardKey key,
+    bool isRealKeyPress,
+  ) {
+    final HardwareKeyboard keyboard = HardwareKeyboard.instance;
+    if (key != LogicalKeyboardKey.keyC ||
+        !(keyboard.isControlPressed || keyboard.isMetaPressed)) {
+      return null;
+    }
+    if (_viewer.isReady) {
+      final PdfTextSelectionDelegate text = _viewer.textSelectionDelegate;
+      if (text.hasSelectedText) {
+        unawaited(_copyRibbonSelection(text));
+      }
+    }
+    return true;
   }
 
   Widget _buildRibbonViewer(
@@ -2520,6 +2638,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           }
         },
         buildContextMenu: _buildRibbonMenu,
+        onKey: _onRibbonKey,
         onGeneralTap:
             (
               BuildContext context,

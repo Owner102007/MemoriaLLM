@@ -245,6 +245,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
+  /// Запрос, не достоявший своего срока, пишется сейчас: следом идёт
+  /// событие, которое на него опирается, — открытие найденного или
+  /// закрытие поиска.
+  void _flushQuery() {
+    final Timer? pending = _queryTimer;
+    if (pending == null) {
+      return;
+    }
+    pending.cancel();
+    _logQuery();
+  }
+
   /// Потоки полки: категории, книги, места чтения.
   ///
   /// Заводятся один раз, а не в каждом построении: поиск по названию
@@ -311,8 +323,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!_searchActive && _searchField.text.isEmpty) {
       return;
     }
-    _queryTimer?.cancel();
-    _queryTimer = null;
+    _flushQuery();
     _log?.log(
       SnoEventType.searchClose,
       data: const <String, Object?>{'scope': 'shelf'},
@@ -333,6 +344,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// ([_openBook]).
   Future<void> _openFound(Book book) {
     final ActionLog? log = _log;
+    _flushQuery();
     if (log != null && log.recording) {
       final List<ShelfTitleHit> hits = searchShelfTitles(
         query: _query,
@@ -802,10 +814,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
       canPop: !_searchActive,
       onPopInvokedWithResult: (bool didPop, Object? result) {
         if (!didPop) {
-          _log?.log(
-            SnoEventType.navBack,
-            data: const <String, Object?>{'closes': 'shelf_search'},
-          );
+          // Сюда приходит всякое «назад», которое не закрыло приложение,
+          // — и то, что увело из другого раздела, и то, что запись не
+          // пустила дальше полки. Событие — только когда поиск открыт.
+          if (_searchActive || _searchField.text.isNotEmpty) {
+            _log?.log(
+              SnoEventType.navBack,
+              data: const <String, Object?>{'closes': 'shelf_search'},
+            );
+          }
           _closeSearch();
         }
       },

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../domain/annotations/annotations.dart';
 import '../../domain/library/ids.dart';
 import '../../domain/prompts/selection_prompt.dart';
@@ -16,7 +18,9 @@ import 'reader_controller.dart';
 /// обмена и в запрос к модели, — и на каждом обязано уйти чистым: без
 /// знака, которым движок отмечает перенос слова. Прежде текст брался у
 /// выделения как есть в четырёх местах экрана чтения, и знак уезжал
-/// вместе с ним. Теперь путь один: [textOf] и [contextOf].
+/// вместе с ним. Теперь путь один: [textOf] и [contextOf]. Пятый выход
+/// — «Копировать» в ленте, где выделение ведёт сам просмотрщик и места
+/// в тексте страницы у него нет, — чистит текст здесь же ([leaving]).
 ///
 /// Здесь же действия пишутся в журнал записи сборок ветвей СНО2026:
 /// что выделено и что с этим сделано — с текстом целиком (решение В3).
@@ -56,10 +60,22 @@ class SelectionActions {
 
   static final RegExp _spaces = RegExp(r'\s+');
 
-  /// Текст таким, каким он уходит из книги.
+  /// Очередь записей в журнал. Текст выделения с переносом считается
+  /// по книге и не сразу: событие, которое его ждёт, не должно лечь в
+  /// журнал после события, случившегося позже, — «выделение снято»
+  /// раньше самого выделения.
+  Future<void> _order = Future<void>.value();
+
+  Future<void> _inOrder(FutureOr<void> Function() write) {
+    final Future<void> next = _order.then((_) => write());
+    _order = next.then<void>((_) {}, onError: (Object _) {});
+    return next;
+  }
+
+  /// Текст [text] таким, каким он уходит из книги.
   ///
   /// Сбой кэша — не повод оставить знак: тогда он убирается без дефиса.
-  Future<String> _leaving(String text) async {
+  Future<String> leaving(String text) async {
     if (!hasLineBreakMark(text)) {
       return text;
     }
@@ -75,7 +91,7 @@ class SelectionActions {
   }
 
   /// Выделенный текст — без знаков переноса.
-  Future<String> textOf(BookSelection selection) => _leaving(selection.text);
+  Future<String> textOf(BookSelection selection) => leaving(selection.text);
 
   /// Абзац вокруг выделения — без знаков переноса; `null` — абзаца не
   /// нашлось.
@@ -85,7 +101,7 @@ class SelectionActions {
       start: selection.start,
       end: selection.end,
     );
-    return paragraph == null ? null : _leaving(paragraph.text);
+    return paragraph == null ? null : leaving(paragraph.text);
   }
 
   /// Идёт ли запись: данные события собирают, только если да.
@@ -100,25 +116,48 @@ class SelectionActions {
   }
 
   /// Выделение устоялось: в журнал — `select.end` с текстом.
-  Future<void> settled(BookSelection selection) async {
+  Future<void> settled(BookSelection selection) {
     if (!_recording) {
-      return;
+      return Future<void>.value();
     }
-    final String text = await textOf(selection);
-    final String flat = text.trim();
-    _log?.log(
-      SnoEventType.selectEnd,
-      data: <String, Object?>{
-        ..._placeOf(selection),
-        ...journalText(text),
-        'words': flat.isEmpty ? 0 : flat.split(_spaces).length,
-      },
-    );
+    return _inOrder(() async {
+      final String text = await textOf(selection);
+      final String flat = text.trim();
+      _log?.log(
+        SnoEventType.selectEnd,
+        data: <String, Object?>{
+          ..._placeOf(selection),
+          ...journalText(text),
+          'words': flat.isEmpty ? 0 : flat.split(_spaces).length,
+        },
+      );
+    });
   }
 
   /// Выделение снято без действия над ним.
-  void cancelled() {
-    _log?.log(SnoEventType.selectCancel);
+  Future<void> cancelled() {
+    if (!_recording) {
+      return Future<void>.value();
+    }
+    return _inOrder(() => _log?.log(SnoEventType.selectCancel));
+  }
+
+  /// Выделенное скопировано там, где места в тексте страницы у него
+  /// нет, — в ленте; [text] — уже очищенный.
+  Future<void> copiedLoose(String text) {
+    if (!_recording) {
+      return Future<void>.value();
+    }
+    return _inOrder(
+      () => _log?.log(
+        SnoEventType.selectionAction,
+        data: <String, Object?>{
+          'action': 'copy',
+          'flow': 'ribbon',
+          ...journalText(text),
+        },
+      ),
+    );
   }
 
   /// Нажато действие [action] панели над выделением: `quote`, `note`,
@@ -127,34 +166,39 @@ class SelectionActions {
     String action,
     BookSelection selection, {
     Map<String, Object?> extra = const <String, Object?>{},
-  }) async {
+  }) {
     if (!_recording) {
-      return;
+      return Future<void>.value();
     }
-    final String text = await textOf(selection);
-    _log?.log(
-      SnoEventType.selectionAction,
-      data: <String, Object?>{
-        'action': action,
-        ..._placeOf(selection),
-        ...journalText(text),
-        ...extra,
-      },
-    );
+    return _inOrder(() async {
+      final String text = await textOf(selection);
+      _log?.log(
+        SnoEventType.selectionAction,
+        data: <String, Object?>{
+          'action': action,
+          ..._placeOf(selection),
+          ...journalText(text),
+          ...extra,
+        },
+      );
+    });
   }
 
   /// Сохраняет выделенное цитатой.
   ///
   /// Контекст сохраняется всегда, а не только когда его просит промпт:
   /// по нему через месяц видно, откуда цитата и о чём там была речь.
-  Future<Quote> saveQuote(BookSelection selection) async {
-    final String text = await textOf(selection);
+  ///
+  /// [text] — текст цитаты, если он уже посчитан и показан читателю:
+  /// сохраняется ровно то, что он видел.
+  Future<Quote> saveQuote(BookSelection selection, {String? text}) async {
+    final String content = text ?? await textOf(selection);
     final String? context = await contextOf(selection);
     final Quote quote = Quote(
       id: _newId(),
       bookId: _bookId,
       page: selection.pageNumber,
-      content: text,
+      content: content,
       context: context,
       // Место цитаты в тексте страницы: по нему она подсвечивается,
       // когда читатель возвращается к ней из списка. У цитат,
@@ -165,23 +209,32 @@ class SelectionActions {
       createdAt: _now(),
     );
     await _annotations.saveQuote(quote);
-    _log?.log(
-      SnoEventType.quoteCreate,
-      data: <String, Object?>{
-        'id': quote.id,
-        ..._placeOf(selection),
-        ...journalText(text),
-      },
-    );
+    if (_recording) {
+      await _inOrder(
+        () => _log?.log(
+          SnoEventType.quoteCreate,
+          data: <String, Object?>{
+            'id': quote.id,
+            ..._placeOf(selection),
+            ...journalText(content),
+          },
+        ),
+      );
+    }
     return quote;
   }
 
   /// Сохраняет заметку [body] к выделенному — вместе с самой цитатой.
   ///
   /// Заметка «здесь автор себе противоречит» без того, чему она
-  /// противоречит, через месяц не значит ничего.
-  Future<Note> saveNote(BookSelection selection, String body) async {
-    final Quote quote = await saveQuote(selection);
+  /// противоречит, через месяц не значит ничего. [text] — текст цитаты,
+  /// каким его показало окно заметки.
+  Future<Note> saveNote(
+    BookSelection selection,
+    String body, {
+    String? text,
+  }) async {
+    final Quote quote = await saveQuote(selection, text: text);
     final DateTime now = _now();
     final Note note = Note(
       id: _newId(),
@@ -193,15 +246,19 @@ class SelectionActions {
       updatedAt: now,
     );
     await _annotations.saveNote(note);
-    _log?.log(
-      SnoEventType.noteCreate,
-      data: <String, Object?>{
-        'id': note.id,
-        'quote': quote.id,
-        'page': note.page,
-        ...journalText(body),
-      },
-    );
+    if (_recording) {
+      await _inOrder(
+        () => _log?.log(
+          SnoEventType.noteCreate,
+          data: <String, Object?>{
+            'id': note.id,
+            'quote': quote.id,
+            'page': note.page,
+            ...journalText(body),
+          },
+        ),
+      );
+    }
     return note;
   }
 

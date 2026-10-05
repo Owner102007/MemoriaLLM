@@ -234,8 +234,22 @@ class FakeDeviceStatus implements DeviceStatus {
   /// Горит ли экран; `null` — устройство не знает.
   bool? lit;
 
+  /// Придерживать ли ответы об экране: тогда каждый вопрос ждёт в
+  /// [screenAsks], пока тест не ответит сам.
+  bool holdScreen = false;
+
+  /// Вопросы об экране, на которые ещё не ответили, по порядку.
+  final List<Completer<bool?>> screenAsks = <Completer<bool?>>[];
+
   @override
-  Future<bool?> screenOn() async => lit;
+  Future<bool?> screenOn() {
+    if (!holdScreen) {
+      return Future<bool?>.value(lit);
+    }
+    final Completer<bool?> ask = Completer<bool?>();
+    screenAsks.add(ask);
+    return ask.future;
+  }
 }
 
 /// Двое часов записи в руках теста: настенные и монотонные.
@@ -373,6 +387,11 @@ class ListActionLog implements ActionLog {
   final List<({SnoEventType type, Map<String, Object?> data})> events =
       <({SnoEventType type, Map<String, Object?> data})>[];
 
+  /// Сколько раз журнал просили что-то записать — и тогда, когда
+  /// запись не идёт: по нему видно, что вне записи событие даже не
+  /// собирают.
+  int asked = 0;
+
   /// Где участник: экран, книга, страница, полоса, режим.
   final RecordingContext context = RecordingContext();
 
@@ -399,6 +418,7 @@ class ListActionLog implements ActionLog {
     SnoEventType type, {
     Map<String, Object?> data = const <String, Object?>{},
   }) {
+    asked++;
     if (recording) {
       events.add((type: type, data: data));
     }

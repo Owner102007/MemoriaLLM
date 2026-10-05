@@ -375,58 +375,98 @@ class BookTextCache {
   /// ищут написание слова ([spelledWhole]).
   static const int _spellingBatch = 64;
 
+  /// Написания, которые книга знает целыми: найденное однажды в ней
+  /// остаётся.
+  final Set<String> _spelled = <String>{};
+
+  /// Написания, которых в книге пока не нашли: написание → страницы, где
+  /// его уже искали. Второй раз те же страницы не читаются — в книге,
+  /// прочитанной целиком, повторный вопрос не ходит в базу вовсе, а пока
+  /// идёт фоновый проход, досматриваются только новые страницы.
+  final Map<String, Set<int>> _unspelled = <String, Set<int>>{};
+
+  /// Сколько ненайденных написаний помнить: дальше память о них
+  /// сбрасывается и набирается заново.
+  static const int _unspelledLimit = 256;
+
+  /// Тексты, которые чистят прямо сейчас: об одном выделении спрашивают
+  /// сразу несколько мест, и читать книгу на каждое незачем.
+  final Map<String, Future<String>> _leaving = <String, Future<String>>{};
+
   /// Какие из написаний [words] встречаются в запомненном тексте книги
   /// целыми словами (ALG-TXT-14, BUG-51).
   ///
   /// Нужно тексту, уходящему из книги: слово, разрезанное переносом,
   /// получает дефис, только если с дефисом оно написано в этой же книге
-  /// где-то ещё. [words] — строчными буквами.
+  /// где-то ещё. [words] — в виде для сравнения ([spellingKey]).
   ///
   /// Смотрит только то, что уже лежит в кэше, и к движку не ходит:
   /// ждать, пока книга дочитается, выделение не будет. В книге, которая
   /// прочитана не вся, слово может не найтись — тогда дефиса не будет.
   /// Сбой базы — то же самое, что «не нашлось».
+  ///
+  /// Ответ запоминается: одно и то же написание спрашивают по нескольку
+  /// раз на каждое действие над выделением, и читать ради него всю
+  /// книгу заново незачем.
   Future<Set<String>> spelledWhole(Set<String> words) async {
-    final Set<String> found = <String>{};
-    if (words.isEmpty || _closed) {
+    final Set<String> found = <String>{
+      for (final String word in words)
+        if (_spelled.contains(word)) word,
+    };
+    final Set<String> open = words.difference(found);
+    if (open.isEmpty || _closed) {
       return found;
     }
     await load();
+    if (_unspelled.length > _unspelledLimit) {
+      _unspelled.clear();
+    }
     final int total = pageCount;
     for (int from = 1; from <= total; from += _spellingBatch) {
-      if (_closed || found.length == words.length) {
+      if (_closed || open.isEmpty) {
         break;
       }
       final int to = from + _spellingBatch - 1 > total
           ? total
           : from + _spellingBatch - 1;
-      bool any = false;
-      for (int page = from; page <= to; page++) {
-        if (_cached.containsKey(page) || _unsaved.containsKey(page)) {
-          any = true;
-          break;
-        }
-      }
-      if (!any) {
+      // Страницы пачки, которые запомнены и которые хоть одно из
+      // искомых написаний ещё не видело.
+      final List<int> fresh = <int>[
+        for (int page = from; page <= to; page++)
+          if ((_cached.containsKey(page) || _unsaved.containsKey(page)) &&
+              open.any(
+                (String word) => !(_unspelled[word]?.contains(page) ?? false),
+              ))
+            page,
+      ];
+      if (fresh.isEmpty) {
         continue;
       }
       final Map<int, String> texts = <int, String>{};
       try {
         texts.addAll(await _store.pageTexts(_key, from: from, to: to));
       } on Object {
-        // База не ответила — в этих страницах слово не найдено.
+        // База не ответила — в этих страницах слово не найдено, и
+        // просмотренными они не считаются.
       }
-      for (int page = from; page <= to; page++) {
-        final String? fresh = _unsaved[page];
-        if (fresh != null) {
-          texts[page] = fresh;
+      for (final int page in fresh) {
+        final String? text = _unsaved[page] ?? texts[page];
+        if (text == null) {
+          continue;
         }
-      }
-      for (final String text in texts.values) {
-        final String lower = text.toLowerCase();
-        for (final String word in words) {
-          if (!found.contains(word) && containsWholeWord(lower, word)) {
+        final String plain = spellingKey(text);
+        for (final String word in open.toList()) {
+          final Set<int> seen = _unspelled.putIfAbsent(word, () => <int>{});
+          if (seen.contains(page)) {
+            continue;
+          }
+          if (containsWholeWord(plain, word)) {
+            _spelled.add(word);
+            _unspelled.remove(word);
             found.add(word);
+            open.remove(word);
+          } else {
+            seen.add(page);
           }
         }
       }
@@ -437,10 +477,22 @@ class BookTextCache {
   /// Текст [text] таким, каким он уходит из книги (ALG-TXT-14, BUG-51):
   /// без знаков переноса, а с дефисом — там, где слово с дефисом книга
   /// знает целым.
-  Future<String> leaving(String text) async {
+  Future<String> leaving(String text) {
     if (!hasLineBreakMark(text)) {
-      return text;
+      return Future<String>.value(text);
     }
+    final Future<String>? running = _leaving[text];
+    if (running != null) {
+      return running;
+    }
+    final Future<String> work = _cleaned(text).whenComplete(() {
+      _leaving.remove(text);
+    });
+    _leaving[text] = work;
+    return work;
+  }
+
+  Future<String> _cleaned(String text) async {
     final Set<String> known = await spelledWhole(hyphenSpellings(text));
     return leavingText(text, hyphenated: known);
   }

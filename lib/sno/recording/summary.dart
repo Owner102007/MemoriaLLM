@@ -3,7 +3,12 @@
 ///
 /// То, что экспериментатор видит на экране завершения и что ложится в
 /// сведения записи, — без разбора журнала. Чистый Dart.
+///
+/// У записи, оборванной перезапуском приложения, итогов в памяти не
+/// осталось: их собирает по журналу [summarizeJournal].
 library;
+
+import 'event.dart';
 
 /// Сколько раз и надолго ли участник уходил из приложения.
 class AwaySummary {
@@ -87,10 +92,12 @@ class BlockMark {
   /// Когда блок начат, в миллисекундах от старта записи.
   final int startMs;
 
-  /// Сколько блок длился.
+  /// Сколько блок длился — по счёту записи: сон устройства в блок
+  /// входит, время после конца записи — нет.
   final int durationMs;
 
-  /// Чем закрыт: `experimenter` — кнопкой, `stop` — остановкой записи.
+  /// Чем закрыт: `experimenter` — кнопкой, `stop` — остановкой записи,
+  /// `crash` — запись оборвалась, блок закрыт по журналу.
   final String closedBy;
 
   /// Запись для сведений о записи и настроек.
@@ -137,6 +144,146 @@ class BlockMark {
     }
     return List<BlockMark>.unmodifiable(marks);
   }
+}
+
+/// Что о записи говорит её журнал: итоги, которых у оборванной записи
+/// не осталось в памяти.
+class JournalSummary {
+  /// Создаёт итоги.
+  const JournalSummary({
+    this.away = const AwaySummary(),
+    this.blocks = const <BlockMark>[],
+    this.openBlock,
+    this.inBackground = false,
+  });
+
+  /// Отлучки — вместе с той, что шла, когда журнал кончился.
+  final AwaySummary away;
+
+  /// Блоки, закрытые в журнале.
+  final List<BlockMark> blocks;
+
+  /// Блок, который в журнале начат и не закончен; длительность — до
+  /// последней строки журнала.
+  final BlockMark? openBlock;
+
+  /// Кончился ли журнал, пока участника не было на переднем плане.
+  final bool inBackground;
+}
+
+/// Большее из двух счётов времени между событиями, не меньше нуля:
+/// монотонные часы стоят во сне устройства, настенные могут перевести.
+int _between(EventMarks from, EventMarks to) {
+  final DateTime? fromWall = from.wall;
+  final DateTime? toWall = to.wall;
+  final int byWall = fromWall == null || toWall == null
+      ? 0
+      : toWall.difference(fromWall).inMilliseconds;
+  final int byT = to.t - from.t;
+  final int span = byWall > byT ? byWall : byT;
+  return span < 0 ? 0 : span;
+}
+
+/// Собирает итоги записи по её журналу [events] (SNO-F-REC-10,
+/// SNO-F-CFG-03).
+///
+/// Нужно записи, оборванной перезапуском: что отмечено блоками и
+/// сколько участник отсутствовал, знает только журнал. Отлучка и блок,
+/// открытые в конце журнала, считаются до его последней строки — или
+/// до строки остановки, если она уже записана.
+JournalSummary summarizeJournal(List<EventMarks> events) {
+  if (events.isEmpty) {
+    return const JournalSummary();
+  }
+  EventMarks end = events.last;
+  for (final EventMarks event in events) {
+    if (event.type == SnoEventType.recordingStop.wire) {
+      end = event;
+    }
+  }
+  const Set<String> seen = <String>{'resumed', 'inactive'};
+  AwaySummary away = const AwaySummary();
+  final List<BlockMark> blocks = <BlockMark>[];
+  EventMarks? blockStart;
+  EventMarks? left;
+  EventMarks? hiddenSince;
+  int hiddenMs = 0;
+  for (final EventMarks event in events) {
+    final String type = event.type;
+    if (type == SnoEventType.blockStart.wire) {
+      blockStart = event;
+    } else if (type == SnoEventType.blockEnd.wire) {
+      final Object? number = event.data['n'];
+      final Object? duration = event.data['duration_ms'];
+      final Object? by = event.data['by'];
+      final EventMarks? start = blockStart;
+      final int lasted = duration is int
+          ? duration
+          : (start == null ? 0 : _between(start, event));
+      if (number is int) {
+        blocks.add(
+          BlockMark(
+            number: number,
+            startMs: start?.t ?? event.t - lasted,
+            durationMs: lasted,
+            closedBy: by is String ? by : 'experimenter',
+          ),
+        );
+      }
+      blockStart = null;
+    } else if (type == SnoEventType.appBackground.wire) {
+      left ??= event;
+    } else if (type == SnoEventType.appState.wire) {
+      final Object? from = event.data['from'];
+      final Object? to = event.data['to'];
+      final bool was = seen.contains(from);
+      final bool now = seen.contains(to);
+      final EventMarks? since = hiddenSince;
+      if (was && !now) {
+        hiddenSince = event;
+      } else if (!was && now && since != null) {
+        hiddenMs += _between(since, event);
+        hiddenSince = null;
+      }
+    } else if (type == SnoEventType.appForeground.wire) {
+      final Object? gone = event.data['away_ms'];
+      final Object? hidden = event.data['hidden_ms'];
+      if (gone is int) {
+        away = away.plus(awayMs: gone, hiddenMs: hidden is int ? hidden : 0);
+      }
+      left = null;
+      hiddenSince = null;
+      hiddenMs = 0;
+    }
+    if (identical(event, end)) {
+      break;
+    }
+  }
+  final Object? late = end.data['late_ms'];
+  final int past = late is int && late > 0 ? late : 0;
+  final EventMarks? leftAt = left;
+  if (leftAt != null) {
+    final EventMarks? since = hiddenSince;
+    away = away.plus(
+      awayMs: _between(leftAt, end) - past,
+      hiddenMs: hiddenMs + (since == null ? 0 : _between(since, end)),
+    );
+  }
+  final EventMarks? start = blockStart;
+  final Object? number = start?.data['n'];
+  return JournalSummary(
+    away: away,
+    blocks: List<BlockMark>.unmodifiable(blocks),
+    openBlock: start == null || number is! int
+        ? null
+        : BlockMark(
+            number: number,
+            startMs: start.t,
+            durationMs: _between(start, end),
+            closedBy: 'crash',
+          ),
+    inBackground: leftAt != null,
+  );
 }
 
 String _clock(int milliseconds) {

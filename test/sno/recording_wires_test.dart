@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -267,12 +269,126 @@ void main() {
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pumpAndSettle();
+      // Место чтения при этом известно: запись может начаться в любой миг.
+      expect(kit.session.context.book, 'hash-1');
+      expect(kit.session.context.page, 2);
       Navigator.of(tester.element(find.byType(ReaderScreen))).pop();
       await tester.pumpAndSettle();
 
       expect(kit.store.journals, isEmpty);
-      // Место чтения при этом известно: запись может начаться в любой миг.
       expect(kit.session.context.book, isNull);
+      expect(kit.session.context.page, isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-02: ушёл, не дождавшись книги, — открытой после '
+        'своего закрытия она в журнале не станет', (WidgetTester tester) async {
+      await data.library.save(testBook());
+      final _HeldOpener opener = _HeldOpener(
+        FakeReaderDocument(pages: <String>['один', 'два']),
+      );
+      final AppServices services = testServices(
+        data: data,
+        recording: kit.session,
+        opener: opener,
+      );
+      await kit.session.start(code);
+      await pumpShelf(tester, services, visible: true);
+
+      await tester.tap(find.byKey(const Key('library-book-book-1')));
+      await tester.pump();
+      // Экран чтения приехал; книга за ним ещё открывается, и ждать её
+      // `pumpAndSettle` нельзя — у ожидания своя вечная анимация.
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(ReaderScreen), findsOneWidget);
+      // Книга ещё открывается, а участник уже нажал «назад».
+      Navigator.of(tester.element(find.byType(ReaderScreen))).pop();
+      await tester.pump();
+      // Экран уезжает — и в это время книга досчиталась.
+      opener.release();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+      await written(tester);
+
+      expect(only('book.open'), isEmpty);
+      expect(only('page.shown'), isEmpty);
+      expect(only('book.close'), isEmpty);
+      // И следующие события полки книгой не помечены.
+      expect(kit.session.context.book, isNull);
+      expect(kit.session.context.page, isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-02: открыл найденное, не дав запросу простоять, — '
+        'запрос в журнале есть и стоит раньше', (WidgetTester tester) async {
+      final AppServices services = await twoBooks();
+      await kit.session.start(code);
+      await pumpShelf(tester, services, visible: true);
+
+      await tester.tap(find.byKey(const Key('library-search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('shelf-search-field')),
+        'анат',
+      );
+      // Срок запроса ещё не вышел, а найденное уже открыто.
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.byKey(const Key('shelf-search-hit-book-2')));
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(ReaderScreen))).pop();
+      await tester.pumpAndSettle();
+      await written(tester);
+
+      expect(
+        types().where((Object? type) => '$type'.startsWith('search.')),
+        <String>['search.query', 'search.result.open', 'search.close'],
+      );
+      expect(dataOf(only('search.query').single)['text'], 'анат');
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-02: «назад», которое поиска не закрывало, '
+        'закрытием поиска не пишется', (WidgetTester tester) async {
+      final AppServices services = await twoBooks();
+      await kit.session.start(code);
+      // Как в приложении, пока идёт запись: «назад» дальше полки не идёт.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PopScope<Object?>(
+            canPop: false,
+            child: LibraryScreen(
+              services: services,
+              canAddBooks: false,
+              defaultSort: ShelfSort.manual,
+              titleSearch: true,
+              models: false,
+              locked: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await written(tester);
+      expect(only('nav.back'), isEmpty);
+      expect(only('search.close'), isEmpty);
+
+      // С открытым поиском «назад» закрывает его — и это пишется.
+      await tester.tap(find.byKey(const Key('library-search')));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await written(tester);
+      expect(dataOf(only('nav.back').single), <String, Object?>{
+        'closes': 'shelf_search',
+      });
+      expect(only('search.close'), hasLength(1));
 
       await unmount(tester);
     });
@@ -372,6 +488,41 @@ void main() {
       expect(dataOf(only('search.close').single), <String, Object?>{
         'scope': 'book',
       });
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-02: листать некуда — причина чужому показу не '
+        'достаётся', (WidgetTester tester) async {
+      await kit.session.start(code);
+      await pumpReader(tester);
+      final ReaderController controller = scaffoldOf(tester).controller;
+      stateOf(tester).focusPage();
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      await controller.goToPage(6);
+      await tester.pumpAndSettle();
+      // Последняя страница: клавиша никуда не ведёт.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      // Следом страница сменилась сама, без действия участника.
+      await controller.goToPage(3);
+      await tester.pumpAndSettle();
+      await written(tester);
+
+      final List<Map<String, Object?>> shown = only('page.shown');
+      expect(shown.map((Map<String, Object?> event) => event['page']), <int>[
+        1,
+        2,
+        6,
+        3,
+      ]);
+      expect(
+        shown.map((Map<String, Object?> event) => dataOf(event)['cause']),
+        <String>['open', 'key', 'other', 'other'],
+      );
 
       await unmount(tester);
     });
@@ -516,6 +667,28 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-CFG-03: номер блока, набранный руками, следующей '
+        'записи не достаётся', (WidgetTester tester) async {
+      await pumpTesting(tester);
+      await kit.session.start(code);
+      await tester.pumpAndSettle();
+      await tap(tester, 'sno-block-more');
+      await tap(tester, 'sno-block-more');
+      expect(textOf(tester, 'sno-block-number'), '3');
+
+      // Запись остановили, сессию завершили — пришёл следующий участник.
+      await kit.session.stop(StopReason.experimenter);
+      await kit.session.finish();
+      await tester.pumpAndSettle();
+      expect(kit.session.phase, RecordingPhase.idle);
+      await kit.session.start(code);
+      await tester.pumpAndSettle();
+
+      expect(textOf(tester, 'sno-block-number'), '1');
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-CFG-03: блоков не отмечали, участник не уходил — '
         'лишних строк на экране завершения нет', (WidgetTester tester) async {
       await pumpTesting(tester);
@@ -600,4 +773,22 @@ void main() {
       await unmount(tester);
     });
   }, skip: Sno.recording ? false : branchOnly);
+}
+
+/// Открыватель, который придерживает книгу, пока тест не отпустит:
+/// «книга ещё открывается».
+class _HeldOpener implements DocumentOpener {
+  _HeldOpener(this._document);
+
+  final ReaderDocument _document;
+  final Completer<void> _gate = Completer<void>();
+
+  /// Книга досчиталась.
+  void release() => _gate.complete();
+
+  @override
+  Future<ReaderDocument> open(BookSource source, {String? password}) async {
+    await _gate.future;
+    return _document;
+  }
 }

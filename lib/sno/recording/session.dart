@@ -470,6 +470,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   Future<void>? _stopRun;
   Future<void>? _finishRun;
   DateTime? _leftAt;
+  int _leftT = 0;
   String? _deepest;
   bool _disposed = false;
 
@@ -480,6 +481,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// С какого мига приложения не видно; `null` — оно на виду.
   DateTime? _hiddenAt;
+  int _hiddenT = 0;
+
+  /// Сверка часов за идущее возвращение: шагов к переднему плану
+  /// несколько, а событие о сверке одно.
+  ({int driftMs, bool applied})? _returnCheck;
 
   /// Сколько за идущую отлучку приложения не было видно.
   int _hiddenMs = 0;
@@ -497,6 +503,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// Открытый блок тестирования и время его начала; `null` — блока нет.
   int? _block;
   int _blockT = 0;
+
+  /// Сколько записи прошло к началу открытого блока — тем же счётом,
+  /// каким считаются сорок минут.
+  int _blockPassed = 0;
 
   /// Блоки, закрытые за идущую запись.
   List<BlockMark> _blocks = const <BlockMark>[];
@@ -536,7 +546,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   int get events => recording ? _seq : (_state?.events ?? 0);
 
   /// Отлучки участника за остановленную запись (SNO-F-REC-10); `null`
-  /// — запись идёт, оборвалась или её нет.
+  /// — запись идёт или её нет. У оборванной записи итог собран по
+  /// журналу.
   AwaySummary? get away => recording ? null : _state?.away;
 
   /// Блоки тестирования, закрытые за запись.
@@ -548,11 +559,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   int? get block => recording ? _block : null;
 
   /// Сколько идёт открытый блок, в миллисекундах.
+  ///
+  /// Счёт тот же, что у сорока минут: сон устройства в блок входит, а
+  /// время после конца записи — нет.
   int get blockElapsedMs {
-    if (!recording || _block == null) {
+    final SessionState? state = _state;
+    if (state == null || !recording || _block == null) {
       return 0;
     }
-    final int passed = _tNow() - _blockT;
+    final int passed = _countedMs(state) - _blockPassed;
     return passed < 0 ? 0 : passed;
   }
 
@@ -599,6 +614,23 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     return passed < 0 ? 0 : passed;
   }
 
+  /// Сколько записи прошло, не больше положенного ей.
+  int _countedMs(SessionState state) {
+    final int limit = _planned.inMilliseconds;
+    final int passed = _passedMs(state);
+    return passed > limit ? limit : passed;
+  }
+
+  /// Большее из настенного и монотонного счёта от мига [at] (`t` —
+  /// [atT]) до мига [now] (`t` — [nowT]), не меньше нуля: монотонные
+  /// часы стоят во сне устройства, настенные могут перевести назад.
+  static int _span(DateTime at, int atT, DateTime now, int nowT) {
+    final int byWall = now.difference(at).inMilliseconds;
+    final int byT = nowT - atT;
+    final int span = byWall > byT ? byWall : byT;
+    return span < 0 ? 0 : span;
+  }
+
   /// Поднимает сессию после запуска приложения.
   ///
   /// Запись, которую застал перезапуск, не продолжается: приложение
@@ -615,8 +647,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       }
       return;
     }
-    final List<EventMarks> tail = await _tail(state.folder);
     if (state.phase == RecordingPhase.stopped) {
+      final List<EventMarks> tail = await _tail(state.folder);
       _state = state;
       _failed = state.failed ?? false;
       // Номер продолжает журнал: отметка сессии могла отстать от него.
@@ -625,15 +657,26 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       _notify();
       return;
     }
-    _state = await _stoppedByCrash(state, tail);
+    // Оборванной записи нужен журнал целиком: блоки и отлучки остались
+    // только в нём.
+    _state = await _stoppedByCrash(
+      state,
+      await _tail(state.folder, count: _wholeJournal),
+    );
     _notify();
   }
 
+  /// Столько строк, чтобы журнал прочитался целиком.
+  static const int _wholeJournal = 1 << 30;
+
   /// Последние читаемые события журнала; пусто — журнала нет или он не
   /// читается.
-  Future<List<EventMarks>> _tail(String folder) async {
+  Future<List<EventMarks>> _tail(
+    String folder, {
+    int count = kTailLines,
+  }) async {
     try {
-      return readableEvents(await _store.lastLines(folder));
+      return readableEvents(await _store.lastLines(folder, count: count));
     } on Object {
       return const <EventMarks>[];
     }
@@ -641,9 +684,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Закрывает запись, оборванную перезапуском приложения.
   ///
-  /// Хвост журнала [tail] говорит, сколько она длилась. Если в нём уже
-  /// есть остановка — приложение умерло между остановкой и отметкой о
-  /// ней, — запись закрывается ею, а не второй остановкой поверх.
+  /// Журнал [tail] говорит, сколько она длилась, какие блоки в ней
+  /// отмечены и сколько участник отсутствовал: в памяти этого не
+  /// осталось (SNO-F-REC-10, SNO-F-CFG-03). Если в нём уже есть
+  /// остановка — приложение умерло между остановкой и отметкой о ней,
+  /// — запись закрывается ею, а не второй остановкой поверх.
   Future<SessionState> _stoppedByCrash(
     SessionState state,
     List<EventMarks> tail,
@@ -673,6 +718,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         away = event.data['state'] is String;
       }
     }
+    final JournalSummary told = summarizeJournal(tail);
+    final BlockMark? open = told.openBlock;
     final SessionState stopped;
     if (stop != null) {
       final Object? duration = stop.data['duration_ms'];
@@ -682,6 +729,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         events: _seq,
         lastT: last?.t ?? stop.t,
         resyncs: null,
+        away: told.away,
+        blocks: told.blocks,
         inBackground: stop.data['in_background'] == true,
       );
     } else {
@@ -698,11 +747,34 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         final EventJournal journal = EventJournal(
           await _store.openJournal(state.folder),
         );
+        final DateTime now = _now();
+        int written = 0;
+        if (open != null) {
+          // Блок, который некому было закрыть, закрывается здесь — тем
+          // же последним мигом журнала (SNO-F-CFG-03).
+          written++;
+          journal.add(
+            encodeEvent(
+              seq: _seq + written,
+              t: t,
+              wall: now,
+              type: SnoEventType.blockEnd,
+              context: context,
+              data: <String, Object?>{
+                'n': open.number,
+                'duration_ms': open.durationMs,
+                'by': open.closedBy,
+                'late': true,
+              },
+            ),
+          );
+        }
+        written++;
         journal.add(
           encodeEvent(
-            seq: _seq + 1,
+            seq: _seq + written,
             t: t,
-            wall: _now(),
+            wall: now,
             type: SnoEventType.recordingStop,
             context: context,
             data: <String, Object?>{
@@ -717,7 +789,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         if (journal.failed) {
           _failed = true;
         } else {
-          _seq++;
+          _seq += written;
         }
       } on Object {
         // Строка остановки не легла: запись всё равно закрывается —
@@ -730,6 +802,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         events: _seq,
         lastT: t,
         resyncs: null,
+        away: told.away,
+        blocks: <BlockMark>[...told.blocks, if (open != null) open],
         inBackground: away,
       );
     }
@@ -890,6 +964,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _hiddenAt = null;
     _hiddenMs = 0;
     _screenOff = false;
+    _returnCheck = null;
     _away = const AwaySummary();
     _block = null;
     _blocks = const <BlockMark>[];
@@ -925,6 +1000,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         at: 0,
         data: <String, Object?>{'at': lastReset, 'recordings_since': since},
       );
+    }
+    if (_appState != _onScreen) {
+      // SNO-F-REC-10: запись началась, когда приложение уже не на
+      // переднем плане (окно потеряло фокус, пока шёл старт), — отлучка
+      // идёт с первого мига, иначе её начало не знал бы никто.
+      _openAbsence(_appState, clock.anchor, 0);
+      unawaited(_readScreen(_leaveRun));
     }
     _stopTicker = _ticker(tick);
     // Замок и точка записи появляются сразу; диск догоняет.
@@ -1036,7 +1118,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         'write_failed': _failureOf(state),
         'finished': finished,
         // SNO-F-REC-10: итог отлучек — после остановки; у оборванной
-        // записи его нет, отлучки читаются из журнала.
+        // записи он собран по журналу.
         'away': running ? null : state.away?.toJson(),
         'in_background': running ? null : state.inBackground,
         'blocks': running
@@ -1165,9 +1247,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (!_logging || _block != null || number < 1) {
       return false;
     }
+    final SessionState? state = _state;
     final int t = _tNow();
     _block = number;
     _blockT = t;
+    _blockPassed = state == null ? 0 : _countedMs(state);
     _write(
       SnoEventType.blockStart,
       at: t,
@@ -1193,7 +1277,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (number == null) {
       return;
     }
-    final int duration = at - _blockT < 0 ? 0 : at - _blockT;
+    // Длительность — по счёту записи, а не по `t`: блок, в который
+    // попал сон устройства, не выходит короче, а блок, который закрыла
+    // запоздавшая остановка, не длиннее записи.
+    final int duration = blockElapsedMs;
     _block = null;
     _blocks = List<BlockMark>.unmodifiable(<BlockMark>[
       ..._blocks,
@@ -1343,37 +1430,37 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       _hiddenAt = null;
       _hiddenMs = 0;
       _screenOff = false;
+      _returnCheck = null;
       return;
     }
     final bool returned = to == _onScreen;
-    // Сверка — до событий возвращения: их настенное время считается
-    // уже от нового якоря, а не отстаёт на длину сна.
-    final ({int driftMs, bool applied})? check = returned
-        ? _clock?.resync()
-        : null;
+    // Сверка — на каждом шаге к переднему плану и до его события:
+    // монотонные часы стояли, пока устройство спало, и без сверки шаги
+    // возвращения получили бы настенное время ухода.
+    if (_rank(to) < _rank(from)) {
+      final ({int driftMs, bool applied})? check = _clock?.resync();
+      if (check != null && !(_returnCheck?.applied ?? false)) {
+        _returnCheck = check;
+      }
+    }
     final DateTime now = _now();
+    final int t = _tNow();
     _write(
       SnoEventType.appState,
+      at: t,
       data: <String, Object?>{'from': from, 'to': to},
     );
     final DateTime? hiddenAt = _hiddenAt;
     if (_visible(from) && !_visible(to)) {
       _hiddenAt = now;
+      _hiddenT = t;
     } else if (!_visible(from) && _visible(to) && hiddenAt != null) {
-      final int hidden = now.difference(hiddenAt).inMilliseconds;
-      _hiddenMs += hidden < 0 ? 0 : hidden;
+      _hiddenMs += _span(hiddenAt, _hiddenT, now, t);
       _hiddenAt = null;
     }
     if (!returned) {
       if (_leftAt == null) {
-        _leftAt = now;
-        _deepest = to;
-        _leaveRun++;
-        _screenOff = false;
-        _write(
-          SnoEventType.appBackground,
-          data: <String, Object?>{'state': to},
-        );
+        _openAbsence(to, now, t);
       } else {
         _deepest = _deeper(_deepest, to);
       }
@@ -1381,14 +1468,21 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       unawaited(_journal?.flush());
       return;
     }
+    // Сорок минут могли выйти, пока участника не было: тогда запись
+    // кончилась во время отлучки, и в итог отлучка входит только до
+    // конца записи.
+    final SessionState? state = _state;
+    final bool over = _due;
+    final int late = state == null ? 0 : _lateMs(state);
     final DateTime? leftAt = _leftAt;
     if (leftAt != null) {
-      final int away = now.difference(leftAt).inMilliseconds;
+      final int away = _span(leftAt, _leftT, now, t);
       final String? deepest = _deepest;
       final bool unseen =
           _hiddenMs > 0 || (deepest != null && !_visible(deepest));
       _write(
         SnoEventType.appForeground,
+        at: t,
         data: <String, Object?>{
           'away_ms': away,
           'deepest': deepest,
@@ -1397,13 +1491,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
           if (_screenOff) 'reason': 'screen_off',
         },
       );
-      _away = _away.plus(awayMs: away, hiddenMs: _hiddenMs);
+      _away = _away.plus(awayMs: away - late, hiddenMs: _hiddenMs);
     }
     _leftAt = null;
     _deepest = null;
     _hiddenAt = null;
     _hiddenMs = 0;
     _screenOff = false;
+    final ({int driftMs, bool applied})? check = _returnCheck;
+    _returnCheck = null;
     if (check != null) {
       _write(
         SnoEventType.clockResync,
@@ -1413,11 +1509,40 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         },
       );
     }
-    if (_due) {
-      unawaited(stop(StopReason.auto));
+    if (over) {
+      unawaited(_stopOnce(StopReason.auto, endedAway: leftAt != null));
     } else {
       unawaited(_journal?.flush());
     }
+  }
+
+  /// Место состояния на пути от переднего плана: `resumed` — 0,
+  /// `inactive` — 1, `hidden` — 2, `paused` — 3.
+  static int _rank(String state) => _depth.indexOf(state) + 1;
+
+  /// На сколько запись пережила положенное ей время; ноль — время не
+  /// вышло.
+  int _lateMs(SessionState state) {
+    final int late = _passedMs(state) - _planned.inMilliseconds;
+    return late < 0 ? 0 : late;
+  }
+
+  /// Начинает отлучку в состоянии [state] в миг [now] (`t` — [t]).
+  void _openAbsence(String state, DateTime now, int t) {
+    _leftAt = now;
+    _leftT = t;
+    _deepest = state;
+    _leaveRun++;
+    _screenOff = false;
+    if (!_visible(state) && _hiddenAt == null) {
+      _hiddenAt = now;
+      _hiddenT = t;
+    }
+    _write(
+      SnoEventType.appBackground,
+      at: t,
+      data: <String, Object?>{'state': state},
+    );
   }
 
   /// Спрашивает устройство, горит ли экран, — в миг ухода
@@ -1442,7 +1567,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   ///
   /// Сессия при этом не завершена: полка остаётся под замком, пока
   /// экспериментатор не завершит сессию ([finish]).
-  Future<void> stop(StopReason by) {
+  Future<void> stop(StopReason by) => _stopOnce(by);
+
+  /// [endedAway] — время записи вышло, пока участника не было, а узнали
+  /// об этом по его возвращении.
+  Future<void> _stopOnce(StopReason by, {bool endedAway = false}) {
     final SessionState? state = _state;
     final Future<void>? running = _stopRun;
     if (running != null) {
@@ -1451,12 +1580,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (state == null || !recording) {
       return Future<void>.value();
     }
-    final Future<void> run = _stop(state, by);
+    final Future<void> run = _stop(state, by, endedAway: endedAway);
     _stopRun = run;
     return run.whenComplete(() => _stopRun = null);
   }
 
-  Future<void> _stop(SessionState state, StopReason by) async {
+  Future<void> _stop(
+    SessionState state,
+    StopReason by, {
+    required bool endedAway,
+  }) async {
     _stopTicker?.call();
     _stopTicker = null;
     final RecordingClock? clock = _clock;
@@ -1472,16 +1605,19 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _closeBlock(by: 'stop', at: t);
     // SNO-F-REC-10: запись остановилась, пока участника не было —
     // отлучка входит в итог до этого мига, и об этом сказано.
+    // Время после конца записи в отлучку не входит: запись, о конце
+    // которой узнали позже, кончилась вовремя.
     final DateTime? leftAt = _leftAt;
-    final bool inBackground = leftAt != null;
+    final bool inBackground = leftAt != null || endedAway;
     if (leftAt != null) {
       final DateTime now = _now();
+      final int late = passed > limit ? passed - limit : 0;
       final DateTime? hiddenAt = _hiddenAt;
       final int hidden = hiddenAt == null
           ? _hiddenMs
-          : _hiddenMs + now.difference(hiddenAt).inMilliseconds;
+          : _hiddenMs + _span(hiddenAt, _hiddenT, now, t);
       _away = _away.plus(
-        awayMs: now.difference(leftAt).inMilliseconds,
+        awayMs: _span(leftAt, _leftT, now, t) - late,
         hiddenMs: hidden,
       );
     }
@@ -1511,6 +1647,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _hiddenAt = null;
     _hiddenMs = 0;
     _screenOff = false;
+    _returnCheck = null;
     _bookOpenedT = null;
     // Замок и точка записи меняются сразу; диск догоняет.
     _notify();

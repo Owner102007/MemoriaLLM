@@ -1,3 +1,4 @@
+import '../../domain/reading/selection_text.dart';
 import '../../domain/reading/text_geometry.dart';
 
 /// Выделенный кусок книги — то, с чем работает панель действий.
@@ -31,7 +32,10 @@ class BookSelection {
   final List<TextBox> rects;
 
   /// Есть ли что показывать и с чем работать.
-  bool get isEmpty => text.trim().isEmpty || end <= start;
+  ///
+  /// Один знак переноса — не текст (BUG-51): из книги он уходит пустой
+  /// строкой, и цитата из него вышла бы пустой.
+  bool get isEmpty => leavingText(text).trim().isEmpty || end <= start;
 
   @override
   bool operator ==(Object other) {
