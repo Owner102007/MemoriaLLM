@@ -141,6 +141,7 @@ class ReaderSheet extends StatefulWidget {
     this.sheetController,
     this.onSelection,
     this.onTap,
+    this.onMoved,
     this.overlay,
     super.key,
   });
@@ -226,6 +227,12 @@ class ReaderSheet extends StatefulWidget {
   /// просмотрщика: он узнаёт о нём раньше, чем экран успевает его
   /// разобрать.
   final void Function(Offset localPosition, {required bool selecting})? onTap;
+
+  /// Читатель подвинул или приблизил страницу при отпертом замке.
+  ///
+  /// Только сообщение: лист от ответа не зависит. Его слушает журнал
+  /// записи сборок ветвей СНО2026 (SNO-F-REC-02).
+  final void Function(SheetTransform transform)? onMoved;
 
   /// Что нарисовать поверх листа: подсветка найденного, панель действий.
   final Widget Function(BuildContext context, SheetView view)? overlay;
@@ -435,6 +442,7 @@ class _ReaderSheetState extends State<ReaderSheet> {
     if (next == _transform) {
       return;
     }
+    widget.onMoved?.call(next);
     // Матрицу просмотрщик меняет и во время собственной раскладки, а
     // `setState` посреди построения дерева — исключение. Тогда правка
     // откладывается на конец кадра: маска отстанет на кадр, но не уронит

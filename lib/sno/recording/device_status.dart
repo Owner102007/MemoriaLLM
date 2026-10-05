@@ -14,6 +14,12 @@ abstract interface class DeviceStatus {
 
   /// Держать ли экран включённым.
   Future<void> keepScreenOn(bool on);
+
+  /// Горит ли экран (SNO-F-REC-10); `null` — не узнать.
+  ///
+  /// По ответу запись отличает экран, погашенный кнопкой питания, от
+  /// свёрнутого приложения.
+  Future<bool?> screenOn();
 }
 
 /// Устройство, о котором ничего не известно: основное приложение и
@@ -30,6 +36,9 @@ class NoDeviceStatus implements DeviceStatus {
 
   @override
   Future<void> keepScreenOn(bool on) async {}
+
+  @override
+  Future<bool?> screenOn() async => null;
 }
 
 /// Устройство через канал `memoria/device` — в `MainActivity` на
@@ -38,7 +47,8 @@ class NoDeviceStatus implements DeviceStatus {
 /// Своего плагина ради трёх вызовов системного API не заводится: новая
 /// зависимость потребовала бы пересчитывать замок сборки. Договор
 /// канала: `battery` → проценты или `null`; `freeBytes` с путём →
-/// байты или `null`; `keepScreenOn` с признаком.
+/// байты или `null`; `keepScreenOn` с признаком; `screenOn` → горит ли
+/// экран (только Android: на ПК вызова нет, и ответ — «не узнать»).
 ///
 /// Ни один отказ канала записи не мешает: без ответа нет
 /// предупреждения, и только.
@@ -85,6 +95,17 @@ class PlatformDeviceStatus implements DeviceStatus {
       // Экран может погаснуть; запись при этом идёт.
     } on MissingPluginException {
       // Канала нет — сборка без нашего кода платформы.
+    }
+  }
+
+  @override
+  Future<bool?> screenOn() async {
+    try {
+      return await _channel.invokeMethod<bool>('screenOn');
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
     }
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../../domain/reading/page_text.dart';
 import '../../domain/reading/reader_document.dart';
+import '../../domain/reading/selection_text.dart';
 
 /// Сколько страниц фоновый проход записывает в базу одним разом.
 ///
@@ -368,6 +369,80 @@ class BookTextCache {
         }
       }
     }
+  }
+
+  /// Сколько страниц читается из базы одним запросом, когда в книге
+  /// ищут написание слова ([spelledWhole]).
+  static const int _spellingBatch = 64;
+
+  /// Какие из написаний [words] встречаются в запомненном тексте книги
+  /// целыми словами (ALG-TXT-14, BUG-51).
+  ///
+  /// Нужно тексту, уходящему из книги: слово, разрезанное переносом,
+  /// получает дефис, только если с дефисом оно написано в этой же книге
+  /// где-то ещё. [words] — строчными буквами.
+  ///
+  /// Смотрит только то, что уже лежит в кэше, и к движку не ходит:
+  /// ждать, пока книга дочитается, выделение не будет. В книге, которая
+  /// прочитана не вся, слово может не найтись — тогда дефиса не будет.
+  /// Сбой базы — то же самое, что «не нашлось».
+  Future<Set<String>> spelledWhole(Set<String> words) async {
+    final Set<String> found = <String>{};
+    if (words.isEmpty || _closed) {
+      return found;
+    }
+    await load();
+    final int total = pageCount;
+    for (int from = 1; from <= total; from += _spellingBatch) {
+      if (_closed || found.length == words.length) {
+        break;
+      }
+      final int to = from + _spellingBatch - 1 > total
+          ? total
+          : from + _spellingBatch - 1;
+      bool any = false;
+      for (int page = from; page <= to; page++) {
+        if (_cached.containsKey(page) || _unsaved.containsKey(page)) {
+          any = true;
+          break;
+        }
+      }
+      if (!any) {
+        continue;
+      }
+      final Map<int, String> texts = <int, String>{};
+      try {
+        texts.addAll(await _store.pageTexts(_key, from: from, to: to));
+      } on Object {
+        // База не ответила — в этих страницах слово не найдено.
+      }
+      for (int page = from; page <= to; page++) {
+        final String? fresh = _unsaved[page];
+        if (fresh != null) {
+          texts[page] = fresh;
+        }
+      }
+      for (final String text in texts.values) {
+        final String lower = text.toLowerCase();
+        for (final String word in words) {
+          if (!found.contains(word) && containsWholeWord(lower, word)) {
+            found.add(word);
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  /// Текст [text] таким, каким он уходит из книги (ALG-TXT-14, BUG-51):
+  /// без знаков переноса, а с дефисом — там, где слово с дефисом книга
+  /// знает целым.
+  Future<String> leaving(String text) async {
+    if (!hasLineBreakMark(text)) {
+      return text;
+    }
+    final Set<String> known = await spelledWhole(hyphenSpellings(text));
+    return leavingText(text, hyphenated: known);
   }
 
   /// Книгу закрыли: проход останавливается, к движку и к базе кэш

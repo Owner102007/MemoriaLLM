@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.os.StatFs
 import android.provider.Settings
 import android.view.KeyEvent
@@ -107,9 +108,20 @@ class MainActivity : FlutterActivity() {
                     keepScreenOn(call.arguments as? Boolean ?: false)
                     result.success(null)
                 }
+                // SNO-F-REC-10: погашенный кнопкой экран запись отличает
+                // от свёрнутого приложения этим ответом.
+                "screenOn" -> result.success(screenOn())
                 else -> result.notImplemented()
             }
         }
+    }
+
+    /** Горит ли экран; `null` — система не ответила. */
+    private fun screenOn(): Boolean? {
+        val manager =
+            getSystemService(Context.POWER_SERVICE) as? PowerManager
+                ?: return null
+        return manager.isInteractive
     }
 
     /** Заряд батареи в процентах; `null` — система не ответила. */

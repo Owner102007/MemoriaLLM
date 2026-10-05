@@ -6,8 +6,11 @@ import '../application/app_services.dart';
 import '../application/theme/theme_controller.dart';
 import '../domain/library/shelf.dart';
 import '../domain/navigation/sections.dart';
+import '../domain/settings/app_settings.dart';
 import '../domain/theme/app_palette.dart';
 import '../sno/flags.dart';
+import '../sno/recording/event.dart';
+import '../sno/recording/logged_settings.dart';
 import '../sno/recording/recording_overlay.dart';
 import '../sno/recording/session.dart';
 import '../sno/testing_screen.dart';
@@ -152,16 +155,43 @@ class _HomeShellState extends State<HomeShell> {
   /// Сессия записи; `null` — в этой сборке записи нет.
   RecordingSession? get _session => widget.services.recording;
 
+  /// Настройки для экрана настроек: в сборке с записью каждая запись
+  /// в них видна журналу (SNO-F-REC-02). Заводятся один раз — экран не
+  /// должен получать новое хранилище на каждое перестроение.
+  AppSettingsRepository? _settings;
+
+  AppSettingsRepository get _screenSettings {
+    final AppSettingsRepository? ready = _settings;
+    if (ready != null) {
+      return ready;
+    }
+    final AppSettingsRepository inner = widget.services.data.settings;
+    final RecordingSession? session = _session;
+    final AppSettingsRepository made = session == null
+        ? inner
+        : LoggedSettings(inner: inner, log: session);
+    _settings = made;
+    return made;
+  }
+
   @override
   void initState() {
     super.initState();
     _session?.addListener(_sessionChanged);
+    widget.themeController.addListener(_themeChanged);
     _tellScreen();
   }
 
   @override
   void didUpdateWidget(HomeShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.themeController, widget.themeController)) {
+      oldWidget.themeController.removeListener(_themeChanged);
+      widget.themeController.addListener(_themeChanged);
+    }
+    if (!identical(oldWidget.services, widget.services)) {
+      _settings = null;
+    }
     if (!identical(oldWidget.services.recording, widget.services.recording)) {
       oldWidget.services.recording?.removeListener(_sessionChanged);
       _session?.addListener(_sessionChanged);
@@ -171,8 +201,21 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   void dispose() {
+    widget.themeController.removeListener(_themeChanged);
     _session?.removeListener(_sessionChanged);
     super.dispose();
+  }
+
+  /// Тему сменили: она пишется мимо хранилища экрана настроек, и
+  /// журнал узнаёт о ней здесь (SNO-F-REC-02).
+  void _themeChanged() {
+    _session?.log(
+      SnoEventType.settingsChange,
+      data: <String, Object?>{
+        'key': SettingsKeys.theme,
+        'value': widget.themeController.value.name,
+      },
+    );
   }
 
   /// Запись началась, остановилась или сессия завершена: замок полки
@@ -184,9 +227,10 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   /// Говорит записи, на каком экране участник (SNO-F-REC-02): это
-  /// подставляется в каждое событие журнала.
+  /// подставляется в каждое событие журнала, а смена экрана пишется
+  /// событием `nav.screen`.
   void _tellScreen() {
-    _session?.context.screen = _reading ? 'reader' : _section.name;
+    _session?.screen(_reading ? 'reader' : _section.name);
   }
 
   void _open(AppSection section) {
@@ -289,6 +333,11 @@ class _HomeShellState extends State<HomeShell> {
           canPop: behind == null && !recording,
           onPopInvokedWithResult: (bool didPop, Object? result) {
             if (!didPop && behind != null) {
+              // SNO-F-REC-02: «назад» увело из раздела на полку.
+              _session?.log(
+                SnoEventType.navBack,
+                data: const <String, Object?>{'closes': 'section'},
+              );
               _open(behind);
             }
           },
@@ -367,6 +416,8 @@ class _HomeShellState extends State<HomeShell> {
           // SNO-F-LIB-02: пока сессия записи не завершена, полка стоит
           // на месте.
           locked: _session?.locked ?? false,
+          // SNO-F-REC-02: журнал записи пишет, когда полка показана.
+          visible: _section == AppSection.shelf && !_reading,
         );
       case AppSection.device:
         if (!_deviceOpened) {
@@ -397,7 +448,7 @@ class _HomeShellState extends State<HomeShell> {
       case AppSection.settings:
         return SettingsScreen(
           themeController: widget.themeController,
-          settings: widget.services.data.settings,
+          settings: _screenSettings,
         );
     }
   }

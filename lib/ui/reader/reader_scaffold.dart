@@ -9,6 +9,8 @@ import '../../domain/reading/navigation.dart';
 import '../../domain/reading/search_dock.dart';
 import '../../domain/reading/selection_query.dart';
 import '../../domain/reading/text_search.dart';
+import '../../sno/recording/action_log.dart';
+import '../../sno/recording/event.dart';
 import 'key_bindings.dart';
 import 'outline_panel.dart';
 import 'reader_keys.dart';
@@ -50,11 +52,23 @@ class ReaderScaffold extends StatefulWidget {
     this.onFullScreen,
     this.keyBindings = KeyBindings.standard,
     this.extraActions = const <Widget>[],
+    this.log,
+    this.onTurnCause,
     super.key,
   });
 
   /// Состояние книги.
   final ReaderController controller;
+
+  /// Журнал записи сборок ветвей СНО2026 (SNO-F-REC-02); `null` — в
+  /// этой сборке записи нет. Обвязка пишет в него своё: панели,
+  /// оглавление, ползунок, найденное.
+  final ActionLog? log;
+
+  /// Чем вызван переход, который обвязка сейчас попросит: `arrow`,
+  /// `slider`, `toc`, `search`, `find`. Экран чтения пишет это в событие
+  /// показа страницы.
+  final ValueChanged<String>? onTurnCause;
 
   /// Поиск по книге.
   final DocumentSearch search;
@@ -280,16 +294,33 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
 
   void _onOutline(bool open) {
     _outlineOpen = open;
+    if (open) {
+      widget.log?.log(SnoEventType.tocOpen);
+    } else {
+      _logPanel('toc', open: false);
+    }
     _report();
   }
 
+  /// Панель открылась или закрылась — в журнал записи (SNO-F-REC-02).
+  void _logPanel(String panel, {required bool open}) {
+    widget.log?.log(
+      open ? SnoEventType.panelOpen : SnoEventType.panelClose,
+      data: <String, Object?>{'panel': panel},
+    );
+  }
+
   /// Показать или спрятать панели.
-  void toggleChrome() => setState(() => _chromeVisible = !_chromeVisible);
+  void toggleChrome() {
+    setState(() => _chromeVisible = !_chromeVisible);
+    _logPanel('chrome', open: _chromeVisible);
+  }
 
   /// Спрятать панели.
   void hideChrome() {
     if (mounted && _chromeVisible) {
       setState(() => _chromeVisible = false);
+      _logPanel('chrome', open: false);
     }
   }
 
@@ -310,14 +341,28 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         ? controller.nextSheetStart
         : controller.previousSheetStart;
     if (target != null) {
+      widget.onTurnCause?.call('arrow');
       unawaited(_goTo(target));
     }
+  }
+
+  /// Переход ползунком страниц — с записью в журнал (SNO-F-REC-02).
+  Future<void> _slideTo(int page) {
+    widget.onTurnCause?.call('slider');
+    widget.log?.log(
+      SnoEventType.sliderJump,
+      data: <String, Object?>{'from': widget.controller.page, 'to': page},
+    );
+    return _goTo(page);
   }
 
   /// Открывает поиск — или возвращает уже открытый ко вводу запроса.
   void openSearch() {
     if (!mounted) {
       return;
+    }
+    if (!_searchOpen) {
+      _logPanel('search', open: true);
     }
     setState(() {
       _searchOpen = true;
@@ -372,6 +417,9 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     // Запрос у поиска появляется сразу, до первого ожидания: панель,
     // которая встанет на экран следом, возьмёт его в своё поле.
     final Future<void> done = search.start(query, also: queries.sublist(1));
+    if (!_searchOpen) {
+      _logPanel('search', open: true);
+    }
     setState(() {
       _searchOpen = true;
       _browsing = true;
@@ -412,7 +460,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       return;
     }
     _browse(at);
-    await _goToHit(hits[at]);
+    await _goToHit(hits[at], cause: 'find');
   }
 
   /// Закрывает поиск. Запрос и место в списке остаются: откроют снова —
@@ -421,6 +469,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     if (!mounted || !_searchOpen) {
       return;
     }
+    widget.log?.log(
+      SnoEventType.searchClose,
+      data: const <String, Object?>{'scope': 'book'},
+    );
     setState(() {
       _searchOpen = false;
       _browsing = false;
@@ -458,12 +510,35 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
   }
 
   Future<void> _selectHit(SearchHit hit) async {
-    _browse(widget.search.hits.indexOf(hit));
+    final int index = widget.search.hits.indexOf(hit);
+    _logHit(hit, index: index, by: 'list');
+    _browse(index);
     await _goToHit(hit);
     hideChrome();
   }
 
-  Future<void> _goToHit(SearchHit hit) async {
+  /// Найденное открыто — в журнал записи: какое по счёту и где оно
+  /// (SNO-F-REC-02). [by] — чем открыто: выбором в списке или шагом.
+  void _logHit(SearchHit hit, {required int index, required String by}) {
+    final ActionLog? log = widget.log;
+    if (log == null || !log.recording) {
+      return;
+    }
+    log.log(
+      SnoEventType.searchResultOpen,
+      data: <String, Object?>{
+        'scope': 'book',
+        ...journalText(widget.search.query),
+        'rank': index + 1,
+        'of': widget.search.hits.length,
+        'page': hit.pageNumber,
+        'by': by,
+      },
+    );
+  }
+
+  Future<void> _goToHit(SearchHit hit, {String cause = 'search'}) async {
+    widget.onTurnCause?.call(cause);
     final Future<void> Function(SearchHit hit)? goToHit = widget.onGoToHit;
     if (goToHit != null) {
       await goToHit(hit);
@@ -494,6 +569,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     } else {
       _hit = next;
     }
+    _logHit(hits[next], index: next, by: 'step');
     await _goToHit(hits[next]);
   }
 
@@ -591,6 +667,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
         canPop: !_searchOpen,
         onPopInvokedWithResult: (bool didPop, Object? result) {
           if (!didPop) {
+            widget.log?.log(
+              SnoEventType.navBack,
+              data: const <String, Object?>{'closes': 'book_search'},
+            );
             closeSearch();
           }
         },
@@ -609,6 +689,14 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
             controller: controller,
             onSelect: (int page) async {
               Navigator.of(context).pop();
+              widget.onTurnCause?.call('toc');
+              widget.log?.log(
+                SnoEventType.tocJump,
+                data: <String, Object?>{
+                  'from': controller.page,
+                  'to': page,
+                },
+              );
               await _goTo(page);
               hideChrome();
             },
@@ -675,7 +763,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
                 canGoForward: controller.nextSheetStart != null,
                 progress: controller.progress,
                 onStep: _stepSheet,
-                onPage: _goTo,
+                onPage: _slideTo,
                 onOutline: () {
                   unawaited(controller.loadOutline());
                   _scaffoldKey.currentState?.openDrawer();

@@ -216,7 +216,7 @@ void main() {
         'повторяются', () {
       final Set<String> names = <String>{};
       for (final SnoEventType type in SnoEventType.values) {
-        expect(type.wire, matches(RegExp(r'^[a-z]+\.[a-z]+$')));
+        expect(type.wire, matches(RegExp(r'^[a-z]+(\.[a-z]+)+$')));
         expect(names.add(type.wire), isTrue, reason: type.wire);
       }
       expect(names, contains('recording.start'));

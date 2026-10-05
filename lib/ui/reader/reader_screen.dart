@@ -11,12 +11,11 @@ import '../../application/reading/book_selection.dart';
 import '../../application/reading/book_text.dart';
 import '../../application/reading/document_search.dart';
 import '../../application/reading/reader_controller.dart';
+import '../../application/reading/selection_actions.dart';
 import '../../domain/annotations/annotations.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/book_file_picker.dart';
-import '../../domain/library/ids.dart';
 import '../../domain/prompts/selection_prompt.dart';
-import '../../domain/reading/context_paragraph.dart';
 import '../../domain/reading/fragments.dart';
 import '../../domain/reading/page_turning.dart';
 import '../../domain/reading/reader_document.dart';
@@ -25,11 +24,15 @@ import '../../domain/reading/reading.dart';
 import '../../domain/reading/selection_query.dart';
 import '../../domain/reading/sheet_arrangement.dart';
 import '../../domain/reading/sheet_placement.dart';
+import '../../domain/reading/sheet_transform.dart';
 import '../../domain/reading/text_geometry.dart';
 import '../../domain/reading/text_search.dart';
 import '../../domain/reading/volume_keys.dart';
 import '../../domain/reading/window_settle.dart';
 import '../../domain/settings/app_settings.dart';
+import '../../sno/recording/action_log.dart';
+import '../../sno/recording/event.dart';
+import '../../sno/recording/thinning.dart';
 import '../annotations/annotations_screen.dart';
 import 'crop_editor_screen.dart';
 import 'display_mode_buttons.dart';
@@ -65,11 +68,18 @@ class ReaderScreen extends StatefulWidget {
     required this.services,
     this.canRelink = true,
     this.models = true,
+    this.openedVia = 'shelf',
     super.key,
   });
 
   /// Книга.
   final Book book;
+
+  /// Каким путём книгу открыли: `shelf` — с полки, `shelf_search` — из
+  /// найденного по названию. Пишется в журнал записи сборок ветвей
+  /// СНО2026 (SNO-F-REC-02): по нему видно, когда участник перестаёт
+  /// искать источник и открывает его по памяти.
+  final String openedVia;
 
   /// Службы приложения.
   final AppServices services;
@@ -247,6 +257,304 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// `{{мой_язык}}`; настоящий выбор языка появится в S8 вместе с
   /// редактором промптов.
   String _myLanguage = 'русский';
+
+  /// Журнал действий участника; `null` — в этой сборке записи нет
+  /// (SNO-F-REC-02).
+  ActionLog? get _log => widget.services.recording;
+
+  /// Действия над выделенным: что уходит из книги и что пишется в
+  /// журнал (BUG-51, SNO-F-REC-02).
+  SelectionActions? _actions;
+
+  /// Чем вызван следующий показ страницы и когда это сказано: причина,
+  /// за которой показа так и не случилось, к чужому показу не идёт.
+  String _cause = 'open';
+  DateTime _causeAt = DateTime.now();
+
+  /// Сколько причина ждёт своего показа.
+  static const Duration _causeLife = Duration(seconds: 3);
+
+  /// Что на экране по последнему слову журналу: страница, полоса, режим.
+  ({int page, int strip, String mode})? _placeSaid;
+
+  /// Настройки книги, какими их видел журнал.
+  BookReadingSettings? _settingsSaid;
+
+  /// Настройки-ползунки, которые ещё не записаны: пока ползунок тянут,
+  /// журналу нужен не каждый его шаг, а то, на чём он остановился.
+  final Map<String, Object?> _slid = <String, Object?>{};
+  Timer? _slidTimer;
+
+  /// Сколько ползунок обязан простоять, чтобы его значение записалось.
+  static const Duration _slidRest = Duration(milliseconds: 400);
+
+  /// Масштаб и сдвиг страницы для журнала — прореженно.
+  late final Thinned<SheetTransform> _moved = Thinned<SheetTransform>(
+    _logMoved,
+  );
+
+  /// Записана ли книга открытой: повторное открытие того же экрана —
+  /// после пароля, после выбора файла — вторым обращением не считается.
+  bool _openSaid = false;
+
+  /// Сколько выделение обязано простоять, чтобы журнал счёл его
+  /// выделением: пока ручку тянут, оно меняется на каждом знаке.
+  static const Duration _selectRest = Duration(milliseconds: 600);
+  Timer? _selectTimer;
+
+  /// Записано ли нынешнее выделение и было ли над ним действие: снятое
+  /// без действия пишется отдельным событием.
+  bool _selectSaid = false;
+  bool _selectActed = false;
+
+  /// Шёл ли поиск по книге и с какого мига — для события запроса.
+  bool _searchRan = false;
+  final Stopwatch _searchTime = Stopwatch();
+
+  /// Говорит, чем вызван следующий показ страницы (SNO-F-REC-02).
+  void _because(String cause) {
+    _cause = cause;
+    _causeAt = DateTime.now();
+  }
+
+  /// Режим показа для журнала: в ленте режимов нет.
+  String _modeName(ReaderController controller) {
+    return _flow == PageFlow.continuous
+        ? 'ribbon'
+        : controller.settings.displayMode.name;
+  }
+
+  /// Сверяет место чтения с тем, что знает журнал: сменилась страница,
+  /// полоса или режим — пишется `page.shown` (SNO-F-REC-02).
+  ///
+  /// Показ берётся здесь, у контроллера, а не из записи позиции: та
+  /// прорежена, а журналу нужен каждый показ — по ним считается время
+  /// на странице.
+  void _notePlace(ReaderController controller) {
+    final ActionLog? log = _log;
+    if (log == null) {
+      return;
+    }
+    final bool paged = _flow == PageFlow.paged;
+    final ({int page, int strip, String mode}) place = (
+      page: controller.page,
+      strip: paged ? controller.fragment + 1 : 1,
+      mode: _modeName(controller),
+    );
+    final ({int page, int strip, String mode})? was = _placeSaid;
+    if (place == was) {
+      return;
+    }
+    _placeSaid = place;
+    log.place(page: place.page, strip: place.strip, mode: place.mode);
+    if (!log.recording) {
+      return;
+    }
+    final bool fresh = DateTime.now().difference(_causeAt) <= _causeLife;
+    final String cause = fresh
+        ? _cause
+        : (paged ? 'other' : 'scroll');
+    _cause = paged ? 'other' : 'scroll';
+    final List<int> pages = controller.sheetPages;
+    log.log(
+      SnoEventType.pageShown,
+      data: <String, Object?>{
+        'cause': cause,
+        if (paged) 'strips': controller.fragmentCount,
+        if (pages.length > 1) 'pages': pages,
+        'of': controller.pageCount,
+        if (was != null)
+          'from': <String, Object?>{'page': was.page, 'strip': was.strip},
+      },
+    );
+  }
+
+  /// Сверяет настройки книги с тем, что знает журнал (SNO-F-REC-02).
+  ///
+  /// Режим, светофильтр и обрезка пишутся сразу — это одно нажатие.
+  /// Ползунки пишутся, когда остановились.
+  void _noteSettings(ReaderController controller) {
+    final BookReadingSettings now = controller.settings;
+    final BookReadingSettings? was = _settingsSaid;
+    _settingsSaid = now;
+    final ActionLog? log = _log;
+    if (log == null || was == null || !log.recording) {
+      return;
+    }
+    if (was.displayMode != now.displayMode) {
+      log.log(
+        SnoEventType.viewMode,
+        data: <String, Object?>{
+          'mode': now.displayMode.name,
+          'from': was.displayMode.name,
+        },
+      );
+    }
+    if (was.filter != now.filter) {
+      log.log(
+        SnoEventType.viewFilter,
+        data: <String, Object?>{
+          'filter': now.filter.name,
+          'from': was.filter.name,
+        },
+      );
+    }
+    if (was.autoCrop != now.autoCrop ||
+        was.ignoreRunningHeads != now.ignoreRunningHeads ||
+        was.manualCrop != now.manualCrop) {
+      log.log(
+        SnoEventType.viewCrop,
+        data: <String, Object?>{
+          'auto': now.autoCrop,
+          'running_heads': now.ignoreRunningHeads,
+          'manual': now.manualCrop != null,
+        },
+      );
+    }
+    void slid(String key, double before, double after) {
+      if (before != after) {
+        _slid[key] = (after * 1000).round() / 1000;
+      }
+    }
+
+    slid('filter_intensity', was.filterIntensity, now.filterIntensity);
+    slid('brightness', was.brightness, now.brightness);
+    slid('contrast', was.contrast, now.contrast);
+    slid('gamma', was.gamma, now.gamma);
+    slid('strip_fit', was.stripFit, now.stripFit);
+    slid('dim_outside', was.dimOutside, now.dimOutside);
+    slid('strip_overlap', was.stripOverlap, now.stripOverlap);
+    slid('neighbour_share', was.neighbourShare, now.neighbourShare);
+    if (_slid.isNotEmpty) {
+      _slidTimer?.cancel();
+      _slidTimer = Timer(_slidRest, _logSlid);
+    }
+  }
+
+  /// Ползунки остановились: их значения — в журнал одним событием.
+  void _logSlid() {
+    _slidTimer?.cancel();
+    _slidTimer = null;
+    if (_slid.isEmpty) {
+      return;
+    }
+    final Map<String, Object?> changed = Map<String, Object?>.of(_slid);
+    _slid.clear();
+    _log?.log(
+      SnoEventType.settingsChange,
+      data: <String, Object?>{'scope': 'book', 'changed': changed},
+    );
+  }
+
+  /// Настройка устройства, которую меняют прямо в чтении.
+  void _logDeviceSetting(String key, Object? value) {
+    _log?.log(
+      SnoEventType.settingsChange,
+      data: <String, Object?>{'scope': 'device', 'key': key, 'value': value},
+    );
+  }
+
+  /// Страницу приблизили или подвинули при отпертом замке.
+  void _logMoved(SheetTransform transform) {
+    _log?.log(
+      SnoEventType.viewZoom,
+      data: <String, Object?>{
+        'scale': (transform.scale * 100).round() / 100,
+        'dx': transform.dx.round(),
+        'dy': transform.dy.round(),
+      },
+    );
+  }
+
+  /// Поиск по книге начался или кончился: законченный пишется запросом
+  /// с числом найденного и временем (SNO-F-REC-02).
+  ///
+  /// Запрос, который сменили раньше, чем он досчитался, не пишется:
+  /// запросом считается то, что досчиталось.
+  void _noteSearch() {
+    final DocumentSearch? search = _search;
+    final ActionLog? log = _log;
+    if (search == null || log == null) {
+      return;
+    }
+    if (search.isRunning) {
+      if (!_searchRan) {
+        _searchRan = true;
+        _searchTime
+          ..reset()
+          ..start();
+      }
+      return;
+    }
+    if (!_searchRan) {
+      return;
+    }
+    _searchRan = false;
+    _searchTime.stop();
+    if (!log.recording || search.query.isEmpty) {
+      return;
+    }
+    log.log(
+      SnoEventType.searchQuery,
+      data: <String, Object?>{
+        'scope': 'book',
+        ...journalText(search.query),
+        'hits': search.hits.length,
+        if (search.reachedLimit) 'limit': true,
+        'ms': _searchTime.elapsedMilliseconds,
+      },
+    );
+  }
+
+  /// Выделение появилось или изменилось: в журнал оно попадёт, когда
+  /// устоится.
+  void _noteSelection(BookSelection selection) {
+    _selectTimer?.cancel();
+    _selectTimer = null;
+    _selectActed = false;
+    if (!(_log?.recording ?? false)) {
+      return;
+    }
+    _selectTimer = Timer(_selectRest, () {
+      _selectTimer = null;
+      _selectSaid = true;
+      unawaited(_actions?.settled(selection));
+    });
+  }
+
+  /// Перед действием над выделением: недождавшееся выделение пишется
+  /// сейчас — событие о нём обязано стоять раньше события действия.
+  Future<void> _settleSelection(BookSelection selection) async {
+    if (_selectTimer == null) {
+      return;
+    }
+    _selectTimer?.cancel();
+    _selectTimer = null;
+    _selectSaid = true;
+    await _actions?.settled(selection);
+  }
+
+  /// Выделения больше нет: снятое без действия пишется в журнал.
+  void _noteSelectionGone() {
+    _selectTimer?.cancel();
+    _selectTimer = null;
+    if (_selectSaid && !_selectActed) {
+      _actions?.cancelled();
+    }
+    _selectSaid = false;
+    _selectActed = false;
+  }
+
+  /// Действие панели над выделением — в журнал.
+  Future<void> _logAction(
+    String action,
+    BookSelection selection, {
+    Map<String, Object?> extra = const <String, Object?>{},
+  }) async {
+    await _settleSelection(selection);
+    _selectActed = true;
+    await _actions?.acted(action, selection, extra: extra);
+  }
 
   /// Можно ли попросить систему повернуть экран.
   ///
@@ -456,7 +764,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // найденное перебирается одной рукой.
         unawaited(scaffold.stepHit(forward ? 1 : -1));
       } else {
-        _stepFragment(forward: forward);
+        _stepFragment(forward: forward, cause: 'volume');
       }
     }
     return outcome;
@@ -618,6 +926,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     if (remember) {
       _fullScreenWanted = value;
+      _logDeviceSetting('full_screen', value);
       await widget.services.data.settings.write(
         SettingsKeys.readingFullScreen,
         value.toString(),
@@ -654,6 +963,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     setState(() => _rotation = rotation);
+    _log?.log(
+      SnoEventType.viewOrientation,
+      data: <String, Object?>{'orientation': rotation.name},
+    );
     await widget.services.data.settings.write(
       SettingsKeys.readingRotation,
       rotation.name,
@@ -670,6 +983,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     setState(() => _zoomLocked = value);
+    _log?.log(
+      SnoEventType.viewLock,
+      data: <String, Object?>{'locked': value},
+    );
     await widget.services.data.settings.write(
       SettingsKeys.zoomLock,
       value.toString(),
@@ -686,6 +1003,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // Место под лист в ленте не меряется: к возвращению оно устарело.
     _window.releaseBox();
     setState(() => _flowNow.value = flow);
+    // SNO-F-REC-02: способ листания — настройка устройства; место
+    // чтения после смены называется журналу заново.
+    _logDeviceSetting('page_flow', flow.name);
+    final ReaderController? shown = _controller;
+    if (shown != null) {
+      _because('flow');
+      _notePlace(shown);
+    }
     // В ленте слоя подсветки нет: совпадений там не показать.
     _refreshHitRects();
     _offerZoneHint();
@@ -708,6 +1033,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
+    _because('mode');
     final DisplayModeOutcome outcome = await controller.setDisplayMode(mode);
     if (outcome == DisplayModeOutcome.noGain) {
       _explainNoGain(mode);
@@ -727,6 +1053,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     final String fraction = mode == PageDisplayMode.third ? '⅓' : '½';
+    _log?.log(
+      SnoEventType.errorShown,
+      data: <String, Object?>{'what': 'mode_no_gain', 'mode': mode.name},
+    );
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         key: const Key('reader-mode-no-gain'),
@@ -751,6 +1081,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       unawaited(widget.services.window.setFullScreen(false));
     }
     _jumpTimer?.cancel();
+    _selectTimer?.cancel();
+    _slidTimer?.cancel();
+    _moved.dispose();
     _window.dispose();
     _flowNow.dispose();
     _lifecycle?.dispose();
@@ -815,17 +1148,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
       // Найденное приходит по мере поиска: совпадения на открытой
       // странице подсвечиваются, как только до неё дошла очередь.
-      final DocumentSearch search = DocumentSearch(
-        document: controller.document,
-        cache: texts,
-      )..addListener(_refreshHitRects);
+      final DocumentSearch search =
+          DocumentSearch(document: controller.document, cache: texts)
+            ..addListener(_refreshHitRects)
+            // SNO-F-REC-02: законченный поиск — в журнал записи.
+            ..addListener(_noteSearch);
       _texts?.close();
+      _searchRan = false;
       setState(() {
         _controller = controller;
         _texts = texts;
         _search = search;
         _loading = false;
       });
+      // BUG-51: всё, что уходит из выделения, идёт через одни руки.
+      _actions = SelectionActions(
+        controller: controller,
+        annotations: widget.services.data.annotations,
+        bookId: _book.id,
+        texts: texts,
+        log: _log,
+      );
+      _sayOpened(controller);
       _scheduleTextPass();
       _syncVolumeKeys();
       _applyWantedFullScreen();
@@ -838,6 +1182,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _failure = error;
         _loading = false;
       });
+      // SNO-F-REC-02: участнику показана ошибка вместо книги.
+      _log?.log(
+        SnoEventType.errorShown,
+        data: <String, Object?>{
+          'what': 'book_open',
+          'problem': error.problem.name,
+          'book': _book.fileHash,
+        },
+      );
       _syncVolumeKeys();
       // Книга не открылась: сообщение об этом во весь монитор ни к чему,
       // а выйти из режима оттуда было бы нечем — клавиши чтения живут на
@@ -846,6 +1199,31 @@ class _ReaderScreenState extends State<ReaderScreen> {
         unawaited(_setFullScreen(false, remember: false));
       }
     }
+  }
+
+  /// Книга открылась: журнал записи узнаёт, какая, каким путём и на
+  /// какой странице (SNO-F-REC-02).
+  void _sayOpened(ReaderController controller) {
+    _settingsSaid = controller.settings;
+    final ActionLog? log = _log;
+    if (log == null) {
+      return;
+    }
+    if (!_openSaid) {
+      _openSaid = true;
+      log.bookOpened(
+        _book.fileHash,
+        via: widget.openedVia,
+        data: <String, Object?>{
+          'title': _book.title,
+          'pages': controller.pageCount,
+          'page': controller.page,
+        },
+      );
+    }
+    _placeSaid = null;
+    _because('open');
+    _notePlace(controller);
   }
 
   /// Начинает фоновый проход по тексту книги — не сразу, а дав книге
@@ -1002,6 +1380,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!mounted) {
       return;
     }
+    // SNO-F-REC-02: показ страницы и настройки книги — в журнал записи.
+    final ReaderController? current = _controller;
+    if (current != null) {
+      _notePlace(current);
+      _noteSettings(current);
+    }
     // Читатель ушёл со страницы — подсветке нечего показывать: текста, к
     // которому она относилась, на экране больше нет.
     final _PageMark? mark = _mark;
@@ -1107,6 +1491,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (_selection == null) {
       return;
     }
+    _noteSelectionGone();
     setState(() => _selection = null);
   }
 
@@ -1124,6 +1509,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     if (ranges.isEmpty) {
       if (mounted && _selection != null) {
+        _noteSelectionGone();
         setState(() => _selection = null);
       }
       return;
@@ -1158,7 +1544,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!mounted) {
       return;
     }
-    setState(() => _selection = selection.isEmpty ? null : selection);
+    final BookSelection? next = selection.isEmpty ? null : selection;
+    // SNO-F-REC-02: журнал записи узнаёт о выделении, когда оно
+    // устоялось, и о том, что его сняли.
+    if (next == null) {
+      if (_selection != null) {
+        _noteSelectionGone();
+      }
+    } else if (next != _selection) {
+      _noteSelection(next);
+    }
+    setState(() => _selection = next);
   }
 
   /// Нажали на промпт читателя.
@@ -1169,23 +1565,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// контекстом.
   Future<void> _onPrompt(SelectionPrompt prompt) async {
     final BookSelection? selection = _selection;
-    final ReaderController? controller = _controller;
-    if (selection == null || controller == null) {
+    final SelectionActions? actions = _actions;
+    if (selection == null || actions == null) {
       return;
     }
-    String? context;
-    if (prompt.check.needsContext) {
-      final ParagraphContext? paragraph = await controller.contextAround(
-        pageNumber: selection.pageNumber,
-        start: selection.start,
-        end: selection.end,
-      );
-      context = paragraph?.text;
-    }
-    final String request = fillPrompt(
-      prompt.body,
-      selection: selection.text,
-      context: context,
+    await _logAction(
+      'prompt',
+      selection,
+      extra: <String, Object?>{'prompt': prompt.name},
+    );
+    // BUG-51: выделенное и абзац уходят в запрос без знака переноса.
+    final String request = await actions.request(
+      selection,
+      prompt,
       bookLanguage: _book.language,
       myLanguage: _myLanguage,
     );
@@ -1193,7 +1585,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     await showModalBottomSheet<void>(
-      context: this.context,
+      context: context,
       isScrollControlled: true,
       builder: (BuildContext context) =>
           PromptPreviewSheet(prompt: prompt, request: request),
@@ -1201,48 +1593,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _refreshOnTop();
   }
 
-  /// Сохраняет выделенное цитатой.
-  ///
-  /// Контекст сохраняется всегда, а не только когда его просит промпт: по
-  /// нему через месяц видно, откуда цитата и о чём там была речь.
-  Future<Quote?> _saveQuote() async {
-    final BookSelection? selection = _selection;
-    final ReaderController? controller = _controller;
-    if (selection == null || controller == null) {
-      return null;
-    }
-    final ParagraphContext? paragraph = await controller.contextAround(
-      pageNumber: selection.pageNumber,
-      start: selection.start,
-      end: selection.end,
-    );
-    final Quote quote = Quote(
-      id: newLibraryId(),
-      bookId: _book.id,
-      page: selection.pageNumber,
-      content: selection.text,
-      context: paragraph?.text,
-      // Место цитаты в тексте страницы: по нему она подсвечивается, когда
-      // читатель возвращается к ней из списка. У цитат, сохранённых до
-      // схемы 8, его нет — такие открываются на своей странице без
-      // подсветки.
-      textStart: selection.start,
-      textEnd: selection.end,
-      createdAt: DateTime.now(),
-    );
-    await widget.services.data.annotations.saveQuote(quote);
-    return quote;
-  }
-
+  /// Сохраняет выделенное цитатой (BUG-51: без знака переноса — текст
+  /// и абзац вокруг него берутся у [SelectionActions]).
   Future<void> _onQuote() async {
-    final Quote? quote = await _saveQuote();
+    final BookSelection? selection = _selection;
+    final SelectionActions? actions = _actions;
+    if (selection == null || actions == null) {
+      return;
+    }
+    await _logAction('quote', selection);
+    await actions.saveQuote(selection);
     if (!mounted) {
       return;
     }
     _dismissSelection();
-    if (quote != null) {
-      _say('Цитата сохранена');
-    }
+    _say('Цитата сохранена');
   }
 
   /// Заметка пишется к месту, а не в пустоту.
@@ -1253,33 +1618,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// заметку: отменённое окно не должно оставлять за собой следов.
   Future<void> _onNote() async {
     final BookSelection? selection = _selection;
-    if (selection == null) {
+    final SelectionActions? actions = _actions;
+    if (selection == null || actions == null) {
+      return;
+    }
+    await _logAction('note', selection);
+    // BUG-51: в окне заметки цитата показана такой, какой сохранится.
+    final String quoted = await actions.textOf(selection);
+    if (!mounted) {
       return;
     }
     final String? body = await showDialog<String>(
       context: context,
-      builder: (BuildContext context) => NoteDialog(quote: selection.text),
+      builder: (BuildContext context) => NoteDialog(quote: quoted),
     );
     _refreshOnTop();
     if (body == null || !mounted) {
       return;
     }
-    final Quote? quote = await _saveQuote();
-    if (quote == null || !mounted) {
-      return;
-    }
-    final DateTime now = DateTime.now();
-    await widget.services.data.annotations.saveNote(
-      Note(
-        id: newLibraryId(),
-        bookId: _book.id,
-        quoteId: quote.id,
-        page: quote.page,
-        body: body,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
+    await actions.saveNote(selection, body);
     if (!mounted) {
       return;
     }
@@ -1289,10 +1646,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<void> _onCopy() async {
     final BookSelection? selection = _selection;
-    if (selection == null) {
+    final SelectionActions? actions = _actions;
+    if (selection == null || actions == null) {
       return;
     }
-    await Clipboard.setData(ClipboardData(text: selection.text));
+    await _logAction('copy', selection);
+    // BUG-51: в буфер обмена текст уходит без знака переноса.
+    final String text = await actions.textOf(selection);
+    await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) {
       return;
     }
@@ -1314,6 +1675,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final List<String> queries = selectionSearchQueries(selection.text);
     if (queries.isEmpty || !isSearchableQuery(queries.first)) {
       _say('Для поиска выделите хотя бы два знака');
+      return;
+    }
+    await _logAction('find', selection);
+    if (!mounted) {
       return;
     }
     _dismissSelection();
@@ -1453,20 +1818,31 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Карточка отвечает на вопрос «а где это было»: экран закрывается,
   /// книга открывается на своей странице, сама цитата подсвечена.
   Future<void> _openAnnotations() async {
+    _log?.log(SnoEventType.annotationsOpen);
     final AnnotationTarget? target = await Navigator.of(context)
         .push<AnnotationTarget>(
           MaterialPageRoute<AnnotationTarget>(
             builder: (BuildContext context) => AnnotationsScreen(
               book: _book,
               annotations: widget.services.data.annotations,
+              log: _log,
             ),
           ),
         );
     _refreshOnTop();
+    _log?.log(
+      SnoEventType.panelClose,
+      data: const <String, Object?>{'panel': 'annotations'},
+    );
     if (target == null || !mounted) {
       return;
     }
     _dismissSelection();
+    _log?.log(
+      SnoEventType.annotationJump,
+      data: <String, Object?>{'page': target.page},
+    );
+    _because('annotation');
     await _showMark(
       page: target.page,
       start: target.textStart,
@@ -1531,9 +1907,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     switch (action) {
       case ReaderTap.previousFragment:
         _dismissSelection();
+        _because('tap_zone');
         unawaited(controller.previousFragment());
       case ReaderTap.nextFragment:
         _dismissSelection();
+        _because('tap_zone');
         unawaited(controller.nextFragment());
       case ReaderTap.dismissSelection:
         _dismissSelection();
@@ -1547,11 +1925,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// В ленте фрагментов нет, там шаг — страница, и просмотрщик обязан
   /// доехать до неё сам: иначе номер страницы уехал бы, а лента осталась
   /// на месте.
-  void _stepFragment({required bool forward}) {
+  ///
+  /// [cause] — чем листают: клавишей или кнопкой громкости; это пишет
+  /// журнал записи (SNO-F-REC-02).
+  void _stepFragment({required bool forward, String cause = 'key'}) {
     final ReaderController? controller = _controller;
     if (controller == null) {
       return;
     }
+    _because(cause);
     // Читатель листает клавишей или кнопкой — подсказка о зонах ему уже
     // не нужна (F-READ-23).
     _dismissZoneHint();
@@ -1577,6 +1959,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
+    _log?.log(
+      SnoEventType.panelOpen,
+      data: const <String, Object?>{'panel': 'reader_settings'},
+    );
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1596,6 +1982,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       },
     );
     _refreshOnTop();
+    // SNO-F-REC-02: ползунки шторки — в журнал до события о её закрытии.
+    _logSlid();
+    _log?.log(
+      SnoEventType.panelClose,
+      data: const <String, Object?>{'panel': 'reader_settings'},
+    );
     // Шторку могли смахнуть, не отпустив ползунок: его значение уже на
     // странице, а в базу ещё не записано (BUG-12).
     await controller.persistSettings();
@@ -1606,6 +1998,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (controller == null) {
       return;
     }
+    _log?.log(
+      SnoEventType.panelOpen,
+      data: const <String, Object?>{'panel': 'crop_editor'},
+    );
     final CropBox? box = await Navigator.of(context).push<CropBox>(
       MaterialPageRoute<CropBox>(
         builder: (BuildContext context) => CropEditorScreen(
@@ -1618,6 +2014,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
     _refreshOnTop();
+    _log?.log(
+      SnoEventType.panelClose,
+      data: <String, Object?>{'panel': 'crop_editor', 'saved': box != null},
+    );
     if (box != null) {
       await controller.setManualCrop(box);
     }
@@ -1655,6 +2055,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onPanelsChanged: _onPanels,
       onSearchOpen: _onSearchOpen,
       onSearchDock: _onSearchDock,
+      // SNO-F-REC-02: обвязка пишет в журнал записи своё — оглавление,
+      // ползунок, поиск, панели — и говорит, чем вызван переход.
+      log: _log,
+      onTurnCause: _because,
       selecting: () => _selection != null || _sheet.selecting,
       fullScreen: _fullScreen,
       onFullScreen: widget.services.window.available
@@ -1875,6 +2279,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
           unawaited(_onSelectionRanges(ranges)),
       onTap: (Offset at, {required bool selecting}) =>
           _onTap(at, size, onTap, selecting: selecting),
+      // SNO-F-REC-02: масштаб и сдвиг страницы — в журнал записи.
+      onMoved: _log == null ? null : _moved.add,
       overlay: (BuildContext context, SheetView view) =>
           _buildOverlay(context, view, document, pages, size),
     );

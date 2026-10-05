@@ -103,12 +103,12 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.resumed) {
-      widget.session.appReturned();
-    } else if (state != AppLifecycleState.detached) {
-      // `inactive`, `hidden`, `paused`. Закрытие приложения (`detached`)
-      // событием не пишется: запись закроется при следующем запуске.
-      widget.session.appLeft(state.name);
+    if (state != AppLifecycleState.detached) {
+      // SNO-F-REC-10: каждая смена — `resumed`, `inactive`, `hidden`,
+      // `paused` — а не только уход и возвращение. Закрытие приложения
+      // (`detached`) событием не пишется: запись закроется при
+      // следующем запуске.
+      widget.session.appState(state.name);
     }
   }
 

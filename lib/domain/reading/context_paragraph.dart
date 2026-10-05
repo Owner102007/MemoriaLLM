@@ -16,6 +16,7 @@ import 'columns.dart';
 import 'page_rows.dart';
 import 'reader_document.dart';
 import 'text_geometry.dart';
+import 'text_search.dart';
 
 /// Абзац вокруг выделения.
 class ParagraphContext {
@@ -231,6 +232,9 @@ ParagraphContext _assemble({
   final StringBuffer buffer = StringBuffer();
   final List<_Placed> placed = <_Placed>[];
 
+  // Где в тексте страницы кончилась предыдущая уложенная строка.
+  int? lastEnd;
+
   for (int i = fromRow; i <= toRow; i++) {
     final TextRow row = rows[i];
     final String raw = text.substring(row.start, row.end);
@@ -247,15 +251,38 @@ ParagraphContext _assemble({
         previous.isNotEmpty &&
         _isHyphen(previous[previous.length - 1]) &&
         _continuesWord(line);
+    // BUG-51: дефис переноса движок отдаёт знаком, а не дефисом. Слово
+    // по обе стороны знака — одно, каким бы ни был регистр: что это
+    // перенос, движок уже решил. Знак остаётся в абзаце — чем его
+    // заменить, решает правило текста, уходящего из книги
+    // (`selection_text.dart`), — а пробел между половинами слова не
+    // ставится. Знак может достаться концу строки, началу следующей
+    // или не достаться ни одной — тогда он лежит в тексте между ними.
+    final int? before = lastEnd;
+    final bool markBetween =
+        before != null &&
+        row.start >= before &&
+        row.start - before <= 2 &&
+        text.substring(before, row.start).codeUnits.contains(kLineBreakHyphen);
+    final bool broken =
+        previous.isNotEmpty &&
+        (previous.codeUnitAt(previous.length - 1) == kLineBreakHyphen ||
+            line.codeUnitAt(0) == kLineBreakHyphen ||
+            markBetween);
     if (glue) {
       // Перенос через дефис: слово разрезано концом строки, и в запрос
       // модели оно обязано попасть целым. Иначе «пре-» и «красный»
       // приедут двумя обрубками.
       buffer.clear();
       buffer.write(previous.substring(0, previous.length - 1));
+    } else if (broken) {
+      if (markBetween) {
+        buffer.writeCharCode(kLineBreakHyphen);
+      }
     } else if (previous.isNotEmpty) {
       buffer.write(' ');
     }
+    lastEnd = row.end;
 
     placed.add(
       _Placed(

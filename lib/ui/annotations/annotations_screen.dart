@@ -8,6 +8,9 @@ import '../../domain/annotations/annotations.dart';
 import '../../domain/annotations/markdown_export.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/ids.dart';
+import '../../domain/reading/selection_text.dart';
+import '../../sno/recording/action_log.dart';
+import '../../sno/recording/event.dart';
 import '../reader/note_dialog.dart';
 
 /// Экран «Цитаты и заметки» одной книги.
@@ -22,6 +25,7 @@ class AnnotationsScreen extends StatefulWidget {
   const AnnotationsScreen({
     required this.book,
     required this.annotations,
+    this.log,
     super.key,
   });
 
@@ -30,6 +34,10 @@ class AnnotationsScreen extends StatefulWidget {
 
   /// Хранилище цитат и заметок.
   final AnnotationRepository annotations;
+
+  /// Журнал записи сборок ветвей СНО2026 (SNO-F-REC-02); `null` — в
+  /// этой сборке записи нет.
+  final ActionLog? log;
 
   @override
   State<AnnotationsScreen> createState() => _AnnotationsScreenState();
@@ -187,6 +195,14 @@ class _AnnotationsScreenState extends State<AnnotationsScreen> {
     if (quote != null) {
       await widget.annotations.deleteQuote(quote.id);
     }
+    widget.log?.log(
+      SnoEventType.quoteDelete,
+      data: <String, Object?>{
+        if (quote != null) 'id': quote.id,
+        'page': entry.page,
+        'notes': entry.notes.length,
+      },
+    );
   }
 
   Future<void> _editNote(_Entry entry) async {
@@ -194,7 +210,8 @@ class _AnnotationsScreenState extends State<AnnotationsScreen> {
     final String? body = await showDialog<String>(
       context: context,
       builder: (BuildContext context) => NoteDialog(
-        quote: entry.quote?.content ?? existing?.body ?? '',
+        // BUG-51: старая цитата могла унести знак переноса.
+        quote: leavingText(entry.quote?.content ?? existing?.body ?? ''),
         initial: existing?.body ?? '',
       ),
     );
@@ -206,22 +223,38 @@ class _AnnotationsScreenState extends State<AnnotationsScreen> {
       await widget.annotations.saveNote(
         existing.copyWith(body: body, updatedAt: now),
       );
+      widget.log?.log(
+        SnoEventType.noteEdit,
+        data: <String, Object?>{
+          'id': existing.id,
+          'page': existing.page,
+          ...journalText(body),
+        },
+      );
       return;
     }
     final Quote? quote = entry.quote;
     if (quote == null) {
       return;
     }
-    await widget.annotations.saveNote(
-      Note(
-        id: newLibraryId(),
-        bookId: widget.book.id,
-        quoteId: quote.id,
-        page: quote.page,
-        body: body,
-        createdAt: now,
-        updatedAt: now,
-      ),
+    final Note note = Note(
+      id: newLibraryId(),
+      bookId: widget.book.id,
+      quoteId: quote.id,
+      page: quote.page,
+      body: body,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await widget.annotations.saveNote(note);
+    widget.log?.log(
+      SnoEventType.noteCreate,
+      data: <String, Object?>{
+        'id': note.id,
+        'quote': quote.id,
+        'page': note.page,
+        ...journalText(body),
+      },
     );
   }
 
@@ -263,7 +296,8 @@ class _Entry {
     final StringBuffer buffer = StringBuffer();
     final Quote? quote = this.quote;
     if (quote != null) {
-      buffer.write(quote.content);
+      // BUG-51: ищут по тексту без знака переноса.
+      buffer.write(leavingText(quote.content));
       buffer.write(' ');
     }
     for (final Note note in notes) {
@@ -313,7 +347,12 @@ class _EntryCard extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               if (quote != null)
-                Text(quote.content, style: theme.textTheme.bodyMedium),
+                // BUG-51: цитата, сохранённая до исправления, могла
+                // унести знак переноса — показывается она без него.
+                Text(
+                  leavingText(quote.content),
+                  style: theme.textTheme.bodyMedium,
+                ),
               for (final Note note in entry.notes) ...<Widget>[
                 const SizedBox(height: 8),
                 Row(

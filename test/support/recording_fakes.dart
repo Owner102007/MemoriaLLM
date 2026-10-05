@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:memoria/domain/settings/app_settings.dart';
+import 'package:memoria/sno/recording/action_log.dart';
 import 'package:memoria/sno/recording/device_status.dart';
+import 'package:memoria/sno/recording/event.dart';
 import 'package:memoria/sno/recording/session.dart';
 import 'package:memoria/sno/recording/store.dart';
 
@@ -228,6 +230,12 @@ class FakeDeviceStatus implements DeviceStatus {
 
   @override
   Future<void> keepScreenOn(bool on) async => screen.add(on);
+
+  /// Горит ли экран; `null` — устройство не знает.
+  bool? lit;
+
+  @override
+  Future<bool?> screenOn() async => lit;
 }
 
 /// Двое часов записи в руках теста: настенные и монотонные.
@@ -347,5 +355,99 @@ class SessionKit {
   Future<void> settle() async {
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
+  }
+}
+
+/// Журнал действий, который просто копит записанное (SNO-F-REC-02).
+///
+/// Для проверок проводов: что экран или действие записали, каким видом
+/// и с какими данными, — без сессии, часов и хранилища.
+class ListActionLog implements ActionLog {
+  /// Создаёт журнал; [recording] — идёт ли запись.
+  ListActionLog({this.recording = true});
+
+  @override
+  bool recording;
+
+  /// Записанные события по порядку.
+  final List<({SnoEventType type, Map<String, Object?> data})> events =
+      <({SnoEventType type, Map<String, Object?> data})>[];
+
+  /// Где участник: экран, книга, страница, полоса, режим.
+  final RecordingContext context = RecordingContext();
+
+  /// Виды записанных событий по порядку.
+  List<String> get types {
+    return <String>[
+      for (final ({SnoEventType type, Map<String, Object?> data}) event
+          in events)
+        event.type.wire,
+    ];
+  }
+
+  /// Данные событий вида [type] по порядку.
+  List<Map<String, Object?>> dataOf(SnoEventType type) {
+    return <Map<String, Object?>>[
+      for (final ({SnoEventType type, Map<String, Object?> data}) event
+          in events)
+        if (event.type == type) event.data,
+    ];
+  }
+
+  @override
+  void log(
+    SnoEventType type, {
+    Map<String, Object?> data = const <String, Object?>{},
+  }) {
+    if (recording) {
+      events.add((type: type, data: data));
+    }
+  }
+
+  @override
+  void screen(String name) {
+    final String from = context.screen;
+    if (from == name) {
+      return;
+    }
+    context.screen = name;
+    log(
+      SnoEventType.navScreen,
+      data: <String, Object?>{'from': from, 'to': name},
+    );
+  }
+
+  @override
+  void bookOpened(
+    String book, {
+    required String via,
+    Map<String, Object?> data = const <String, Object?>{},
+  }) {
+    context.book = book;
+    log(
+      SnoEventType.bookOpen,
+      data: <String, Object?>{'via': via, 'book': book, ...data},
+    );
+  }
+
+  @override
+  void bookClosed() {
+    if (context.book == null) {
+      return;
+    }
+    log(SnoEventType.bookClose);
+    context
+      ..book = null
+      ..page = null
+      ..strip = null
+      ..mode = null;
+  }
+
+  @override
+  void place({required int page, required int strip, required String mode}) {
+    context
+      ..page = page
+      ..strip = strip
+      ..mode = mode;
   }
 }

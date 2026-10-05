@@ -7,6 +7,7 @@
 library;
 
 import '../library/search_text.dart';
+import '../reading/selection_text.dart';
 import 'annotations.dart';
 
 /// Собирает цитаты и заметки книги в один Markdown-документ.
@@ -59,7 +60,9 @@ String annotationsToMarkdown({
     out.writeln('## Страница $page');
     for (final Quote quote in quotes.where((Quote q) => q.page == page)) {
       out.writeln();
-      out.writeln(_blockquote(quote.content));
+      // BUG-51: цитата, сохранённая до исправления, могла унести знак
+      // переноса — в выгрузку он не идёт.
+      out.writeln(_blockquote(leavingText(quote.content)));
       for (final Note note in notesByQuote[quote.id] ?? const <Note>[]) {
         out.writeln();
         out.writeln(note.body.trim());

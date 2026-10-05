@@ -1113,6 +1113,7 @@ class _TestingScreenState extends State<TestingScreen>
           ),
           subtitle: const Text('Остановить: удерживайте точку в углу экрана'),
         ),
+      if (session.phase == RecordingPhase.recording) _blockRow(theme, session),
       if (session.phase == RecordingPhase.stopped)
         ListTile(
           key: const Key('sno-session-finish'),
@@ -1126,6 +1127,88 @@ class _TestingScreenState extends State<TestingScreen>
           onTap: () => _openFinish(session),
         ),
     ];
+  }
+
+  /// Номер, который экспериментатор выбрал следующему блоку; `null` —
+  /// берётся предложенный записью.
+  int? _blockNumber;
+
+  /// «Блок №»: экспериментатор отмечает начало и конец блока
+  /// тестирования (SNO-F-CFG-03, кадр SNO-SCR-01.1).
+  ///
+  /// Строка есть, только пока запись идёт. Блок один: пока он открыт,
+  /// на его месте — сколько он идёт и «Закончить». Номер предлагается
+  /// следующий по порядку; стрелками его можно поправить.
+  Widget _blockRow(ThemeData theme, RecordingSession session) {
+    final int? running = session.block;
+    if (running != null) {
+      return ListTile(
+        key: const Key('sno-block-running'),
+        title: ValueListenableBuilder<int>(
+          valueListenable: session.ticks,
+          builder: (BuildContext context, int tick, Widget? child) {
+            final String passed = describeRecordingTime(
+              session.blockElapsedMs,
+            );
+            return Text(
+              'Блок $running идёт · $passed',
+              key: const Key('sno-block-passed'),
+            );
+          },
+        ),
+        trailing: FilledButton.tonalIcon(
+          key: const Key('sno-block-end'),
+          onPressed: () {
+            session.endBlock();
+            // Следующему блоку номер предложит запись.
+            setState(() => _blockNumber = null);
+          },
+          icon: const Icon(Icons.stop),
+          label: const Text('Закончить'),
+        ),
+      );
+    }
+    final int number = _blockNumber ?? session.nextBlock;
+    return ListTile(
+      key: const Key('sno-block'),
+      title: Row(
+        children: <Widget>[
+          const Flexible(
+            child: Text(
+              'Блок №',
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.fade,
+            ),
+          ),
+          IconButton(
+            key: const Key('sno-block-less'),
+            icon: const Icon(Icons.remove),
+            tooltip: 'Номер меньше',
+            visualDensity: VisualDensity.compact,
+            onPressed: number > 1
+                ? () => setState(() => _blockNumber = number - 1)
+                : null,
+          ),
+          Text('$number', key: const Key('sno-block-number')),
+          IconButton(
+            key: const Key('sno-block-more'),
+            icon: const Icon(Icons.add),
+            tooltip: 'Номер больше',
+            visualDensity: VisualDensity.compact,
+            onPressed: number < 99
+                ? () => setState(() => _blockNumber = number + 1)
+                : null,
+          ),
+        ],
+      ),
+      trailing: FilledButton.tonalIcon(
+        key: const Key('sno-block-start'),
+        onPressed: () => session.startBlock(number),
+        icon: const Icon(Icons.play_arrow),
+        label: const Text('Начать'),
+      ),
+    );
   }
 
   @override

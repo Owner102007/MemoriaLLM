@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../hold_button.dart';
 import 'session.dart';
+import 'summary.dart';
 
 /// Чем кончилась запись — заголовком экрана завершения и плашки.
 String describeStop(StopReason? by) {
@@ -69,6 +70,11 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   int _events = 0;
   bool _failed = false;
 
+  /// Строки о блоках и об отлучках; `null` — блоков не отмечали,
+  /// участник не уходил (SNO-F-CFG-03, SNO-F-REC-10).
+  String? _blocks;
+  String? _away;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +94,8 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     _code = state.participant.display;
     _events = session.events;
     _failed = session.writeFailed;
+    _blocks = describeBlocks(state.blocks);
+    _away = describeAway(state.away);
   }
 
   @override
@@ -126,6 +134,8 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     final ThemeData theme = Theme.of(context);
     final RecordingSession session = widget.session;
     final bool open = session.phase == RecordingPhase.stopped;
+    final String? blocks = _blocks;
+    final String? away = _away;
     return Scaffold(
       appBar: AppBar(title: const Text('Завершение сессии')),
       body: Align(
@@ -163,6 +173,16 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
                 'Записано событий: $_events',
                 key: const Key('sno-finish-events'),
               ),
+              if (blocks != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(blocks, key: const Key('sno-finish-blocks')),
+                ),
+              if (away != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(away, key: const Key('sno-finish-away')),
+                ),
               if (_failed)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),

@@ -12,6 +12,9 @@ import '../../domain/library/shelf_title_search.dart';
 import '../../domain/navigation/sections.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
+import '../../sno/recording/action_log.dart';
+import '../../sno/recording/event.dart';
+import '../../sno/recording/thinning.dart';
 import '../reader/reader_screen.dart';
 import 'book_drag.dart';
 import 'category_shelf.dart';
@@ -37,11 +40,18 @@ class LibraryScreen extends StatefulWidget {
     this.titleSearch = false,
     this.locked = false,
     this.models = true,
+    this.visible = true,
     super.key,
   });
 
   /// Службы приложения.
   final AppServices services;
+
+  /// На экране ли полка: открыт её раздел, и книга не читается.
+  ///
+  /// Нужно журналу записи сборок ветвей СНО2026 (SNO-F-REC-02): когда
+  /// полка снова перед участником, в журнал ложится `shelf.shown`.
+  final bool visible;
 
   /// Просьба показать книги устройства, чтобы добавить их на полку
   /// (F-APP-02). Аргумент — категория, чей «+» нажали; `null` — кнопка в
@@ -150,6 +160,91 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// Занят ли экран поиском: тогда «назад» закрывает его, а не раздел.
   bool get _searchActive => _searching || _query.isNotEmpty;
 
+  /// Журнал действий участника; `null` — в этой сборке записи нет
+  /// (SNO-F-REC-02).
+  ActionLog? get _log => widget.services.recording;
+
+  /// Сколько запрос обязан простоять без изменений, чтобы журнал счёл
+  /// его запросом: иначе каждая буква стала бы отдельным событием.
+  static const Duration _queryRest = Duration(milliseconds: 150);
+
+  /// Срок, который набранный запрос обязан простоять.
+  Timer? _queryTimer;
+
+  /// Полка, какой её построили в последний раз: по ней журнал пишет,
+  /// что показано и сколько нашлось.
+  List<ShelfSection> _shown = const <ShelfSection>[];
+
+  /// Прокрутка полки для журнала — прореженно (SNO-ALG-REC-01).
+  late final Thinned<double> _scrolled = Thinned<double>(_logScroll);
+
+  void _logScroll(double offset) {
+    final ActionLog? log = _log;
+    if (log == null || !log.recording || !_shelf.hasClients) {
+      return;
+    }
+    final ScrollPosition position = _shelf.position;
+    log.log(
+      SnoEventType.shelfScroll,
+      data: <String, Object?>{
+        'offset': offset.round(),
+        'max': position.maxScrollExtent.round(),
+        'viewport': position.viewportDimension.round(),
+      },
+    );
+  }
+
+  /// Полка снова перед участником: что на ней и где она стоит.
+  void _logShown() {
+    final ActionLog? log = _log;
+    if (!mounted || log == null || !log.recording) {
+      return;
+    }
+    int books = 0;
+    for (final ShelfSection section in _shown) {
+      books += section.books.length;
+    }
+    log.log(
+      SnoEventType.shelfShown,
+      data: <String, Object?>{
+        'sort': (widget.locked ? ShelfSort.manual : _sort).name,
+        'locked': widget.locked,
+        'books': books,
+        'categories': <Object?>[
+          for (final ShelfSection section in _shown)
+            <String, Object?>{
+              'title': section.title,
+              'books': section.books.length,
+            },
+        ],
+        if (_shelf.hasClients) 'offset': _shelf.position.pixels.round(),
+      },
+    );
+  }
+
+  /// Книги полки в том порядке, в каком они стоят.
+  List<Book> get _shownBooks {
+    return <Book>[for (final ShelfSection section in _shown) ...section.books];
+  }
+
+  /// Запрос простоял свой срок — он пишется в журнал с числом найденного.
+  void _logQuery() {
+    _queryTimer = null;
+    final ActionLog? log = _log;
+    final String query = _query.trim();
+    if (!mounted || log == null || !log.recording || query.isEmpty) {
+      return;
+    }
+    log.log(
+      SnoEventType.searchQuery,
+      data: <String, Object?>{
+        'scope': 'shelf',
+        ...journalText(query),
+        'hits': searchShelfTitles(query: query, books: _shownBooks).length,
+      },
+    );
+  }
+
   /// Потоки полки: категории, книги, места чтения.
   ///
   /// Заводятся один раз, а не в каждом построении: поиск по названию
@@ -178,10 +273,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!identical(oldWidget.services, widget.services)) {
       _watchShelf();
     }
+    if (widget.visible && !oldWidget.visible) {
+      // После кадра: полка под замком могла смениться в этом же
+      // построении, и писать надо ту, что участник увидит.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _logShown());
+    }
   }
 
   @override
   void dispose() {
+    _queryTimer?.cancel();
+    _scrolled.dispose();
     _removed.clear();
     _autoScroll?.cancel();
     _shelf.dispose();
@@ -209,6 +311,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!_searchActive && _searchField.text.isEmpty) {
       return;
     }
+    _queryTimer?.cancel();
+    _queryTimer = null;
+    _log?.log(
+      SnoEventType.searchClose,
+      data: const <String, Object?>{'scope': 'shelf'},
+    );
     _searchField.clear();
     setState(() {
       _searching = false;
@@ -218,10 +326,34 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// Открывает книгу, найденную по названию (SNO-F-LIB-01).
   ///
-  /// Свой путь, отдельный от нажатия на полке: журналу записи (этап 2
-  /// ветви) предстоит отличать «нашёл поиском» от «открыл по памяти».
-  /// Поиск закрывает само открытие книги ([_openBook]).
-  Future<void> _openFound(Book book) => _openBook(book);
+  /// Свой путь, отдельный от нажатия на полке: журнал записи отличает
+  /// «нашёл поиском» от «открыл по памяти» (SNO-F-REC-02) — здесь
+  /// пишется, какой по счёту из найденного открыт, а книга открывается
+  /// с пометкой пути. Поиск закрывает само открытие книги
+  /// ([_openBook]).
+  Future<void> _openFound(Book book) {
+    final ActionLog? log = _log;
+    if (log != null && log.recording) {
+      final List<ShelfTitleHit> hits = searchShelfTitles(
+        query: _query,
+        books: _shownBooks,
+      );
+      final int at = hits.indexWhere(
+        (ShelfTitleHit hit) => hit.book.id == book.id,
+      );
+      log.log(
+        SnoEventType.searchResultOpen,
+        data: <String, Object?>{
+          'scope': 'shelf',
+          ...journalText(_query.trim()),
+          'rank': at + 1,
+          'of': hits.length,
+          'book': book.fileHash,
+        },
+      );
+    }
+    return _openBook(book, via: 'shelf_search');
+  }
 
   /// Книгу подняли: полка готовится ехать под пальцем.
   void _dragStarted() {
@@ -587,7 +719,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// один раз и только когда книга действительно открылась. Прежде оно
   /// записывалось и тут, до открытия: одно открытие считалось дважды, а
   /// книга с потерянным файлом поднималась в «Сначала недавние».
-  Future<void> _openBook(Book book) async {
+  ///
+  /// [via] — каким путём книгу открыли: с полки или из найденного по
+  /// названию; это пишет журнал записи (SNO-F-REC-02).
+  Future<void> _openBook(Book book, {String via = 'shelf'}) async {
     // SNO-F-LIB-01: открытая книга закрывает поиск по названию.
     // Вернувшись, читатель видит полку, а не список найденного и не
     // поле с клавиатурой: каждое обращение к поиску — отдельное действие.
@@ -607,10 +742,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
             canRelink: widget.canAddBooks,
             // SNO-F-READ-01: без модели над выделением нет промптов.
             models: widget.models,
+            // SNO-F-REC-02: журнал записи пишет, каким путём открыли.
+            openedVia: via,
           ),
         ),
       );
     } finally {
+      // SNO-F-REC-02: закрытие книги — раньше перехода на полку.
+      _log?.bookClosed();
       widget.onReading?.call(false);
     }
   }
@@ -663,6 +802,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
       canPop: !_searchActive,
       onPopInvokedWithResult: (bool didPop, Object? result) {
         if (!didPop) {
+          _log?.log(
+            SnoEventType.navBack,
+            data: const <String, Object?>{'closes': 'shelf_search'},
+          );
           _closeSearch();
         }
       },
@@ -806,7 +949,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  void _onQuery(String value) => setState(() => _query = value);
+  void _onQuery(String value) {
+    setState(() => _query = value);
+    // SNO-F-REC-02: запросом журнал считает набранное, простоявшее
+    // свой срок; список найденного при этом обновляется с каждой буквой.
+    _queryTimer?.cancel();
+    final ActionLog? log = _log;
+    _queryTimer = log != null && log.recording
+        ? Timer(_queryRest, _logQuery)
+        : null;
+  }
 
   Future<void> _newCategoryFromBar() async {
     final List<BookCategory> existing = await widget.services.data.categories
@@ -839,6 +991,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             sort: widget.locked ? ShelfSort.manual : _sort,
             progress: progress,
           );
+    _shown = sections;
     final Widget shelf;
     if (empty) {
       shelf = widget.canAddBooks
@@ -932,6 +1085,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Widget _shelfList({
+    required List<ShelfSection> sections,
+    required List<BookCategory> categories,
+    required Map<String, double> progress,
+  }) {
+    final Widget list = _shelfItems(
+      sections: sections,
+      categories: categories,
+      progress: progress,
+    );
+    if (_log == null) {
+      return list;
+    }
+    // SNO-F-REC-02: прокрутка полки — в журнал, прореженно; чем жест
+    // кончился, пишется обязательно. Слушатель только смотрит.
+    return NotificationListener<ScrollNotification>(
+      onNotification: (ScrollNotification notification) {
+        if (notification.depth != 0) {
+          return false;
+        }
+        if (notification is ScrollUpdateNotification) {
+          _scrolled.add(notification.metrics.pixels);
+        } else if (notification is ScrollEndNotification) {
+          _scrolled.flush();
+        }
+        return false;
+      },
+      child: list,
+    );
+  }
+
+  Widget _shelfItems({
     required List<ShelfSection> sections,
     required List<BookCategory> categories,
     required Map<String, double> progress,

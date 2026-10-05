@@ -13,6 +13,8 @@
 /// переписывая таблицу с данными живых читателей.
 library;
 
+import '../reading/selection_text.dart';
+
 /// Сколько промптов помещается в панель над выделением.
 ///
 /// Пять — не круглое число, а потолок: за ним панель перестаёт помещаться
@@ -173,9 +175,12 @@ String fillPrompt(
   String? bookLanguage,
   String? myLanguage,
 }) {
+  // BUG-51: знак переноса в запрос не уходит. Тот, кто зовёт, уже
+  // расставил дефисы там, где книга их знает (`BookTextCache.leaving`);
+  // здесь — последний рубеж: что бы ни пришло, знака в запросе нет.
   final Map<PromptSlot, String> values = <PromptSlot, String>{
-    PromptSlot.selection: selection,
-    PromptSlot.context: context ?? '',
+    PromptSlot.selection: leavingText(selection),
+    PromptSlot.context: leavingText(context ?? ''),
     PromptSlot.bookLanguage: bookLanguage ?? '',
     PromptSlot.myLanguage: myLanguage ?? '',
   };

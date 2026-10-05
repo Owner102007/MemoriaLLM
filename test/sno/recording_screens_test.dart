@@ -948,17 +948,42 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(kit.session.recording, isTrue);
-      final List<Map<String, Object?>> events = kit.store.events(kit.folder);
-      expect(kit.store.types(kit.folder), <String>[
-        'recording.start',
-        'app.background',
-        'app.foreground',
-        'clock.resync',
-      ]);
+      final List<Map<String, Object?>> all = kit.store.events(kit.folder);
+      // SNO-F-REC-10: каждая смена состояния — своим событием. Система
+      // ведёт приложение через все ступени: туда три и обратно три.
+      expect(
+        <Object?>[
+          for (final Map<String, Object?> event in all)
+            if (event['type'] == 'app.state')
+              (event['data']! as Map<String, Object?>)['to'],
+        ],
+        <String>[
+          'inactive',
+          'hidden',
+          'paused',
+          'hidden',
+          'inactive',
+          'resumed',
+        ],
+      );
+      final List<Map<String, Object?>> events = all
+          .where((Map<String, Object?> event) => event['type'] != 'app.state')
+          .toList();
+      expect(
+        events.map((Map<String, Object?> event) => event['type']),
+        <String>[
+          'recording.start',
+          'app.background',
+          'app.foreground',
+          'clock.resync',
+        ],
+      );
       expect(events[1]['data'], <String, Object?>{'state': 'inactive'});
       expect(events[2]['data'], <String, Object?>{
         'away_ms': 7000,
         'deepest': 'paused',
+        'kind': 'hidden',
+        'hidden_ms': 7000,
       });
 
       await unmount(tester);

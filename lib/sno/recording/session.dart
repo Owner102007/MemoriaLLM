@@ -26,11 +26,13 @@ import 'package:flutter/foundation.dart';
 import '../../domain/settings/app_settings.dart';
 import '../participant_code.dart';
 import '../settings_keys.dart';
+import 'action_log.dart';
 import 'clock.dart';
 import 'device_status.dart';
 import 'event.dart';
 import 'journal.dart';
 import 'store.dart';
+import 'summary.dart';
 
 /// Сколько длится запись.
 const Duration kRecordingLength = Duration(minutes: 40);
@@ -126,6 +128,9 @@ class SessionState {
     this.lastT = 0,
     this.resyncs,
     this.failed = false,
+    this.away,
+    this.blocks = const <BlockMark>[],
+    this.inBackground = false,
   });
 
   /// Идентификатор записи.
@@ -170,6 +175,17 @@ class SessionState {
   /// иначе написало бы в сведениях записи, что журнал цел.
   final bool? failed;
 
+  /// Отлучки участника за запись (SNO-F-REC-10); `null` — неизвестно:
+  /// запись идёт или оборвалась, и счёт остался в умершем приложении.
+  final AwaySummary? away;
+
+  /// Блоки тестирования, отмеченные за запись.
+  final List<BlockMark> blocks;
+
+  /// Остановилась ли запись, пока приложения не было на переднем плане
+  /// (SNO-F-REC-10).
+  final bool inBackground;
+
   /// То же состояние с отметкой о том, лёг ли журнал на диск.
   SessionState withFailure(bool? failed) {
     return SessionState(
@@ -185,16 +201,25 @@ class SessionState {
       lastT: lastT,
       resyncs: resyncs,
       failed: failed,
+      away: away,
+      blocks: blocks,
+      inBackground: inBackground,
     );
   }
 
   /// То же состояние после остановки.
+  ///
+  /// Отлучки, блоки и признак «остановилась в фоне» остаются прежними,
+  /// если не названы: завершение сессии их не пересчитывает.
   SessionState stopped({
     required StopReason by,
     required int durationMs,
     required int events,
     required int lastT,
     required int? resyncs,
+    AwaySummary? away,
+    List<BlockMark>? blocks,
+    bool? inBackground,
   }) {
     return SessionState(
       id: id,
@@ -209,6 +234,9 @@ class SessionState {
       lastT: lastT,
       resyncs: resyncs,
       failed: failed,
+      away: away ?? this.away,
+      blocks: blocks ?? this.blocks,
+      inBackground: inBackground ?? this.inBackground,
     );
   }
 
@@ -227,6 +255,9 @@ class SessionState {
       'last_t': lastT,
       'resyncs': resyncs,
       'write_failed': failed,
+      'away': away?.toJson(),
+      'blocks': <Object?>[for (final BlockMark mark in blocks) mark.toJson()],
+      'in_background': inBackground,
     });
   }
 
@@ -281,6 +312,9 @@ class SessionState {
         lastT: lastT is int ? lastT : 0,
         resyncs: resyncs is int ? resyncs : null,
         failed: failed is bool ? failed : null,
+        away: AwaySummary.fromJson(raw['away']),
+        blocks: BlockMark.listFromJson(raw['blocks']),
+        inBackground: raw['in_background'] == true,
       );
     } on FormatException {
       return null;
@@ -363,7 +397,7 @@ String describeRecordingTime(int milliseconds) {
 /// Слушатели узнают о смене состояния ([phase]); [ticks] тикает раз в
 /// секунду, пока запись идёт, — по нему обновляется оставшееся время,
 /// и остальное дерево от этого не перестраивается.
-class RecordingSession extends ChangeNotifier {
+class RecordingSession extends ChangeNotifier implements ActionLog {
   /// Создаёт сессию.
   ///
   /// [branch], [device] и [build] попадают в сведения записи: ветвь,
@@ -439,6 +473,41 @@ class RecordingSession extends ChangeNotifier {
   String? _deepest;
   bool _disposed = false;
 
+  /// В каком состоянии приложение сейчас: `resumed`, `inactive`,
+  /// `hidden`, `paused` (SNO-F-REC-10). Ведётся и вне записи — запись
+  /// может начаться в любом.
+  String _appState = _onScreen;
+
+  /// С какого мига приложения не видно; `null` — оно на виду.
+  DateTime? _hiddenAt;
+
+  /// Сколько за идущую отлучку приложения не было видно.
+  int _hiddenMs = 0;
+
+  /// Погашен ли экран за идущую отлучку — по ответу устройства.
+  bool _screenOff = false;
+
+  /// Номер отлучки: запоздавший ответ устройства о прежней не
+  /// принимается.
+  int _leaveRun = 0;
+
+  /// Отлучки за идущую запись.
+  AwaySummary _away = const AwaySummary();
+
+  /// Открытый блок тестирования и время его начала; `null` — блока нет.
+  int? _block;
+  int _blockT = 0;
+
+  /// Блоки, закрытые за идущую запись.
+  List<BlockMark> _blocks = const <BlockMark>[];
+
+  /// Сколько раз за запись открывали каждую книгу.
+  final Map<String, int> _visits = <String, int>{};
+
+  /// Когда открыта книга, по часам записи; `null` — книга не открыта
+  /// или открыта до записи.
+  int? _bookOpenedT;
+
   /// Не удалось ли записать что-то на диск за эту сессию — и тогда,
   /// когда журнал уже закрыт.
   bool _failed = false;
@@ -450,6 +519,7 @@ class RecordingSession extends ChangeNotifier {
   RecordingPhase get phase => _state?.phase ?? RecordingPhase.idle;
 
   /// Идёт ли запись.
+  @override
   bool get recording => phase == RecordingPhase.recording;
 
   /// Стоит ли полка под замком: сессия начата и не завершена
@@ -464,6 +534,30 @@ class RecordingSession extends ChangeNotifier {
 
   /// Сколько событий записано.
   int get events => recording ? _seq : (_state?.events ?? 0);
+
+  /// Отлучки участника за остановленную запись (SNO-F-REC-10); `null`
+  /// — запись идёт, оборвалась или её нет.
+  AwaySummary? get away => recording ? null : _state?.away;
+
+  /// Блоки тестирования, закрытые за запись.
+  List<BlockMark> get blocks {
+    return recording ? _blocks : (_state?.blocks ?? const <BlockMark>[]);
+  }
+
+  /// Номер открытого блока; `null` — блок не идёт.
+  int? get block => recording ? _block : null;
+
+  /// Сколько идёт открытый блок, в миллисекундах.
+  int get blockElapsedMs {
+    if (!recording || _block == null) {
+      return 0;
+    }
+    final int passed = _tNow() - _blockT;
+    return passed < 0 ? 0 : passed;
+  }
+
+  /// Какой номер предложить следующему блоку: за последним закрытым.
+  int get nextBlock => _blocks.isEmpty ? 1 : _blocks.last.number + 1;
 
   /// Не удалось ли записать что-то на диск.
   bool get writeFailed => _failed || (_journal?.failed ?? false);
@@ -565,6 +659,20 @@ class RecordingSession extends ChangeNotifier {
       }
     }
     _seq = last?.seq ?? 0;
+    // SNO-F-REC-10: оборвалась ли запись, пока приложения не было на
+    // переднем плане, — по последнему слову журнала о его состоянии.
+    bool away = false;
+    for (final EventMarks event in tail) {
+      if (event.type == SnoEventType.appState.wire) {
+        away = event.data['to'] != _onScreen;
+      } else if (event.type == SnoEventType.appBackground.wire) {
+        away = true;
+      } else if (event.type == SnoEventType.appForeground.wire) {
+        away = false;
+      } else if (event.type == SnoEventType.heartbeat.wire) {
+        away = event.data['state'] is String;
+      }
+    }
     final SessionState stopped;
     if (stop != null) {
       final Object? duration = stop.data['duration_ms'];
@@ -574,6 +682,7 @@ class RecordingSession extends ChangeNotifier {
         events: _seq,
         lastT: last?.t ?? stop.t,
         resyncs: null,
+        inBackground: stop.data['in_background'] == true,
       );
     } else {
       final int t = last?.t ?? 0;
@@ -600,6 +709,7 @@ class RecordingSession extends ChangeNotifier {
               'stopped_by': StopReason.crash.wire,
               'duration_ms': duration,
               'late': true,
+              if (away) 'in_background': true,
             },
           ),
         );
@@ -620,6 +730,7 @@ class RecordingSession extends ChangeNotifier {
         events: _seq,
         lastT: t,
         resyncs: null,
+        inBackground: away,
       );
     }
     // Лёг ли журнал умершего приложения на диск, узнать не у кого:
@@ -776,6 +887,14 @@ class RecordingSession extends ChangeNotifier {
     _beats = 0;
     _leftAt = null;
     _deepest = null;
+    _hiddenAt = null;
+    _hiddenMs = 0;
+    _screenOff = false;
+    _away = const AwaySummary();
+    _block = null;
+    _blocks = const <BlockMark>[];
+    _visits.clear();
+    _bookOpenedT = null;
     _state = state;
 
     final Object? reference = snapshot['reference'];
@@ -916,6 +1035,15 @@ class RecordingSession extends ChangeNotifier {
         'events': running ? null : state.events,
         'write_failed': _failureOf(state),
         'finished': finished,
+        // SNO-F-REC-10: итог отлучек — после остановки; у оборванной
+        // записи его нет, отлучки читаются из журнала.
+        'away': running ? null : state.away?.toJson(),
+        'in_background': running ? null : state.inBackground,
+        'blocks': running
+            ? null
+            : <Object?>[
+                for (final BlockMark mark in state.blocks) mark.toJson(),
+              ],
       },
     };
     try {
@@ -948,14 +1076,139 @@ class RecordingSession extends ChangeNotifier {
   /// Вне записи не делает ничего: пока запись не идёт, ни одна строка
   /// не пишется никуда. Места вызова стоят рядом с действиями
   /// участника и помечены `// SNO-F-REC-02`.
+  @override
   void log(
     SnoEventType type, {
     Map<String, Object?> data = const <String, Object?>{},
   }) {
-    if (!recording || _stopRun != null) {
+    if (!_logging) {
       return;
     }
     _write(type, data: data);
+  }
+
+  /// Пишутся ли сейчас события: запись идёт и не останавливается.
+  bool get _logging => recording && _stopRun == null;
+
+  @override
+  void screen(String name) {
+    final String from = context.screen;
+    if (from == name) {
+      return;
+    }
+    // Экран стоит в событии перехода уже новый: событие — о том, куда
+    // участник пришёл.
+    context.screen = name;
+    log(
+      SnoEventType.navScreen,
+      data: <String, Object?>{'from': from, 'to': name},
+    );
+  }
+
+  @override
+  void bookOpened(
+    String book, {
+    required String via,
+    Map<String, Object?> data = const <String, Object?>{},
+  }) {
+    context.book = book;
+    if (!_logging) {
+      _bookOpenedT = null;
+      return;
+    }
+    final int visit = (_visits[book] ?? 0) + 1;
+    _visits[book] = visit;
+    final int t = _tNow();
+    _bookOpenedT = t;
+    _write(
+      SnoEventType.bookOpen,
+      at: t,
+      data: <String, Object?>{'via': via, 'visit': visit, ...data},
+    );
+  }
+
+  @override
+  void bookClosed() {
+    if (context.book == null) {
+      return;
+    }
+    if (_logging) {
+      final int t = _tNow();
+      final int? opened = _bookOpenedT;
+      _write(
+        SnoEventType.bookClose,
+        at: t,
+        data: <String, Object?>{if (opened != null) 'open_ms': t - opened},
+      );
+    }
+    _bookOpenedT = null;
+    context
+      ..book = null
+      ..page = null
+      ..strip = null
+      ..mode = null;
+  }
+
+  @override
+  void place({required int page, required int strip, required String mode}) {
+    context
+      ..page = page
+      ..strip = strip
+      ..mode = mode;
+  }
+
+  /// Начинает блок тестирования номер [number] (SNO-F-CFG-03).
+  ///
+  /// Блок один: пока открыт прежний, новый не начинается. Отвечает,
+  /// начат ли блок.
+  bool startBlock(int number) {
+    if (!_logging || _block != null || number < 1) {
+      return false;
+    }
+    final int t = _tNow();
+    _block = number;
+    _blockT = t;
+    _write(
+      SnoEventType.blockStart,
+      at: t,
+      data: <String, Object?>{'n': number},
+    );
+    _notify();
+    return true;
+  }
+
+  /// Заканчивает открытый блок. Отвечает, было ли что заканчивать.
+  bool endBlock() {
+    if (!_logging || _block == null) {
+      return false;
+    }
+    _closeBlock(by: 'experimenter', at: _tNow());
+    _notify();
+    return true;
+  }
+
+  /// Закрывает открытый блок событием и отметкой; [by] — чем закрыт.
+  void _closeBlock({required String by, required int at}) {
+    final int? number = _block;
+    if (number == null) {
+      return;
+    }
+    final int duration = at - _blockT < 0 ? 0 : at - _blockT;
+    _block = null;
+    _blocks = List<BlockMark>.unmodifiable(<BlockMark>[
+      ..._blocks,
+      BlockMark(
+        number: number,
+        startMs: _blockT,
+        durationMs: duration,
+        closedBy: by,
+      ),
+    ]);
+    _write(
+      SnoEventType.blockEnd,
+      at: at,
+      data: <String, Object?>{'n': number, 'duration_ms': duration, 'by': by},
+    );
   }
 
   /// Строка журнала с номером и временем; без открытого журнала не
@@ -1025,32 +1278,18 @@ class RecordingSession extends ChangeNotifier {
     }
     _beats++;
     if (_beats % kHeartbeatTicks == 0) {
-      _write(SnoEventType.heartbeat);
+      // SNO-F-REC-10: вне переднего плана сердцебиение называет
+      // состояние — приложение жило, но участник на него не смотрел.
+      _write(
+        SnoEventType.heartbeat,
+        data: <String, Object?>{if (_appState != _onScreen) 'state': _appState},
+      );
     }
     unawaited(_journal?.flush());
     ticks.value++;
   }
 
-  /// Приложение ушло с переднего плана; [state] — куда: `inactive`,
-  /// `hidden`, `paused`.
-  ///
-  /// Запись при этом не останавливается. Событие пишется одно на
-  /// отлучку — в миг ухода; насколько глубоко приложение ушло, скажет
-  /// событие возвращения.
-  void appLeft(String state) {
-    if (!recording || _stopRun != null) {
-      return;
-    }
-    if (_leftAt == null) {
-      _leftAt = _now();
-      _write(
-        SnoEventType.appBackground,
-        data: <String, Object?>{'state': state},
-      );
-      unawaited(_journal?.flush());
-    }
-    _deepest = _deeper(_deepest, state);
-  }
+  static const String _onScreen = 'resumed';
 
   static const List<String> _depth = <String>['inactive', 'hidden', 'paused'];
 
@@ -1061,29 +1300,110 @@ class RecordingSession extends ChangeNotifier {
     return _depth.indexOf(state) > _depth.indexOf(known) ? state : known;
   }
 
+  /// Видно ли приложение в состоянии [state]: без фокуса оно на виду,
+  /// свёрнутое и остановленное — нет.
+  static bool _visible(String state) {
+    return state == _onScreen || state == 'inactive';
+  }
+
+  /// Приложение ушло с переднего плана; [state] — куда: `inactive`,
+  /// `hidden`, `paused`.
+  void appLeft(String state) => appState(state);
+
   /// Приложение вернулось на передний план.
+  void appReturned() => appState(_onScreen);
+
+  /// Приложение сменило состояние на [to]: `resumed` — на экране и в
+  /// фокусе, `inactive` — на виду, но без фокуса, `hidden` — его не
+  /// видно, `paused` — остановлено системой (SNO-F-REC-10).
   ///
-  /// Часы сверяются: монотонные могли стоять, пока устройство спало. И
-  /// если сорок минут вышли, пока приложения не было на экране, запись
-  /// останавливается сразу — временем их окончания.
-  void appReturned() {
-    final DateTime? leftAt = _leftAt;
-    _leftAt = null;
-    final String? deepest = _deepest;
-    _deepest = null;
-    if (!recording || _stopRun != null || leftAt == null) {
+  /// Запись при этом не останавливается. Пишется **каждая** смена
+  /// (`app.state`): миг, когда окно свернули, известен временем
+  /// события, а не выводится по возвращении. Отлучка — от ухода с
+  /// переднего плана до возвращения — по-прежнему обрамлена парой
+  /// `app.background` / `app.foreground`; возвращение говорит, была ли
+  /// она на виду (`unfocused`) или приложения не было видно (`hidden`)
+  /// и сколько.
+  ///
+  /// При возвращении часы сверяются: монотонные могли стоять, пока
+  /// устройство спало. И если сорок минут вышли, пока приложения не
+  /// было на экране, запись останавливается сразу — временем их
+  /// окончания.
+  void appState(String to) {
+    final String from = _appState;
+    if (to == from) {
       return;
     }
-    // Сверка — до события возвращения: его настенное время считается
+    _appState = to;
+    if (!_logging) {
+      // Вне записи отлучки не считаются; состояние помнится — запись
+      // может начаться в любом.
+      _leftAt = null;
+      _deepest = null;
+      _hiddenAt = null;
+      _hiddenMs = 0;
+      _screenOff = false;
+      return;
+    }
+    final bool returned = to == _onScreen;
+    // Сверка — до событий возвращения: их настенное время считается
     // уже от нового якоря, а не отстаёт на длину сна.
-    final ({int driftMs, bool applied})? check = _clock?.resync();
+    final ({int driftMs, bool applied})? check = returned
+        ? _clock?.resync()
+        : null;
+    final DateTime now = _now();
     _write(
-      SnoEventType.appForeground,
-      data: <String, Object?>{
-        'away_ms': _now().difference(leftAt).inMilliseconds,
-        'deepest': deepest,
-      },
+      SnoEventType.appState,
+      data: <String, Object?>{'from': from, 'to': to},
     );
+    final DateTime? hiddenAt = _hiddenAt;
+    if (_visible(from) && !_visible(to)) {
+      _hiddenAt = now;
+    } else if (!_visible(from) && _visible(to) && hiddenAt != null) {
+      final int hidden = now.difference(hiddenAt).inMilliseconds;
+      _hiddenMs += hidden < 0 ? 0 : hidden;
+      _hiddenAt = null;
+    }
+    if (!returned) {
+      if (_leftAt == null) {
+        _leftAt = now;
+        _deepest = to;
+        _leaveRun++;
+        _screenOff = false;
+        _write(
+          SnoEventType.appBackground,
+          data: <String, Object?>{'state': to},
+        );
+      } else {
+        _deepest = _deeper(_deepest, to);
+      }
+      unawaited(_readScreen(_leaveRun));
+      unawaited(_journal?.flush());
+      return;
+    }
+    final DateTime? leftAt = _leftAt;
+    if (leftAt != null) {
+      final int away = now.difference(leftAt).inMilliseconds;
+      final String? deepest = _deepest;
+      final bool unseen =
+          _hiddenMs > 0 || (deepest != null && !_visible(deepest));
+      _write(
+        SnoEventType.appForeground,
+        data: <String, Object?>{
+          'away_ms': away,
+          'deepest': deepest,
+          'kind': unseen ? 'hidden' : 'unfocused',
+          'hidden_ms': _hiddenMs,
+          if (_screenOff) 'reason': 'screen_off',
+        },
+      );
+      _away = _away.plus(awayMs: away, hiddenMs: _hiddenMs);
+    }
+    _leftAt = null;
+    _deepest = null;
+    _hiddenAt = null;
+    _hiddenMs = 0;
+    _screenOff = false;
     if (check != null) {
       _write(
         SnoEventType.clockResync,
@@ -1097,6 +1417,24 @@ class RecordingSession extends ChangeNotifier {
       unawaited(stop(StopReason.auto));
     } else {
       unawaited(_journal?.flush());
+    }
+  }
+
+  /// Спрашивает устройство, горит ли экран, — в миг ухода
+  /// (SNO-F-REC-10): экран, погашенный кнопкой, отличается от
+  /// свёрнутого приложения только этим ответом.
+  ///
+  /// Ответ, пришедший после возвращения или к другой отлучке, не
+  /// принимается.
+  Future<void> _readScreen(int run) async {
+    bool? lit;
+    try {
+      lit = await _status.screenOn();
+    } on Object {
+      lit = null;
+    }
+    if (lit == false && run == _leaveRun && _leftAt != null) {
+      _screenOff = true;
     }
   }
 
@@ -1130,6 +1468,23 @@ class RecordingSession extends ChangeNotifier {
         ? limit
         : passed;
     final int t = _tNow();
+    // Открытый блок закрывает остановка — тем же мигом (SNO-F-CFG-03).
+    _closeBlock(by: 'stop', at: t);
+    // SNO-F-REC-10: запись остановилась, пока участника не было —
+    // отлучка входит в итог до этого мига, и об этом сказано.
+    final DateTime? leftAt = _leftAt;
+    final bool inBackground = leftAt != null;
+    if (leftAt != null) {
+      final DateTime now = _now();
+      final DateTime? hiddenAt = _hiddenAt;
+      final int hidden = hiddenAt == null
+          ? _hiddenMs
+          : _hiddenMs + now.difference(hiddenAt).inMilliseconds;
+      _away = _away.plus(
+        awayMs: now.difference(leftAt).inMilliseconds,
+        hiddenMs: hidden,
+      );
+    }
     _write(
       SnoEventType.recordingStop,
       at: t,
@@ -1137,6 +1492,7 @@ class RecordingSession extends ChangeNotifier {
         'stopped_by': by.wire,
         'duration_ms': duration,
         if (passed > limit) 'late_ms': passed - limit,
+        if (inBackground) 'in_background': true,
       },
     );
     final SessionState stopped = state.stopped(
@@ -1145,10 +1501,17 @@ class RecordingSession extends ChangeNotifier {
       events: _seq,
       lastT: t,
       resyncs: clock?.resyncs ?? 0,
+      away: _away,
+      blocks: _blocks,
+      inBackground: inBackground,
     );
     _state = stopped;
     _leftAt = null;
     _deepest = null;
+    _hiddenAt = null;
+    _hiddenMs = 0;
+    _screenOff = false;
+    _bookOpenedT = null;
     // Замок и точка записи меняются сразу; диск догоняет.
     _notify();
     // Файлы начала записи ещё могут писаться: остановка идёт после них.

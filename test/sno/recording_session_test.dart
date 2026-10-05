@@ -502,7 +502,12 @@ void main() {
       // Запись длилась столько, сколько положено, а не до возвращения.
       expect(kit.session.state!.durationMs, forty.inMilliseconds);
 
-      final List<String> types = kit.store.types(kit.folder);
+      // Смены состояния (`app.state`, SNO-F-REC-10) здесь не в счёт: у
+      // них свои тесты.
+      final List<String> types = kit.store
+          .types(kit.folder)
+          .where((String type) => type != 'app.state')
+          .toList();
       expect(types.sublist(types.length - 4), <String>[
         'app.background',
         'app.foreground',
@@ -692,19 +697,29 @@ void main() {
       await kit.settle();
 
       expect(kit.session.recording, isTrue);
-      final List<Map<String, Object?>> events = kit.store.events(kit.folder);
-      expect(kit.store.types(kit.folder), <String>[
-        'recording.start',
-        'app.background',
-        'app.foreground',
-        'clock.resync',
-      ]);
+      // Смены состояния (`app.state`, SNO-F-REC-10) здесь не в счёт: у
+      // них свои тесты.
+      final List<Map<String, Object?>> events = kit.store
+          .events(kit.folder)
+          .where((Map<String, Object?> event) => event['type'] != 'app.state')
+          .toList();
+      expect(
+        events.map((Map<String, Object?> event) => event['type']),
+        <String>[
+          'recording.start',
+          'app.background',
+          'app.foreground',
+          'clock.resync',
+        ],
+      );
       expect(events[1]['t'], 5000);
       expect(events[1]['data'], <String, Object?>{'state': 'inactive'});
       expect(events[2]['t'], 9000);
       expect(events[2]['data'], <String, Object?>{
         'away_ms': 4000,
         'deepest': 'hidden',
+        'kind': 'hidden',
+        'hidden_ms': 4000,
       });
       // Часы шли: расхождения нет, якорь на месте.
       expect(events[3]['data'], <String, Object?>{
