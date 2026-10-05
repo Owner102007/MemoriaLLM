@@ -532,10 +532,11 @@ jobs:
           set -eu
           title='title=Чем подписан APK'
           # Отпечаток читается из блока подписи самого APK своим
-          # разбором: `apksigner` на раннере его не отдал (прогон
-          # №255, вторая попытка), а логов шага сессии разработки не
-          # видно. Блоков подписи может быть несколько — сертификат в
-          # них обязан быть один.
+          # разбором: вывод `apksigner` меняется от версии к версии
+          # инструментов сборки (до 36-й — «Signer #1 certificate…»,
+          # с 37-й — «V2 Signer: certificate…»), и на этом шаг уже
+          # падал (прогон №255, вторая попытка). Блоков подписи может
+          # быть несколько — сертификат в них обязан быть один.
           digest=$(python3 tool/apk_cert_sha256.py "out/$FILE" | sort -u || true)
           count=$(printf '%s\n' "$digest" | grep -c . || true)
           if [ "$count" -gt 1 ]; then
@@ -550,12 +551,12 @@ jobs:
             status=0
             said=$("$signer" verify --print-certs "out/$FILE" 2>&1) || status=$?
             second=$(printf '%s\n' "$said" \
-              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
-              | head -1 | tr 'A-F' 'a-f' | tr -d ': \r' || true)
+              | sed -n 's/^.*certificate SHA-256 digest: //p' \
+              | tr 'A-F' 'a-f' | tr -d ': \r' | sort -u || true)
             if [ -z "$second" ]; then
               echo "::notice $title::apksigner ($signer) отпечатка не отдал, код $status: $(printf '%s' "$said" | head -c 400 | tr '\r\n' '  ')"
             elif [ "$second" != "$digest" ]; then
-              echo "::error $title::apksigner и разбор блока подписи расходятся: $second и ${digest:-ничего}"
+              echo "::error $title::apksigner и разбор блока подписи расходятся: $(printf '%s' "$second" | tr '\n' ' ') и ${digest:-ничего}"
               exit 1
             fi
           else
