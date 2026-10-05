@@ -335,6 +335,10 @@ class _BookResult {
 /// **Кэш — производное**: сбой базы или движка подготовку не роняет.
 /// Книга, которая не открылась, названа в итоге; остальные читаются.
 ///
+/// **Когда делать нечего, подготовки не видно**: при обычном запуске
+/// текст уже прочитан и карта посчитана — проход сверяет это с базой и
+/// молчит, полоска над полкой не появляется.
+///
 /// Проход идёт, только пока приложение открыто: службы переднего плана
 /// у него нет. Пока он читает, экран не гаснет.
 class ShelfReading extends ChangeNotifier {
@@ -495,12 +499,10 @@ class ShelfReading extends ChangeNotifier {
     _activeMs = 0;
     _activeSince = null;
     final ShelfIndexSummary before = _summary ?? const ShelfIndexSummary();
-    _show(
-      ShelfReadingProgress(
-        phase: _held ? ShelfReadingPhase.held : ShelfReadingPhase.reading,
-        booksTotal: books.length,
-      ),
-    );
+    // Полоски пока нет: она появится, только если найдётся, что читать
+    // или считать. При обычном запуске всё уже готово, и мелькать ей
+    // перед участником незачем.
+    _show(ShelfReadingProgress(booksTotal: books.length));
     int complete = 0;
     int pages = 0;
     int scans = 0;
@@ -566,14 +568,6 @@ class ShelfReading extends ChangeNotifier {
 
   /// Считает карту, если лежащая устарела.
   Future<MapSummary> _buildMap(int books, MapSummary? before) async {
-    _show(
-      _progress.copyWith(
-        phase: ShelfReadingPhase.mapping,
-        title: '',
-        mapDone: 0,
-        mapTotal: books,
-      ),
-    );
     try {
       final MapPlan plan = await _map.plan();
       final MapOutcome? current = plan.current;
@@ -593,6 +587,14 @@ class ShelfReading extends ChangeNotifier {
           fingerprint: current.fingerprint,
         );
       }
+      _show(
+        _progress.copyWith(
+          phase: ShelfReadingPhase.mapping,
+          title: '',
+          mapDone: 0,
+          mapTotal: books,
+        ),
+      );
       final int started = _nowMs();
       final MapOutcome outcome = await _map.build(
         plan,

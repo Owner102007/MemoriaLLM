@@ -167,8 +167,12 @@ void main() {
     final ShelfReading pass = reading();
     final List<ShelfReadingPhase> phases = <ShelfReadingPhase>[];
     pass.addListener(() {
-      if (phases.isEmpty || phases.last != pass.progress.phase) {
-        phases.add(pass.progress.phase);
+      final ShelfReadingPhase phase = pass.progress.phase;
+      if (phase == ShelfReadingPhase.idle) {
+        return;
+      }
+      if (phases.isEmpty || phases.last != phase) {
+        phases.add(phase);
       }
     });
 
@@ -232,8 +236,14 @@ void main() {
     final ShelfReading again = reading();
     await again.restore();
     expect(again.summary!.books, 3);
+    // Делать нечего — и подготовки не видно: полоска над полкой не
+    // мелькает при каждом запуске.
+    bool shown = false;
+    again.addListener(() => shown = shown || again.progress.busy);
     again.start();
     await again.settled();
+    expect(shown, isFalse);
+    expect(again.progress.phase, ShelfReadingPhase.done);
 
     expect(opener.opened.length, opened);
     expect(a.textReads.values, everyElement(1));
