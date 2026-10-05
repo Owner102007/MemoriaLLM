@@ -34,19 +34,26 @@ import 'store.dart';
 /// лежала: обычно она среди незавершённых, но завершение, оборванное
 /// на полпути, могло перенести её к остальным, не сняв отметки о
 /// сессии. Такой папки нет ни в списке, ни в упаковке, ни в удалении.
+/// А пока неизвестно, есть ли незавершённая сессия (отметка о ней не
+/// прочиталась при запуске), не трогают ни одной папки: в списке
+/// только архивы.
 class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   /// Создаёт записи; [root] отдаёт папку `Записи/`.
   ///
   /// [activeFolder] называет папку незавершённой сессии: её нельзя ни
-  /// подбирать, ни упаковывать. [now] подменяется в тестах.
+  /// подбирать, ни упаковывать. [sessionKnown] говорит, можно ли
+  /// этому ответу верить; не назван — можно. [now] подменяется в
+  /// тестах.
   FileDeviceRecords({
     required Future<Directory> Function() root,
     RecordOutlet outlet = const NoRecordOutlet(),
     String? Function()? activeFolder,
+    bool Function()? sessionKnown,
     DateTime Function()? now,
   }) : _root = root,
        _outlet = outlet,
        _activeFolder = activeFolder,
+       _sessionKnown = sessionKnown,
        _now = now ?? DateTime.now;
 
   /// Имя файла отметок в папке записей.
@@ -58,6 +65,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   final Future<Directory> Function() _root;
   final RecordOutlet _outlet;
   final String? Function()? _activeFolder;
+  final bool Function()? _sessionKnown;
   final DateTime Function() _now;
 
   List<DeviceRecord> _entries = const <DeviceRecord>[];
@@ -72,6 +80,10 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   String? _copyDir;
 
   bool _stateRead = false;
+
+  /// Есть ли отметки, которые ещё не легли на диск: их запишет
+  /// следующее чтение папки.
+  bool _unsaved = false;
 
   /// Что известно об архивах, уже проверенных в этом запуске: суммы
   /// сверяются один раз, пока файл не изменился.
@@ -90,6 +102,10 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
 
   @override
   List<DeviceRecord> get entries => _entries;
+
+  /// Можно ли трогать папки записей: известно, какая из них — папка
+  /// незавершённой сессии.
+  bool get _foldersFree => _sessionKnown?.call() ?? true;
 
   /// Выполняет [body], когда кончилось всё начатое раньше.
   Future<T> _locked<T>(Future<T> Function() body) {
@@ -127,8 +143,10 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   /// Читает отметки с диска — один раз за запуск.
   ///
   /// Файла нет или в нём мусор — отметок нет. Файл есть, но диск его
-  /// не отдал — чтение повторится в следующий раз: иначе первая же
-  /// новая отметка записалась бы поверх всех прежних.
+  /// не отдал — чтение повторится в следующий раз, а до тех пор
+  /// отметки на диск не пишутся ([_writeState]): иначе первая же новая
+  /// отметка записалась бы поверх всех прежних. Отметки, поставленные
+  /// за это время, остаются в силе: прочитанное их не затирает.
   Future<void> _readState(Directory records) async {
     if (_stateRead) {
       return;
@@ -137,7 +155,11 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     Map<String, Object?>? raw;
     try {
       if (await file.exists()) {
-        final Object? decoded = jsonDecode(await file.readAsString());
+        // Байты, а не строка: файл с испорченной кодировкой — мусор, а
+        // не отказ диска, и ждать его вечно незачем.
+        final Object? decoded = jsonDecode(
+          utf8.decode(await file.readAsBytes(), allowMalformed: true),
+        );
         raw = decoded is Map<String, Object?> ? decoded : null;
       }
     } on FormatException {
@@ -151,12 +173,15 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       for (final MapEntry<String, Object?> mark in marks.entries) {
         final Object? value = mark.value;
         if (value is Map<String, Object?>) {
-          _marks[mark.key] = <String, Object?>{...value};
+          final Map<String, Object?> known = _mark(mark.key);
+          for (final MapEntry<String, Object?> field in value.entries) {
+            known.putIfAbsent(field.key, () => field.value);
+          }
         }
       }
     }
     final Object? copyDir = raw?['copy_dir'];
-    _copyDir = copyDir is String && copyDir.isNotEmpty ? copyDir : null;
+    _copyDir ??= copyDir is String && copyDir.isNotEmpty ? copyDir : null;
   }
 
   /// Отметки записи [name]; заводятся, если их ещё нет.
@@ -166,7 +191,15 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
 
   /// Пишет отметки через временный файл: оборванная запись не оставит
   /// под именем отметок половину JSON.
+  ///
+  /// Пока прежние отметки не прочитаны, файл не трогается: новая
+  /// помнится до тех пор, пока диск их не отдаст.
   Future<void> _writeState(Directory records) async {
+    await _readState(records);
+    if (!_stateRead) {
+      _unsaved = true;
+      return;
+    }
     final String text = const JsonEncoder.withIndent('  ')
         .convert(<String, Object?>{
           'schema': stateSchema,
@@ -177,9 +210,12 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       final File part = File(p.join(records.path, '$stateName$kPartSuffix'));
       await part.writeAsString(text, flush: true);
       await part.rename(p.join(records.path, stateName));
+      _unsaved = false;
     } on FileSystemException {
-      // Отметка не легла на диск: до перезапуска она помнится, после —
-      // запись снова «не отправлена».
+      // Отметка не легла на диск: до перезапуска она помнится и
+      // пишется снова при следующем чтении папки; не записалась и
+      // тогда — после перезапуска запись снова «не отправлена».
+      _unsaved = true;
     }
   }
 
@@ -198,6 +234,9 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   Future<void> _read() async {
     final Directory records = await _records();
     await _readState(records);
+    if (_unsaved && _stateRead) {
+      await _writeState(records);
+    }
     final List<DeviceRecord> found = <DeviceRecord>[];
     final Set<String> seen = <String>{};
     await for (final FileSystemEntity entity in records.list(
@@ -208,9 +247,10 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
         continue;
       }
       try {
-        if (entity is Directory && base == _activeFolder?.call()) {
+        if (entity is Directory &&
+            (!_foldersFree || base == _activeFolder?.call())) {
           // Папка незавершённой сессии: её покажут, когда сессию
-          // завершат.
+          // завершат. Неизвестно, чья папка, — не показывают ни одной.
           continue;
         }
         if (entity is File && base.endsWith(kArchiveExtension)) {
@@ -292,6 +332,11 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   @override
   Future<void> adoptOrphans() {
     return _locked(() async {
+      if (!_foldersFree) {
+        // Чья папка лежит среди незавершённых, неизвестно: это может
+        // быть запись, которую ещё предстоит закрыть.
+        return;
+      }
       final Directory records = await _records();
       final Directory current = Directory(
         p.join(records.path, FileRecordingStore.currentName),
@@ -343,7 +388,8 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     try {
       for (final Directory folder in folders) {
         await _locked(() async {
-          if (p.basename(folder.path) != _activeFolder?.call()) {
+          if (_foldersFree &&
+              p.basename(folder.path) != _activeFolder?.call()) {
             await _packFolder(folder);
           }
         });
@@ -416,7 +462,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       return Future<DeviceRecord?>.value();
     }
     return _locked(() async {
-      if (_activeFolder?.call() == folder) {
+      if (!_foldersFree || _activeFolder?.call() == folder) {
         return null;
       }
       final Directory records = await _records();
@@ -438,12 +484,15 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
         name = await _packFolder(done) ?? folder;
       }
       await _scan();
+      // Архив и неубранная папка могут носить одно имя: отвечать надо
+      // архивом.
+      DeviceRecord? found;
       for (final DeviceRecord record in _entries) {
-        if (record.name == name) {
-          return record;
+        if (record.name == name && (found == null || record.packed)) {
+          found = record;
         }
       }
-      return null;
+      return found;
     }).whenComplete(_notify);
   }
 
@@ -562,7 +611,8 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   @override
   Future<bool> delete(DeviceRecord record) {
     return _locked(() async {
-      if (!record.packed && _activeFolder?.call() == record.name) {
+      if (!record.packed &&
+          (!_foldersFree || _activeFolder?.call() == record.name)) {
         return false;
       }
       final Directory folder = await _records();
@@ -574,9 +624,14 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
           }
         } else {
           final Directory streams = Directory(p.join(folder.path, record.name));
-          if (await streams.exists()) {
-            await streams.delete(recursive: true);
+          if (!await streams.exists()) {
+            // Папки уже нет: пока спрашивали, её упаковали. Удалено
+            // не то, о чём спрашивали, — ничего; запись теперь архив,
+            // и список это покажет.
+            await _scan();
+            return false;
           }
+          await streams.delete(recursive: true);
         }
       } on FileSystemException {
         await _scan();

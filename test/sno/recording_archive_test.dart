@@ -359,10 +359,7 @@ void main() {
       );
       expect(
         (manifestOf(entries)['files']! as Map<String, Object?>).keys,
-        unorderedEquals(<String>[
-          kEventsFile,
-          '$kSnapshotEndFile$kPartSuffix',
-        ]),
+        unorderedEquals(<String>[kEventsFile, '$kSnapshotEndFile$kPartSuffix']),
       );
     });
 
@@ -404,6 +401,29 @@ void main() {
         await File(p.join(folder.path, kManifestFile)).readAsString(),
         '{"чужой": true}',
       );
+    });
+
+    test('SNO-F-REC-05: в папке лежит ярлык, а не файл — отказ, папка '
+        'цела', () async {
+      if (Platform.isWindows) {
+        // Ярлык там заводится только с особыми правами.
+        return;
+      }
+      final Directory folder = await make(usual(), about: info());
+      final File outside = File(p.join(temp.path, 'чужой.txt'));
+      await outside.writeAsString('не запись');
+      await Link(p.join(folder.path, 'input.jsonl')).create(outside.path);
+
+      // Что за ярлыком, в архив не попало бы, а папку убрали бы вместе
+      // с ним: упаковка такую папку не берёт.
+      await expectLater(
+        packRecording(folder, now: () => packedAt),
+        throwsA(isA<PackException>()),
+      );
+
+      expect(await listing(), <String>[name]);
+      expect(await Link(p.join(folder.path, 'input.jsonl')).exists(), isTrue);
+      expect(await outside.readAsString(), 'не запись');
     });
 
     test('SNO-ALG-REC-03: манифест проходит схему', () async {
@@ -549,6 +569,45 @@ void main() {
       await packRecording(again, now: () => packedAt);
 
       expect(await listing(), <String>['$name.zip']);
+    });
+
+    test('SNO-ALG-REC-03: уборку папки оборвали после файла сведений — '
+        'остаток убирается, второго архива нет', () async {
+      final Map<String, String> files = usual();
+      final File first = await packRecording(
+        await make(files, about: info()),
+        now: () => packedAt,
+      );
+      final List<int> before = await first.readAsBytes();
+      // От папки остались два файла из трёх и ни слова о записи: всё
+      // это уже лежит в архиве, и сверять сведения не с чем.
+      final Directory rest = await make(<String, String>{
+        kEventsFile: files[kEventsFile]!,
+        kSnapshotEndFile: files[kSnapshotEndFile]!,
+      });
+
+      final File second = await packRecording(rest, now: () => packedAt);
+
+      expect(second.path, first.path);
+      expect(await second.readAsBytes(), before);
+      expect(await listing(), <String>['$name.zip']);
+    });
+
+    test('SNO-ALG-REC-03: остаток с файлом, которого в архиве нет, — не '
+        'остаток: он упаковывается', () async {
+      final Map<String, String> files = usual();
+      await packRecording(
+        await make(files, about: info()),
+        now: () => packedAt,
+      );
+      final Directory other = await make(<String, String>{
+        kEventsFile: journal(7),
+      });
+
+      final File second = await packRecording(other, now: () => packedAt);
+
+      expect(p.basename(second.path), '$name-2.zip');
+      expect(await listing(), <String>['$name-2.zip', '$name.zip']);
     });
   });
 
@@ -741,9 +800,8 @@ void main() {
           folder,
           now: () => packedAt,
           // Пока архив писался, в журнал дописали строку.
-          beforeVerify: (File part) => File(
-            p.join(folder.path, kEventsFile),
-          ).writeAsString('{"seq":6}\n', mode: FileMode.append, flush: true),
+          beforeVerify: (File part) => File(p.join(folder.path, kEventsFile))
+              .writeAsString('{"seq":6}\n', mode: FileMode.append, flush: true),
         ),
         throwsA(isA<PackException>()),
       );
@@ -770,9 +828,9 @@ void main() {
         packRecording(
           folder,
           now: () => packedAt,
-          beforeVerify: (File part) => File(
-            p.join(folder.path, 'input.jsonl'),
-          ).writeAsString('{"seq":1}\n', flush: true),
+          beforeVerify: (File part) =>
+              File(p.join(folder.path, 'input.jsonl'))
+                  .writeAsString('{"seq":1}\n', flush: true),
         ),
         throwsA(isA<PackException>()),
       );

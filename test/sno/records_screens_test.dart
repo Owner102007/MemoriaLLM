@@ -598,6 +598,31 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-REC-05: экран закрыли, пока сессия завершалась, — '
+        'запись всё равно упаковывается', (WidgetTester tester) async {
+      kit.store.finishGate = Completer<void>();
+      final String folder = await pumpFinish(tester);
+
+      await holdOn(tester, 'sno-finish-hold');
+      // Завершение ещё идёт: папка не перенесена, упаковку не звали.
+      expect(find.text('Завершаю…'), findsOneWidget);
+      expect(records.packed, isEmpty);
+
+      tester.state<NavigatorState>(find.byType(Navigator)).pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionFinishScreen), findsNothing);
+
+      kit.store.finishGate!.complete();
+      await tester.pumpAndSettle();
+
+      // Экрана нет, а архив собирается: иначе запись осталась бы
+      // папкой до следующего запуска приложения.
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(records.packed, <String>[folder]);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-REC-06: с телефона архив уходит кнопкой '
         '«Поделиться»', (WidgetTester tester) async {
       final String folder = await pumpFinish(tester);
@@ -876,18 +901,20 @@ void main() {
       expect(records.pending, 1);
     });
 
-    test('SNO-F-REC-08: сессия не поднялась — папки среди незавершённых '
-        'не трогают', () async {
-      // Чья папка лежит среди незавершённых, неизвестно: это может
-      // быть запись, которую ещё предстоит закрыть.
+    test('SNO-F-REC-08: сессия не поднялась — папок записей не '
+        'трогают', () async {
+      // Чья папка лежит среди записей, неизвестно: это может быть
+      // запись, которую ещё предстоит закрыть.
       await recoverRecords(
         testServices(data: data, recording: kit.session, records: records),
         restored: false,
       );
       await Future<void>.delayed(Duration.zero);
 
+      // И не упаковывают: завершение, оборванное на полпути, могло
+      // оставить папку сессии среди завершённых.
       expect(records.adopted, 0);
-      expect(records.pending, 1);
+      expect(records.pending, 0);
     });
 
     test('SNO-F-REC-08: записей в сборке нет — делать нечего', () async {

@@ -45,22 +45,22 @@ Future<bool> restoreRecording(AppServices services) async {
 /// запуска не задерживает: папок прежних сборок может быть много.
 ///
 /// [restored] — поднялась ли сессия записи. Если нет, неизвестно,
-/// чья папка лежит среди незавершённых, и подбирать её нельзя: это
-/// может быть запись, которую ещё предстоит закрыть.
+/// чья папка лежит среди записей, и ни подбирать, ни упаковывать
+/// папки нельзя: это может быть запись, которую ещё предстоит
+/// закрыть. Тем же правилом живут и сами записи
+/// (`RecordingSession.known`).
 Future<void> recoverRecords(
   AppServices services, {
   required bool restored,
 }) async {
   final DeviceRecords? records = services.records;
-  if (records == null) {
+  if (records == null || !restored) {
     return;
   }
-  if (restored) {
-    try {
-      await records.adoptOrphans();
-    } on Object {
-      // Папка записей не прочиталась: записи остаются как лежали.
-    }
+  try {
+    await records.adoptOrphans();
+  } on Object {
+    // Папка записей не прочиталась: записи остаются как лежали.
   }
   unawaited(_packPending(records));
 }

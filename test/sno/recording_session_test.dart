@@ -935,6 +935,59 @@ void main() {
   });
 
   group('SNO-F-REC-01: перезапуск приложения', () {
+    test('SNO-F-REC-08: есть ли незавершённая сессия, известно только '
+        'после прочитанной отметки', () async {
+      final SessionKit first = SessionKit();
+      // До запуска ничего не известно: папки записей трогать нельзя.
+      expect(first.session.known, isFalse);
+      await first.session.restore();
+      expect(first.session.known, isTrue);
+      await first.session.start(code);
+      first.session.dispose();
+
+      // Запуск, на котором база не ответила: сессии «нет», но это не
+      // значит, что её нет.
+      first.settings.failReads = true;
+      final SessionKit second = SessionKit(
+        settings: first.settings,
+        store: first.store,
+        time: first.time,
+      );
+      await expectLater(second.session.restore(), throwsStateError);
+      expect(second.session.phase, RecordingPhase.idle);
+      expect(second.session.known, isFalse);
+      second.session.dispose();
+
+      // База ответила — сессия поднята, и это известно.
+      first.settings.failReads = false;
+      final SessionKit third = SessionKit(
+        settings: first.settings,
+        store: first.store,
+        time: first.time,
+      );
+      await third.session.restore();
+      expect(third.session.phase, RecordingPhase.stopped);
+      expect(third.session.known, isTrue);
+      third.session.dispose();
+    });
+
+    test('SNO-F-REC-08: новая запись после непрочитанной отметки — отметка '
+        'о сессии снова своя', () async {
+      final SessionKit kit = SessionKit();
+      kit.settings.failReads = true;
+      await expectLater(kit.session.restore(), throwsStateError);
+      expect(kit.session.known, isFalse);
+      kit.settings.failReads = false;
+
+      expect(await kit.session.start(code), isTrue);
+
+      expect(kit.session.known, isTrue);
+      await kit.session.stop(StopReason.experimenter);
+      await kit.session.finish();
+      expect(kit.session.known, isTrue);
+      kit.session.dispose();
+    });
+
     test('SNO-F-REC-01: запись, которую застал перезапуск, закрыта как '
         'оборванная', () async {
       final SessionKit first = SessionKit();
@@ -1440,6 +1493,33 @@ void main() {
       // Запись закрыта своей остановкой, снимок — тот, что снят в миг
       // остановки.
       expect(session.state!.stoppedBy, StopReason.experimenter);
+      expect(kit.store.json(folder, kSnapshotEndFile), <String, Object?>{
+        'schema': 'конец',
+        'traces': 3,
+      });
+      session.dispose();
+    });
+
+    test('SNO-ALG-REC-03: журнал не прочитался — снимок, снятый вовремя, '
+        'всё равно остаётся', () async {
+      final SessionKit kit = SessionKit();
+      final RecordingSession dead = sessionOn(kit);
+      await dead.start(code);
+      final String folder = dead.state!.folder;
+      kit.settings.failKeys.add(SnoSettingsKeys.session);
+      await dead.stop(StopReason.experimenter);
+      kit.settings.failKeys.clear();
+      dead.dispose();
+
+      // Остановка лежит в журнале, но запуск её не видит: диск не
+      // отдал хвост. Запись закрывается как оборванная — а снимок
+      // конца, снятый в миг остановки, поздним не подменяется.
+      kit.store.failTail = true;
+      final RecordingSession session = sessionOn(kit);
+      await session.restore();
+      kit.store.failTail = false;
+
+      expect(session.state!.stoppedBy, StopReason.crash);
       expect(kit.store.json(folder, kSnapshotEndFile), <String, Object?>{
         'schema': 'конец',
         'traces': 3,

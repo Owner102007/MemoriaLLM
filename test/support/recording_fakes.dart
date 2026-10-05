@@ -25,8 +25,16 @@ class MemorySettings implements AppSettingsRepository {
   /// Отказывать ли в удалении.
   bool failRemoves = false;
 
+  /// Отказывать ли в чтении: «база не ответила».
+  bool failReads = false;
+
   @override
-  Future<String?> read(String key) async => values[key];
+  Future<String?> read(String key) async {
+    if (failReads) {
+      throw StateError('настройки не читаются');
+    }
+    return values[key];
+  }
 
   @override
   Future<void> write(String key, String value) async {
@@ -71,6 +79,9 @@ class MemoryRecordingStore implements RecordingStore {
 
   /// Отказывать ли журналу в записи: «диск отказал».
   bool failAppend = false;
+
+  /// Отказывать ли в чтении хвоста журнала: «диск не ответил».
+  bool failTail = false;
 
   /// Сколько журналов открыто и ещё не закрыто.
   int open = 0;
@@ -119,6 +130,9 @@ class MemoryRecordingStore implements RecordingStore {
     String folder, {
     int count = kTailLines,
   }) async {
+    if (failTail) {
+      throw StateError('журнал не читается');
+    }
     final StringBuffer? journal = journals[folder];
     if (journal == null) {
       return const <String>[];
@@ -151,8 +165,13 @@ class MemoryRecordingStore implements RecordingStore {
     journals.remove(folder);
   }
 
+  /// Придерживает перенос завершённой записи, пока тест не отпустит:
+  /// по нему видно, что бывает, пока сессия завершается.
+  Completer<void>? finishGate;
+
   @override
   Future<void> finish(String folder) async {
+    await finishGate?.future;
     if (current.remove(folder)) {
       finished.add(folder);
     }

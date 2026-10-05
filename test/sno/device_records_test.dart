@@ -51,11 +51,15 @@ void main() {
     }
   });
 
-  FileDeviceRecords open({String? Function()? active}) {
+  FileDeviceRecords open({
+    String? Function()? active,
+    bool Function()? known,
+  }) {
     final FileDeviceRecords records = FileDeviceRecords(
       root: () async => folder,
       outlet: outlet,
       activeFolder: active,
+      sessionKnown: known,
       now: () => now,
     );
     addTearDown(records.dispose);
@@ -483,6 +487,105 @@ void main() {
       expect(await listing(), <String>['$first.zip', '$second.zip']);
     });
 
+    test('SNO-F-REC-08: отметка о сессии не прочиталась — папок не '
+        'трогают вовсе, архивы на месте', () async {
+      const String third = 'sno2026_I_11111111_a91f3c_20261104-1000';
+      final Directory current = Directory(
+        p.join(folder.path, FileRecordingStore.currentName),
+      );
+      await archiveOf(first, id: firstId);
+      // Завершение сессии перенесло эту папку и оборвалось; а запуск
+      // не прочитал отметку о сессии — чья папка, неизвестно.
+      await makeRecordingFolder(
+        folder,
+        second,
+        about: recordingInfo(id: secondId),
+      );
+      await makeRecordingFolder(
+        current,
+        third,
+        about: recordingInfo(id: '01KB9A3M4N7Q8R9S0T1V2W3X4Y'),
+      );
+      bool known = false;
+      final FileDeviceRecords records = open(known: () => known);
+
+      await records.adoptOrphans();
+      await records.packPending();
+
+      final List<String> untouched = <String>[
+        FileRecordingStore.currentName,
+        '$first.zip',
+        second,
+      ];
+      expect(await listing(), untouched);
+      expect(await listing(current), <String>[third]);
+      // В списке — только архив.
+      expect(namesOf(records), <String>[first]);
+      expect(await records.pack(second), isNull);
+      expect(
+        await records.delete(
+          const DeviceRecord(name: second, bytes: 1, packed: false),
+        ),
+        isFalse,
+      );
+      expect(await listing(), untouched);
+
+      // Начали новую запись: отметка о сессии теперь своя, и папки
+      // без сессии — обычные записи.
+      known = true;
+      await records.adoptOrphans();
+      await records.packPending();
+
+      expect(await listing(), <String>[
+        FileRecordingStore.currentName,
+        '$third.zip',
+        '$first.zip',
+        '$second.zip',
+      ]);
+      expect(await listing(current), isEmpty);
+    });
+
+    test('SNO-F-REC-07: архив собран, а папку убрать не дали — упаковка '
+        'отвечает архивом, а не папкой', () async {
+      if (Platform.isWindows) {
+        // Запрет на удаление здесь ставится правами папки.
+        return;
+      }
+      final Directory streams = await makeRecordingFolder(
+        folder,
+        first,
+        about: recordingInfo(id: firstId),
+      );
+      final Directory locked = Directory(p.join(streams.path, 'clt'));
+      await locked.create();
+      await File(p.join(locked.path, 'answers.json')).writeAsString('{}');
+      // Скрытое имя занято непустой папкой — переименовать нельзя; из
+      // вложенной папки нельзя удалять — папка записи остаётся.
+      final Directory gone = Directory(
+        p.join(folder.path, '$kGonePrefix$first'),
+      );
+      await gone.create();
+      await File(p.join(gone.path, 'keep.txt')).writeAsString('занято');
+      await Process.run('chmod', <String>['555', locked.path]);
+      addTearDown(() => Process.run('chmod', <String>['755', locked.path]));
+      final FileDeviceRecords records = open();
+
+      final DeviceRecord? packed = await records.pack(first);
+
+      expect(packed?.packed, isTrue);
+      expect(packed?.damaged, isFalse);
+      expect(await File(p.join(folder.path, '$first.zip')).exists(), isTrue);
+      if (await streams.exists()) {
+        // Папку убрать не удалось: в списке две строки с одним именем.
+        expect(
+          <String>{
+            for (final DeviceRecord record in records.entries) record.rowId,
+          },
+          <String>{first, '$first/'},
+        );
+      }
+    });
+
     test('SNO-F-REC-05: имя папки — одно слово: пустое и с разделителем '
         'упаковка не принимает', () async {
       await both();
@@ -635,6 +738,68 @@ void main() {
       await again.refresh();
 
       expect(untaken(again.entries), hasLength(2));
+    });
+
+    test('SNO-F-REC-06: файл отметок не отдал диск — новая отметка '
+        'прежних не затирает', () async {
+      if (Platform.isWindows) {
+        // Отказ чтения здесь ставится правами файла.
+        return;
+      }
+      await both();
+      final FileDeviceRecords before = open();
+      await before.refresh();
+      expect(await before.share(<DeviceRecord>[before.entries.last]), 1);
+      final File state = File(
+        p.join(folder.path, FileDeviceRecords.stateName),
+      );
+      await Process.run('chmod', <String>['000', state.path]);
+      addTearDown(() => Process.run('chmod', <String>['644', state.path]));
+      try {
+        await state.readAsBytes();
+        // Права не действуют (тест идёт от имени root): отказа чтения
+        // не устроить.
+        return;
+      } on FileSystemException {
+        // Диск файла не отдаёт — как и нужно.
+      }
+      final FileDeviceRecords records = open();
+      await records.refresh();
+      // Прежняя отметка не видна: ошибка в безопасную сторону.
+      expect(untaken(records.entries), hasLength(2));
+
+      expect(await records.share(<DeviceRecord>[records.entries.first]), 1);
+      expect(records.entries.first.taken, isTrue);
+
+      // Диск ответил: прежняя отметка цела, новая легла рядом с ней.
+      await Process.run('chmod', <String>['644', state.path]);
+      await records.refresh();
+      expect(untaken(records.entries), isEmpty);
+      expect(
+        (stateOnDisk()['records']! as Map<String, Object?>).keys.toSet(),
+        <String>{first, second},
+      );
+      final FileDeviceRecords again = open();
+      await again.refresh();
+      expect(untaken(again.entries), isEmpty);
+    });
+
+    test('SNO-F-REC-06: файл отметок с испорченной кодировкой — мусор, а '
+        'не отказ диска: новая отметка ложится', () async {
+      await both();
+      await File(
+        p.join(folder.path, FileDeviceRecords.stateName),
+      ).writeAsBytes(<int>[0xFF, 0xFE, 0x7B, 0x22]);
+      final FileDeviceRecords records = open();
+      await records.refresh();
+      expect(untaken(records.entries), hasLength(2));
+
+      expect(await records.share(records.entries), 2);
+
+      expect(
+        (stateOnDisk()['records']! as Map<String, Object?>).keys.toSet(),
+        <String>{first, second},
+      );
     });
 
     test('SNO-F-REC-06: файл отметок не читается — записи не отправлены, '
@@ -798,9 +963,8 @@ void main() {
         return;
       }
       await archiveOf(first, id: firstId);
-      final Link alias = await Link(
-        p.join(temp.path, 'ярлык'),
-      ).create(folder.path);
+      final Link alias = await Link(p.join(temp.path, 'ярлык'))
+          .create(folder.path);
       outlet.folder = alias.path;
       final FileDeviceRecords records = open();
       await records.refresh();
@@ -863,6 +1027,27 @@ void main() {
 
       expect(await listing(), isEmpty);
       expect(records.entries, isEmpty);
+    });
+
+    test('SNO-F-REC-07: папку упаковали, пока спрашивали об удалении, — '
+        'не удалено ничего, и об этом не сказано «удалена»', () async {
+      await makeRecordingFolder(
+        folder,
+        first,
+        about: recordingInfo(id: firstId),
+      );
+      final FileDeviceRecords records = open();
+      await records.refresh();
+      final DeviceRecord row = records.entries.single;
+      expect(row.packed, isFalse);
+      // Упаковка при запуске дошла до папки, пока на экране стоял
+      // вопрос «Удалить?».
+      await records.packPending();
+
+      expect(await records.delete(row), isFalse);
+
+      expect(await listing(), <String>['$first.zip']);
+      expect(records.entries.single.packed, isTrue);
     });
   });
 

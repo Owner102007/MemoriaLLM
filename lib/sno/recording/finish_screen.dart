@@ -232,7 +232,9 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     if (known != null) {
       for (final DeviceRecord entry
           in widget.records?.entries ?? const <DeviceRecord>[]) {
-        if (entry.name == known.name) {
+        // Строку узнают по [DeviceRecord.rowId]: неубранная папка
+        // записи носит то же имя, что её архив.
+        if (entry.rowId == known.rowId) {
           fresh = entry;
         }
       }

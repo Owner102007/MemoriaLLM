@@ -571,13 +571,16 @@ Future<File> packRecording(
   for (int number = 2; await target.exists(); number++) {
     // Тот же ли это архив: в нём лежит каждый файл папки с той же
     // суммой и те же сведения о записи. Только тогда папку можно
-    // убрать, не упаковывая заново.
+    // убрать, не упаковывая заново. Сведений в папке нет вовсе —
+    // сверять нечего: всё, что в ней лежит, уже в архиве (так выглядит
+    // папка, уборку которой оборвали после файла сведений).
     final ArchiveCheck known = await checkArchive(target, sums: sums);
     final Map<String, Object?>? manifest = known.manifest;
+    final bool bare = info == null && !sums.containsKey(kRecordingFile);
     if (known.intact &&
         manifest != null &&
-        recordingIdOf(manifest) == id &&
-        _sameInfo(manifest, info) &&
+        (bare ||
+            (recordingIdOf(manifest) == id && _sameInfo(manifest, info))) &&
         await _unchanged(folder, lengths)) {
       await _cleanup(folder);
       return target;
@@ -636,9 +639,7 @@ Future<File> packRecording(
     // или выросший за это время, в архив не попал, и убирать папку
     // нельзя.
     if (!await _unchanged(folder, lengths)) {
-      throw const PackException(
-        'папка записи изменилась, пока её упаковывали',
-      );
+      throw const PackException('папка записи изменилась, пока её упаковывали');
     }
     await part.rename(target.path);
   } on PackException {

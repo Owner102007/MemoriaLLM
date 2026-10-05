@@ -528,8 +528,20 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// когда журнал уже закрыт.
   bool _failed = false;
 
+  /// Известно ли, есть ли незавершённая сессия: отметка о ней
+  /// прочитана ([restore]) или записана заново (старт записи).
+  bool _known = false;
+
   /// Состояние незавершённой сессии; `null` — сессии нет.
   SessionState? get state => _state;
+
+  /// Известно ли, какая папка записи принадлежит незавершённой сессии.
+  ///
+  /// Пока отметка о сессии не прочитана — запуск, на котором база не
+  /// ответила, — [state] пуст, но это не значит, что сессии нет: чья
+  /// папка лежит среди записей, неизвестно, и трогать папки нельзя
+  /// (SNO-F-REC-08).
+  bool get known => _known;
 
   /// Что происходит с записью.
   RecordingPhase get phase => _state?.phase ?? RecordingPhase.idle;
@@ -651,11 +663,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         // нечем снять, хуже потерянной отметки.
         await _settings.remove(SnoSettingsKeys.session);
       }
+      _known = true;
       return;
     }
     if (state.phase == RecordingPhase.stopped) {
       final List<EventMarks> tail = await _tail(state.folder);
       _state = state;
+      _known = true;
       _failed = state.failed ?? false;
       // Номер продолжает журнал: отметка сессии могла отстать от него.
       final int written = tail.isEmpty ? 0 : tail.last.seq;
@@ -669,6 +683,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       state,
       await _tail(state.folder, count: _wholeJournal),
     );
+    _known = true;
     _notify();
   }
 
@@ -816,10 +831,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     // Снимок конца оборванной записи — сейчас, при первом же запуске:
     // раньше его снять было некому. И до отметки о сессии: запуск,
     // оборванный между ними, снимет его в следующий раз, а отказ диска
-    // на нём попадёт в отметку. Снимок, снятый вовремя, остаётся: если
-    // в журнале уже есть остановка, прежнее приложение успело его
-    // положить — или это сделал прошлый запуск.
-    if (stop == null || !await _hasEndSnapshot(state.folder)) {
+    // на нём попадёт в отметку. Снимок, который уже лежит, остаётся,
+    // что бы ни говорил журнал: его положило прежнее приложение в миг
+    // остановки или прошлый запуск — и он не позже нового. Журнал мог
+    // и не прочитаться, и тогда остановки в нём «нет».
+    if (!await _hasEndSnapshot(state.folder)) {
       await _putEndSnapshot(state.folder, late: true);
     }
     // Лёг ли журнал умершего приложения на диск, узнать не у кого:
@@ -977,6 +993,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       await _abandon(journal, folder);
       return false;
     }
+    // Отметка о сессии теперь наша: чья папка — известно.
+    _known = true;
     _clock = clock;
     _journal = journal;
     _failed = false;

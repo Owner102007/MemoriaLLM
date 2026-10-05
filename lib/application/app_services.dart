@@ -136,6 +136,8 @@ class AppServices {
       outlet: platformRecordOutlet(),
       // Папку незавершённой сессии не подбирают и не упаковывают.
       activeFolder: () => recording.state?.folder,
+      // Отметка о сессии не прочиталась — папок не трогают вовсе.
+      sessionKnown: () => recording.known,
     );
   }
 
