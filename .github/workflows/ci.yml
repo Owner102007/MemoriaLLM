@@ -381,8 +381,10 @@ jobs:
       # идентификатор и своё имя (SNO-F-CFG-01). Доступ ко всем файлам
       # есть у всех трёх приложений: основное ищет книги, ветвь — архив
       # с литературой (SNO-F-LIT-03); записи в чужие файлы и доступа к
-      # фото, видео и звуку нет ни у кого. Строки в двоичном манифесте
-      # лежат в UTF-8 или в UTF-16 — ищутся обе записи.
+      # фото, видео и звуку нет ни у кого. Поставщик файлов для архивов
+      # записей (SNO-F-REC-06) есть у ветвей и только у них. Строки в
+      # двоичном манифесте лежат в UTF-8 или в UTF-16 — ищутся обе
+      # записи.
       - name: Что внутри APK
         if: steps.probe.outputs.ready == 'true'
         env:
@@ -439,6 +441,19 @@ jobs:
               problems.append('в сборке нет MANAGE_EXTERNAL_STORAGE')
           if not branch and has('sno2026'):
               problems.append('в основной сборке есть след ветви sno2026')
+          # SNO-F-REC-06: архив записи уходит с телефона через
+          # поставщика файлов сборки ветви. В основном приложении его
+          # нет: записей там не бывает, и отдавать наружу нечего.
+          provider = has('RecordsFileProvider')
+          if branch and not provider:
+              problems.append('в сборке ветви нет поставщика файлов '
+                              'для архивов записей')
+          if branch and not exact(package + '.records'):
+              problems.append('у поставщика файлов не то имя: ждали '
+                              f'{package}.records')
+          if not branch and provider:
+              problems.append('в основной сборке есть поставщик файлов '
+                              'для архивов записей')
           for problem in problems:
               print(f'::error title=Что внутри APK::{problem}')
           print(f'{sys.argv[1]}: {package}, «{label}», '

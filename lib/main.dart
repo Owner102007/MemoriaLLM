@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 
 import 'application/app_services.dart';
 import 'application/data/app_data.dart';
 import 'application/theme/theme_controller.dart';
+import 'sno/recording/records.dart';
 import 'ui/app.dart';
 
 Future<void> main() async {
@@ -15,6 +18,7 @@ Future<void> main() async {
   // SNO-F-REC-01: сессия записи поднимается до первого кадра — полка
   // незавершённой сессии встаёт под замок сразу.
   await restoreRecording(services);
+  await recoverRecords(services);
   runApp(MemoriaApp(themeController: themeController, services: services));
 }
 
@@ -28,5 +32,31 @@ Future<void> restoreRecording(AppServices services) async {
   } on Object {
     // Состояние сессии не прочиталось: раздел «Тестирование» покажет
     // «Старт записи», папка записи останется на диске.
+  }
+}
+
+/// Подбирает записи, оставшиеся папками (SNO-F-REC-05, SNO-F-REC-08).
+///
+/// Папки без сессии переезжают к завершённым до первого кадра — пока
+/// новая запись начаться не может; упаковка в архивы идёт следом и
+/// запуска не задерживает: папок прежних сборок может быть много.
+Future<void> recoverRecords(AppServices services) async {
+  final DeviceRecords? records = services.records;
+  if (records == null) {
+    return;
+  }
+  try {
+    await records.adoptOrphans();
+  } on Object {
+    // Папка записей не прочиталась: записи остаются как лежали.
+  }
+  unawaited(_packPending(records));
+}
+
+Future<void> _packPending(DeviceRecords records) async {
+  try {
+    await records.packPending();
+  } on Object {
+    // Не упаковалось сейчас — упакуется при следующем запуске.
   }
 }

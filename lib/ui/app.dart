@@ -83,6 +83,7 @@ class _MemoriaAppState extends State<MemoriaApp> {
     return RecordingOverlay(
       session: session,
       navigator: _navigator,
+      records: widget.services.records,
       child: page,
     );
   }

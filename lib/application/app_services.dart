@@ -24,7 +24,10 @@ import '../infrastructure/platform/windows_full_screen.dart';
 import '../sno/flags.dart';
 import '../sno/participant_code.dart';
 import '../sno/recording/device_status.dart';
+import '../sno/recording/file_records.dart';
 import '../sno/recording/file_store.dart';
+import '../sno/recording/record_outlet.dart';
+import '../sno/recording/records.dart';
 import '../sno/recording/session.dart';
 import '../sno/reference_state.dart';
 import 'build_info.dart';
@@ -51,6 +54,7 @@ class AppServices {
     this.window = const NoFullScreenWindow(),
     this.archiveSearch = noArchiveSearch,
     this.recording,
+    this.records,
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -83,6 +87,11 @@ class AppServices {
         : const LocalBookStorage(
             copyInto: Sno.literature ? applicationBooks : null,
           );
+    // SNO-F-REC-01: запись сессии — только в сборке ветви. Условие —
+    // константа сборки: в основном приложении записи нет вовсе.
+    final RecordingSession? recording = Sno.recording
+        ? _recordingFor(data, storage)
+        : null;
     return AppServices(
       data: data,
       storage: storage,
@@ -103,9 +112,30 @@ class AppServices {
       // Условие — константа сборки: в основное приложение обход
       // архивов не попадает.
       archiveSearch: Sno.literature ? findArchivesInIsolate : noArchiveSearch,
-      // SNO-F-REC-01: запись сессии — только в сборке ветви. Условие —
-      // константа сборки: в основном приложении записи нет вовсе.
-      recording: Sno.recording ? _recordingFor(data, storage) : null,
+      recording: recording,
+      // SNO-F-REC-05: архивы записей — там же, где запись. Условие
+      // начинается с константы сборки: в основное приложение код
+      // архивов не попадает.
+      records: Sno.recording && recording != null
+          ? _recordsFor(recording)
+          : null,
+    );
+  }
+
+  /// Папка `Записи/` в папке данных приложения.
+  static Future<Directory> _recordsFolder() async {
+    final Directory root = await appDataDirectory();
+    return Directory(p.join(root.path, FileRecordingStore.folderName));
+  }
+
+  /// Записи на устройстве сборки ветви СНО2026 (SNO-F-REC-07): архивы
+  /// в той же папке `Записи/`, куда сессия кладёт папки записей.
+  static DeviceRecords _recordsFor(RecordingSession recording) {
+    return FileDeviceRecords(
+      root: _recordsFolder,
+      outlet: platformRecordOutlet(),
+      // Папку незавершённой сессии не подбирают и не упаковывают.
+      activeFolder: () => recording.state?.folder,
     );
   }
 
@@ -115,14 +145,16 @@ class AppServices {
   /// начала записи строится тем же кодом, что эталон.
   static RecordingSession _recordingFor(AppData data, BookStorage storage) {
     final String nodeId = data.clock.nodeId;
+    final ReferenceKeeper keeper = ReferenceKeeper(
+      data: data,
+      storage: storage,
+    );
     return RecordingSession(
       settings: data.settings,
-      store: FileRecordingStore(() async {
-        final Directory root = await appDataDirectory();
-        return Directory(p.join(root.path, FileRecordingStore.folderName));
-      }),
+      store: FileRecordingStore(_recordsFolder),
       nodeId: nodeId,
-      snapshot: ReferenceKeeper(data: data, storage: storage).recordingSnapshot,
+      snapshot: keeper.recordingSnapshot,
+      endSnapshot: keeper.recordingEndSnapshot,
       branch: Sno.branch,
       device: deviceCodeOf(nodeId),
       build: <String, Object?>{
@@ -173,4 +205,8 @@ class AppServices {
   /// Сессия записи (SNO-F-REC-01); `null` — в этой сборке записи нет:
   /// основное приложение и тесты, которым она не нужна.
   final RecordingSession? recording;
+
+  /// Записи на устройстве — архивы завершённых сессий (SNO-F-REC-07);
+  /// `null` — записей в этой сборке нет.
+  final DeviceRecords? records;
 }

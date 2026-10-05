@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/sno/flags.dart';
+import 'package:memoria/sno/recording/file_store.dart';
 
 /// SNO-ALG-CFG-01: три приложения из одного кода — согласие исходников.
 ///
@@ -165,6 +166,98 @@ void main() {
             .readAsStringSync();
         expect(own, contains('SNO-F-LIT-03'), reason: 'флейвор $name');
       }
+    });
+  });
+
+  group('SNO-F-REC-06: поставщик файлов для архивов записей', () {
+    const Map<String, String> branches = <String, String>{
+      'sno2026core': snoBranchCore,
+      'sno2026test': snoBranchTest,
+    };
+
+    test('SNO-F-REC-06: у ветви поставщик есть, и наружу он не '
+        'выставлен', () {
+      for (final String name in branches.keys) {
+        final String own = File('android/app/src/$name/AndroidManifest.xml')
+            .readAsStringSync();
+        expect(
+          own,
+          contains('android:name=".RecordsFileProvider"'),
+          reason: 'флейвор $name',
+        );
+        // Имя поставщика — от идентификатора сборки: у ветвей они
+        // разные, и два приложения на одном телефоне не спорят.
+        expect(
+          own,
+          contains(r'android:authorities="${applicationId}.records"'),
+          reason: 'флейвор $name',
+        );
+        expect(own, contains('android:exported="false"'), reason: name);
+        expect(
+          own,
+          contains('android:grantUriPermissions="true"'),
+          reason: 'флейвор $name',
+        );
+        expect(
+          own,
+          contains('android:resource="@xml/sno_records_paths"'),
+          reason: 'флейвор $name',
+        );
+        expect(own, contains('SNO-F-REC-06'), reason: 'флейвор $name');
+      }
+    });
+
+    test('SNO-F-REC-06: поставщик отдаёт только папку записей своей '
+        'ветви', () {
+      for (final MapEntry<String, String> branch in branches.entries) {
+        final String paths = File(
+          'android/app/src/${branch.key}/res/xml/sno_records_paths.xml',
+        ).readAsStringSync();
+        // Та же папка, куда записи кладёт приложение: подпапка данных
+        // ветви и «Записи».
+        final String folder =
+            '${dataFolderFor(branch.value)}/${FileRecordingStore.folderName}/';
+        expect(
+          paths,
+          contains('<files-path name="records" path="$folder" />'),
+          reason: 'флейвор ${branch.key}',
+        );
+        // Других путей нет: ни кэша, ни общей памяти, ни корня.
+        expect(
+          RegExp('<[a-z-]+-path ').allMatches(paths),
+          hasLength(1),
+          reason: 'флейвор ${branch.key}',
+        );
+      }
+    });
+
+    test('SNO-F-REC-06: в основном приложении поставщика нет', () {
+      for (final String name in <String>['main', 'full']) {
+        final String own = File('android/app/src/$name/AndroidManifest.xml')
+            .readAsStringSync();
+        expect(own, isNot(contains('<provider')), reason: 'манифест $name');
+      }
+      expect(
+        File('android/app/src/full/res/xml/sno_records_paths.xml').existsSync(),
+        isFalse,
+      );
+    });
+
+    test('SNO-F-REC-06: канал и имя поставщика у Kotlin и у Dart одни', () {
+      final String activity = File(
+        'android/app/src/main/kotlin/io/github/owner102007/memoria/'
+        'MainActivity.kt',
+      ).readAsStringSync();
+      final String outlet = File(
+        'lib/sno/recording/record_outlet.dart',
+      ).readAsStringSync();
+
+      expect(activity, contains('RECORDS_CHANNEL = "memoria/records"'));
+      expect(outlet, contains("MethodChannel('memoria/records')"));
+      // Хвост имени поставщика — тот же, что в манифестах ветвей.
+      expect(activity, contains('RECORDS_AUTHORITY = ".records"'));
+      // Библиотека с `FileProvider` названа сборке явно.
+      expect(gradle, contains('implementation("androidx.core:core:'));
     });
   });
 

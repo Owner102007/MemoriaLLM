@@ -604,6 +604,20 @@ int crc32Of(List<int> bytes) {
   return _crcUpdate(0xFFFFFFFF, _bytes(bytes)) ^ 0xFFFFFFFF;
 }
 
+/// CRC-32 по частям: писателю архива (`zip_writer.dart`) сумма нужна
+/// от потока, а не от готового списка байт.
+class Crc32 {
+  int _crc = 0xFFFFFFFF;
+
+  /// Принимает очередной кусок.
+  void add(List<int> bytes) {
+    _crc = _crcUpdate(_crc, _bytes(bytes));
+  }
+
+  /// Сумма всего принятого.
+  int get value => _crc ^ 0xFFFFFFFF;
+}
+
 int _crcUpdate(int crc, Uint8List bytes) {
   int value = crc;
   for (int i = 0; i < bytes.length; i++) {

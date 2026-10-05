@@ -10,7 +10,8 @@ import 'store.dart';
 /// Папка `Записи/` лежит в папке данных приложения. Незавершённая
 /// запись — в `Записи/.current/<имя>/`: по этой папке после сбоя
 /// видно, что запись оборвалась. Завершённая переезжает в
-/// `Записи/<имя>/` и ждёт упаковки в архив (SNO-F-REC-05).
+/// `Записи/<имя>/`, и её упаковывают в архив `Записи/<имя>.zip`
+/// (SNO-F-REC-05, `file_records.dart`).
 class FileRecordingStore implements RecordingStore {
   /// Создаёт хранилище; [root] отдаёт папку `Записи/`.
   FileRecordingStore(this._root);
@@ -56,8 +57,11 @@ class FileRecordingStore implements RecordingStore {
     String name = wanted;
     int number = 1;
     // Две записи в одну минуту получили бы одно имя: вторая — с хвостом.
+    // Занято имя и тогда, когда первая уже упакована в архив
+    // (SNO-F-REC-05): архив называется так же, как папка.
     while (await Directory(p.join(current.path, name)).exists() ||
-        await Directory(p.join(records.path, name)).exists()) {
+        await Directory(p.join(records.path, name)).exists() ||
+        await File(p.join(records.path, '$name.zip')).exists()) {
       number++;
       name = '$wanted-$number';
     }

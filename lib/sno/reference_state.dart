@@ -618,6 +618,74 @@ class ReferenceKeeper {
     };
   }
 
+  /// Снимок состояния для конца записи сессии (SNO-ALG-REC-03).
+  ///
+  /// То же, что снимок начала, и то, что участник оставил: места
+  /// чтения, цитаты, заметки и закладки целиком. Книга названа
+  /// отпечатком — тем же, что стоит в строках журнала.
+  Future<Map<String, Object?>> recordingEndSnapshot() async {
+    final AppDatabase db = _data.database;
+    final Map<String, String> prints = <String, String>{
+      for (final BookRow book in await db.select(db.books).get())
+        book.id: book.fileHash,
+    };
+    String at(DateTime moment) => moment.toUtc().toIso8601String();
+    return <String, Object?>{
+      ...await recordingSnapshot(),
+      'progress': <Object?>[
+        for (final ReadingProgressRow row
+            in await db.select(db.readingProgress).get())
+          if (!row.isDeleted)
+            <String, Object?>{
+              'book': prints[row.bookId],
+              'page': row.page,
+              'fragment': row.fragment,
+              'offset': row.offsetInFragment,
+              'progress': row.progress,
+              'updated_at': at(row.updatedAt),
+            },
+      ],
+      'quotes': <Object?>[
+        for (final QuoteRow row in await db.select(db.quotes).get())
+          if (!row.isDeleted)
+            <String, Object?>{
+              'id': row.id,
+              'book': prints[row.bookId],
+              'page': row.page,
+              'text': row.content,
+              'text_start': row.textStart,
+              'text_end': row.textEnd,
+              'created_at': at(row.createdAt),
+            },
+      ],
+      'notes': <Object?>[
+        for (final NoteRow row in await db.select(db.notes).get())
+          if (!row.isDeleted)
+            <String, Object?>{
+              'id': row.id,
+              'book': prints[row.bookId],
+              'quote': row.quoteId,
+              'page': row.page,
+              'text': row.body,
+              'created_at': at(row.createdAt),
+              'updated_at': at(row.updatedAt),
+            },
+      ],
+      'bookmarks': <Object?>[
+        for (final BookmarkRow row in await db.select(db.bookmarks).get())
+          if (!row.isDeleted)
+            <String, Object?>{
+              'id': row.id,
+              'book': prints[row.bookId],
+              'page': row.page,
+              'fragment': row.fragment,
+              'label': row.label,
+              'created_at': at(row.createdAt),
+            },
+      ],
+    };
+  }
+
   Future<ShelfState> _shelf() async {
     return shelfStateOf(
       categories: await _data.categories.categories(),

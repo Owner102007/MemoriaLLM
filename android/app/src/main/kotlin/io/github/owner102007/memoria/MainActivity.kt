@@ -1,5 +1,7 @@
 package io.github.owner102007.memoria
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +16,7 @@ import android.provider.Settings
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -35,7 +38,8 @@ import java.io.File
  * По той же причине здесь живут доступ ко всем файлам (S5.4) и перехват
  * кнопок громкости (F-READ-26): Flutter этих кнопок не видит вовсе.
  * И три вопроса записи сессии к устройству (SNO-F-REC-01): заряд,
- * свободное место и «экран не гаснет».
+ * свободное место и «экран не гаснет». И выход архива записи с
+ * телефона (SNO-F-REC-06): системное окно «Поделиться».
  */
 class MainActivity : FlutterActivity() {
     /** Канал кнопок громкости; `null`, пока движок не поднят. */
@@ -113,6 +117,84 @@ class MainActivity : FlutterActivity() {
                 "screenOn" -> result.success(screenOn())
                 else -> result.notImplemented()
             }
+        }
+
+        // SNO-F-REC-06: архив записи сессии уходит с телефона системным
+        // окном «Поделиться» — в мессенджер, почту или на диск.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            RECORDS_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "share" ->
+                    result.success(
+                        shareRecords(
+                            call.argument<List<String>>("paths")
+                                ?: emptyList(),
+                        ),
+                    )
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /**
+     * Отдаёт архивы записей системному окну «Поделиться»
+     * (SNO-ALG-REC-04).
+     *
+     * Чужое приложение получает не путь, а ссылку `content://` от
+     * поставщика файлов сборки ветви ([RecordsFileProvider]) и право
+     * прочитать только эти файлы. Отвечает, открылось ли окно: дошёл
+     * ли архив до адресата, Android не сообщает.
+     *
+     * В основном приложении поставщика нет — ссылки не получится, и
+     * ответ «нет»: записей там не бывает.
+     */
+    private fun shareRecords(paths: List<String>): Boolean {
+        if (paths.isEmpty()) {
+            return false
+        }
+        return try {
+            val authority = "$packageName$RECORDS_AUTHORITY"
+            val uris = ArrayList<Uri>()
+            for (path in paths) {
+                val file = File(path)
+                if (!file.isFile || !file.name.endsWith(".zip")) {
+                    return false
+                }
+                uris.add(FileProvider.getUriForFile(this, authority, file))
+            }
+            val send =
+                if (uris.size == 1) {
+                    Intent(Intent.ACTION_SEND)
+                        .putExtra(Intent.EXTRA_STREAM, uris[0])
+                } else {
+                    Intent(Intent.ACTION_SEND_MULTIPLE)
+                        .putParcelableArrayListExtra(
+                            Intent.EXTRA_STREAM,
+                            uris,
+                        )
+                }
+            send.type = "application/zip"
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Право на чтение выдаётся по ссылкам из ClipData: без него
+            // окно выбора показало бы приложения, а файл они прочитать
+            // не смогли бы.
+            val clip = ClipData.newRawUri("", uris[0])
+            for (index in 1 until uris.size) {
+                clip.addItem(ClipData.Item(uris[index]))
+            }
+            send.clipData = clip
+            startActivity(Intent.createChooser(send, null))
+            true
+        } catch (error: IllegalArgumentException) {
+            // Файл лежит не в папке записей, или поставщика в этой
+            // сборке нет.
+            false
+        } catch (error: ActivityNotFoundException) {
+            false
+        } catch (error: SecurityException) {
+            false
         }
     }
 
@@ -371,6 +453,10 @@ class MainActivity : FlutterActivity() {
         const val STORAGE_CHANNEL = "memoria/storage_access"
         const val VOLUME_CHANNEL = "memoria/volume_keys"
         const val DEVICE_CHANNEL = "memoria/device"
+        const val RECORDS_CHANNEL = "memoria/records"
+
+        /** Хвост имени поставщика файлов: за идентификатором сборки. */
+        const val RECORDS_AUTHORITY = ".records"
         const val READ_STORAGE = android.Manifest.permission.READ_EXTERNAL_STORAGE
         const val STORAGE_REQUEST = 4201
     }

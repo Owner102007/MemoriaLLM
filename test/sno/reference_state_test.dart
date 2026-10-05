@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -854,6 +855,109 @@ void main() {
       expect(again.placed, hasLength(4));
       expect(await shelf(), laid);
       expect((await keep.snapshot()).matches(reference), isTrue);
+    });
+  });
+
+  group('SNO-ALG-REC-03: снимок конца записи', () {
+    final DateTime made = DateTime.utc(2026, 10, 4, 16);
+
+    Future<void> traces() async {
+      await data.library.save(testBook(id: 'a1', hash: 'hash-a1'));
+      await data.library.save(testBook(id: 'a2', hash: 'hash-a2'));
+      await data.reading.savePosition(
+        const ReadingPosition(bookId: 'a1', page: 12, progress: 0.4),
+      );
+      await data.annotations.saveQuote(
+        Quote(
+          id: 'q1',
+          bookId: 'a1',
+          page: 12,
+          content: 'цитата',
+          createdAt: made,
+        ),
+      );
+      await data.annotations.saveNote(
+        Note(
+          id: 'n1',
+          bookId: 'a1',
+          page: 12,
+          body: 'заметка',
+          createdAt: made,
+          updatedAt: made,
+          quoteId: 'q1',
+        ),
+      );
+      await data.annotations.saveBookmark(
+        Bookmark(id: 'm1', bookId: 'a2', page: 3, createdAt: made),
+      );
+    }
+
+    Map<String, Object?> only(Map<String, Object?> json, String key) {
+      return (json[key]! as List<Object?>).single! as Map<String, Object?>;
+    }
+
+    test('SNO-ALG-REC-03: то же, что снимок начала, и то, что участник '
+        'оставил, — целиком', () async {
+      await traces();
+
+      final Map<String, Object?> json = await keeper().recordingEndSnapshot();
+
+      // Всё, что есть в снимке начала, — на месте.
+      final Map<String, Object?> start = await keeper().recordingSnapshot();
+      for (final String key in start.keys) {
+        expect(json[key], start[key], reason: key);
+      }
+      expect(json['schema'], kSnapshotSchema);
+      expect(json['traces'], 4);
+
+      // Книга названа отпечатком — тем же, что стоит в строках журнала.
+      final Map<String, Object?> place = only(json, 'progress');
+      expect(place['book'], 'hash-a1');
+      expect(place['page'], 12);
+      expect(place['progress'], 0.4);
+
+      final Map<String, Object?> quote = only(json, 'quotes');
+      expect(quote['id'], 'q1');
+      expect(quote['book'], 'hash-a1');
+      expect(quote['page'], 12);
+      expect(quote['text'], 'цитата');
+      expect(quote['created_at'], '2026-10-04T16:00:00.000Z');
+
+      final Map<String, Object?> note = only(json, 'notes');
+      expect(note['id'], 'n1');
+      expect(note['quote'], 'q1');
+      expect(note['text'], 'заметка');
+
+      final Map<String, Object?> mark = only(json, 'bookmarks');
+      expect(mark['book'], 'hash-a2');
+      expect(mark['page'], 3);
+
+      // Снимок ложится в файл: в нём нет ничего, что не пишется в JSON.
+      expect(jsonDecode(jsonEncode(json)), isA<Map<String, Object?>>());
+    });
+
+    test('SNO-ALG-REC-03: удалённое в снимок конца не попадает', () async {
+      await traces();
+      await data.annotations.deleteNote('n1');
+      await data.annotations.deleteQuote('q1');
+      await data.annotations.deleteBookmark('m1');
+
+      final Map<String, Object?> json = await keeper().recordingEndSnapshot();
+
+      expect(json['quotes'], isEmpty);
+      expect(json['notes'], isEmpty);
+      expect(json['bookmarks'], isEmpty);
+      expect(json['progress'], hasLength(1));
+    });
+
+    test('SNO-ALG-REC-03: участник ничего не оставил — списки пусты', () async {
+      final Map<String, Object?> json = await keeper().recordingEndSnapshot();
+
+      expect(json['progress'], isEmpty);
+      expect(json['quotes'], isEmpty);
+      expect(json['notes'], isEmpty);
+      expect(json['bookmarks'], isEmpty);
+      expect(json['traces'], 0);
     });
   });
 }

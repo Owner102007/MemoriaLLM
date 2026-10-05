@@ -1312,6 +1312,112 @@ void main() {
     });
   });
 
+  group('SNO-ALG-REC-03: снимок конца записи', () {
+    /// Сессия, у которой снимок конца — свой, а не тот же, что начала.
+    RecordingSession sessionOn(SessionKit kit, {bool failing = false}) {
+      return RecordingSession(
+        settings: kit.settings,
+        store: kit.store,
+        nodeId: kTestNode,
+        snapshot: () async => <String, Object?>{'schema': 'начало'},
+        endSnapshot: () async {
+          if (failing) {
+            throw StateError('база не ответила');
+          }
+          return <String, Object?>{'schema': 'конец', 'traces': 3};
+        },
+        branch: 'I',
+        device: 'a91f3c',
+        now: kit.time.now,
+        monotonic: () =>
+            () => kit.time.monotonic,
+        ticker: (void Function() onTick) => () {},
+        random: Random(7),
+      );
+    }
+
+    test('SNO-ALG-REC-03: остановка кладёт снимок конца в папку '
+        'записи', () async {
+      final SessionKit kit = SessionKit();
+      final RecordingSession session = sessionOn(kit);
+      await session.start(code);
+      final String folder = session.state!.folder;
+      // Пока запись идёт, снимка конца нет.
+      expect(kit.store.files[folder]!.containsKey(kSnapshotEndFile), isFalse);
+
+      await session.stop(StopReason.experimenter);
+
+      expect(kit.store.json(folder, kSnapshotEndFile), <String, Object?>{
+        'schema': 'конец',
+        'traces': 3,
+      });
+      expect(kit.store.json(folder, kSnapshotStartFile), <String, Object?>{
+        'schema': 'начало',
+      });
+      session.dispose();
+    });
+
+    test('SNO-ALG-REC-03: снимок конца не назван — берётся тот же, что '
+        'снимок начала', () async {
+      final SessionKit kit = SessionKit();
+      await kit.session.start(code);
+      final String folder = kit.folder;
+
+      await kit.session.stop(StopReason.auto);
+
+      expect(kit.store.json(folder, kSnapshotEndFile), kit.snapshot);
+      kit.session.dispose();
+    });
+
+    test('SNO-ALG-REC-03: снимок не снялся — так в нём и сказано, запись '
+        'останавливается', () async {
+      final SessionKit kit = SessionKit();
+      final RecordingSession session = sessionOn(kit, failing: true);
+      await session.start(code);
+      final String folder = session.state!.folder;
+
+      await session.stop(StopReason.experimenter);
+
+      expect(session.phase, RecordingPhase.stopped);
+      expect(kit.store.json(folder, kSnapshotEndFile), <String, Object?>{
+        'failed': true,
+      });
+      session.dispose();
+    });
+
+    test('SNO-ALG-REC-03: у оборванной записи снимок конца снят при '
+        'следующем запуске и так помечен', () async {
+      final SessionKit kit = SessionKit();
+      final RecordingSession dead = sessionOn(kit);
+      await dead.start(code);
+      final String folder = dead.state!.folder;
+      dead.log(SnoEventType.heartbeat);
+      dead.tick();
+      await kit.settle();
+      dead.dispose();
+      kit.time.pass(const Duration(minutes: 5));
+
+      final RecordingSession session = sessionOn(kit);
+      await session.restore();
+
+      expect(session.state!.stoppedBy, StopReason.crash);
+      expect(kit.store.json(folder, kSnapshotEndFile), <String, Object?>{
+        'schema': 'конец',
+        'traces': 3,
+        'late': true,
+      });
+
+      // Второй запуск до завершения сессии снимок не переснимает.
+      kit.store.files[folder]!.remove(kSnapshotEndFile);
+      final RecordingSession again = sessionOn(kit);
+      await again.restore();
+      expect(again.phase, RecordingPhase.stopped);
+      expect(kit.store.files[folder]!.containsKey(kSnapshotEndFile), isFalse);
+      session.dispose();
+      again.dispose();
+    });
+  });
+
   group('SNO-F-REC-01: готовность устройства', () {
     test('SNO-F-REC-01: мало заряда и места — предупреждение', () async {
       final SessionKit kit = SessionKit(

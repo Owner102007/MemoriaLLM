@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Что поставщик файлов сборки ветви вправе отдать наружу
+     (SNO-F-REC-06): только папку записей сессий и только по ссылке,
+     выданной на один файл. Путь — от папки данных приложения: подпапка
+     ветви (`dataFolderFor` в `lib/sno/flags.dart`) и «Записи»
+     (`FileRecordingStore.folderName`); согласие сверяет
+     `test/sno/build_setup_test.dart`. -->
+<paths>
+    <files-path name="records" path="sno2026-I/Записи/" />
+</paths>

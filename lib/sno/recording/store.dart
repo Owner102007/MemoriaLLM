@@ -16,6 +16,10 @@ const String kEventsFile = 'events.jsonl';
 /// Имя снимка состояния в начале записи.
 const String kSnapshotStartFile = 'snapshot_start.json';
 
+/// Имя снимка состояния в конце записи (SNO-ALG-REC-03): тем же кодом,
+/// что снимок начала, плюс места чтения, цитаты и заметки целиком.
+const String kSnapshotEndFile = 'snapshot_end.json';
+
 /// Имя файла сведений о записи: участник, устройство, сборка, часы,
 /// остановка. Из него соберётся манифест архива.
 const String kRecordingFile = 'recording.json';

@@ -402,13 +402,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   ///
   /// [branch], [device] и [build] попадают в сведения записи: ветвь,
   /// первые шесть знаков идентификатора устройства, версия и коммит
-  /// сборки. [now], [monotonic], [ticker] и [random] подменяются в
+  /// сборки. [endSnapshot] — снимок конца записи (SNO-ALG-REC-03): то
+  /// же состояние и то, что участник оставил; не назван — берётся
+  /// [snapshot]. [now], [monotonic], [ticker] и [random] подменяются в
   /// тестах.
   RecordingSession({
     required AppSettingsRepository settings,
     required RecordingStore store,
     required String nodeId,
     required SnapshotSource snapshot,
+    SnapshotSource? endSnapshot,
     this.branch = '',
     this.device = '',
     this.build = const <String, Object?>{},
@@ -422,6 +425,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
        _store = store,
        _nodeId = nodeId,
        _snapshot = snapshot,
+       _endSnapshot = endSnapshot ?? snapshot,
        _status = status,
        _planned = planned,
        _now = now ?? DateTime.now,
@@ -433,6 +437,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   final RecordingStore _store;
   final String _nodeId;
   final SnapshotSource _snapshot;
+  final SnapshotSource _endSnapshot;
   final DeviceStatus _status;
   final Duration _planned;
   final DateTime Function() _now;
@@ -818,6 +823,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       // так же — по строке остановки, которая уже лежит в журнале.
     }
     await _putInfo(marked, finished: false);
+    // Снимок конца оборванной записи — сейчас, при первом же запуске:
+    // раньше его снять было некому.
+    await _putEndSnapshot(marked.folder, late: true);
     return marked;
   }
 
@@ -1079,6 +1087,29 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       return await _snapshot();
     } on Object {
       return <String, Object?>{'failed': true};
+    }
+  }
+
+  /// Кладёт в папку записи снимок её конца (SNO-ALG-REC-03): с чем
+  /// участник закончил — места чтения, цитаты, заметки, настройки.
+  ///
+  /// [late] — запись оборвалась, и снимок снят при следующем запуске
+  /// приложения, а не в миг остановки.
+  Future<void> _putEndSnapshot(String folder, {required bool late}) async {
+    Map<String, Object?> snapshot;
+    try {
+      snapshot = await _endSnapshot();
+    } on Object {
+      snapshot = <String, Object?>{'failed': true};
+    }
+    try {
+      await _store.put(
+        folder,
+        kSnapshotEndFile,
+        _pretty(<String, Object?>{...snapshot, if (late) 'late': true}),
+      );
+    } on Object {
+      _failed = true;
     }
   }
 
@@ -1667,6 +1698,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     // Сначала журнал, потом отметка: приложение, умершее между ними,
     // найдёт в журнале остановку и закроет запись ею.
     await _journal?.flush();
+    // Снимок конца — сразу за журналом, пока устройство не трогали
+    // (SNO-ALG-REC-03); и до отметки: отказ диска на нём попадёт в неё.
+    await _putEndSnapshot(state.folder, late: false);
     // Отказ диска — в отметку сессии: его помнят и после перезапуска.
     final SessionState marked = stopped.withFailure(writeFailed);
     _state = marked;
@@ -1687,7 +1721,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Завершает сессию: замок снят, код участника забыт (SNO-F-CFG-05).
   ///
-  /// Папка записи переезжает к завершённым и ждёт упаковки в архив.
+  /// Папка записи переезжает к завершённым; в архив её упаковывает
+  /// тот, кто завершал, — `DeviceRecords.pack` (SNO-F-REC-05).
   Future<void> finish() {
     final Future<void>? running = _finishRun;
     if (running != null) {

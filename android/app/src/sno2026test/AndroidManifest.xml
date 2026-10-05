@@ -21,5 +21,19 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
-    <application android:requestLegacyExternalStorage="true"/>
+    <application android:requestLegacyExternalStorage="true">
+        <!-- Архив записи сессии уходит с телефона системным окном
+             «Поделиться» (SNO-F-REC-06). Поставщик наружу не выставлен:
+             чужое приложение читает только тот архив, ссылку на который
+             ему выдали, и только пока ему это разрешено. -->
+        <provider
+            android:name=".RecordsFileProvider"
+            android:authorities="${applicationId}.records"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/sno_records_paths" />
+        </provider>
+    </application>
 </manifest>

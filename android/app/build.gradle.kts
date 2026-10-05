@@ -77,3 +77,10 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Поставщик файлов для архивов записей (SNO-F-REC-06,
+    // `RecordsFileProvider`). Библиотека и так приходит с движком
+    // Flutter; здесь она названа, потому что ею пользуется наш код.
+    implementation("androidx.core:core:1.13.1")
+}

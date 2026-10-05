@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/sno/recording/action_log.dart';
 import 'package:memoria/sno/recording/device_status.dart';
 import 'package:memoria/sno/recording/event.dart';
+import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/session.dart';
 import 'package:memoria/sno/recording/store.dart';
 
@@ -469,5 +471,207 @@ class ListActionLog implements ActionLog {
       ..page = page
       ..strip = strip
       ..mode = mode;
+  }
+}
+
+/// Записи на устройстве в памяти (SNO-F-REC-07): ни диска, ни
+/// системных окон.
+///
+/// Экраны проверяются на них: что показано, что отдано окну
+/// «Поделиться», что помечено и что удалено. Настоящие записи на диске
+/// проверяются в `device_records_test.dart`.
+class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
+  /// Создаёт записи: телефон — [shares], ПК — [saves].
+  MemoryDeviceRecords({
+    this.shares = false,
+    this.saves = false,
+    List<DeviceRecord> entries = const <DeviceRecord>[],
+    DateTime? now,
+  }) : _entries = List<DeviceRecord>.of(entries),
+       now = now ?? DateTime(2026, 11, 3, 14, 50);
+
+  @override
+  bool shares;
+
+  @override
+  bool saves;
+
+  @override
+  bool loaded = false;
+
+  /// Время отметок «отправлена» и «копия есть».
+  DateTime now;
+
+  final List<DeviceRecord> _entries;
+
+  @override
+  List<DeviceRecord> get entries => orderRecords(_entries);
+
+  /// Сколько раз список перечитывали.
+  int refreshed = 0;
+
+  /// Папки, которые просили упаковать, по порядку.
+  final List<String> packed = <String>[];
+
+  /// Что вернёт упаковка папки; не задано — архив этой записи на
+  /// двадцать минут и полторы тысячи событий.
+  DeviceRecord? Function(String folder)? onPack;
+
+  /// Придерживает упаковку, пока тест не отпустит: по нему видно, что
+  /// стоит на экране, пока архив собирается.
+  Completer<void>? packGate;
+
+  /// Открывается ли окно «Поделиться».
+  bool shareOpens = true;
+
+  /// Что отдавали окну «Поделиться», по вызовам: имена записей.
+  final List<List<String>> shared = <List<String>>[];
+
+  /// Чем кончится «Сохранить архив как…».
+  CopyOutcome copyOutcome = CopyOutcome.done;
+
+  /// Записи, копию которых просили сохранить.
+  final List<String> saved = <String>[];
+
+  /// Открывается ли папка.
+  bool revealOpens = true;
+
+  /// Что открывали: имя записи или `null` — саму папку.
+  final List<String?> revealed = <String?>[];
+
+  /// Удаляются ли записи.
+  bool deleteWorks = true;
+
+  /// Удалённые записи, по порядку.
+  final List<String> deleted = <String>[];
+
+  /// Сколько раз подбирали папки без сессии.
+  int adopted = 0;
+
+  /// Сколько раз упаковывали оставшееся папками.
+  int pending = 0;
+
+  /// Кладёт запись в список — как архив, положенный в папку руками.
+  void put(DeviceRecord record) {
+    _entries
+      ..removeWhere((DeviceRecord known) => known.name == record.name)
+      ..add(record);
+    notifyListeners();
+  }
+
+  DeviceRecord _with(
+    DeviceRecord record, {
+    DateTime? sharedAt,
+    DateTime? copiedAt,
+  }) {
+    return DeviceRecord(
+      name: record.name,
+      bytes: record.bytes,
+      packed: record.packed,
+      damaged: record.damaged,
+      branch: record.branch,
+      participant: record.participant,
+      startedAt: record.startedAt,
+      durationMs: record.durationMs,
+      events: record.events,
+      stoppedBy: record.stoppedBy,
+      sharedAt: sharedAt ?? record.sharedAt,
+      copiedAt: copiedAt ?? record.copiedAt,
+    );
+  }
+
+  void _replace(DeviceRecord record) {
+    final int at = _entries.indexWhere(
+      (DeviceRecord known) => known.name == record.name,
+    );
+    if (at >= 0) {
+      _entries[at] = record;
+    }
+  }
+
+  @override
+  Future<void> refresh() async {
+    refreshed++;
+    loaded = true;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> adoptOrphans() async {
+    adopted++;
+  }
+
+  @override
+  Future<void> packPending() async {
+    pending++;
+  }
+
+  @override
+  Future<DeviceRecord?> pack(String folder) async {
+    packed.add(folder);
+    await packGate?.future;
+    final DeviceRecord? Function(String folder)? answer = onPack;
+    final DeviceRecord? record = answer != null
+        ? answer(folder)
+        : DeviceRecord(
+            name: folder,
+            bytes: 412 * 1024,
+            branch: 'I',
+            participant: kTestCode,
+            startedAt: DateTime.fromMillisecondsSinceEpoch(kTestMoment),
+            durationMs: 20 * 60 * 1000,
+            events: 1482,
+            stoppedBy: StopReason.experimenter.wire,
+          );
+    if (record != null) {
+      _entries
+        ..removeWhere((DeviceRecord known) => known.name == record.name)
+        ..add(record);
+    }
+    loaded = true;
+    notifyListeners();
+    return record;
+  }
+
+  @override
+  Future<bool> share(List<DeviceRecord> records) async {
+    shared.add(<String>[
+      for (final DeviceRecord record in records) record.name,
+    ]);
+    if (!shareOpens) {
+      return false;
+    }
+    for (final DeviceRecord record in records) {
+      _replace(_with(record, sharedAt: now));
+    }
+    notifyListeners();
+    return true;
+  }
+
+  @override
+  Future<CopyOutcome> saveCopy(DeviceRecord record) async {
+    saved.add(record.name);
+    if (copyOutcome == CopyOutcome.done) {
+      _replace(_with(record, copiedAt: now));
+      notifyListeners();
+    }
+    return copyOutcome;
+  }
+
+  @override
+  Future<bool> reveal([DeviceRecord? record]) async {
+    revealed.add(record?.name);
+    return revealOpens;
+  }
+
+  @override
+  Future<bool> delete(DeviceRecord record) async {
+    if (!deleteWorks) {
+      return false;
+    }
+    deleted.add(record.name);
+    _entries.removeWhere((DeviceRecord known) => known.name == record.name);
+    notifyListeners();
+    return true;
   }
 }

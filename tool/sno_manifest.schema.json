@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Манифест архива записи сессии СНО2026 (SNO-ALG-REC-03)",
+  "description": "manifest.json — первый файл архива sno2026_<ветвь>_<код>_<устройство>_<дата-время>.zip. Всё, что было в recording.json папки записи, и перечень файлов архива с суммами.",
+  "type": "object",
+  "required": ["schema", "eye_tracker", "archive", "files"],
+  "properties": {
+    "schema": {"const": "sno2026-recording/1"},
+    "branch": {"enum": ["I", "II"]},
+    "app": {"type": "object"},
+    "device": {
+      "type": "object",
+      "required": ["node_id", "code"],
+      "properties": {
+        "node_id": {"type": "string"},
+        "code": {"type": "string"}
+      }
+    },
+    "participant": {
+      "type": "object",
+      "required": ["code", "generated"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[0-9]{8}$"},
+        "generated": {"type": "boolean"},
+        "generator": {"type": ["string", "null"]},
+        "generated_at": {"type": "string"},
+        "attempt": {"type": "integer", "minimum": 0}
+      }
+    },
+    "recording": {
+      "type": "object",
+      "required": ["id", "clock_anchor", "planned_s", "stopped_by", "finished"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[0-9A-Z]{26}$"},
+        "clock_anchor": {"type": "string"},
+        "planned_s": {"type": "integer", "minimum": 1},
+        "duration_s": {"type": ["integer", "null"], "minimum": 0},
+        "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+        "stopped_by": {"enum": ["auto", "experimenter", "crash", null]},
+        "resyncs": {"type": ["integer", "null"], "minimum": 0},
+        "events": {"type": ["integer", "null"], "minimum": 0},
+        "write_failed": {"type": ["boolean", "null"]},
+        "finished": {"type": "boolean"},
+        "in_background": {"type": ["boolean", "null"]},
+        "away": {
+          "type": ["object", "null"],
+          "required": ["count", "total_ms", "hidden_ms", "longest_ms"],
+          "properties": {
+            "count": {"type": "integer", "minimum": 0},
+            "total_ms": {"type": "integer", "minimum": 0},
+            "hidden_ms": {"type": "integer", "minimum": 0},
+            "longest_ms": {"type": "integer", "minimum": 0}
+          }
+        },
+        "blocks": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["n", "start_ms", "duration_ms", "closed_by"],
+            "properties": {
+              "n": {"type": "integer", "minimum": 1},
+              "start_ms": {"type": "integer", "minimum": 0},
+              "duration_ms": {"type": "integer", "minimum": 0},
+              "closed_by": {"enum": ["experimenter", "stop", "crash"]}
+            }
+          }
+        }
+      }
+    },
+    "info_missing": {"const": true},
+    "eye_tracker": {
+      "type": "object",
+      "required": ["present"],
+      "properties": {"present": {"type": "boolean"}}
+    },
+    "archive": {
+      "type": "object",
+      "required": ["name", "packer", "packed_at"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^sno2026_.*\\.zip$"},
+        "packer": {"const": "memoria-zip/1"},
+        "packed_at": {"type": "string"}
+      }
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["bytes", "sha256"],
+        "properties": {
+          "bytes": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "lines": {"type": "integer", "minimum": 0},
+          "dropped_lines": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

@@ -19,6 +19,8 @@ import 'literature_archive.dart';
 import 'participant_code.dart';
 import 'recording/code_screen.dart';
 import 'recording/finish_screen.dart';
+import 'recording/records.dart';
+import 'recording/records_screen.dart';
 import 'recording/session.dart';
 import 'reference_state.dart';
 
@@ -181,6 +183,12 @@ String describeReadiness(Readiness readiness) {
 /// сессия не завершена, полка под замком, и здесь нельзя ни добавить
 /// архив, ни сбросить устройство: и то и другое меняет полку.
 ///
+/// **Записи на устройстве** (SNO-F-REC-07, `recording/records.dart`).
+/// Пока сессии нет, под стартом записи стоит строка «Записи на
+/// устройстве · 3, не отправлено 1» — она ведёт к списку архивов. Во
+/// время записи и до «Завершить сессию» строки нет: участнику чужие
+/// записи не показываются.
+///
 /// **Архив с литературой приложение находит само** (SNO-F-LIT-03).
 /// Когда блок «Для экспериментатора» раскрыт, устройство обходится
 /// (`AppServices.archiveSearch`), и ZIP-архивы с книгами встают списком;
@@ -316,6 +324,9 @@ class _TestingScreenState extends State<TestingScreen>
   /// Сессия записи; `null` — в этой сборке записи нет.
   RecordingSession? get _session => widget.services.recording;
 
+  /// Записи на устройстве; `null` — в этой сборке их нет.
+  DeviceRecords? get _records => widget.services.records;
+
   /// Начата ли и не завершена ли сессия: пока это так, полку менять
   /// нельзя ничем — ни архивом, ни сбросом.
   bool get _sessionOpen => _session?.locked ?? false;
@@ -325,13 +336,38 @@ class _TestingScreenState extends State<TestingScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _session?.addListener(_sessionChanged);
+    _records?.addListener(_recordsChanged);
     unawaited(_refreshReadiness());
+    unawaited(_refreshRecords());
+  }
+
+  void _recordsChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Перечитывает список записей (SNO-F-REC-07): архив могли убрать
+  /// или положить руками, пока раздела не было на экране.
+  Future<void> _refreshRecords() async {
+    try {
+      await _records?.refresh();
+    } on Object {
+      // Папка записей не прочиталась: строка покажет прежнее.
+    }
+  }
+
+  void _openRecords(DeviceRecords records) {
+    unawaited(
+      openDeviceRecords(Navigator.of(context, rootNavigator: true), records),
+    );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _session?.removeListener(_sessionChanged);
+    _records?.removeListener(_recordsChanged);
     _searchRun++;
     unawaited(_searching?.cancel());
     super.dispose();
@@ -421,7 +457,11 @@ class _TestingScreenState extends State<TestingScreen>
   /// Открывает завершение сессии (SNO-SCR-08).
   void _openFinish(RecordingSession session) {
     unawaited(
-      openSessionFinish(Navigator.of(context, rootNavigator: true), session),
+      openSessionFinish(
+        Navigator.of(context, rootNavigator: true),
+        session,
+        records: _records,
+      ),
     );
   }
 
@@ -451,10 +491,15 @@ class _TestingScreenState extends State<TestingScreen>
     if (widget.visible && !oldWidget.visible) {
       // Заряд и место за это время изменились.
       unawaited(_refreshReadiness());
+      unawaited(_refreshRecords());
     }
     if (!identical(oldWidget.services.recording, widget.services.recording)) {
       oldWidget.services.recording?.removeListener(_sessionChanged);
       _session?.addListener(_sessionChanged);
+    }
+    if (!identical(oldWidget.services.records, widget.services.records)) {
+      oldWidget.services.records?.removeListener(_recordsChanged);
+      _records?.addListener(_recordsChanged);
     }
   }
 
@@ -1220,6 +1265,7 @@ class _TestingScreenState extends State<TestingScreen>
     final ThemeData theme = Theme.of(context);
     final String device = deviceCodeOf(widget.services.data.clock.nodeId);
     final RecordingSession? session = _session;
+    final DeviceRecords? records = _records;
     return Scaffold(
       appBar: AppBar(title: const Text('Тестирование')),
       body: Align(
@@ -1235,14 +1281,35 @@ class _TestingScreenState extends State<TestingScreen>
                 subtitle: Text(device),
               ),
               if (session != null) ..._recording(theme, session),
+              // SNO-F-REC-07: записи видны, только пока сессии нет —
+              // участнику чужие записи не показываются.
+              if (records != null && !_sessionOpen)
+                ListTile(
+                  key: const Key('sno-records'),
+                  leading: const Icon(Icons.inventory_2_outlined),
+                  title: const Text('Записи на устройстве'),
+                  subtitle: Text(
+                    records.loaded
+                        ? describeRecordsCount(
+                            records.entries,
+                            shares: records.shares,
+                          )
+                        : '…',
+                    key: const Key('sno-records-count'),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openRecords(records),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 child: Text(
                   session == null
                       ? 'Запись, тест и записи появятся здесь следующими '
                             'сборками.'
-                      : 'Тест и записи на устройстве появятся здесь '
-                            'следующими сборками.',
+                      : records == null
+                      ? 'Тест и записи на устройстве появятся здесь '
+                            'следующими сборками.'
+                      : 'Тест появится здесь следующей сборкой.',
                   style: theme.textTheme.bodySmall,
                 ),
               ),

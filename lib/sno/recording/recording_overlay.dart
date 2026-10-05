@@ -9,6 +9,7 @@ import '../../domain/navigation/sections.dart';
 import '../../ui/claimed_pointers.dart';
 import '../hold_button.dart';
 import 'finish_screen.dart';
+import 'records.dart';
 import 'session.dart';
 
 /// Сколько держат точку записи, чтобы спросить об остановке.
@@ -49,11 +50,16 @@ class RecordingOverlay extends StatefulWidget {
     required this.session,
     required this.navigator,
     required this.child,
+    this.records,
     super.key,
   });
 
   /// Сессия записи.
   final RecordingSession session;
+
+  /// Записи на устройстве: экран завершения упаковывает с ними запись
+  /// в архив (SNO-F-REC-05); `null` — упаковывать некому.
+  final DeviceRecords? records;
 
   /// Навигатор приложения: диалог остановки и экран завершения
   /// открываются в нём.
@@ -175,7 +181,9 @@ class _RecordingOverlayState extends State<RecordingOverlay>
     if (navigator == null) {
       return;
     }
-    unawaited(openSessionFinish(navigator, widget.session));
+    unawaited(
+      openSessionFinish(navigator, widget.session, records: widget.records),
+    );
   }
 
   @override
