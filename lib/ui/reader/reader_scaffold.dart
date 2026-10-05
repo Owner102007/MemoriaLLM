@@ -692,10 +692,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
               widget.onTurnCause?.call('toc');
               widget.log?.log(
                 SnoEventType.tocJump,
-                data: <String, Object?>{
-                  'from': controller.page,
-                  'to': page,
-                },
+                data: <String, Object?>{'from': controller.page, 'to': page},
               );
               await _goTo(page);
               hideChrome();

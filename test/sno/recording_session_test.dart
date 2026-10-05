@@ -514,13 +514,18 @@ void main() {
         'clock.resync',
         'recording.stop',
       ]);
-      final List<Map<String, Object?>> events = kit.store.events(kit.folder);
+      final List<Map<String, Object?>> events = kit.store
+          .events(kit.folder)
+          .where((Map<String, Object?> event) => event['type'] != 'app.state')
+          .toList();
       final Map<String, Object?> left = events[events.length - 4];
       expect(left['data'], <String, Object?>{'state': 'inactive'});
       final Map<String, Object?> back = events[events.length - 3];
       expect(back['data'], <String, Object?>{
         'away_ms': 41 * 60 * 1000,
         'deepest': 'paused',
+        'kind': 'hidden',
+        'hidden_ms': 41 * 60 * 1000,
       });
       // Настенное время возвращения — настоящее, а не отставшее на сон.
       expect(back['wall'], isoWithOffset(kit.time.wall));

@@ -351,9 +351,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     final bool fresh = DateTime.now().difference(_causeAt) <= _causeLife;
-    final String cause = fresh
-        ? _cause
-        : (paged ? 'other' : 'scroll');
+    final String cause = fresh ? _cause : (paged ? 'other' : 'scroll');
     _cause = paged ? 'other' : 'scroll';
     final List<int> pages = controller.sheetPages;
     log.log(
@@ -983,10 +981,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
     setState(() => _zoomLocked = value);
-    _log?.log(
-      SnoEventType.viewLock,
-      data: <String, Object?>{'locked': value},
-    );
+    _log?.log(SnoEventType.viewLock, data: <String, Object?>{'locked': value});
     await widget.services.data.settings.write(
       SettingsKeys.zoomLock,
       value.toString(),

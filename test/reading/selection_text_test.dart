@@ -77,15 +77,15 @@ void main() {
     });
 
     test('BUG-51: слово с переноса склеивается', () {
-      expect(leavingText('остео${mark}логия'), 'остеология');
+      expect(leavingText('остео$markлогия'), 'остеология');
       expect(
-        leavingText('наука остео${mark}логия изучает кос${mark}ти'),
+        leavingText('наука остео$markлогия изучает кос$markти'),
         'наука остеология изучает кости',
       );
     });
 
     test('BUG-51: дефис встаёт, только если книга знает слово с ним', () {
-      final String text = 'Сердечно${mark}сосудистая и остео${mark}логия';
+      final String text = 'Сердечно$markсосудистая и остео$markлогия';
       expect(hyphenSpellings(text), <String>{
         'сердечно-сосудистая',
         'остео-логия',
@@ -99,7 +99,7 @@ void main() {
     });
 
     test('BUG-51: знак на краю слова ничего не разрезает', () {
-      expect(leavingText('${mark}логия'), 'логия');
+      expect(leavingText('$markлогия'), 'логия');
       expect(leavingText('остео$mark'), 'остео');
       expect(leavingText('остео$mark логия'), 'остео логия');
       expect(hyphenSpellings('остео$mark логия'), isEmpty);
@@ -107,7 +107,7 @@ void main() {
     });
 
     test('BUG-51: два переноса в одном слове — каждый решается сам', () {
-      final String text = 'северо${mark}западно${mark}европейский';
+      final String text = 'северо$markзападно$markевропейский';
       expect(hyphenSpellings(text), <String>{
         'северо-западно',
         'западно-европейский',
@@ -133,7 +133,10 @@ void main() {
     const String bookId = 'book-1';
     const String hash = 'hash-1';
 
-    BookTextCache cacheOf(FakeReaderDocument document, MemoryPageTextStore store) {
+    BookTextCache cacheOf(
+      FakeReaderDocument document,
+      MemoryPageTextStore store,
+    ) {
       return BookTextCache(
         document: document,
         store: store,
@@ -164,21 +167,21 @@ void main() {
         'a microscope and felt self-made',
       );
       // Слова с дефисом в книге больше нигде нет — склеено без него.
-      expect(
-        await cache.leaving('Saint${mark}Petersburg'),
-        'SaintPetersburg',
-      );
+      expect(await cache.leaving('Saint${mark}Petersburg'), 'SaintPetersburg');
       cache.close();
     });
 
-    test('BUG-51: книга ещё не прочитана — дефиса нет, движок не тронут', () async {
-      final FakeReaderDocument document = book();
-      final BookTextCache cache = cacheOf(document, MemoryPageTextStore());
+    test(
+      'BUG-51: книга ещё не прочитана — дефиса нет, движок не тронут',
+      () async {
+        final FakeReaderDocument document = book();
+        final BookTextCache cache = cacheOf(document, MemoryPageTextStore());
 
-      expect(await cache.leaving('self${mark}made'), 'selfmade');
-      expect(document.textReads, isEmpty);
-      cache.close();
-    });
+        expect(await cache.leaving('self${mark}made'), 'selfmade');
+        expect(document.textReads, isEmpty);
+        cache.close();
+      },
+    );
 
     test('BUG-51: база не читается — знак всё равно убран', () async {
       final FakeReaderDocument document = book();
@@ -323,17 +326,18 @@ void main() {
         'note.create',
         'select.cancel',
       ]);
-      final Map<String, Object?> selected =
-          log.dataOf(SnoEventType.selectEnd).single;
+      final Map<String, Object?> selected = log
+          .dataOf(SnoEventType.selectEnd)
+          .single;
       expect(selected['page'], 1);
       expect(selected['start'], 0);
       expect(selected['end'], first.length);
       expect(selected['text'], 'He bought a microscope and felt self-made.');
       expect(selected['words'], 7);
       expect(
-        log.dataOf(SnoEventType.selectionAction).map(
-          (Map<String, Object?> data) => data['action'],
-        ),
+        log
+            .dataOf(SnoEventType.selectionAction)
+            .map((Map<String, Object?> data) => data['action']),
         <String>['quote', 'note'],
       );
       expect(log.dataOf(SnoEventType.noteCreate).single['text'], 'проверить');
@@ -343,15 +347,17 @@ void main() {
       }
     });
 
-    test('SNO-F-REC-02: запись не идёт — действия работают, журнал пуст',
-        () async {
-      log.recording = false;
-      await actions.settled(whole());
-      await actions.acted('copy', whole());
-      await actions.saveQuote(whole());
+    test(
+      'SNO-F-REC-02: запись не идёт — действия работают, журнал пуст',
+      () async {
+        log.recording = false;
+        await actions.settled(whole());
+        await actions.acted('copy', whole());
+        await actions.saveQuote(whole());
 
-      expect(log.events, isEmpty);
-      expect(annotations.savedQuotes, hasLength(1));
-    });
+        expect(log.events, isEmpty);
+        expect(annotations.savedQuotes, hasLength(1));
+      },
+    );
   });
 }

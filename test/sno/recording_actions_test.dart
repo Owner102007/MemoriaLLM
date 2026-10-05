@@ -33,35 +33,44 @@ void main() {
     return event['data']! as Map<String, Object?>;
   }
 
+  /// Даёт журналу лечь на диск: его сбрасывает секунда записи.
+  Future<void> written(SessionKit kit) async {
+    kit.session.tick();
+    await kit.settle();
+  }
+
   Map<String, Object?> recordingInfo(SessionKit kit, String folder) {
     return kit.store.json(folder, kRecordingFile)['recording']!
         as Map<String, Object?>;
   }
 
   group('SNO-F-REC-02: действия участника в журнале', () {
-    test('SNO-F-REC-02: смена экрана — событием, экран в нём уже новый', () async {
-      final SessionKit kit = SessionKit();
-      kit.session.screen('testing');
-      await kit.session.start(code);
-      kit.session.screen('shelf');
-      // Тот же экран второй раз событием не становится.
-      kit.session.screen('shelf');
-      kit.session.screen('reader');
-      await kit.settle();
+    test(
+      'SNO-F-REC-02: смена экрана — событием, экран в нём уже новый',
+      () async {
+        final SessionKit kit = SessionKit();
+        kit.session.screen('testing');
+        await kit.session.start(code);
+        kit.session.screen('shelf');
+        // Тот же экран второй раз событием не становится.
+        kit.session.screen('shelf');
+        kit.session.screen('reader');
+        await written(kit);
 
-      final List<Map<String, Object?>> moves = eventsOf(kit, 'nav.screen');
-      expect(moves, hasLength(2));
-      expect(dataOf(moves[0]), <String, Object?>{
-        'from': 'testing',
-        'to': 'shelf',
-      });
-      expect(moves[0]['screen'], 'shelf');
-      expect(dataOf(moves[1]), <String, Object?>{
-        'from': 'shelf',
-        'to': 'reader',
-      });
-      kit.session.dispose();
-    });
+        final List<Map<String, Object?>> moves = eventsOf(kit, 'nav.screen');
+        expect(moves, hasLength(2));
+        expect(dataOf(moves[0]), <String, Object?>{
+          'from': 'testing',
+          'to': 'shelf',
+        });
+        expect(moves[0]['screen'], 'shelf');
+        expect(dataOf(moves[1]), <String, Object?>{
+          'from': 'shelf',
+          'to': 'reader',
+        });
+        kit.session.dispose();
+      },
+    );
 
     test('SNO-F-REC-02: книга, страница, полоса и режим стоят в каждом '
         'событии, пока книга открыта', () async {
@@ -86,7 +95,7 @@ void main() {
       );
       kit.session.bookClosed();
       kit.session.screen('shelf');
-      await kit.settle();
+      await written(kit);
 
       final Map<String, Object?> opened = eventsOf(kit, 'book.open').single;
       expect(opened['book'], 'hash-a');
@@ -124,18 +133,19 @@ void main() {
         kit.session.bookOpened(book, via: 'shelf_search');
         kit.session.bookClosed();
       }
-      await kit.settle();
+      await written(kit);
 
       expect(
-        eventsOf(kit, 'book.open').map(
-          (Map<String, Object?> event) => dataOf(event)['visit'],
-        ),
+        eventsOf(
+          kit,
+          'book.open',
+        ).map((Map<String, Object?> event) => dataOf(event)['visit']),
         <int>[1, 1, 2, 3],
       );
       expect(eventsOf(kit, 'book.close'), hasLength(4));
       // Закрытие без открытой книги ничего не пишет.
       kit.session.bookClosed();
-      await kit.settle();
+      await written(kit);
       expect(eventsOf(kit, 'book.close'), hasLength(4));
 
       // Новая запись считает обращения заново.
@@ -143,82 +153,88 @@ void main() {
       await kit.session.finish();
       await kit.session.start(code);
       kit.session.bookOpened('a', via: 'shelf');
-      await kit.settle();
+      await written(kit);
       expect(dataOf(eventsOf(kit, 'book.open').single)['visit'], 1);
       kit.session.dispose();
     });
 
-    test('SNO-F-REC-02: вне записи место чтения помнится, а строк нет', () async {
-      final SessionKit kit = SessionKit();
-      kit.session.screen('reader');
-      kit.session.bookOpened('hash-a', via: 'shelf');
-      kit.session.place(page: 3, strip: 1, mode: 'full');
-      kit.session.log(SnoEventType.pageShown);
-      kit.session.bookClosed();
-      expect(kit.session.startBlock(1), isFalse);
-      await kit.settle();
+    test(
+      'SNO-F-REC-02: вне записи место чтения помнится, а строк нет',
+      () async {
+        final SessionKit kit = SessionKit();
+        kit.session.screen('reader');
+        kit.session.bookOpened('hash-a', via: 'shelf');
+        kit.session.place(page: 3, strip: 1, mode: 'full');
+        kit.session.log(SnoEventType.pageShown);
+        kit.session.bookClosed();
+        expect(kit.session.startBlock(1), isFalse);
+        await written(kit);
 
-      expect(kit.store.journals, isEmpty);
-      expect(kit.session.context.screen, 'reader');
-      expect(kit.session.context.book, isNull);
-      kit.session.dispose();
-    });
+        expect(kit.store.journals, isEmpty);
+        expect(kit.session.context.screen, 'reader');
+        expect(kit.session.context.book, isNull);
+        kit.session.dispose();
+      },
+    );
 
-    test('SNO-F-REC-02: сценарий «открыл книгу, три страницы, выделил, '
-        'цитата, поиск, закрыл» — виды по порядку, номера без пропусков', () async {
-      final SessionKit kit = SessionKit();
-      await kit.session.start(code);
-      final RecordingSession log = kit.session;
-      log.screen('reader');
-      log.bookOpened('hash-a', via: 'shelf');
-      for (int page = 1; page <= 3; page++) {
-        log.place(page: page, strip: 1, mode: 'full');
-        log.log(SnoEventType.pageShown);
-        kit.time.pass(const Duration(seconds: 5));
-      }
-      log
-        ..log(SnoEventType.selectEnd, data: journalText('остеология'))
-        ..log(SnoEventType.selectionAction, data: journalText('остеология'))
-        ..log(SnoEventType.quoteCreate, data: journalText('остеология'))
-        ..log(SnoEventType.searchQuery, data: journalText('кость'))
-        ..log(SnoEventType.searchResultOpen)
-        ..log(SnoEventType.searchClose)
-        ..bookClosed()
-        ..screen('shelf');
-      await kit.session.stop(StopReason.experimenter);
-
-      final List<Map<String, Object?>> events = kit.store.events(kit.folder);
-      expect(
-        events.map((Map<String, Object?> event) => event['type']),
-        <String>[
-          'recording.start',
-          'nav.screen',
-          'book.open',
-          'page.shown',
-          'page.shown',
-          'page.shown',
-          'select.end',
-          'selection.action',
-          'quote.create',
-          'search.query',
-          'search.result.open',
-          'search.close',
-          'book.close',
-          'nav.screen',
-          'recording.stop',
-        ],
-      );
-      for (int i = 0; i < events.length; i++) {
-        expect(events[i]['seq'], i + 1);
-        if (i > 0) {
-          expect(
-            events[i]['t']! as int,
-            greaterThanOrEqualTo(events[i - 1]['t']! as int),
-          );
+    test(
+      'SNO-F-REC-02: сценарий «открыл книгу, три страницы, выделил, '
+      'цитата, поиск, закрыл» — виды по порядку, номера без пропусков',
+      () async {
+        final SessionKit kit = SessionKit();
+        await kit.session.start(code);
+        final RecordingSession log = kit.session;
+        log.screen('reader');
+        log.bookOpened('hash-a', via: 'shelf');
+        for (int page = 1; page <= 3; page++) {
+          log.place(page: page, strip: 1, mode: 'full');
+          log.log(SnoEventType.pageShown);
+          kit.time.pass(const Duration(seconds: 5));
         }
-      }
-      kit.session.dispose();
-    });
+        log
+          ..log(SnoEventType.selectEnd, data: journalText('остеология'))
+          ..log(SnoEventType.selectionAction, data: journalText('остеология'))
+          ..log(SnoEventType.quoteCreate, data: journalText('остеология'))
+          ..log(SnoEventType.searchQuery, data: journalText('кость'))
+          ..log(SnoEventType.searchResultOpen)
+          ..log(SnoEventType.searchClose)
+          ..bookClosed()
+          ..screen('shelf');
+        await kit.session.stop(StopReason.experimenter);
+
+        final List<Map<String, Object?>> events = kit.store.events(kit.folder);
+        expect(
+          events.map((Map<String, Object?> event) => event['type']),
+          <String>[
+            'recording.start',
+            'nav.screen',
+            'book.open',
+            'page.shown',
+            'page.shown',
+            'page.shown',
+            'select.end',
+            'selection.action',
+            'quote.create',
+            'search.query',
+            'search.result.open',
+            'search.close',
+            'book.close',
+            'nav.screen',
+            'recording.stop',
+          ],
+        );
+        for (int i = 0; i < events.length; i++) {
+          expect(events[i]['seq'], i + 1);
+          if (i > 0) {
+            expect(
+              events[i]['t']! as int,
+              greaterThanOrEqualTo(events[i - 1]['t']! as int),
+            );
+          }
+        }
+        kit.session.dispose();
+      },
+    );
 
     test('SNO-F-REC-02: восемь тысяч событий — журнал меньше трёх '
         'мегабайт', () async {
@@ -339,22 +355,28 @@ void main() {
       kit.session.dispose();
     });
 
-    test('SNO-F-REC-10: потеряло фокус, но осталось на виду — `unfocused`', () async {
-      final SessionKit kit = SessionKit();
-      await kit.session.start(code);
-      kit.session.appState('inactive');
-      kit.time.pass(const Duration(seconds: 4));
-      kit.session.appState('resumed');
-      await kit.settle();
+    test(
+      'SNO-F-REC-10: потеряло фокус, но осталось на виду — `unfocused`',
+      () async {
+        final SessionKit kit = SessionKit();
+        await kit.session.start(code);
+        kit.session.appState('inactive');
+        kit.time.pass(const Duration(seconds: 4));
+        kit.session.appState('resumed');
+        await kit.settle();
 
-      expect(dataOf(eventsOf(kit, 'app.foreground').single), <String, Object?>{
-        'away_ms': 4000,
-        'deepest': 'inactive',
-        'kind': 'unfocused',
-        'hidden_ms': 0,
-      });
-      kit.session.dispose();
-    });
+        expect(
+          dataOf(eventsOf(kit, 'app.foreground').single),
+          <String, Object?>{
+            'away_ms': 4000,
+            'deepest': 'inactive',
+            'kind': 'unfocused',
+            'hidden_ms': 0,
+          },
+        );
+        kit.session.dispose();
+      },
+    );
 
     test('SNO-F-REC-10: экран погасили кнопкой — отлучка помечена', () async {
       final SessionKit kit = SessionKit();
@@ -386,27 +408,30 @@ void main() {
       kit.session.dispose();
     });
 
-    test('SNO-F-REC-10: сердцебиение вне переднего плана несёт состояние', () async {
-      final SessionKit kit = SessionKit();
-      await kit.session.start(code);
-      kit.run(10);
-      kit.session.appState('inactive');
-      kit.session.appState('hidden');
-      kit.run(10);
-      kit.session.appState('resumed');
-      kit.run(10);
-      await kit.settle();
+    test(
+      'SNO-F-REC-10: сердцебиение вне переднего плана несёт состояние',
+      () async {
+        final SessionKit kit = SessionKit();
+        await kit.session.start(code);
+        kit.run(10);
+        kit.session.appState('inactive');
+        kit.session.appState('hidden');
+        kit.run(10);
+        kit.session.appState('resumed');
+        kit.run(10);
+        await kit.settle();
 
-      final List<Map<String, Object?>> beats = eventsOf(
-        kit,
-        'session.heartbeat',
-      );
-      expect(beats, hasLength(3));
-      expect(beats[0].containsKey('data'), isFalse);
-      expect(dataOf(beats[1]), <String, Object?>{'state': 'hidden'});
-      expect(beats[2].containsKey('data'), isFalse);
-      kit.session.dispose();
-    });
+        final List<Map<String, Object?>> beats = eventsOf(
+          kit,
+          'session.heartbeat',
+        );
+        expect(beats, hasLength(3));
+        expect(beats[0].containsKey('data'), isFalse);
+        expect(dataOf(beats[1]), <String, Object?>{'state': 'hidden'});
+        expect(beats[2].containsKey('data'), isFalse);
+        kit.session.dispose();
+      },
+    );
 
     test('SNO-F-REC-10: итог отлучек — в сведениях записи и строкой для '
         'экспериментатора', () async {
@@ -432,7 +457,10 @@ void main() {
       });
       expect(recordingInfo(kit, folder)['in_background'], isFalse);
       expect(kit.session.away!.count, 2);
-      expect(describeAway(kit.session.away), 'Уходил из приложения: 2 раза, 0:12');
+      expect(
+        describeAway(kit.session.away),
+        'Уходил из приложения: 2 раза, 0:12',
+      );
 
       // Итог переживает перезапуск приложения до завершения сессии.
       final SessionKit second = SessionKit(
@@ -503,10 +531,7 @@ void main() {
 
       expect(second.session.state!.stoppedBy, StopReason.crash);
       expect(second.session.state!.inBackground, isTrue);
-      expect(
-        dataOf(second.store.events(folder).last)['in_background'],
-        isTrue,
-      );
+      expect(dataOf(second.store.events(folder).last)['in_background'], isTrue);
       expect(recordingInfo(second, folder)['in_background'], isTrue);
       // Отлучки оборванной записи читаются из журнала: итога нет.
       expect(recordingInfo(second, folder)['away'], isNull);
@@ -556,61 +581,71 @@ void main() {
   });
 
   group('SNO-F-CFG-03: блоки тестирования', () {
-    test('SNO-F-CFG-03: «начать» и «закончить» — в журнале, блок один', () async {
-      final SessionKit kit = SessionKit();
-      await kit.session.start(code);
-      kit.run(10);
-      expect(kit.session.nextBlock, 1);
-      expect(kit.session.block, isNull);
+    test(
+      'SNO-F-CFG-03: «начать» и «закончить» — в журнале, блок один',
+      () async {
+        final SessionKit kit = SessionKit();
+        await kit.session.start(code);
+        kit.run(10);
+        expect(kit.session.nextBlock, 1);
+        expect(kit.session.block, isNull);
 
-      expect(kit.session.startBlock(1), isTrue);
-      expect(kit.session.block, 1);
-      // Пока блок открыт, второй не начинается.
-      expect(kit.session.startBlock(2), isFalse);
-      kit.run(100);
-      expect(kit.session.blockElapsedMs, 100000);
-      expect(kit.session.endBlock(), isTrue);
-      expect(kit.session.block, isNull);
-      // Заканчивать больше нечего.
-      expect(kit.session.endBlock(), isFalse);
-      expect(kit.session.nextBlock, 2);
+        expect(kit.session.startBlock(1), isTrue);
+        expect(kit.session.block, 1);
+        // Пока блок открыт, второй не начинается.
+        expect(kit.session.startBlock(2), isFalse);
+        kit.run(100);
+        expect(kit.session.blockElapsedMs, 100000);
+        expect(kit.session.endBlock(), isTrue);
+        expect(kit.session.block, isNull);
+        // Заканчивать больше нечего.
+        expect(kit.session.endBlock(), isFalse);
+        expect(kit.session.nextBlock, 2);
 
-      expect(kit.session.startBlock(2), isTrue);
-      kit.run(50);
-      await kit.session.stop(StopReason.experimenter);
+        expect(kit.session.startBlock(2), isTrue);
+        kit.run(50);
+        await kit.session.stop(StopReason.experimenter);
 
-      expect(eventsOf(kit, 'block.start').map(dataOf), <Map<String, Object?>>[
-        <String, Object?>{'n': 1},
-        <String, Object?>{'n': 2},
-      ]);
-      expect(eventsOf(kit, 'block.end').map(dataOf), <Map<String, Object?>>[
-        <String, Object?>{'n': 1, 'duration_ms': 100000, 'by': 'experimenter'},
-        // Открытый блок закрыла остановка записи.
-        <String, Object?>{'n': 2, 'duration_ms': 50000, 'by': 'stop'},
-      ]);
-      // Конец блока — раньше остановки записи.
-      final List<String> types = kit.store.types(kit.folder);
-      expect(types.sublist(types.length - 2), <String>[
-        'block.end',
-        'recording.stop',
-      ]);
-      expect(recordingInfo(kit, kit.folder)['blocks'], <Object?>[
-        <String, Object?>{
-          'n': 1,
-          'start_ms': 10000,
-          'duration_ms': 100000,
-          'closed_by': 'experimenter',
-        },
-        <String, Object?>{
-          'n': 2,
-          'start_ms': 110000,
-          'duration_ms': 50000,
-          'closed_by': 'stop',
-        },
-      ]);
-      expect(describeBlocks(kit.session.blocks), 'Блоки: 1 — 1:40 · 2 — 0:50');
-      kit.session.dispose();
-    });
+        expect(eventsOf(kit, 'block.start').map(dataOf), <Map<String, Object?>>[
+          <String, Object?>{'n': 1},
+          <String, Object?>{'n': 2},
+        ]);
+        expect(eventsOf(kit, 'block.end').map(dataOf), <Map<String, Object?>>[
+          <String, Object?>{
+            'n': 1,
+            'duration_ms': 100000,
+            'by': 'experimenter',
+          },
+          // Открытый блок закрыла остановка записи.
+          <String, Object?>{'n': 2, 'duration_ms': 50000, 'by': 'stop'},
+        ]);
+        // Конец блока — раньше остановки записи.
+        final List<String> types = kit.store.types(kit.folder);
+        expect(types.sublist(types.length - 2), <String>[
+          'block.end',
+          'recording.stop',
+        ]);
+        expect(recordingInfo(kit, kit.folder)['blocks'], <Object?>[
+          <String, Object?>{
+            'n': 1,
+            'start_ms': 10000,
+            'duration_ms': 100000,
+            'closed_by': 'experimenter',
+          },
+          <String, Object?>{
+            'n': 2,
+            'start_ms': 110000,
+            'duration_ms': 50000,
+            'closed_by': 'stop',
+          },
+        ]);
+        expect(
+          describeBlocks(kit.session.blocks),
+          'Блоки: 1 — 1:40 · 2 — 0:50',
+        );
+        kit.session.dispose();
+      },
+    );
 
     test('SNO-F-CFG-03: блоков не отмечали — строки нет; после остановки '
         'блок не начать', () async {
@@ -626,25 +661,28 @@ void main() {
       kit.session.dispose();
     });
 
-    test('SNO-F-CFG-03: блоки остановленной сессии переживают перезапуск', () async {
-      final SessionKit first = SessionKit();
-      await first.session.start(code);
-      first.session.startBlock(3);
-      first.run(75);
-      first.session.endBlock();
-      await first.session.stop(StopReason.experimenter);
-      first.session.dispose();
+    test(
+      'SNO-F-CFG-03: блоки остановленной сессии переживают перезапуск',
+      () async {
+        final SessionKit first = SessionKit();
+        await first.session.start(code);
+        first.session.startBlock(3);
+        first.run(75);
+        first.session.endBlock();
+        await first.session.stop(StopReason.experimenter);
+        first.session.dispose();
 
-      final SessionKit second = SessionKit(
-        settings: first.settings,
-        store: first.store,
-        time: first.time,
-      );
-      await second.session.restore();
+        final SessionKit second = SessionKit(
+          settings: first.settings,
+          store: first.store,
+          time: first.time,
+        );
+        await second.session.restore();
 
-      expect(describeBlocks(second.session.blocks), 'Блоки: 3 — 1:15');
-      second.session.dispose();
-    });
+        expect(describeBlocks(second.session.blocks), 'Блоки: 3 — 1:15');
+        second.session.dispose();
+      },
+    );
   });
 
   group('SNO-F-REC-02: настройки в журнале', () {

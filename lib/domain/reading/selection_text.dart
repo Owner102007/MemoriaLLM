@@ -85,9 +85,7 @@ String leavingText(String text, {Set<String> hyphenated = const <String>{}}) {
     if (hyphenated.isNotEmpty) {
       final ({String left, String right})? halves = _halvesAt(text, at);
       if (halves != null &&
-          hyphenated.contains(
-            '${halves.left}-${halves.right}'.toLowerCase(),
-          )) {
+          hyphenated.contains('${halves.left}-${halves.right}'.toLowerCase())) {
         out.write('-');
       }
     }

@@ -1147,9 +1147,7 @@ class _TestingScreenState extends State<TestingScreen>
         title: ValueListenableBuilder<int>(
           valueListenable: session.ticks,
           builder: (BuildContext context, int tick, Widget? child) {
-            final String passed = describeRecordingTime(
-              session.blockElapsedMs,
-            );
+            final String passed = describeRecordingTime(session.blockElapsedMs);
             return Text(
               'Блок $running идёт · $passed',
               key: const Key('sno-block-passed'),

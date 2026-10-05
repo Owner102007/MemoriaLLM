@@ -49,8 +49,8 @@ void main() {
   test('BUG-51: готовый запрос к модели не несёт знака переноса', () {
     final String filled = fillPrompt(
       'Объясни «{{выделение}}».\nОтрывок: {{контекст}}',
-      selection: 'остео${mark}логия',
-      context: 'Наука остео${mark}логия изучает кости.',
+      selection: 'остео$markлогия',
+      context: 'Наука остео$markлогия изучает кости.',
     );
     expect(filled, isNot(contains(mark)));
     expect(filled, contains('«остеология»'));
@@ -65,7 +65,7 @@ void main() {
           id: 'q-1',
           bookId: 'book-1',
           page: 3,
-          content: 'остео${mark}логия изучает кости',
+          content: 'остео$markлогия изучает кости',
           createdAt: DateTime.utc(2026, 10, 5),
         ),
       ],
