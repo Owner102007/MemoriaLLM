@@ -230,8 +230,7 @@ void main() {
         now: time.now,
         monotonic: () =>
             () => time.monotonic,
-        ticker: (void Function() onTick) =>
-            () {},
+        ticker: (void Function() onTick) => () {},
       );
     }
 
@@ -280,11 +279,9 @@ void main() {
         'recording.stop',
         'session.finish',
       ]);
-      final Map<String, Object?> info =
-          jsonDecode(
-                await File(p.join(done.path, kRecordingFile)).readAsString(),
-              )
-              as Map<String, Object?>;
+      final Map<String, Object?> info = jsonDecode(
+        await File(p.join(done.path, kRecordingFile)).readAsString(),
+      ) as Map<String, Object?>;
       final Map<String, Object?> about =
           info['recording']! as Map<String, Object?>;
       expect(about['finished'], isTrue);
@@ -300,11 +297,8 @@ void main() {
       await first.start(await first.proposeCode());
       final String folder = first.state!.folder;
       // Приложение умерло посреди строки журнала.
-      await journalOf(folder).writeAsString(
-        '{"seq":2,"t":10',
-        mode: FileMode.append,
-        flush: true,
-      );
+      await journalOf(folder)
+          .writeAsString('{"seq":2,"t":10', mode: FileMode.append, flush: true);
       first.dispose();
       time.pass(const Duration(minutes: 2));
 
@@ -324,10 +318,7 @@ void main() {
       await second.finish();
       expect(second.locked, isFalse);
       expect(await current(folder).exists(), isFalse);
-      expect(
-        await Directory(p.join(records.path, folder)).exists(),
-        isTrue,
-      );
+      expect(await Directory(p.join(records.path, folder)).exists(), isTrue);
       second.dispose();
     });
   });

@@ -209,8 +209,7 @@ void main() {
         now: kit.time.now,
         monotonic: () =>
             () => kit.time.monotonic,
-        ticker: (void Function() onTick) =>
-            () {},
+        ticker: (void Function() onTick) => () {},
         random: Random(7),
       );
 
