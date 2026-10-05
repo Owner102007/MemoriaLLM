@@ -92,9 +92,7 @@ String leavingText(String text, {Set<String> hyphenated = const <String>{}}) {
     if (hyphenated.isNotEmpty) {
       final ({String left, String right})? halves = _halvesAt(text, at);
       if (halves != null &&
-          hyphenated.contains(
-            spellingKey('${halves.left}-${halves.right}'),
-          )) {
+          hyphenated.contains(spellingKey('${halves.left}-${halves.right}'))) {
         out.write('-');
       }
     }

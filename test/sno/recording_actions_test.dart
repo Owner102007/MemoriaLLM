@@ -590,15 +590,12 @@ void main() {
         'drift_ms': 3 * 60 * 1000,
         'applied': true,
       });
-      expect(
-        dataOf(eventsOf(kit, 'app.foreground').single),
-        <String, Object?>{
-          'away_ms': 3 * 60 * 1000,
-          'deepest': 'paused',
-          'kind': 'hidden',
-          'hidden_ms': 3 * 60 * 1000,
-        },
-      );
+      expect(dataOf(eventsOf(kit, 'app.foreground').single), <String, Object?>{
+        'away_ms': 3 * 60 * 1000,
+        'deepest': 'paused',
+        'kind': 'hidden',
+        'hidden_ms': 3 * 60 * 1000,
+      });
       kit.session.dispose();
     });
 
@@ -634,15 +631,12 @@ void main() {
       final Map<String, Object?> left = eventsOf(kit, 'app.background').single;
       expect(left['t'], 0);
       expect(dataOf(left), <String, Object?>{'state': 'inactive'});
-      expect(
-        dataOf(eventsOf(kit, 'app.foreground').single),
-        <String, Object?>{
-          'away_ms': 6000,
-          'deepest': 'inactive',
-          'kind': 'unfocused',
-          'hidden_ms': 0,
-        },
-      );
+      expect(dataOf(eventsOf(kit, 'app.foreground').single), <String, Object?>{
+        'away_ms': 6000,
+        'deepest': 'inactive',
+        'kind': 'unfocused',
+        'hidden_ms': 0,
+      });
       kit.session.dispose();
     });
 
@@ -657,15 +651,12 @@ void main() {
       kit.session.appState('resumed');
       await kit.settle();
 
-      expect(
-        dataOf(eventsOf(kit, 'app.foreground').single),
-        <String, Object?>{
-          'away_ms': 9000,
-          'deepest': 'hidden',
-          'kind': 'hidden',
-          'hidden_ms': 9000,
-        },
-      );
+      expect(dataOf(eventsOf(kit, 'app.foreground').single), <String, Object?>{
+        'away_ms': 9000,
+        'deepest': 'hidden',
+        'kind': 'hidden',
+        'hidden_ms': 9000,
+      });
       kit.session.dispose();
     });
 
