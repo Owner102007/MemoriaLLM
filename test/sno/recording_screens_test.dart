@@ -769,8 +769,10 @@ void main() {
       await tester.pump();
       expect(find.byKey(const Key('sno-exit-refused')), findsOneWidget);
       expect(kit.session.recording, isTrue);
-      // Сообщение уходит само.
-      await tester.pump(const Duration(seconds: 5));
+      // Сообщение уходит само: срок считается с того мига, как оно
+      // встало на место, поэтому время идёт двумя кадрами.
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('sno-exit-refused')), findsNothing);
 

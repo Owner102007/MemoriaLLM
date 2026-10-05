@@ -206,10 +206,7 @@ void main() {
       expect(numbers(<String>[line(1), line(2)]), <int>[1, 2]);
       // За обрывком успели дописать перевод строки: строка целая, но
       // не читается — её в счёт не берут, остальные на месте.
-      expect(
-        numbers(<String>[line(1), '{"seq": 2, "t', line(3)]),
-        <int>[1, 3],
-      );
+      expect(numbers(<String>[line(1), '{"seq": 2, "t', line(3)]), <int>[1, 3]);
       expect(numbers(<String>[line(1), line(2), '{"seq": 3, "t']), <int>[1, 2]);
       expect(readableEvents(<String>['мусор', '{']), isEmpty);
       expect(readableEvents(const <String>[]), isEmpty);
