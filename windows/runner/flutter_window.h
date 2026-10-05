@@ -41,6 +41,11 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_channel_;
 
+  // Канал `memoria/device` (SNO-F-REC-01): запись сессии спрашивает
+  // заряд и свободное место и просит не гасить экран.
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      device_channel_;
+
   // Развёрнуто ли окно во весь экран, и каким оно было до этого.
   bool full_screen_ = false;
   LONG_PTR windowed_style_ = 0;

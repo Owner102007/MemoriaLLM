@@ -8,6 +8,8 @@ import '../domain/library/shelf.dart';
 import '../domain/navigation/sections.dart';
 import '../domain/theme/app_palette.dart';
 import '../sno/flags.dart';
+import '../sno/recording/recording_overlay.dart';
+import '../sno/recording/session.dart';
 import '../sno/testing_screen.dart';
 import 'library/device_books_screen.dart';
 import 'library/library_screen.dart';
@@ -16,7 +18,7 @@ import 'theme/palette_scope.dart';
 import 'theme/theme_builder.dart';
 
 /// Корневой виджет приложения.
-class MemoriaApp extends StatelessWidget {
+class MemoriaApp extends StatefulWidget {
   /// Создаёт приложение с готовым контроллером тем и службами.
   const MemoriaApp({
     required this.themeController,
@@ -31,24 +33,54 @@ class MemoriaApp extends StatelessWidget {
   final AppServices services;
 
   @override
+  State<MemoriaApp> createState() => _MemoriaAppState();
+}
+
+class _MemoriaAppState extends State<MemoriaApp> {
+  /// Навигатор приложения — слою записи: диалог остановки и экран
+  /// завершения сессии открываются поверх любого экрана (SNO-F-REC-01).
+  final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
+
+  @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppThemeId>(
-      valueListenable: themeController,
+      valueListenable: widget.themeController,
       builder: (BuildContext context, AppThemeId themeId, Widget? child) {
         final AppPalette palette = appPalettes[themeId]!;
         return MaterialApp(
           title: appNameFor(Sno.branch),
           debugShowCheckedModeBanner: false,
+          navigatorKey: _navigator,
           theme: buildTheme(palette),
           // Палитра нужна полке целыми числами, а не через `ColorScheme`:
           // по ним считается цвет категории и проверяется его контраст.
           builder: (BuildContext context, Widget? page) => AppPaletteScope(
             palette: palette,
-            child: page ?? const SizedBox.shrink(),
+            child: _underRecording(page ?? const SizedBox.shrink()),
           ),
-          home: HomeShell(themeController: themeController, services: services),
+          home: HomeShell(
+            themeController: widget.themeController,
+            services: widget.services,
+          ),
         );
       },
+    );
+  }
+
+  /// Кладёт поверх приложения слой записи, если запись в сборке есть.
+  ///
+  /// Слой стоит выше навигатора: точка записи видна на каждом экране и
+  /// лежит поверх светофильтра — тот накрывает только картинку
+  /// страницы (SNO-SCR-02).
+  Widget _underRecording(Widget page) {
+    final RecordingSession? session = widget.services.recording;
+    if (session == null) {
+      return page;
+    }
+    return RecordingOverlay(
+      session: session,
+      navigator: _navigator,
+      child: page,
     );
   }
 }
@@ -117,6 +149,46 @@ class _HomeShellState extends State<HomeShell> {
   /// новая полка, которая читает настройки заново.
   int _resets = 0;
 
+  /// Сессия записи; `null` — в этой сборке записи нет.
+  RecordingSession? get _session => widget.services.recording;
+
+  @override
+  void initState() {
+    super.initState();
+    _session?.addListener(_sessionChanged);
+    _tellScreen();
+  }
+
+  @override
+  void didUpdateWidget(HomeShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.services.recording, widget.services.recording)) {
+      oldWidget.services.recording?.removeListener(_sessionChanged);
+      _session?.addListener(_sessionChanged);
+      _tellScreen();
+    }
+  }
+
+  @override
+  void dispose() {
+    _session?.removeListener(_sessionChanged);
+    super.dispose();
+  }
+
+  /// Запись началась, остановилась или сессия завершена: замок полки
+  /// и «назад» зависят от этого (SNO-F-LIB-02, SNO-F-REC-01).
+  void _sessionChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Говорит записи, на каком экране участник (SNO-F-REC-02): это
+  /// подставляется в каждое событие журнала.
+  void _tellScreen() {
+    _session?.context.screen = _reading ? 'reader' : _section.name;
+  }
+
   void _open(AppSection section) {
     if (section == _section) {
       return;
@@ -127,6 +199,21 @@ class _HomeShellState extends State<HomeShell> {
         _deviceOpened = true;
       }
     });
+    _tellScreen();
+  }
+
+  /// Запись началась (SNO-F-REC-01): участник возвращается на полку.
+  ///
+  /// Сообщение «убрана с полки» с кнопкой «Вернуть» при этом уходит:
+  /// под замком расположение книг не меняется ничем (SNO-F-LIB-02).
+  void _recordingStarted() {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.maybeOf(context)
+      ?..clearSnackBars()
+      ..removeCurrentSnackBar();
+    _open(AppSection.shelf);
   }
 
   /// Полка просит книги устройства: раздел и категория для них.
@@ -150,6 +237,7 @@ class _HomeShellState extends State<HomeShell> {
   void _readingChanged(bool reading) {
     if (mounted && reading != _reading) {
       setState(() => _reading = reading);
+      _tellScreen();
     }
   }
 
@@ -192,10 +280,13 @@ class _HomeShellState extends State<HomeShell> {
         // панели нет.
         final bool typing = MediaQuery.viewInsetsOf(context).bottom > 0;
         final AppSection? behind = sectionBehind(_section);
+        // SNO-F-REC-01: пока запись идёт, «назад» на полке приложение
+        // не закрывает — закрытое приложение оборвало бы запись.
+        final bool recording = _session?.recording ?? false;
         return PopScope<Object?>(
           // «Назад» из «Устройства» и «Настроек» ведёт на «Полку», а не
           // закрывает приложение.
-          canPop: behind == null,
+          canPop: behind == null && !recording,
           onPopInvokedWithResult: (bool didPop, Object? result) {
             if (!didPop && behind != null) {
               _open(behind);
@@ -273,6 +364,9 @@ class _HomeShellState extends State<HomeShell> {
           titleSearch: Sno.enabled,
           // SNO-F-READ-01: без модели над выделением нет промптов.
           models: Sno.models,
+          // SNO-F-LIB-02: пока сессия записи не завершена, полка стоит
+          // на месте.
+          locked: _session?.locked ?? false,
         );
       case AppSection.device:
         if (!_deviceOpened) {
@@ -296,6 +390,7 @@ class _HomeShellState extends State<HomeShell> {
             flags: Sno.flags,
             visible: _section == AppSection.testing,
             onStateReset: () => unawaited(_stateReset()),
+            onRecordingStarted: _recordingStarted,
           );
         }
         return const SizedBox.shrink();

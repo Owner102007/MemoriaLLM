@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import '../domain/library/archive_scan.dart';
 import '../domain/library/book_file_picker.dart';
 import '../domain/library/book_storage.dart';
@@ -9,6 +11,7 @@ import '../domain/reading/full_screen.dart';
 import '../domain/reading/reader_document.dart';
 import '../domain/reading/volume_keys.dart';
 import '../infrastructure/files/android_book_storage.dart';
+import '../infrastructure/files/app_directory.dart';
 import '../infrastructure/files/archive_scanner.dart';
 import '../infrastructure/files/book_copy.dart';
 import '../infrastructure/files/cover_cache.dart';
@@ -19,6 +22,12 @@ import '../infrastructure/pdf/pdfrx_document.dart';
 import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
 import '../sno/flags.dart';
+import '../sno/participant_code.dart';
+import '../sno/recording/device_status.dart';
+import '../sno/recording/file_store.dart';
+import '../sno/recording/session.dart';
+import '../sno/reference_state.dart';
+import 'build_info.dart';
 import 'data/app_data.dart';
 import 'library/cover_service.dart';
 import 'library/device_library.dart';
@@ -41,6 +50,7 @@ class AppServices {
     this.volumeKeys = const NoVolumeKeys(),
     this.window = const NoFullScreenWindow(),
     this.archiveSearch = noArchiveSearch,
+    this.recording,
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -93,6 +103,37 @@ class AppServices {
       // Условие — константа сборки: в основное приложение обход
       // архивов не попадает.
       archiveSearch: Sno.literature ? findArchivesInIsolate : noArchiveSearch,
+      // SNO-F-REC-01: запись сессии — только в сборке ветви. Условие —
+      // константа сборки: в основном приложении записи нет вовсе.
+      recording: Sno.recording ? _recordingFor(data, storage) : null,
+    );
+  }
+
+  /// Сессия записи сборки ветви СНО2026 (SNO-F-REC-01).
+  ///
+  /// Записи лежат в папке данных приложения, в `Записи/`; снимок
+  /// начала записи строится тем же кодом, что эталон.
+  static RecordingSession _recordingFor(AppData data, BookStorage storage) {
+    final String nodeId = data.clock.nodeId;
+    return RecordingSession(
+      settings: data.settings,
+      store: FileRecordingStore(() async {
+        final Directory root = await appDataDirectory();
+        return Directory(p.join(root.path, FileRecordingStore.folderName));
+      }),
+      nodeId: nodeId,
+      snapshot: ReferenceKeeper(
+        data: data,
+        storage: storage,
+      ).recordingSnapshot,
+      branch: Sno.branch,
+      device: deviceCodeOf(nodeId),
+      build: <String, Object?>{
+        'version': appVersion,
+        'commit': appCommit,
+        'flags': Sno.flags.enabledNames,
+      },
+      status: const PlatformDeviceStatus(),
     );
   }
 
@@ -131,4 +172,8 @@ class AppServices {
   /// пользуется раздел «Тестирование» сборок ветвей СНО2026. В основном
   /// приложении он ничего не ищет.
   final ArchiveSearch archiveSearch;
+
+  /// Сессия записи (SNO-F-REC-01); `null` — в этой сборке записи нет:
+  /// основное приложение и тесты, которым она не нужна.
+  final RecordingSession? recording;
 }

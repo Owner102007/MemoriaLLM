@@ -16,20 +16,13 @@ import '../domain/reading/reader_document.dart';
 import 'flags.dart';
 import 'hold_button.dart';
 import 'literature_archive.dart';
+import 'participant_code.dart';
+import 'recording/code_screen.dart';
+import 'recording/finish_screen.dart';
+import 'recording/session.dart';
 import 'reference_state.dart';
 
-/// Сколько знаков идентификатора устройства показывается.
-///
-/// Шести хватает, чтобы различить устройства одной серии тестов, и их
-/// можно прочесть вслух; тот же код встанет в манифест записи.
-const int kDeviceCodeLength = 6;
-
-/// Код устройства: первые знаки его идентификатора узла.
-String deviceCodeOf(String nodeId) {
-  return nodeId.length > kDeviceCodeLength
-      ? nodeId.substring(0, kDeviceCodeLength)
-      : nodeId;
-}
+export 'participant_code.dart' show deviceCodeOf, kDeviceCodeLength;
 
 /// Сколько неудач названо в сообщении поимённо.
 const int kNamedFailures = 3;
@@ -153,15 +146,40 @@ enum ArchiveSearchPhase {
   finished,
 }
 
+/// Готовность к записи одной строкой: «место 1,2 ГБ · заряд 84 %».
+///
+/// Пусто — устройство ничего о себе не сказало. Мало места или заряда
+/// — сказано словами: это предупреждение, не запрет (SNO-F-REC-01).
+String describeReadiness(Readiness readiness) {
+  final int? free = readiness.freeBytes;
+  final int? battery = readiness.batteryPercent;
+  return <String>[
+    if (free != null)
+      readiness.lowSpace
+          ? 'мало места: ${describeFileSize(free)}'
+          : 'место ${describeFileSize(free)}',
+    if (battery != null)
+      readiness.lowBattery ? 'низкий заряд: $battery %' : 'заряд $battery %',
+  ].join(' · ');
+}
+
 /// Раздел «Тестирование» сборок ветвей СНО2026 (SNO-F-CFG-03).
 ///
 /// Единственное место инструментов исследования: всё остальное
-/// приложение остаётся читалкой. Пунктов-заглушек здесь нет — запись,
+/// приложение остаётся читалкой. Пунктов-заглушек здесь нет —
 /// cognitive load test и записи на устройстве появляются вместе со
-/// своими функциями. Сейчас в разделе: код устройства, блок «Для
-/// экспериментатора» с архивами литературы (SNO-F-LIT-03, SNO-F-LIT-01)
-/// и эталонным состоянием (SNO-F-CFG-04), сведения о ветви
-/// (SNO-F-CFG-01).
+/// своими функциями. Сейчас в разделе: код устройства, запись сессии
+/// (SNO-F-REC-01), блок «Для экспериментатора» с архивами литературы
+/// (SNO-F-LIT-03, SNO-F-LIT-01) и эталонным состоянием (SNO-F-CFG-04),
+/// сведения о ветви (SNO-F-CFG-01).
+///
+/// **Запись сессии** (SNO-F-REC-01, `recording/session.dart`). «Старт
+/// записи» выдаёт код участника (SNO-F-CFG-05) и начинает запись только
+/// после «Код записан». Пока запись идёт, здесь — и только здесь —
+/// видно, сколько её осталось: в чтении счёта нет, он подгонял бы
+/// участника. После остановки раздел ведёт на завершение сессии. Пока
+/// сессия не завершена, полка под замком, и здесь нельзя ни добавить
+/// архив, ни сбросить устройство: и то и другое меняет полку.
 ///
 /// **Архив с литературой приложение находит само** (SNO-F-LIT-03).
 /// Когда блок «Для экспериментатора» раскрыт, устройство обходится
@@ -191,6 +209,7 @@ class TestingScreen extends StatefulWidget {
     this.unpack,
     this.visible = true,
     this.onStateReset,
+    this.onRecordingStarted,
     super.key,
   });
 
@@ -213,6 +232,9 @@ class TestingScreen extends StatefulWidget {
   /// Устройство сброшено к эталону: оболочке пора перечитать то, что
   /// она держит в памяти, — тему и порядок полки.
   final VoidCallback? onStateReset;
+
+  /// Запись началась: оболочке пора вернуть участника на полку.
+  final VoidCallback? onRecordingStarted;
 
   @override
   State<TestingScreen> createState() => _TestingScreenState();
@@ -279,18 +301,121 @@ class _TestingScreenState extends State<TestingScreen>
   /// начала нового, не принимается.
   int _referenceRun = 0;
 
+  /// Заряд и свободное место; `null` — ещё не спрашивали.
+  Readiness? _readiness;
+
+  /// Номер вопроса о готовности: запоздавший ответ не принимается.
+  int _readinessRun = 0;
+
+  /// Идёт ли старт записи: от нажатия до начавшейся записи.
+  bool _starting = false;
+
+  /// Почему запись не началась; `null` — такого не было.
+  String? _startFailure;
+
+  /// Сессия записи; `null` — в этой сборке записи нет.
+  RecordingSession? get _session => widget.services.recording;
+
+  /// Начата ли и не завершена ли сессия: пока это так, полку менять
+  /// нельзя ничем — ни архивом, ни сбросом.
+  bool get _sessionOpen => _session?.locked ?? false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _session?.addListener(_sessionChanged);
+    unawaited(_refreshReadiness());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _session?.removeListener(_sessionChanged);
     _searchRun++;
     unawaited(_searching?.cancel());
     super.dispose();
+  }
+
+  void _sessionChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Спрашивает у устройства заряд и свободное место (SNO-F-REC-01).
+  Future<void> _refreshReadiness() async {
+    final RecordingSession? session = _session;
+    if (session == null) {
+      return;
+    }
+    final int run = ++_readinessRun;
+    final Readiness readiness = await session.readiness();
+    if (mounted && run == _readinessRun) {
+      setState(() => _readiness = readiness);
+    }
+  }
+
+  /// Начинает запись: код участника, подтверждение, старт
+  /// (SNO-F-REC-01, SNO-F-CFG-05).
+  Future<void> _startRecording(RecordingSession session) async {
+    if (_starting || _busy || _resetting || session.locked) {
+      return;
+    }
+    setState(() {
+      _starting = true;
+      _startFailure = null;
+    });
+    try {
+      final Readiness readiness = await session.readiness();
+      final ParticipantCode proposed = await session.proposeCode();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _readiness = readiness);
+      final ParticipantCode? code = await Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(
+        MaterialPageRoute<ParticipantCode>(
+          builder: (BuildContext context) {
+            return ParticipantCodeScreen(
+              proposed: proposed,
+              readiness: readiness,
+              parse: session.enteredCode,
+              minutes: session.planned.inMinutes,
+            );
+          },
+        ),
+      );
+      if (code == null) {
+        return;
+      }
+      final bool started = await session.start(code);
+      if (!started) {
+        _startFailure =
+            'Запись не началась: не удалось завести папку записи. '
+            'Проверьте свободное место.';
+        return;
+      }
+      widget.onRecordingStarted?.call();
+    } on Object {
+      _startFailure = 'Запись не началась из-за ошибки приложения.';
+    } finally {
+      if (mounted) {
+        setState(() => _starting = false);
+      }
+    }
+  }
+
+  /// Открывает завершение сессии (SNO-SCR-08).
+  void _openFinish(RecordingSession session) {
+    unawaited(
+      openSessionFinish(
+        Navigator.of(context, rootNavigator: true),
+        session,
+      ),
+    );
   }
 
   @override
@@ -315,6 +440,14 @@ class _TestingScreenState extends State<TestingScreen>
       // Итог прошлого сброса к нынешнему состоянию уже не относится.
       _resetResult = null;
       unawaited(_refreshReference());
+    }
+    if (widget.visible && !oldWidget.visible) {
+      // Заряд и место за это время изменились.
+      unawaited(_refreshReadiness());
+    }
+    if (!identical(oldWidget.services.recording, widget.services.recording)) {
+      oldWidget.services.recording?.removeListener(_sessionChanged);
+      _session?.addListener(_sessionChanged);
     }
   }
 
@@ -384,7 +517,9 @@ class _TestingScreenState extends State<TestingScreen>
 
   /// Сбрасывает устройство к эталонному состоянию (SNO-F-CFG-04).
   Future<void> _reset() async {
-    if (_busy || _resetting) {
+    // SNO-F-REC-01: пока сессия не завершена, сброса нет — он стёр бы
+    // следы участника, чья запись ещё не закрыта.
+    if (_busy || _resetting || _starting || _sessionOpen) {
       return;
     }
     setState(() {
@@ -504,7 +639,7 @@ class _TestingScreenState extends State<TestingScreen>
 
   /// Выбор архива системным диалогом — запасной путь.
   Future<void> _pickArchives() async {
-    if (_busy || _picking || _resetting) {
+    if (_busy || _picking || _resetting || _starting || _sessionOpen) {
       return;
     }
     final List<PickedFile> files;
@@ -527,7 +662,8 @@ class _TestingScreenState extends State<TestingScreen>
   /// всё остальное уходит в распаковку, и не-архив получает свой отказ
   /// от неё — «это не ZIP-архив».
   Future<void> _addArchives(List<PickedFile> files) async {
-    if (_busy || _resetting) {
+    // SNO-F-LIB-02: пока сессия не завершена, полка не меняется ничем.
+    if (_busy || _resetting || _starting || _sessionOpen) {
       return;
     }
     final List<PickedFile> archives = <PickedFile>[
@@ -736,7 +872,7 @@ class _TestingScreenState extends State<TestingScreen>
           ),
           subtitle: Text(describeFoundArchive(archive, _roots)),
           trailing: const Icon(Icons.chevron_right),
-          enabled: !_busy,
+          enabled: !_busy && !_sessionOpen,
           onTap: () => unawaited(_addFound(archive)),
         ),
       if (_phase == ArchiveSearchPhase.searching)
@@ -791,7 +927,9 @@ class _TestingScreenState extends State<TestingScreen>
               ),
             TextButton(
               key: const Key('sno-add-archive'),
-              onPressed: _busy ? null : () => unawaited(_pickArchives()),
+              onPressed: _busy || _sessionOpen
+                  ? null
+                  : () => unawaited(_pickArchives()),
               child: const Text('Выбрать вручную…'),
             ),
           ],
@@ -854,14 +992,17 @@ class _TestingScreenState extends State<TestingScreen>
                 label: _resetting
                     ? 'Сбрасываю…'
                     : 'Удерживайте, чтобы сбросить',
-                onConfirmed: _busy || _resetting
+                onConfirmed: _busy || _resetting || _starting || _sessionOpen
                     ? null
                     : () => unawaited(_reset()),
               ),
               const SizedBox(height: 8),
               Text(
-                'Стирает прогресс, цитаты, заметки, закладки и настройки. '
-                'Книги остаются.',
+                _sessionOpen
+                    ? 'Сброс недоступен, пока сессия записи не завершена.'
+                    : 'Стирает прогресс, цитаты, заметки, закладки и '
+                          'настройки. Книги остаются.',
+                key: const Key('sno-reset-note'),
                 style: theme.textTheme.bodySmall,
               ),
               if (result != null)
@@ -899,10 +1040,102 @@ class _TestingScreenState extends State<TestingScreen>
     ]);
   }
 
+  /// Запись сессии: старт, ход, завершение (SNO-F-REC-01).
+  ///
+  /// Что здесь стоит, зависит от того, что с записью: «Старт записи»,
+  /// пока сессии нет; оставшееся время, пока запись идёт; путь к
+  /// завершению сессии, когда она остановлена.
+  List<Widget> _recording(ThemeData theme, RecordingSession session) {
+    final ParticipantCode? participant = session.participant;
+    final Readiness? readiness = _readiness;
+    final String ready = readiness == null ? '' : describeReadiness(readiness);
+    final String? failure = _startFailure;
+    return <Widget>[
+      if (participant != null)
+        ListTile(
+          key: const Key('sno-participant'),
+          title: const Text('Участник'),
+          subtitle: Text(participant.display),
+        ),
+      if (session.phase == RecordingPhase.idle) ...<Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: FilledButton.icon(
+            key: const Key('sno-record-start'),
+            onPressed: _busy || _resetting || _starting
+                ? null
+                : () => unawaited(_startRecording(session)),
+            icon: const Icon(Icons.fiber_manual_record),
+            label: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'Старт записи · ${session.planned.inMinutes} мин',
+              ),
+            ),
+          ),
+        ),
+        if (ready.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              ready,
+              key: const Key('sno-record-ready'),
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        if (failure != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text(
+              failure,
+              key: const Key('sno-record-failure'),
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ),
+      ],
+      if (session.phase == RecordingPhase.recording)
+        ListTile(
+          key: const Key('sno-recording'),
+          leading: Icon(
+            Icons.fiber_manual_record,
+            color: theme.colorScheme.error,
+          ),
+          // Оставшееся время видно только здесь (решение В6): в чтении
+          // счёт подгонял бы участника.
+          title: ValueListenableBuilder<int>(
+            valueListenable: session.ticks,
+            builder: (BuildContext context, int tick, Widget? child) {
+              final String left = describeRecordingTime(session.remainingMs);
+              return Text(
+                'Идёт запись · осталось $left',
+                key: const Key('sno-recording-left'),
+              );
+            },
+          ),
+          subtitle: const Text(
+            'Остановить: удерживайте точку в углу экрана',
+          ),
+        ),
+      if (session.phase == RecordingPhase.stopped)
+        ListTile(
+          key: const Key('sno-session-finish'),
+          leading: const Icon(Icons.flag_outlined),
+          title: const Text('Завершить сессию'),
+          subtitle: Text(
+            '${describeStop(session.state?.stoppedBy)} · '
+            '${describeRecordingTime(session.elapsedMs)}',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _openFinish(session),
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final String device = deviceCodeOf(widget.services.data.clock.nodeId);
+    final RecordingSession? session = _session;
     return Scaffold(
       appBar: AppBar(title: const Text('Тестирование')),
       body: Align(
@@ -917,11 +1150,15 @@ class _TestingScreenState extends State<TestingScreen>
                 title: const Text('Устройство'),
                 subtitle: Text(device),
               ),
+              if (session != null) ..._recording(theme, session),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 child: Text(
-                  'Запись, тест и записи появятся здесь следующими '
-                  'сборками.',
+                  session == null
+                      ? 'Запись, тест и записи появятся здесь следующими '
+                            'сборками.'
+                      : 'Тест и записи на устройстве появятся здесь '
+                            'следующими сборками.',
                   style: theme.textTheme.bodySmall,
                 ),
               ),

@@ -5,10 +5,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
+import android.os.StatFs
 import android.provider.Settings
 import android.view.KeyEvent
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -30,6 +33,8 @@ import java.io.File
  *
  * По той же причине здесь живут доступ ко всем файлам (S5.4) и перехват
  * кнопок громкости (F-READ-26): Flutter этих кнопок не видит вовсе.
+ * И три вопроса записи сессии к устройству (SNO-F-REC-01): заряд,
+ * свободное место и «экран не гаснет».
  */
 class MainActivity : FlutterActivity() {
     /** Канал кнопок громкости; `null`, пока движок не поднят. */
@@ -86,6 +91,61 @@ class MainActivity : FlutterActivity() {
             }
         }
         volumeChannel = volume
+
+        // SNO-F-REC-01: запись сессии в сборках ветвей СНО2026
+        // спрашивает заряд и свободное место перед стартом и держит
+        // экран включённым, пока идёт.
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DEVICE_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "battery" -> result.success(batteryPercent())
+                "freeBytes" ->
+                    result.success(freeBytes(call.arguments as? String))
+                "keepScreenOn" -> {
+                    keepScreenOn(call.arguments as? Boolean ?: false)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** Заряд батареи в процентах; `null` — система не ответила. */
+    private fun batteryPercent(): Int? {
+        val manager =
+            getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+                ?: return null
+        val percent =
+            manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return if (percent in 0..100) percent else null
+    }
+
+    /** Свободное место на томе, где лежит [path]; `null` — не узнать. */
+    private fun freeBytes(path: String?): Long? {
+        if (path == null) {
+            return null
+        }
+        return try {
+            StatFs(path).availableBytes
+        } catch (error: IllegalArgumentException) {
+            null
+        }
+    }
+
+    /**
+     * Держит экран включённым, пока идёт запись сессии.
+     *
+     * Признак окна, а не блокировка пробуждения: разрешения он не
+     * требует и снимается сам, когда приложение ушло с экрана.
+     */
+    private fun keepScreenOn(on: Boolean) {
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     /**
@@ -298,6 +358,7 @@ class MainActivity : FlutterActivity() {
         const val CHANNEL = "memoria/uri_permissions"
         const val STORAGE_CHANNEL = "memoria/storage_access"
         const val VOLUME_CHANNEL = "memoria/volume_keys"
+        const val DEVICE_CHANNEL = "memoria/device"
         const val READ_STORAGE = android.Manifest.permission.READ_EXTERNAL_STORAGE
         const val STORAGE_REQUEST = 4201
     }

@@ -3,9 +3,82 @@
 #include <flutter/standard_method_codec.h>
 
 #include <optional>
+#include <string>
 #include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+// Путь из UTF-8, каким его присылает Dart, в UTF-16 для Win32. Пустая
+// строка — путь не разобрался.
+std::wstring WideFromUtf8(const std::string& text) {
+  if (text.empty()) {
+    return std::wstring();
+  }
+  const int size = static_cast<int>(text.size());
+  const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                         text.data(), size, nullptr, 0);
+  if (length <= 0) {
+    return std::wstring();
+  }
+  std::wstring wide(static_cast<size_t>(length), L'\0');
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), size,
+                      wide.data(), length);
+  return wide;
+}
+
+// SNO-F-REC-01: три вопроса записи сессии к устройству. Плагина ради
+// них нет по той же причине, что и для окна во весь экран.
+void HandleDeviceCall(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const std::string& method = call.method_name();
+  if (method == "battery") {
+    SYSTEM_POWER_STATUS power = {};
+    // 128 во флагах — батареи нет вовсе; процент больше ста (255) —
+    // система его не знает.
+    if (!GetSystemPowerStatus(&power) || (power.BatteryFlag & 128) != 0 ||
+        power.BatteryLifePercent > 100) {
+      result->Success(flutter::EncodableValue());
+      return;
+    }
+    result->Success(flutter::EncodableValue(
+        static_cast<int32_t>(power.BatteryLifePercent)));
+    return;
+  }
+  if (method == "freeBytes") {
+    const std::string* path = std::get_if<std::string>(call.arguments());
+    const std::wstring wide =
+        path == nullptr ? std::wstring() : WideFromUtf8(*path);
+    ULARGE_INTEGER available = {};
+    if (wide.empty() ||
+        !GetDiskFreeSpaceExW(wide.c_str(), &available, nullptr, nullptr)) {
+      result->Success(flutter::EncodableValue());
+      return;
+    }
+    result->Success(flutter::EncodableValue(
+        static_cast<int64_t>(available.QuadPart)));
+    return;
+  }
+  if (method == "keepScreenOn") {
+    const bool* on = std::get_if<bool>(call.arguments());
+    if (on == nullptr) {
+      result->Error("bad_arguments", "keepScreenOn expects a bool");
+      return;
+    }
+    // Просьба к системе не гасить экран и не засыпать; снимается той же
+    // функцией, а с концом процесса — сама.
+    SetThreadExecutionState(*on ? (ES_CONTINUOUS | ES_DISPLAY_REQUIRED |
+                                   ES_SYSTEM_REQUIRED)
+                                : ES_CONTINUOUS);
+    result->Success(flutter::EncodableValue());
+    return;
+  }
+  result->NotImplemented();
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -52,6 +125,15 @@ bool FlutterWindow::OnCreate() {
         result->Success(flutter::EncodableValue(SetFullScreen(*on)));
       });
 
+  device_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "memoria/device",
+          &flutter::StandardMethodCodec::GetInstance());
+  device_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+             result) { HandleDeviceCall(call, std::move(result)); });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -70,6 +152,10 @@ void FlutterWindow::OnDestroy() {
   if (window_channel_) {
     window_channel_->SetMethodCallHandler(nullptr);
     window_channel_ = nullptr;
+  }
+  if (device_channel_) {
+    device_channel_->SetMethodCallHandler(nullptr);
+    device_channel_ = nullptr;
   }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;

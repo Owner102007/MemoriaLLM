@@ -39,40 +39,36 @@ import '../domain/library/shelf.dart';
 import '../domain/library/shelf_archive.dart';
 import '../domain/settings/app_settings.dart';
 import '../infrastructure/database/app_database.dart';
+import 'settings_keys.dart';
+
+export 'settings_keys.dart' show SnoSettingsKeys;
 
 /// Версия записи эталона.
 const String kReferenceSchema = 'sno2026-reference/1';
-
-/// Ключи сборки ветви в общей таблице настроек.
-abstract final class SnoSettingsKeys {
-  /// Эталонное состояние — JSON ([ReferenceState.encode]).
-  static const String reference = 'sno.reference_state';
-
-  /// Когда устройство в последний раз сбросили к эталону: время в UTC.
-  ///
-  /// Попадёт в снимок начала записи (этап 2): по нему видно, с чистого
-  /// ли состояния начинал тестировщик.
-  static const String lastReset = 'sno.state_reset';
-}
 
 /// Настройки, которые сброс не трогает: это не след читателя.
 ///
 /// Идентификатор устройства обязан пережить сброс — по нему записи
 /// одного устройства узнаются при разборе; часы идут только вперёд;
-/// версия правила «есть ли текст» — служебная отметка разборки.
+/// версия правила «есть ли текст» — служебная отметка разборки; коды
+/// участников, уже выданные на устройстве, не должны выдаться снова
+/// (SNO-ALG-CFG-03).
 const Set<String> _keptSettings = <String>{
   SettingsKeys.nodeId,
   SettingsKeys.lastHlc,
   SettingsKeys.deviceTextRule,
   SnoSettingsKeys.reference,
   SnoSettingsKeys.lastReset,
+  SnoSettingsKeys.knownCodes,
 };
 
 /// Настройки, которых нет в снимке состояния: их пишет само приложение,
-/// а не читатель, и после сброса они появляются снова.
+/// а не читатель, и после сброса они появляются снова. Состояние
+/// сессии записи — тоже не след читателя: это отметка самой записи.
 const Set<String> _serviceSettings = <String>{
   ..._keptSettings,
   SettingsKeys.promptsSeeded,
+  SnoSettingsKeys.session,
 };
 
 /// Книга на своём месте полки.
@@ -383,7 +379,17 @@ class StateSnapshot {
   bool matches(ReferenceState reference) {
     return traces == 0 && settings.isEmpty && shelf.sameAs(reference.shelf);
   }
+
+  /// Запись снимка для записи сессии (`snapshot_start.json`).
+  Map<String, Object?> toJson() => <String, Object?>{
+    ...shelf.toJson(),
+    'settings': settings,
+    'traces': traces,
+  };
 }
+
+/// Версия снимка состояния в записи сессии.
+const String kSnapshotSchema = 'sno2026-snapshot/1';
 
 /// Чем кончился сброс.
 class ResetReport {
@@ -584,6 +590,28 @@ class ReferenceKeeper {
       settings: settings,
       traces: traces,
     );
+  }
+
+  /// Снимок состояния для начала записи сессии (SNO-F-REC-01).
+  ///
+  /// Строится тем же кодом, что эталон, и говорит, совпадает ли с ним
+  /// устройство: по снимку видно, с одной ли полки начинали участники.
+  Future<Map<String, Object?>> recordingSnapshot() async {
+    final StateSnapshot now = await snapshot();
+    final ReferenceState? known = await reference();
+    final DateTime? reset = await lastReset();
+    return <String, Object?>{
+      'schema': kSnapshotSchema,
+      'taken_at': _now().toUtc().toIso8601String(),
+      ...now.toJson(),
+      'reference': known == null
+          ? null
+          : <String, Object?>{
+              'saved_at': known.savedAt.toUtc().toIso8601String(),
+              'matches': now.matches(known),
+            },
+      'last_reset': reset?.toUtc().toIso8601String(),
+    };
   }
 
   Future<ShelfState> _shelf() async {

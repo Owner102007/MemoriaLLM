@@ -12,6 +12,7 @@ import 'package:memoria/domain/reading/full_screen.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/volume_keys.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
+import 'package:memoria/sno/recording/session.dart';
 
 import 'fake_reading.dart';
 
@@ -35,6 +36,9 @@ import 'fake_reading.dart';
 ///
 /// [archiveSearch] так же подменяет поиск архивов с книгами
 /// (SNO-F-LIT-03); без него поиск «находит» [archives].
+///
+/// [recording] — сессия записи (SNO-F-REC-01); без неё записи в
+/// приложении нет, как в основной сборке.
 AppServices testServices({
   required AppData data,
   ReaderDocument? document,
@@ -50,6 +54,7 @@ AppServices testServices({
   ScanRunner? scanRunner,
   List<FoundArchive> archives = const <FoundArchive>[],
   ArchiveSearch? archiveSearch,
+  RecordingSession? recording,
 }) {
   final ReaderDocument doc =
       document ?? FakeReaderDocument(pages: <String>['текст']);
@@ -67,6 +72,7 @@ AppServices testServices({
     window: window,
     // Изолята здесь нет по той же причине, что и у обхода книг ниже.
     archiveSearch: archiveSearch ?? fakeArchiveSearch(archives),
+    recording: recording,
     covers: CoverService(
       opener: FakeDocumentOpener(
         doc,
