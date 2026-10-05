@@ -713,6 +713,64 @@ void main() {
       });
       kit.session.dispose();
     });
+
+    test('SNO-F-REC-01: остановка дописывает своё на диск — её можно '
+        'дождаться', () async {
+      final SessionKit kit = SessionKit();
+      await kit.session.start(code);
+      kit.run(3);
+
+      SessionState? marked() {
+        return SessionState.decode(
+          kit.settings.values[SnoSettingsKeys.session],
+        );
+      }
+
+      final Future<void> stopping = kit.session.stop(StopReason.experimenter);
+      // Точка погасла сразу, а отметка сессии ещё говорит «идёт»:
+      // приложение, закрытое сейчас, запись бы оборвало.
+      expect(kit.session.recording, isFalse);
+      expect(marked()!.phase, RecordingPhase.recording);
+
+      await kit.session.settled();
+      expect(marked()!.phase, RecordingPhase.stopped);
+      expect(marked()!.stoppedBy, StopReason.experimenter);
+      await stopping;
+
+      // Завершения тоже можно дождаться.
+      final Future<void> finishing = kit.session.finish();
+      expect(kit.settings.values, contains(SnoSettingsKeys.session));
+      await kit.session.settled();
+      expect(kit.settings.values, isNot(contains(SnoSettingsKeys.session)));
+      await finishing;
+      // Ждать нечего — ожидание кончается сразу.
+      await kit.session.settled();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-01: об отказе диска при остановке узнают '
+        'слушатели', () async {
+      final SessionKit kit = SessionKit();
+      await kit.session.start(code);
+      final String folder = kit.folder;
+      await kit.settle();
+      bool? seen;
+      kit.session.addListener(() => seen = kit.session.writeFailed);
+
+      // Диск отказал на последнем сбросе журнала.
+      kit.store.failAppend = true;
+      await kit.session.stop(StopReason.experimenter);
+
+      // Экран завершения открыт сразу после остановки и узнаёт об
+      // отказе от сессии: без этого он показал бы целый журнал.
+      expect(seen, isTrue);
+      expect(kit.session.state!.failed, isTrue);
+      final Map<String, Object?> recording =
+          kit.store.json(folder, kRecordingFile)['recording']!
+              as Map<String, Object?>;
+      expect(recording['write_failed'], isTrue);
+      kit.session.dispose();
+    });
   });
 
   group('SNO-F-CFG-05: завершение сессии', () {
@@ -897,6 +955,8 @@ void main() {
               as Map<String, Object?>;
       expect(recording['stopped_by'], 'crash');
       expect(recording['duration_s'], 20);
+      // Лёг ли журнал умершего приложения целиком, узнать не у кого.
+      expect(recording['write_failed'], isNull);
 
       // Завершается такая сессия как любая другая.
       await second.session.finish();
@@ -1166,6 +1226,60 @@ void main() {
       await second.session.finish();
       expect(second.session.locked, isFalse);
       second.session.dispose();
+    });
+
+    test('SNO-F-REC-01: отказ диска помнится и после перезапуска', () async {
+      final SessionKit first = SessionKit();
+      await first.session.start(code);
+      final String folder = first.folder;
+      first.run(5);
+      // Диск отказал: строка остановки в журнал не легла.
+      first.store.failAppend = true;
+      await first.session.stop(StopReason.experimenter);
+      first.store.failAppend = false;
+      expect(first.session.writeFailed, isTrue);
+      first.session.dispose();
+
+      // Приложение перезапустили до завершения сессии.
+      final SessionKit second = SessionKit(
+        settings: first.settings,
+        store: first.store,
+        time: first.time,
+      );
+      await second.session.restore();
+      expect(second.session.phase, RecordingPhase.stopped);
+      expect(second.session.state!.stoppedBy, StopReason.experimenter);
+      expect(second.session.writeFailed, isTrue);
+      await second.session.finish();
+
+      final Map<String, Object?> recording =
+          second.store.json(folder, kRecordingFile)['recording']!
+              as Map<String, Object?>;
+      expect(recording['finished'], isTrue);
+      expect(recording['write_failed'], isTrue);
+      second.session.dispose();
+    });
+
+    test('SNO-F-REC-01: отметка сессии помнит, лёг ли журнал на диск', () {
+      final SessionState state = SessionState(
+        id: 'id',
+        folder: 'folder',
+        participant: code,
+        startedAt: DateTime.fromMillisecondsSinceEpoch(kTestMoment),
+        plannedSeconds: 2400,
+        phase: RecordingPhase.stopped,
+        stoppedBy: StopReason.auto,
+        durationMs: 2400000,
+      );
+      expect(SessionState.decode(state.encode())!.failed, isFalse);
+      expect(
+        SessionState.decode(state.withFailure(true).encode())!.failed,
+        isTrue,
+      );
+      expect(
+        SessionState.decode(state.withFailure(null).encode())!.failed,
+        isNull,
+      );
     });
   });
 

@@ -116,16 +116,20 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   ///
   /// Пока запись идёт, окно не закрывается — как «назад» на полке
   /// телефона: закрытое приложение оборвало бы запись участника.
-  /// Сначала запись останавливают, потом закрывают окно.
+  /// Сначала запись останавливают, потом закрывают окно. Остановке и
+  /// завершению сессии дают дописать своё на диск: окно, закрытое
+  /// раньше, оставило бы запись без строки остановки.
   @override
   Future<AppExitResponse> didRequestAppExit() async {
     if (!widget.session.recording) {
+      await widget.session.settled();
       return AppExitResponse.exit;
     }
     final BuildContext? host = widget.navigator.currentContext;
     if (host != null) {
+      // Крестик нажали несколько раз — сообщение одно, а не очередь.
       ScaffoldMessenger.maybeOf(host)
-        ?..hideCurrentSnackBar()
+        ?..clearSnackBars()
         ..showSnackBar(
           const SnackBar(
             key: Key('sno-exit-refused'),

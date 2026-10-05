@@ -34,10 +34,10 @@ static bool ClaimSingleInstance() {
   const DWORD error = ::GetLastError();
   // Объект уже есть — или есть, но не даётся: его держит экземпляр,
   // запущенный с другими правами.
-  const bool running =
+  const bool taken =
       error == ERROR_ALREADY_EXISTS ||
       (claim == nullptr && error == ERROR_ACCESS_DENIED);
-  if (!running) {
+  if (!taken) {
     return true;
   }
   HWND running = ::FindWindowW(nullptr, MEMORIA_WINDOW_TITLE);

@@ -65,6 +65,9 @@ class MemoryRecordingStore implements RecordingStore {
   /// Отказывать ли в заведении папки: «места нет».
   bool failCreate = false;
 
+  /// Отказывать ли журналу в записи: «диск отказал».
+  bool failAppend = false;
+
   /// Сколько журналов открыто и ещё не закрыто.
   int open = 0;
 
@@ -93,6 +96,7 @@ class MemoryRecordingStore implements RecordingStore {
     return _MemoryJournal(
       journals.putIfAbsent(folder, StringBuffer.new),
       () => open--,
+      () => failAppend,
     );
   }
 
@@ -178,13 +182,17 @@ class MemoryRecordingStore implements RecordingStore {
 }
 
 class _MemoryJournal implements JournalFile {
-  _MemoryJournal(this._text, this._closed);
+  _MemoryJournal(this._text, this._closed, this._failing);
 
   final StringBuffer _text;
   final void Function() _closed;
+  final bool Function() _failing;
 
   @override
   Future<void> append(String text) async {
+    if (_failing()) {
+      throw StateError('журнал не пишется');
+    }
     _text.write(text);
   }
 

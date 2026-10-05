@@ -776,10 +776,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('sno-exit-refused')), findsNothing);
 
-      // Запись остановлена — окно можно закрыть.
-      await kit.session.stop(StopReason.experimenter);
-      await tester.pump();
+      // Запись остановлена — окно можно закрыть, но не раньше, чем
+      // остановка допишет своё на диск: иначе следующий запуск принял
+      // бы запись за оборванную.
+      final Future<void> stopping = kit.session.stop(StopReason.experimenter);
       expect(await askToExit(), 'exit');
+      final SessionState marked = SessionState.decode(
+        kit.settings.values[SnoSettingsKeys.session],
+      )!;
+      expect(marked.phase, RecordingPhase.stopped);
+      await stopping;
+      await tester.pump();
 
       await unmount(tester);
     });
