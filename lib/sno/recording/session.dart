@@ -123,6 +123,8 @@ class SessionState {
     this.stoppedBy,
     this.durationMs,
     this.events = 0,
+    this.lastT = 0,
+    this.resyncs = 0,
   });
 
   /// Идентификатор записи.
@@ -152,11 +154,20 @@ class SessionState {
   /// Сколько строк в журнале на миг остановки.
   final int events;
 
+  /// Время `t` события остановки: у событий, записанных после
+  /// перезапуска приложения, оно не меньше.
+  final int lastT;
+
+  /// Сколько раз за запись переставляли якорь настенных часов.
+  final int resyncs;
+
   /// То же состояние после остановки.
   SessionState stopped({
     required StopReason by,
     required int durationMs,
     required int events,
+    required int lastT,
+    required int resyncs,
   }) {
     return SessionState(
       id: id,
@@ -168,6 +179,8 @@ class SessionState {
       stoppedBy: by,
       durationMs: durationMs,
       events: events,
+      lastT: lastT,
+      resyncs: resyncs,
     );
   }
 
@@ -183,6 +196,8 @@ class SessionState {
       'stopped_by': stoppedBy?.wire,
       'duration_ms': durationMs,
       'events': events,
+      'last_t': lastT,
+      'resyncs': resyncs,
     });
   }
 
@@ -203,6 +218,8 @@ class SessionState {
       final Object? phase = raw['phase'];
       final Object? duration = raw['duration_ms'];
       final Object? events = raw['events'];
+      final Object? lastT = raw['last_t'];
+      final Object? resyncs = raw['resyncs'];
       final ParticipantCode? participant = ParticipantCode.fromJson(
         raw['participant'],
       );
@@ -231,6 +248,8 @@ class SessionState {
         stoppedBy: StopReason.named(raw['stopped_by']),
         durationMs: duration is int ? duration : null,
         events: events is int ? events : 0,
+        lastT: lastT is int ? lastT : 0,
+        resyncs: resyncs is int ? resyncs : 0,
       );
     } on FormatException {
       return null;
@@ -382,6 +401,7 @@ class RecordingSession extends ChangeNotifier {
   int _seq = 0;
   int _beats = 0;
   bool _starting = false;
+  Future<void>? _startTail;
   Future<void>? _stopRun;
   bool _finishing = false;
   DateTime? _leftAt;
@@ -413,7 +433,7 @@ class RecordingSession extends ChangeNotifier {
   /// Не удалось ли записать что-то на диск.
   bool get writeFailed => _journal?.failed ?? false;
 
-  /// Сколько запись идёт или шла, в миллисекундах, по настенным часам.
+  /// Сколько запись идёт или шла, в миллисекундах.
   int get elapsedMs {
     final SessionState? state = _state;
     if (state == null) {
@@ -424,8 +444,8 @@ class RecordingSession extends ChangeNotifier {
       return done;
     }
     final int limit = _planned.inMilliseconds;
-    final int passed = _wallElapsedMs(state);
-    return passed < 0 ? 0 : (passed > limit ? limit : passed);
+    final int passed = _passedMs(state);
+    return passed > limit ? limit : passed;
   }
 
   /// Сколько записи осталось, в миллисекундах.
@@ -433,6 +453,21 @@ class RecordingSession extends ChangeNotifier {
 
   int _wallElapsedMs(SessionState state) {
     return _now().difference(state.startedAt).inMilliseconds;
+  }
+
+  /// Сколько прошло от старта: большее из настенного и монотонного
+  /// счёта, не меньше нуля.
+  ///
+  /// Сорок минут считаются по настенным часам: монотонные во сне
+  /// устройства стоят. Монотонные учитываются тоже — на случай, если
+  /// настенные перевели назад: запись не должна от этого растянуться,
+  /// а её длительность — обнулиться.
+  int _passedMs(SessionState state) {
+    final RecordingClock? clock = _clock;
+    final int wall = clock?.wallElapsedMs ?? _wallElapsedMs(state);
+    final int monotonic = clock?.t ?? 0;
+    final int passed = wall > monotonic ? wall : monotonic;
+    return passed < 0 ? 0 : passed;
   }
 
   /// Поднимает сессию после запуска приложения.
@@ -451,63 +486,101 @@ class RecordingSession extends ChangeNotifier {
       }
       return;
     }
+    final EventMarks? last = await _lastMarks(state.folder);
     if (state.phase == RecordingPhase.stopped) {
       _state = state;
-      _seq = state.events;
+      // Номер продолжает журнал: отметка сессии могла отстать от него.
+      _seq = last != null && last.seq > state.events ? last.seq : state.events;
       _notify();
       return;
     }
-    _state = await _stoppedByCrash(state);
+    _state = await _stoppedByCrash(state, last);
     _notify();
   }
 
+  /// Отметки последнего читаемого события журнала; `null` — журнала
+  /// нет или он не читается.
+  Future<EventMarks?> _lastMarks(String folder) async {
+    try {
+      return lastEventMarks(await _store.lastLines(folder));
+    } on Object {
+      return null;
+    }
+  }
+
   /// Закрывает запись, оборванную перезапуском приложения.
-  Future<SessionState> _stoppedByCrash(SessionState state) async {
-    int seq = 0;
-    int t = 0;
-    try {
-      final String? last = await _store.lastLine(state.folder);
-      final ({int seq, int t})? marks = last == null ? null : eventMarks(last);
-      if (marks != null) {
-        seq = marks.seq;
-        t = marks.t;
-      }
-    } on Object {
-      // Журнал не прочитался: длительность неизвестна, запись всё равно
-      // закрывается — замок на полке обязан сниматься.
-    }
+  ///
+  /// Последнее читаемое событие журнала [last] говорит, сколько она
+  /// длилась. Если это уже остановка — приложение умерло между
+  /// остановкой и отметкой о ней, — запись закрывается ею, а не второй
+  /// остановкой поверх.
+  Future<SessionState> _stoppedByCrash(
+    SessionState state,
+    EventMarks? last,
+  ) async {
     final int limit = state.plannedSeconds * 1000;
-    final int duration = t > limit ? limit : t;
-    final DateTime moment = _now();
-    _seq = seq;
-    try {
-      final JournalFile file = await _store.openJournal(state.folder);
-      final EventJournal journal = EventJournal(file);
-      _seq++;
-      journal.add(
-        encodeEvent(
-          seq: _seq,
-          t: t,
-          wall: moment,
-          type: SnoEventType.recordingStop,
-          context: context,
-          data: <String, Object?>{
-            'stopped_by': StopReason.crash.wire,
-            'duration_ms': duration,
-            'late': true,
-          },
-        ),
+    int clip(int value) => value < 0 ? 0 : (value > limit ? limit : value);
+
+    final SessionState stopped;
+    if (last != null && last.type == SnoEventType.recordingStop.wire) {
+      final Object? duration = last.data['duration_ms'];
+      stopped = state.stopped(
+        by: StopReason.named(last.data['stopped_by']) ?? StopReason.crash,
+        durationMs: clip(duration is int ? duration : last.t),
+        events: last.seq,
+        lastT: last.t,
+        resyncs: 0,
       );
-      await journal.close();
-    } on Object {
-      _seq = seq;
+      _seq = last.seq;
+    } else {
+      final int t = last?.t ?? 0;
+      // Длительность — по настенному времени последнего события, как у
+      // записи, остановленной в срок: сон устройства в неё входит.
+      final DateTime? wall = last?.wall;
+      final int duration = clip(
+        wall == null ? t : wall.difference(state.startedAt).inMilliseconds,
+      );
+      _seq = last?.seq ?? 0;
+      try {
+        final EventJournal journal = EventJournal(
+          await _store.openJournal(state.folder),
+        );
+        journal.add(
+          encodeEvent(
+            seq: _seq + 1,
+            t: t,
+            wall: _now(),
+            type: SnoEventType.recordingStop,
+            context: context,
+            data: <String, Object?>{
+              'stopped_by': StopReason.crash.wire,
+              'duration_ms': duration,
+              'late': true,
+            },
+          ),
+        );
+        await journal.close();
+        if (!journal.failed) {
+          _seq++;
+        }
+      } on Object {
+        // Строка остановки не легла: запись всё равно закрывается —
+        // замок на полке обязан сниматься.
+      }
+      stopped = state.stopped(
+        by: StopReason.crash,
+        durationMs: duration,
+        events: _seq,
+        lastT: t,
+        resyncs: 0,
+      );
     }
-    final SessionState stopped = state.stopped(
-      by: StopReason.crash,
-      durationMs: duration,
-      events: _seq,
-    );
-    await _settings.write(SnoSettingsKeys.session, stopped.encode());
+    try {
+      await _settings.write(SnoSettingsKeys.session, stopped.encode());
+    } on Object {
+      // Отметка не записалась: при следующем запуске запись закроется
+      // так же — по строке остановки, которая уже лежит в журнале.
+    }
     await _putInfo(stopped, finished: false);
     return stopped;
   }
@@ -581,6 +654,11 @@ class RecordingSession extends ChangeNotifier {
     final Map<String, Object?> snapshot = await _takeSnapshot();
     final String? sort = await _settings.read(SettingsKeys.shelfSort);
     final String? lastReset = await _settings.read(SnoSettingsKeys.lastReset);
+    final int since =
+        int.tryParse(
+          await _settings.read(SnoSettingsKeys.recordingsSinceReset) ?? '',
+        ) ??
+        0;
 
     final String folder;
     final EventJournal journal;
@@ -593,9 +671,14 @@ class RecordingSession extends ChangeNotifier {
           startedAt: _now(),
         ),
       );
-      journal = EventJournal(await _store.openJournal(folder));
     } on Object {
       // Папку записи завести не удалось: записи нет, сессии тоже.
+      return false;
+    }
+    try {
+      journal = EventJournal(await _store.openJournal(folder));
+    } on Object {
+      await _discard(folder);
       return false;
     }
 
@@ -610,9 +693,8 @@ class RecordingSession extends ChangeNotifier {
       phase: RecordingPhase.recording,
     );
     try {
-      // Сначала отметка о сессии, потом запись: приложение, упавшее
-      // между ними, найдёт сессию и закроет её.
-      await _settings.write(SnoSettingsKeys.session, state.encode());
+      // Код и счёт записей — раньше отметки о сессии: отказ на них не
+      // оставит сессии, которой не было.
       final Set<String> known = await _knownCodes();
       if (known.add(participant.base)) {
         await _settings.write(
@@ -620,12 +702,19 @@ class RecordingSession extends ChangeNotifier {
           encodeKnownCodes(known),
         );
       }
+      await _settings.write(
+        SnoSettingsKeys.recordingsSinceReset,
+        '${since + 1}',
+      );
+      // Отметка о сессии — до первого события: приложение, упавшее
+      // сразу после, найдёт сессию и закроет её.
+      await _settings.write(SnoSettingsKeys.session, state.encode());
     } on Object {
-      await journal.close();
+      await _abandon(journal, folder);
       return false;
     }
     if (_disposed) {
-      await journal.close();
+      await _abandon(journal, folder);
       return false;
     }
     _clock = clock;
@@ -637,8 +726,11 @@ class RecordingSession extends ChangeNotifier {
     _state = state;
 
     final Object? reference = snapshot['reference'];
+    // Старт — это `t = 0` по определению: обращения к базе между
+    // заведением часов и этой строкой в него не входят.
     _write(
       SnoEventType.recordingStart,
+      at: 0,
       data: <String, Object?>{
         'recording': state.id,
         'planned_s': state.plannedSeconds,
@@ -654,14 +746,34 @@ class RecordingSession extends ChangeNotifier {
       },
     );
     if (lastReset != null) {
-      _write(SnoEventType.stateReset, data: <String, Object?>{'at': lastReset});
+      // Сброс записан с числом записей, начатых после него: ноль —
+      // участник начинает с только что сброшенного устройства.
+      _write(
+        SnoEventType.stateReset,
+        at: 0,
+        data: <String, Object?>{'at': lastReset, 'recordings_since': since},
+      );
     }
     _stopTicker = _ticker(tick);
     // Замок и точка записи появляются сразу; диск догоняет.
+    final Future<void> tail = _startFiles(state, journal, snapshot);
+    _startTail = tail;
     _notify();
+    await tail;
+    if (identical(_startTail, tail)) {
+      _startTail = null;
+    }
+    return true;
+  }
 
+  /// Файлы начала записи: снимок, сведения, первые строки журнала.
+  Future<void> _startFiles(
+    SessionState state,
+    EventJournal journal,
+    Map<String, Object?> snapshot,
+  ) async {
     try {
-      await _store.put(folder, kSnapshotStartFile, _pretty(snapshot));
+      await _store.put(state.folder, kSnapshotStartFile, _pretty(snapshot));
     } on Object {
       journal.failed = true;
     }
@@ -672,7 +784,25 @@ class RecordingSession extends ChangeNotifier {
     } on Object {
       // Экран может погаснуть — запись от этого не пропадает.
     }
-    return true;
+  }
+
+  /// Запись не началась: журнал закрыт, отметки и папки не остаётся.
+  Future<void> _abandon(EventJournal journal, String folder) async {
+    await journal.close();
+    try {
+      await _settings.remove(SnoSettingsKeys.session);
+    } on Object {
+      // Отметка осталась: запуск приложения закроет её как оборванную.
+    }
+    await _discard(folder);
+  }
+
+  Future<void> _discard(String folder) async {
+    try {
+      await _store.discard(folder);
+    } on Object {
+      // Пустая папка осталась среди незавершённых.
+    }
   }
 
   /// Снимок состояния; не удался — так в нём и сказано.
@@ -692,6 +822,7 @@ class RecordingSession extends ChangeNotifier {
   /// остановка. Из них соберётся манифест архива (SNO-F-REC-05).
   Future<void> _putInfo(SessionState state, {required bool finished}) async {
     final int? duration = state.durationMs;
+    final bool running = state.phase == RecordingPhase.recording;
     final Map<String, Object?> info = <String, Object?>{
       'schema': kRecordingSchema,
       'branch': branch,
@@ -705,8 +836,8 @@ class RecordingSession extends ChangeNotifier {
         'duration_s': duration == null ? null : duration ~/ 1000,
         'duration_ms': duration,
         'stopped_by': state.stoppedBy?.wire,
-        'resyncs': _clock?.resyncs ?? 0,
-        'events': state.phase == RecordingPhase.recording ? null : state.events,
+        'resyncs': running ? null : state.resyncs,
+        'events': running ? null : state.events,
         'finished': finished,
       },
     };
@@ -717,13 +848,22 @@ class RecordingSession extends ChangeNotifier {
     }
   }
 
+  /// Время `t` для события сейчас.
+  ///
+  /// Пока часы записи живы — по ним. После перезапуска приложения
+  /// часов нет: время считается от настенного старта, но не меньше
+  /// времени остановки — `t` в журнале не убывает.
   int _tNow() {
     final RecordingClock? clock = _clock;
     if (clock != null) {
       return clock.t;
     }
     final SessionState? state = _state;
-    return state == null ? 0 : _wallElapsedMs(state);
+    if (state == null) {
+      return 0;
+    }
+    final int wall = _wallElapsedMs(state);
+    return wall > state.lastT ? wall : state.lastT;
   }
 
   /// Пишет событие в журнал записи (SNO-F-REC-02).
@@ -742,44 +882,54 @@ class RecordingSession extends ChangeNotifier {
   }
 
   /// Строка журнала с номером и временем; без открытого журнала не
-  /// делает ничего.
+  /// делает ничего. [at] — время события, если оно известно заранее.
   void _write(
     SnoEventType type, {
     Map<String, Object?> data = const <String, Object?>{},
     bool post = false,
+    int? at,
   }) {
     final EventJournal? journal = _journal;
     if (journal == null) {
       return;
     }
     final RecordingClock? clock = _clock;
-    final int t = _tNow();
-    _seq++;
-    journal.add(
-      encodeEvent(
-        seq: _seq,
+    final int t = at ?? _tNow();
+    final DateTime wall = clock == null ? _now() : clock.wallAt(t);
+    String line(Map<String, Object?> payload) {
+      return encodeEvent(
+        seq: _seq + 1,
         t: t,
-        wall: clock == null ? _now() : clock.wallAt(t),
+        wall: wall,
         type: type,
         context: context,
-        data: data,
+        data: payload,
         post: post,
-      ),
-    );
+      );
+    }
+
+    // Данные, которые не пишутся в JSON, не должны ни уронить экран,
+    // ни оставить в журнале пропуск номера: событие пишется без них.
+    String safe() {
+      try {
+        return line(data);
+      } on Object {
+        return line(const <String, Object?>{'unencodable': true});
+      }
+    }
+
+    final String encoded = safe();
+    _seq++;
+    journal.add(encoded);
   }
 
   /// Вышло ли время записи.
-  ///
-  /// Сорок минут считаются по настенным часам: монотонные во сне
-  /// устройства стоят. Монотонные учитываются тоже — на случай, если
-  /// настенные перевели назад: запись не должна от этого растянуться.
   bool get _due {
-    final RecordingClock? clock = _clock;
-    if (clock == null) {
+    final SessionState? state = _state;
+    if (state == null || _clock == null) {
       return false;
     }
-    final int limit = _planned.inMilliseconds;
-    return clock.wallElapsedMs >= limit || clock.t >= limit;
+    return _passedMs(state) >= _planned.inMilliseconds;
   }
 
   /// Секунда записи: сброс журнала на диск, сердцебиение, конец
@@ -893,14 +1043,16 @@ class RecordingSession extends ChangeNotifier {
     _stopTicker = null;
     final RecordingClock? clock = _clock;
     final int limit = _planned.inMilliseconds;
-    final int passed = clock?.wallElapsedMs ?? _wallElapsedMs(state);
+    final int passed = _passedMs(state);
     // Запись, которая кончилась сама, длилась ровно сколько положено,
     // даже если приложение узнало об этом позже.
     final int duration = by == StopReason.auto || passed > limit
         ? limit
-        : (passed < 0 ? 0 : passed);
+        : passed;
+    final int t = _tNow();
     _write(
       SnoEventType.recordingStop,
+      at: t,
       data: <String, Object?>{
         'stopped_by': by.wire,
         'duration_ms': duration,
@@ -911,19 +1063,28 @@ class RecordingSession extends ChangeNotifier {
       by: by,
       durationMs: duration,
       events: _seq,
+      lastT: t,
+      resyncs: clock?.resyncs ?? 0,
     );
     _state = stopped;
     _leftAt = null;
     _deepest = null;
     // Замок и точка записи меняются сразу; диск догоняет.
     _notify();
+    // Файлы начала записи ещё могут писаться: остановка идёт после них.
+    final Future<void>? starting = _startTail;
+    if (starting != null) {
+      await starting;
+    }
+    // Сначала журнал, потом отметка: приложение, умершее между ними,
+    // найдёт в журнале остановку и закроет запись ею.
+    await _journal?.flush();
     try {
       await _settings.write(SnoSettingsKeys.session, stopped.encode());
     } on Object {
-      // Отметка не записалась: после перезапуска запись закроется как
-      // оборванная — журнал при этом цел.
+      // Отметка не записалась: после перезапуска запись закроется по
+      // строке остановки из журнала.
     }
-    await _journal?.flush();
     await _putInfo(stopped, finished: false);
     try {
       await _status.keepScreenOn(false);
@@ -950,14 +1111,12 @@ class RecordingSession extends ChangeNotifier {
       if (state == null || state.phase != RecordingPhase.stopped) {
         return;
       }
-      EventJournal? journal = _journal;
-      if (journal == null) {
+      if (_journal == null) {
         // Сессию подняли после перезапуска: журнал открывается заново.
         try {
-          journal = EventJournal(await _store.openJournal(state.folder));
-          _journal = journal;
+          _journal = EventJournal(await _store.openJournal(state.folder));
         } on Object {
-          journal = null;
+          _journal = null;
         }
       }
       _write(SnoEventType.sessionFinish, post: true);
@@ -965,7 +1124,13 @@ class RecordingSession extends ChangeNotifier {
         by: state.stoppedBy ?? StopReason.crash,
         durationMs: state.durationMs ?? 0,
         events: _seq,
+        lastT: state.lastT,
+        resyncs: state.resyncs,
       );
+      final EventJournal? journal = _journal;
+      // Закрытый журнал больше не держится: повторное завершение
+      // откроет его заново, а не напишет в никуда.
+      _journal = null;
       await journal?.close();
       await _putInfo(done, finished: true);
       try {
@@ -973,8 +1138,12 @@ class RecordingSession extends ChangeNotifier {
       } on Object {
         // Папка осталась среди незавершённых: её подберёт упаковка.
       }
-      await _settings.remove(SnoSettingsKeys.session);
-      _journal = null;
+      try {
+        await _settings.remove(SnoSettingsKeys.session);
+      } on Object {
+        // Отметка осталась: после перезапуска сессию завершат ещё раз.
+        // Замок при этом снимается сейчас — участник уже ушёл.
+      }
       _clock = null;
       _state = null;
       _seq = 0;

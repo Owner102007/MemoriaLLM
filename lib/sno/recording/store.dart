@@ -20,6 +20,9 @@ const String kSnapshotStartFile = 'snapshot_start.json';
 /// остановка. Из него соберётся манифест архива.
 const String kRecordingFile = 'recording.json';
 
+/// Сколько последних строк журнала читает восстановление после сбоя.
+const int kTailLines = 20;
+
 /// Журнал, открытый на дозапись.
 abstract interface class JournalFile {
   /// Дописывает [text] в конец и сбрасывает на диск.
@@ -45,13 +48,16 @@ abstract interface class RecordingStore {
   /// Кладёт в папку записи файл [name] целиком.
   Future<void> put(String folder, String name, String content);
 
-  /// Последняя целая строка журнала записи [folder]; `null` — журнала
-  /// нет или в нём нет ни одной целой строки.
+  /// Последние целые строки журнала записи [folder], не больше [count],
+  /// в порядке записи; пусто — журнала нет или целых строк в нём нет.
   ///
   /// Оборванный хвост — строка без перевода строки в конце — при этом
   /// отрезается: приложение умерло посреди записи, и дописывать за
-  /// обрывком нельзя.
-  Future<String?> lastLine(String folder);
+  /// обрывком нельзя. Зовётся только тогда, когда журнал не открыт.
+  Future<List<String>> lastLines(String folder, {int count = kTailLines});
+
+  /// Убирает папку незавершённой записи, которая так и не началась.
+  Future<void> discard(String folder);
 
   /// Переносит запись из незавершённых к завершённым.
   Future<void> finish(String folder);

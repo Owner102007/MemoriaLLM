@@ -19,6 +19,9 @@ class EventJournal {
   Future<void>? _writing;
   bool _closed = false;
 
+  /// Не удалась ли последняя запись на диск.
+  bool _broken = false;
+
   /// Сколько строк принято.
   int lines = 0;
 
@@ -59,12 +62,18 @@ class EventJournal {
   Future<void> _drain() async {
     try {
       while (_pending.isNotEmpty) {
-        final String chunk = _pending.toString();
+        final String lines = _pending.toString();
         _pending.clear();
+        // После отказа диска пачка могла лечь наполовину. Следующая
+        // начинается с новой строки: обрывок останется отдельной
+        // нечитаемой строкой, а не склеится с целым событием.
+        final String chunk = _broken ? '\n$lines' : lines;
         try {
           await _file.append(chunk);
+          _broken = false;
         } on Object {
           failed = true;
+          _broken = true;
         }
       }
     } finally {

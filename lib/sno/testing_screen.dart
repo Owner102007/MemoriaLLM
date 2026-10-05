@@ -338,8 +338,14 @@ class _TestingScreenState extends State<TestingScreen>
   }
 
   void _sessionChanged() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
+    // Сессию завершили: заряд и место под «Старт записи» — уже не те,
+    // что были сорок минут назад.
+    if (_session?.phase == RecordingPhase.idle) {
+      unawaited(_refreshReadiness());
     }
   }
 
@@ -392,8 +398,8 @@ class _TestingScreenState extends State<TestingScreen>
       final bool started = await session.start(code);
       if (!started) {
         _startFailure =
-            'Запись не началась: не удалось завести папку записи. '
-            'Проверьте свободное место.';
+            'Запись не началась: её не удалось завести на устройстве. '
+            'Проверьте свободное место и попробуйте ещё раз.';
         return;
       }
       widget.onRecordingStarted?.call();

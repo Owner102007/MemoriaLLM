@@ -61,10 +61,31 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   /// Идёт ли завершение.
   bool _closing = false;
 
+  /// Что показано на экране. Запоминается, пока сессия есть: когда её
+  /// завершили, экран ещё уходит с глаз и обязан показывать то же, а не
+  /// пустой код и нули.
+  String _title = '';
+  String _code = '';
+  int _events = 0;
+
   @override
   void initState() {
     super.initState();
     widget.session.addListener(_changed);
+    _remember();
+  }
+
+  void _remember() {
+    final RecordingSession session = widget.session;
+    final SessionState? state = session.state;
+    if (state == null) {
+      return;
+    }
+    _title =
+        '${describeStop(state.stoppedBy)} · '
+        '${describeRecordingTime(session.elapsedMs)}';
+    _code = state.participant.display;
+    _events = session.events;
   }
 
   @override
@@ -75,7 +96,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
 
   void _changed() {
     if (mounted) {
-      setState(() {});
+      setState(_remember);
     }
   }
 
@@ -102,9 +123,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final RecordingSession session = widget.session;
-    final SessionState? state = session.state;
-    final String code = state?.participant.display ?? '';
-    final String length = describeRecordingTime(session.elapsedMs);
+    final bool open = session.phase == RecordingPhase.stopped;
     return Scaffold(
       appBar: AppBar(title: const Text('Завершение сессии')),
       body: Align(
@@ -115,7 +134,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
             children: <Widget>[
               Text(
-                '${describeStop(state?.stoppedBy)} · $length',
+                _title,
                 key: const Key('sno-finish-title'),
                 style: theme.textTheme.titleLarge,
               ),
@@ -126,7 +145,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  code,
+                  _code,
                   key: const Key('sno-finish-code'),
                   style: theme.textTheme.displayMedium?.copyWith(
                     fontFeatures: const <FontFeature>[
@@ -139,7 +158,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
               const Text('Впишите код в бланк'),
               const SizedBox(height: 28),
               Text(
-                'Записано событий: ${session.events}',
+                'Записано событий: $_events',
                 key: const Key('sno-finish-events'),
               ),
               if (session.writeFailed)
@@ -158,7 +177,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
                 label: _closing
                     ? 'Завершаю…'
                     : 'Удерживайте, чтобы завершить сессию',
-                onConfirmed: _closing || state == null
+                onConfirmed: _closing || !open
                     ? null
                     : () => unawaited(_finish()),
               ),

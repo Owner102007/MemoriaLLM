@@ -157,20 +157,53 @@ void main() {
       expect(DateTime.parse(isoWithOffset(utc)).isAtSameMomentAs(utc), isTrue);
     });
 
-    test('SNO-ALG-REC-01: по строке узнаются номер и время события', () {
+    test('SNO-ALG-REC-01: по строке узнаются номер, время и вид события', () {
       final String line = encodeEvent(
         seq: 41,
         t: 20500,
         wall: wall,
-        type: SnoEventType.heartbeat,
+        type: SnoEventType.recordingStop,
         context: RecordingContext(),
+        data: const <String, Object?>{'stopped_by': 'auto'},
       );
-      expect(eventMarks(line), (seq: 41, t: 20500));
+      final EventMarks marks = eventMarks(line)!;
+      expect(marks.seq, 41);
+      expect(marks.t, 20500);
+      expect(marks.type, 'recording.stop');
+      expect(marks.wall!.isAtSameMomentAs(wall), isTrue);
+      expect(marks.data, <String, Object?>{'stopped_by': 'auto'});
       // Оборванная строка и чужой текст не читаются.
       expect(eventMarks(line.substring(0, line.length ~/ 2)), isNull);
       expect(eventMarks(''), isNull);
       expect(eventMarks('[1, 2]'), isNull);
-      expect(eventMarks('{"seq": "41", "t": 1}'), isNull);
+      expect(eventMarks('{"seq": "41", "t": 1, "type": "x.y"}'), isNull);
+      expect(eventMarks('{"seq": 41, "t": 1}'), isNull);
+      // Без данных и без читаемого времени строка всё равно годится.
+      final EventMarks bare = eventMarks(
+        '{"seq": 2, "t": 5, "type": "session.heartbeat", "wall": "вчера"}',
+      )!;
+      expect(bare.wall, isNull);
+      expect(bare.data, isEmpty);
+    });
+
+    test('SNO-F-REC-08: отметки берутся у последней читаемой строки', () {
+      String line(int seq) {
+        return encodeEvent(
+          seq: seq,
+          t: seq * 1000,
+          wall: wall,
+          type: SnoEventType.heartbeat,
+          context: RecordingContext(),
+        );
+      }
+
+      expect(lastEventMarks(<String>[line(1), line(2)])!.seq, 2);
+      // За обрывком успели дописать перевод строки: строка целая, но
+      // не читается — отметки у той, что перед ней.
+      final List<String> torn = <String>[line(1), line(2), '{"seq": 3, "t'];
+      expect(lastEventMarks(torn)!.seq, 2);
+      expect(lastEventMarks(<String>['мусор', '{']), isNull);
+      expect(lastEventMarks(const <String>[]), isNull);
     });
 
     test('SNO-F-REC-02: виды событий названы по одному образцу и не '
@@ -323,7 +356,17 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await file.release();
       await next;
-      expect(file.chunks, <String>['уцелело\n']);
+      // Пропавшая пачка могла лечь наполовину: следующая начинается с
+      // новой строки и с обрывком не склеивается.
+      expect(file.chunks, <String>['\nуцелело\n']);
+
+      // Диск ожил — дальше пачки идут как обычно.
+      journal.add('и это');
+      final Future<void> later = journal.flush();
+      await Future<void>.delayed(Duration.zero);
+      await file.release();
+      await later;
+      expect(file.chunks.last, 'и это\n');
     });
 
     test('SNO-ALG-REC-01: закрытие дописывает оставшееся', () async {

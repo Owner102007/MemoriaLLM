@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +31,10 @@ import '../support/test_services.dart';
 /// `recording_session_test.dart`; здесь — что видит участник и что
 /// делает экспериментатор.
 void main() {
+  const String branchOnly =
+      'основной прогон: проверяется прогонами ветвей '
+      '(--dart-define=SNO_BRANCH=I и II)';
+
   late AppData data;
   late SessionKit kit;
 
@@ -182,6 +187,27 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-CFG-05: системное «назад» на экране кода записи не '
+        'начинает', (WidgetTester tester) async {
+      await pumpTesting(tester);
+      await tap(tester, 'sno-record-start');
+      expect(find.byType(ParticipantCodeScreen), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ParticipantCodeScreen), findsNothing);
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(started, 0);
+      // Кнопка старта снова работает.
+      final FilledButton start = tester.widget(
+        find.byKey(const Key('sno-record-start')),
+      );
+      expect(start.onPressed, isNotNull);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-CFG-05: прежний код принимается только с верной '
         'контрольной цифрой', (WidgetTester tester) async {
       await pumpTesting(tester);
@@ -317,7 +343,27 @@ void main() {
       expect(find.text('Записано событий: 141'), findsOneWidget);
       expect(find.byKey(const Key('sno-finish-failed')), findsNothing);
 
-      await holdOn(tester, 'sno-finish-hold');
+      // Сессию завершают удержанием; пока экран уходит с глаз, на нём
+      // по-прежнему стоят код и итог записи, а не пустые строки.
+      final TestGesture finger = await tester.startGesture(
+        tester.getCenter(find.byKey(const Key('sno-finish-hold'))),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      await tester.pump(kResetHold + const Duration(milliseconds: 100));
+      await finger.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('sno-finish-code'))).data,
+        '6795-4332',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('sno-finish-title'))).data,
+        'Запись остановлена · 23:10',
+      );
+      await tester.pumpAndSettle();
 
       // Сессия завершена: экран закрыт, в разделе снова старт.
       expect(find.byType(SessionFinishScreen), findsNothing);
@@ -360,12 +406,11 @@ void main() {
       addTearDown(tester.view.reset);
       // Эталон есть: кнопка сброса на экране.
       await data.library.save(testBook(hash: 'hash-a'));
-      await ReferenceKeeper(
-        data: data,
-        storage: MemoryBookStorage(),
-      ).remember(const <ArchivePlacement>[
-        ArchivePlacement(fingerprint: 'hash-a', title: 'Аа', category: null),
-      ]);
+      await ReferenceKeeper(data: data, storage: MemoryBookStorage()).remember(
+        const <ArchivePlacement>[
+          ArchivePlacement(fingerprint: 'hash-a', title: 'Аа', category: null),
+        ],
+      );
       await pumpTesting(tester);
       await tester.tap(find.text('Для экспериментатора'));
       await tester.pumpAndSettle();
@@ -430,7 +475,49 @@ void main() {
 
     setUp(() => underTaps = 0);
 
-    Future<void> pumpOverlay(WidgetTester tester) async {
+    /// Сколько раз экран под слоем принял нажатие за долгое — так
+    /// экран чтения начинает выделение.
+    int pageHolds = 0;
+
+    setUp(() => pageHolds = 0);
+
+    /// Экран с кнопкой в левом углу — там, где стоит точка записи.
+    Widget withCornerButton() {
+      return Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            key: const Key('under-dot'),
+            icon: const Icon(Icons.menu),
+            onPressed: () => underTaps++,
+          ),
+        ),
+        body: const Center(child: Text('страница книги')),
+      );
+    }
+
+    /// Экран, который, как экран чтения, принимает долгое нажатие за
+    /// начало выделения — через четверть секунды.
+    Widget likeReader() {
+      return RawGestureDetector(
+        behavior: HitTestBehavior.opaque,
+        gestures: <Type, GestureRecognizerFactory<GestureRecognizer>>{
+          LongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+                () => LongPressGestureRecognizer(
+                  duration: const Duration(milliseconds: 250),
+                ),
+                (LongPressGestureRecognizer instance) {
+                  instance.onLongPressStart = (LongPressStartDetails details) {
+                    pageHolds++;
+                  };
+                },
+              ),
+        },
+        child: const Center(child: Text('страница книги')),
+      );
+    }
+
+    Future<void> pumpOverlay(WidgetTester tester, {Widget? home}) async {
       final GlobalKey<NavigatorState> navigator = GlobalKey<NavigatorState>();
       await tester.pumpWidget(
         MaterialApp(
@@ -442,30 +529,32 @@ void main() {
               child: page!,
             );
           },
-          home: Scaffold(
-            appBar: AppBar(
-              leading: IconButton(
-                key: const Key('under-dot'),
-                icon: const Icon(Icons.menu),
-                onPressed: () => underTaps++,
-              ),
-            ),
-            body: const Center(child: Text('страница книги')),
-          ),
+          home: home ?? withCornerButton(),
         ),
       );
       await tester.pumpAndSettle();
     }
 
-    /// Держит палец на точке записи [held].
-    Future<void> holdDot(WidgetTester tester, Duration held) async {
-      final TestGesture gesture = await tester.startGesture(
-        tester.getCenter(find.byKey(const Key('sno-recording-dot'))),
-      );
+    /// Держит палец в точке [at] всего [held].
+    Future<void> holdAt(WidgetTester tester, Offset at, Duration held) async {
+      final TestGesture gesture = await tester.startGesture(at);
       await tester.pump();
-      await tester.pump(held);
+      // Сначала точка узнаёт удержание, потом растёт кольцо: его счёт
+      // начинается с кадра после распознавания.
+      const Duration recognised = Duration(milliseconds: 250);
+      await tester.pump(recognised);
+      await tester.pump(held - recognised);
       await gesture.up();
       await tester.pumpAndSettle();
+    }
+
+    /// Держит палец на точке записи всего [held].
+    Future<void> holdDot(WidgetTester tester, Duration held) {
+      return holdAt(
+        tester,
+        tester.getCenter(find.byKey(const Key('sno-recording-dot'))),
+        held,
+      );
     }
 
     const Duration enough = Duration(milliseconds: 2100);
@@ -575,6 +664,73 @@ void main() {
       expect(find.byKey(const Key('sno-stop-dialog')), findsNothing);
       expect(kit.session.recording, isTrue);
       expect(find.byType(SessionFinishScreen), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-01: удержание точки страница под ней за своё не '
+        'принимает', (WidgetTester tester) async {
+      await pumpOverlay(tester, home: likeReader());
+      await kit.session.start(code);
+      await tester.pump();
+
+      // Без точки под пальцем страница долгое нажатие узнаёт.
+      await holdAt(
+        tester,
+        const Offset(300, 300),
+        const Duration(milliseconds: 600),
+      );
+      expect(pageHolds, 1);
+
+      // На точке — нет: слово под пальцем не выделится.
+      await holdDot(tester, enough);
+      expect(pageHolds, 1);
+      expect(find.byKey(const Key('sno-stop-dialog')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-01: палец, который повёл по экрану, запись не '
+        'останавливает', (WidgetTester tester) async {
+      await pumpOverlay(tester, home: likeReader());
+      await kit.session.start(code);
+      await tester.pump();
+
+      // Протяжка из угла, длиннее двух секунд.
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const Key('sno-recording-dot'))),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      await gesture.moveBy(const Offset(120, 160));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump(const Duration(milliseconds: 2000));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('sno-stop-dialog')), findsNothing);
+      expect(kit.session.recording, isTrue);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-01: вопрос, закрытый нажатием мимо, записи не '
+        'останавливает', (WidgetTester tester) async {
+      await pumpOverlay(tester);
+      await kit.session.start(code);
+      await tester.pump();
+      await holdDot(tester, enough);
+      expect(find.byKey(const Key('sno-stop-dialog')), findsOneWidget);
+
+      await tester.tapAt(const Offset(780, 580));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('sno-stop-dialog')), findsNothing);
+      expect(kit.session.recording, isTrue);
+      // И автостоп после этого снимает только точку, а не экран.
+      kit.run(40 * 60);
+      await tester.pumpAndSettle();
+      expect(find.text('страница книги'), findsOneWidget);
+      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
 
       await unmount(tester);
     });
@@ -808,6 +964,47 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-CFG-03: приложение открыли с незавершённой сессией '
+        '— замок и плашка с первого кадра', (WidgetTester tester) async {
+      await data.library.save(testBook());
+      await kit.session.start(code);
+      kit.run(30);
+      await kit.session.stop(StopReason.experimenter);
+
+      await pumpApp(tester, testServices(data: data, recording: kit.session));
+
+      expect(shelf(tester).locked, isTrue);
+      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
+      expect(find.text('Запись остановлена'), findsOneWidget);
+
+      // Плашка ведёт на завершение сессии.
+      await tester.tap(find.byKey(const Key('sno-recording-ended')));
+      await settle(tester);
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.text('Запись остановлена · 00:30'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-01: «назад» из другого раздела во время записи '
+        'ведёт на полку', (WidgetTester tester) async {
+      await data.library.save(testBook());
+      await pumpApp(tester, testServices(data: data, recording: kit.session));
+      await kit.session.start(code);
+      await tester.tap(find.byKey(const Key('nav-settings')));
+      await settle(tester);
+      expect(kit.session.context.screen, 'settings');
+
+      await tester.binding.handlePopRoute();
+      await settle(tester);
+
+      expect(kit.session.context.screen, 'shelf');
+      expect(find.byType(LibraryScreen), findsOneWidget);
+      expect(kit.session.recording, isTrue);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-REC-02: запись знает, на каком экране участник', (
       WidgetTester tester,
     ) async {
@@ -825,14 +1022,9 @@ void main() {
 
       await unmount(tester);
     });
-
   });
 
   group('SNO-F-REC-01: запись в собранной ветви', () {
-    const String branchOnly =
-        'основной прогон: проверяется прогонами ветвей '
-        '(--dart-define=SNO_BRANCH=I и II)';
-
     Future<void> settle(WidgetTester tester) async {
       await tester.pumpAndSettle();
       await tester.pump(const Duration(seconds: 1));

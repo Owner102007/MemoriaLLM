@@ -15,12 +15,18 @@ class MemorySettings implements AppSettingsRepository {
   /// Отказывать ли в записи: «база не ответила».
   bool failWrites = false;
 
+  /// Ключи, запись которых не удаётся.
+  final Set<String> failKeys = <String>{};
+
+  /// Отказывать ли в удалении.
+  bool failRemoves = false;
+
   @override
   Future<String?> read(String key) async => values[key];
 
   @override
   Future<void> write(String key, String value) async {
-    if (failWrites) {
+    if (failWrites || failKeys.contains(key)) {
       throw StateError('настройки не пишутся');
     }
     values[key] = value;
@@ -28,6 +34,9 @@ class MemorySettings implements AppSettingsRepository {
 
   @override
   Future<void> remove(String key) async {
+    if (failRemoves) {
+      throw StateError('настройки не удаляются');
+    }
     values.remove(key);
   }
 
@@ -93,16 +102,19 @@ class MemoryRecordingStore implements RecordingStore {
   }
 
   @override
-  Future<String?> lastLine(String folder) async {
+  Future<List<String>> lastLines(
+    String folder, {
+    int count = kTailLines,
+  }) async {
     final StringBuffer? journal = journals[folder];
     if (journal == null) {
-      return null;
+      return const <String>[];
     }
     final String text = journal.toString();
     final int end = text.lastIndexOf('\n');
     if (end < 0) {
       journal.clear();
-      return null;
+      return const <String>[];
     }
     if (end != text.length - 1) {
       // Оборванный хвост отрезается, как у настоящего хранилища.
@@ -110,8 +122,20 @@ class MemoryRecordingStore implements RecordingStore {
         ..clear()
         ..write(text.substring(0, end + 1));
     }
-    final int start = end == 0 ? -1 : text.lastIndexOf('\n', end - 1);
-    return text.substring(start + 1, end);
+    final List<String> lines = <String>[
+      for (final String line in const LineSplitter().convert(
+        text.substring(0, end),
+      ))
+        if (line.isNotEmpty) line,
+    ];
+    return lines.length > count ? lines.sublist(lines.length - count) : lines;
+  }
+
+  @override
+  Future<void> discard(String folder) async {
+    current.remove(folder);
+    files.remove(folder);
+    journals.remove(folder);
   }
 
   @override
@@ -121,13 +145,21 @@ class MemoryRecordingStore implements RecordingStore {
     }
   }
 
-  /// Строки журнала папки [folder], разобранные из JSON.
-  List<Map<String, Object?>> events(String folder) {
-    return <Map<String, Object?>>[
+  /// Строки журнала папки [folder], как они лежат «на диске».
+  List<String> lines(String folder) {
+    return <String>[
       for (final String line in const LineSplitter().convert(
         journals[folder]?.toString() ?? '',
       ))
-        if (line.isNotEmpty) jsonDecode(line) as Map<String, Object?>,
+        if (line.isNotEmpty) line,
+    ];
+  }
+
+  /// Строки журнала папки [folder], разобранные из JSON.
+  List<Map<String, Object?>> events(String folder) {
+    return <Map<String, Object?>>[
+      for (final String line in lines(folder))
+        jsonDecode(line) as Map<String, Object?>,
     ];
   }
 

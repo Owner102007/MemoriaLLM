@@ -17,6 +17,14 @@ abstract final class SnoSettingsKeys {
   /// (`SessionState.encode`); ключа нет — сессии нет (SNO-F-REC-01).
   static const String session = 'sno.session';
 
+  /// Сколько записей началось на устройстве после последнего сброса
+  /// к эталону — число (SNO-F-REC-01).
+  ///
+  /// Сброс стирает ключ: счёт начинается заново. По нему видно, первая
+  /// ли это запись после сброса или между ними уже был другой
+  /// участник.
+  static const String recordingsSinceReset = 'sno.recordings_since_reset';
+
   /// Семёрки цифр кодов участников, уже встречавшихся на этом
   /// устройстве (SNO-ALG-CFG-03).
   ///

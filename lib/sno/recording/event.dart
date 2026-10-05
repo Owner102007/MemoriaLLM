@@ -140,11 +140,40 @@ String encodeEvent({
   });
 }
 
-/// Номер и время события в строке журнала; `null` — строка не читается.
+/// Что читается из строки журнала при восстановлении.
+class EventMarks {
+  /// Создаёт отметки.
+  const EventMarks({
+    required this.seq,
+    required this.t,
+    required this.type,
+    this.wall,
+    this.data = const <String, Object?>{},
+  });
+
+  /// Сквозной номер события.
+  final int seq;
+
+  /// Миллисекунды от старта записи.
+  final int t;
+
+  /// Вид события, как он записан.
+  final String type;
+
+  /// Настенное время события; `null` — в строке его нет или оно не
+  /// читается.
+  final DateTime? wall;
+
+  /// Данные события.
+  final Map<String, Object?> data;
+}
+
+/// Отметки события в строке журнала; `null` — строка не читается.
 ///
 /// Нужно восстановлению после сбоя: последняя целая строка говорит,
-/// сколько событий записано и сколько длилась запись.
-({int seq, int t})? eventMarks(String line) {
+/// сколько событий записано, сколько длилась запись и не остановлена
+/// ли она уже.
+EventMarks? eventMarks(String line) {
   try {
     final Object? raw = jsonDecode(line);
     if (raw is! Map<String, Object?>) {
@@ -152,11 +181,35 @@ String encodeEvent({
     }
     final Object? seq = raw['seq'];
     final Object? t = raw['t'];
-    if (seq is! int || t is! int) {
+    final Object? type = raw['type'];
+    final Object? wall = raw['wall'];
+    final Object? data = raw['data'];
+    if (seq is! int || t is! int || type is! String) {
       return null;
     }
-    return (seq: seq, t: t);
+    return EventMarks(
+      seq: seq,
+      t: t,
+      type: type,
+      wall: wall is String ? DateTime.tryParse(wall) : null,
+      data: data is Map<String, Object?> ? data : const <String, Object?>{},
+    );
   } on FormatException {
     return null;
   }
+}
+
+/// Последняя читаемая строка из [lines]; `null` — читаемых нет.
+///
+/// Последняя целая строка журнала может оказаться мусором — обрывком,
+/// за которым успели дописать перевод строки. Тогда отметки берутся у
+/// ближайшей читаемой перед ней.
+EventMarks? lastEventMarks(List<String> lines) {
+  for (int i = lines.length - 1; i >= 0; i--) {
+    final EventMarks? marks = eventMarks(lines[i]);
+    if (marks != null) {
+      return marks;
+    }
+  }
+  return null;
 }

@@ -12,6 +12,14 @@ import 'session.dart';
 /// Сколько держат точку записи, чтобы спросить об остановке.
 const Duration kStopHold = Duration(seconds: 2);
 
+/// Через сколько удержания точка забирает нажатие себе.
+///
+/// Раньше, чем экран под ней успеет принять то же нажатие за своё:
+/// выделение слова на странице начинается через четверть секунды,
+/// подсказка у кнопки — через полсекунды. Нажатие короче достаётся
+/// экрану, как будто точки нет.
+const Duration kDotRecognition = Duration(milliseconds: 200);
+
 /// Цвет точки записи.
 ///
 /// Не из темы: точка обязана выглядеть одинаково на любой теме и под
@@ -123,8 +131,12 @@ class _RecordingOverlayState extends State<RecordingOverlay>
     if (stop != true || !mounted) {
       return;
     }
-    await widget.session.stop(StopReason.experimenter);
+    // Состояние меняется сразу, диск догоняет: экран завершения
+    // открывается, не дожидаясь его, — иначе под ним успела бы
+    // мелькнуть плашка.
+    final Future<void> stopping = widget.session.stop(StopReason.experimenter);
     _openFinish();
+    await stopping;
   }
 
   void _openFinish() {
@@ -139,6 +151,8 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   Widget build(BuildContext context) {
     final RecordingSession session = widget.session;
     final EdgeInsets safe = MediaQuery.paddingOf(context);
+    // Экранная клавиатура плашку не закрывает: та встаёт над ней.
+    final double keyboard = MediaQuery.viewInsetsOf(context).bottom;
     final bool wide =
         navPlacementFor(MediaQuery.sizeOf(context).width) == NavPlacement.top;
     return Stack(
@@ -170,7 +184,9 @@ class _RecordingOverlayState extends State<RecordingOverlay>
                   // Выше нижней навигации телефона: плашка не должна
                   // закрывать разделы.
                   padding: EdgeInsets.only(
-                    bottom: safe.bottom + (wide ? 24 : 96),
+                    bottom: keyboard > 0
+                        ? keyboard + 12
+                        : safe.bottom + (wide ? 24 : 96),
                   ),
                   child: _EndedPlaque(
                     label: describeStop(session.state?.stoppedBy),
@@ -235,9 +251,15 @@ class _EndedPlaque extends StatelessWidget {
 /// Удержание точки [hold] зовёт [onHeld]; короткое нажатие не делает
 /// ничего. Нажатия точка не отбирает: под ней может стоять кнопка
 /// экрана — «назад» в левом углу, — и короткое нажатие достаётся ей,
-/// как прежде. А вот додержанное нажатие кнопке уже не достаётся: оно
-/// отменяется для всех, иначе отпущенный палец нажал бы «назад» и
-/// закрыл только что открытый вопрос об остановке.
+/// как прежде.
+///
+/// Удержание — другое дело: через [kDotRecognition] точка забирает
+/// нажатие себе, в общем споре жестов, как это делает любое долгое
+/// нажатие. Экран под ней его уже не получит: слово на странице не
+/// выделится, подсказка у кнопки не всплывёт, а отпущенный палец не
+/// нажмёт «назад» и не закроет только что открытый вопрос об
+/// остановке. Палец, который повёл по экрану, удержанием не
+/// считается: прокрутка и протяжка идут как шли.
 class RecordingDot extends StatefulWidget {
   /// Создаёт точку.
   const RecordingDot({required this.onHeld, this.hold = kStopHold, super.key});
@@ -256,11 +278,19 @@ class _RecordingDotState extends State<RecordingDot>
     with SingleTickerProviderStateMixin {
   late final AnimationController _fill = AnimationController(
     vsync: this,
-    duration: widget.hold,
+    duration: _fillTime(widget.hold),
   )..addStatusListener(_statusChanged);
 
-  /// Палец, который держит точку; `null` — её не держат.
-  int? _pointer;
+  /// Сколько растёт кольцо: всё удержание без времени распознавания.
+  static Duration _fillTime(Duration hold) {
+    return hold > kDotRecognition ? hold - kDotRecognition : Duration.zero;
+  }
+
+  @override
+  void didUpdateWidget(RecordingDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _fill.duration = _fillTime(widget.hold);
+  }
 
   @override
   void dispose() {
@@ -272,31 +302,15 @@ class _RecordingDotState extends State<RecordingDot>
     if (status != AnimationStatus.completed) {
       return;
     }
-    final int? pointer = _pointer;
-    _pointer = null;
     _fill.reset();
-    if (pointer != null) {
-      // Додержали: это нажатие больше ничьё — ни кнопки под точкой, ни
-      // прокрутки списка.
-      GestureBinding.instance.cancelPointer(pointer);
-    }
     widget.onHeld();
   }
 
-  void _press(PointerDownEvent event) {
-    // Второй палец удержания не начинает и не сбивает.
-    if (_pointer != null) {
-      return;
-    }
-    _pointer = event.pointer;
+  void _held() {
     _fill.forward(from: 0);
   }
 
-  void _release(PointerEvent event) {
-    if (event.pointer != _pointer) {
-      return;
-    }
-    _pointer = null;
+  void _release() {
     if (_fill.isAnimating) {
       _fill.reset();
     }
@@ -306,12 +320,26 @@ class _RecordingDotState extends State<RecordingDot>
   Widget build(BuildContext context) {
     return Semantics(
       label: 'Идёт запись',
-      child: Listener(
+      child: RawGestureDetector(
         // Прозрачна для нажатий: кнопка под точкой получает их тоже.
         behavior: HitTestBehavior.translucent,
-        onPointerDown: _press,
-        onPointerUp: _release,
-        onPointerCancel: _release,
+        excludeFromSemantics: true,
+        gestures: <Type, GestureRecognizerFactory<GestureRecognizer>>{
+          LongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+                () => LongPressGestureRecognizer(duration: kDotRecognition),
+                (LongPressGestureRecognizer instance) {
+                  instance
+                    ..onLongPressStart = (LongPressStartDetails details) {
+                      _held();
+                    }
+                    ..onLongPressEnd = (LongPressEndDetails details) {
+                      _release();
+                    }
+                    ..onLongPressCancel = _release;
+                },
+              ),
+        },
         child: SizedBox(
           width: 32,
           height: 32,
@@ -356,7 +384,7 @@ class _DotPainter extends CustomPainter {
 
   /// Картинка нажатий не ловит: иначе отрисовщик закрыл бы собой
   /// кнопку под точкой (как подсветка найденного в BUG-43). Удержание
-  /// слушает `Listener` над ней.
+  /// слушает распознаватель над ней.
   @override
   bool? hitTest(Offset position) => false;
 
@@ -411,12 +439,13 @@ class _StopRecordingDialogState extends State<StopRecordingDialog> {
     if (_closed || !mounted) {
       return;
     }
-    _closed = true;
-    // Вопрос могли закрыть и мимо кнопок — нажатием вокруг него.
+    // Вопрос могли закрыть и мимо кнопок — нажатием вокруг него; тогда
+    // закрывать уже нечего.
     final ModalRoute<Object?>? route = ModalRoute.of(context);
     if (route == null || !route.isCurrent) {
       return;
     }
+    _closed = true;
     Navigator.of(context).pop(stop);
   }
 

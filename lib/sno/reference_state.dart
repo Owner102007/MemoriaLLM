@@ -52,7 +52,9 @@ const String kReferenceSchema = 'sno2026-reference/1';
 /// одного устройства узнаются при разборе; часы идут только вперёд;
 /// версия правила «есть ли текст» — служебная отметка разборки; коды
 /// участников, уже выданные на устройстве, не должны выдаться снова
-/// (SNO-ALG-CFG-03).
+/// (SNO-ALG-CFG-03); незавершённая сессия записи обязана остаться
+/// незавершённой — сбросить устройство посреди неё раздел
+/// «Тестирование» не даёт, и отметка сессии от сброса не зависит.
 const Set<String> _keptSettings = <String>{
   SettingsKeys.nodeId,
   SettingsKeys.lastHlc,
@@ -60,15 +62,17 @@ const Set<String> _keptSettings = <String>{
   SnoSettingsKeys.reference,
   SnoSettingsKeys.lastReset,
   SnoSettingsKeys.knownCodes,
+  SnoSettingsKeys.session,
 };
 
 /// Настройки, которых нет в снимке состояния: их пишет само приложение,
-/// а не читатель, и после сброса они появляются снова. Состояние
-/// сессии записи — тоже не след читателя: это отметка самой записи.
+/// а не читатель, и после сброса они появляются снова. Счёт записей
+/// после сброса — отметка самой записи, а не след читателя; сброс её
+/// стирает.
 const Set<String> _serviceSettings = <String>{
   ..._keptSettings,
   SettingsKeys.promptsSeeded,
-  SnoSettingsKeys.session,
+  SnoSettingsKeys.recordingsSinceReset,
 };
 
 /// Книга на своём месте полки.

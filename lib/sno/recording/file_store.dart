@@ -85,11 +85,14 @@ class FileRecordingStore implements RecordingStore {
   }
 
   @override
-  Future<String?> lastLine(String folder) async {
+  Future<List<String>> lastLines(
+    String folder, {
+    int count = kTailLines,
+  }) async {
     final Directory directory = await _folder(folder);
     final File file = File(p.join(directory.path, kEventsFile));
     if (!await file.exists()) {
-      return null;
+      return const <String>[];
     }
     final List<int> bytes = await file.readAsBytes();
     const int newline = 0x0A;
@@ -99,15 +102,29 @@ class FileRecordingStore implements RecordingStore {
       if (bytes.isNotEmpty) {
         await _truncate(file, 0);
       }
-      return null;
+      return const <String>[];
     }
     if (end != bytes.length - 1) {
       await _truncate(file, end + 1);
     }
-    final int start = end == 0 ? -1 : bytes.lastIndexOf(newline, end - 1);
     // Битый UTF-8 читается с заменой знаков: такую строку отвергнет
     // разбор JSON, а не чтение файла.
-    return utf8.decode(bytes.sublist(start + 1, end), allowMalformed: true);
+    final List<String> lines = <String>[
+      for (final String line in const LineSplitter().convert(
+        utf8.decode(bytes.sublist(0, end), allowMalformed: true),
+      ))
+        if (line.isNotEmpty) line,
+    ];
+    return lines.length > count ? lines.sublist(lines.length - count) : lines;
+  }
+
+  @override
+  Future<void> discard(String folder) async {
+    final Directory records = await _records();
+    final Directory open = Directory(p.join(_current(records).path, folder));
+    if (await open.exists()) {
+      await open.delete(recursive: true);
+    }
   }
 
   Future<void> _truncate(File file, int length) async {
