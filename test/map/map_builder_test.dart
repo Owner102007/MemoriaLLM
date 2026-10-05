@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/map/map_builder.dart';
-import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/map/book_bag.dart';
 import 'package:memoria/domain/map/book_map.dart';
@@ -94,62 +93,65 @@ void main() {
     }
   }
 
-  test('F-MAP-02: карта считается по тексту из кэша и ложится в базу', () async {
-    await addLibrary();
-    final MapBuilder map = builder();
-    final MapPlan plan = await map.plan();
-    expect(plan.upToDate, isFalse);
-    final List<String> hashes = <String>[
-      for (final MapSource source in plan.sources) source.book.fileHash,
-    ];
-    expect(hashes, <String>[
-      'hash-a1',
-      'hash-a2',
-      'hash-a3',
-      'hash-m1',
-      'hash-m2',
-      'hash-m3',
-    ]);
-    expect(plan.sources.first.group, 'Ангиология');
-    expect(plan.sources.first.cachedPages, 2);
-    expect(plan.sources.last.group, 'Математика');
+  test(
+    'F-MAP-02: карта считается по тексту из кэша и ложится в базу',
+    () async {
+      await addLibrary();
+      final MapBuilder map = builder();
+      final MapPlan plan = await map.plan();
+      expect(plan.upToDate, isFalse);
+      final List<String> hashes = <String>[
+        for (final MapSource source in plan.sources) source.book.fileHash,
+      ];
+      expect(hashes, <String>[
+        'hash-a1',
+        'hash-a2',
+        'hash-a3',
+        'hash-m1',
+        'hash-m2',
+        'hash-m3',
+      ]);
+      expect(plan.sources.first.group, 'Ангиология');
+      expect(plan.sources.first.cachedPages, 2);
+      expect(plan.sources.last.group, 'Математика');
 
-    final List<List<int>> steps = <List<int>>[];
-    final MapOutcome outcome = await map.build(
-      plan,
-      onProgress: (int done, int total) => steps.add(<int>[done, total]),
-    );
-    expect(outcome.kind, MapOutcomeKind.built);
-    expect(outcome.books, 6);
-    expect(outcome.groups, 2);
-    expect(outcome.fingerprint, hasLength(8));
-    expect(steps.last, <int>[6, 6]);
-    expect(steps, hasLength(6));
+      final List<List<int>> steps = <List<int>>[];
+      final MapOutcome outcome = await map.build(
+        plan,
+        onProgress: (int done, int total) => steps.add(<int>[done, total]),
+      );
+      expect(outcome.kind, MapOutcomeKind.built);
+      expect(outcome.books, 6);
+      expect(outcome.groups, 2);
+      expect(outcome.fingerprint, hasLength(8));
+      expect(steps.last, <int>[6, 6]);
+      expect(steps, hasLength(6));
 
-    final StoredBookMap stored = (await data.bookMap.load())!;
-    expect(stored.layoutKey, plan.key);
-    expect(stored.version, kBookMapVersion);
-    expect(stored.points.keys.toSet(), <String>{
-      'a1',
-      'a2',
-      'a3',
-      'm1',
-      'm2',
-      'm3',
-    });
-    // Место лежит под идентификатором книги, а несёт отпечаток файла.
-    expect(stored.points['m2']!.key, 'hash-m2');
-    // Книги одной категории стоят вместе: ближайшая к «a1» — тоже «a».
-    double distance(String a, String b) {
-      final MapPoint p = stored.points[a]!;
-      final MapPoint q = stored.points[b]!;
-      return (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y);
-    }
+      final StoredBookMap stored = (await data.bookMap.load())!;
+      expect(stored.layoutKey, plan.key);
+      expect(stored.version, kBookMapVersion);
+      expect(stored.points.keys.toSet(), <String>{
+        'a1',
+        'a2',
+        'a3',
+        'm1',
+        'm2',
+        'm3',
+      });
+      // Место лежит под идентификатором книги, а несёт отпечаток файла.
+      expect(stored.points['m2']!.key, 'hash-m2');
+      // Книги одной категории стоят вместе: ближайшая к «a1» — тоже «a».
+      double distance(String a, String b) {
+        final MapPoint p = stored.points[a]!;
+        final MapPoint q = stored.points[b]!;
+        return (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y);
+      }
 
-    for (final String other in <String>['m1', 'm2', 'm3']) {
-      expect(distance('a1', 'a2'), lessThan(distance('a1', other)));
-    }
-  });
+      for (final String other in <String>['m1', 'm2', 'm3']) {
+        expect(distance('a1', 'a2'), lessThan(distance('a1', other)));
+      }
+    },
+  );
 
   test('F-MAP-04: карта стабильна — второй раз не считается', () async {
     await addLibrary();

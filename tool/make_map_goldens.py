@@ -478,7 +478,10 @@ def stable_hash(text):
     """FNV-1a, 32 бита, по знакам строки — как `stableHash` в Dart."""
     value = 0x811C9DC5
     for char in text:
-        value = ((value ^ ord(char)) * 16777619) & MASK
+        code = ord(char)
+        value = ((value ^ (code & 0xFFFF)) * 16777619) & MASK
+        if code > 0xFFFF:
+            value = ((value ^ ((code >> 16) & 0xFFFF)) * 16777619) & MASK
     return value
 
 

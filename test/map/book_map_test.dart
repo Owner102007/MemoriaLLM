@@ -81,11 +81,7 @@ List<_Volume> _library() {
         // тем, и соседство не может получиться из одного порядка.
         final int mixed = (number * 7) % 24;
         volumes.add(
-          _Volume(
-            'hash-${mixed.toString().padLeft(2, '0')}',
-            entry.key,
-            topic,
-          ),
+          _Volume('hash-${mixed.toString().padLeft(2, '0')}', entry.key, topic),
         );
         number++;
       }
@@ -116,7 +112,10 @@ void main() {
         isTrue,
       );
       // Слова одной книги никого ни с кем не роднят.
-      expect(vocabulary.terms.any((String t) => t.startsWith('книга-')), isFalse);
+      expect(
+        vocabulary.terms.any((String t) => t.startsWith('книга-')),
+        isFalse,
+      );
     });
 
     test('ALG-MAP-02: порог считается от числа книг', () {
@@ -182,7 +181,10 @@ void main() {
             neighbours.similarity[i * n + j],
             neighbours.similarity[j * n + i],
           );
-          expect(neighbours.similarity[i * n + j], lessThanOrEqualTo(1 + 1e-12));
+          expect(
+            neighbours.similarity[i * n + j],
+            lessThanOrEqualTo(1 + 1e-12),
+          );
         }
       }
     });
@@ -250,10 +252,7 @@ void main() {
       double closest = double.infinity;
       for (int i = 0; i < map.points.length; i++) {
         for (int j = i + 1; j < map.points.length; j++) {
-          closest = math.min(
-            closest,
-            _distance(map.points[i], map.points[j]),
-          );
+          closest = math.min(closest, _distance(map.points[i], map.points[j]));
         }
       }
       // Вторая нормировка после раздвижки может сжать карту на долю

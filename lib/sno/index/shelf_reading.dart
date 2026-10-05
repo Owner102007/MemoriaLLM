@@ -529,10 +529,7 @@ class ShelfReading extends ChangeNotifier {
         // записывается после каждой книги — закрытое на середине
         // приложение счёт не теряет.
         await _remember(
-          before.copyWith(
-            complete: false,
-            readMs: before.readMs + _elapsed(),
-          ),
+          before.copyWith(complete: false, readMs: before.readMs + _elapsed()),
         );
       }
     }
@@ -644,9 +641,19 @@ class ShelfReading extends ChangeNotifier {
     }
     int fresh = 0;
     bool opened = false;
+    bool waited = false;
     while (true) {
       if (!await _waitTurn()) {
         return null;
+      }
+      if (waited) {
+        // Пока проход стоял, читатель мог открыть эту самую книгу, и её
+        // страницы запомнил он: читать их движком второй раз незачем.
+        try {
+          cached.addAll(await _texts.cachedPages(key));
+        } on Object {
+          // База не ответила — остаётся то, что проход знал сам.
+        }
       }
       _show(
         _progress.copyWith(
@@ -654,7 +661,9 @@ class ShelfReading extends ChangeNotifier {
           booksDone: index,
           booksTotal: total,
           title: book.title,
-          page: 0,
+          // Страницы читаются по порядку: сколько запомнено — там проход
+          // и стоит.
+          page: cached.length,
           pages: pageCount ?? 0,
         ),
       );
@@ -712,6 +721,7 @@ class ShelfReading extends ChangeNotifier {
       if (!interrupted) {
         break;
       }
+      waited = true;
       _pause();
       await _keepScreen(false);
       if (_disposed) {
@@ -750,9 +760,9 @@ class ShelfReading extends ChangeNotifier {
     return _BookResult(
       pages: cached.length,
       complete: complete,
-      // Скан — книга, прочитанная целиком, в которой нет ни знака; и
+      // Скан — книга, прочитанная целиком, в которой нет ни знака, и
       // книга, которую сканом уже назвал импорт: у страницы из одних
-      // пробелов длина в базе не нулевая.
+      // пробелов длина не нулевая, и по длинам её от текста не отличить.
       blank: complete && (!anyText || book.hasTextLayer == false),
       fresh: fresh,
     );
@@ -783,7 +793,10 @@ class ShelfReading extends ChangeNotifier {
     try {
       await _texts.savePageTexts(key, Map<int, String>.of(batch));
       for (final MapEntry<int, String> entry in batch.entries) {
-        cached[entry.key] = entry.value.trim().isEmpty ? 0 : entry.value.length;
+        // Длина — как её отдаст база при следующем запуске: вместе с
+        // пробелами. Иначе одна и та же книга была бы сканом сегодня и
+        // книгой с текстом завтра.
+        cached[entry.key] = entry.value.length;
       }
     } on Object {
       // Не записалось — эти страницы прочитаются в другой раз.

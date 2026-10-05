@@ -33,9 +33,9 @@ void main() {
   double numberOf(Object? value) => (value! as num).toDouble();
 
   setUpAll(() {
-    golden =
-        jsonDecode(File(_goldenPath).readAsStringSync())
-            as Map<String, Object?>;
+    golden = jsonDecode(
+      File(_goldenPath).readAsStringSync(),
+    ) as Map<String, Object?>;
     final Map<String, Map<String, Object?>> byKey =
         <String, Map<String, Object?>>{};
     for (final Object? entry in listOf('books')) {
@@ -44,8 +44,7 @@ void main() {
     }
     // Мешки — в порядке расчёта: по возрастанию отпечатка.
     bags = <BookBag>[
-      for (final Object? key in listOf('order'))
-        _bagOf(byKey[key! as String]!),
+      for (final Object? key in listOf('order')) _bagOf(byKey[key! as String]!),
     ];
   });
 
@@ -85,8 +84,7 @@ void main() {
       for (int c = 0; c < cells.length; c++) {
         final List<Object?> cell = cells[c]! as List<Object?>;
         expect(rows[i].index[c], cell[0]! as int, reason: 'книга $i');
-        final double difference =
-            (rows[i].weight[c] - numberOf(cell[1])).abs();
+        final double difference = (rows[i].weight[c] - numberOf(cell[1])).abs();
         worst = math.max(worst, difference);
         square += rows[i].weight[c] * rows[i].weight[c];
       }

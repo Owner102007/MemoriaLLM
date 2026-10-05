@@ -111,14 +111,11 @@ void main() {
     int? pageCount,
     bool? hasTextLayer,
   }) async {
-    final Book book = testBook(
-      id: id,
-      title: 'Том $id',
-      hash: 'hash-$id',
-    ).copyWith(
-      pageCount: pageCount ?? pages.length,
-      hasTextLayer: hasTextLayer,
-    );
+    final Book book = testBook(id: id, title: 'Том $id', hash: 'hash-$id')
+        .copyWith(
+          pageCount: pageCount ?? pages.length,
+          hasTextLayer: hasTextLayer,
+        );
     await data.library.save(book);
     await placeBook(data, id, 'angio');
     final _Volume volume = _Volume(pages: pages);
@@ -286,10 +283,11 @@ void main() {
     expect(a.textReads.keys.toSet(), <int>{1, 2, 3});
     // Свой файл проход закрыл: движок отдан читателю.
     expect(a.closes, 1);
-    expect(
-      (await data.pageTexts.cachedPages(keyOf('a'))).keys.toSet(),
-      <int>{1, 2, 3},
-    );
+    expect((await data.pageTexts.cachedPages(keyOf('a'))).keys.toSet(), <int>{
+      1,
+      2,
+      3,
+    });
     expect(pass.summary, isNull);
 
     // Книгу закрыли — проход продолжает с четвёртой страницы.
@@ -302,6 +300,35 @@ void main() {
     expect(a.closes, 2);
     expect(pass.summary!.complete, isTrue);
     expect(pass.progress.phase, ShelfReadingPhase.done);
+  });
+
+  test('SNO-F-IDX-04: страницы, которые за время простоя запомнил '
+      'читатель, не перечитываются', () async {
+    final _Volume a = await shelve('a', pagesOf('артерии', 6));
+    final ShelfReading pass = reading();
+    a.onRead = (int page) async {
+      if (page == 2) {
+        pass.held = true;
+      }
+    };
+    pass.start();
+    while (pass.progress.phase != ShelfReadingPhase.held) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    // Читатель открыл эту же книгу, и его проход запомнил ещё три
+    // страницы — в тот же кэш.
+    await data.pageTexts.savePageTexts(keyOf('a'), <int, String>{
+      3: 'Страница 3 про артерии и сосуды.',
+      4: 'Страница 4 про артерии и сосуды.',
+      5: 'Страница 5 про артерии и сосуды.',
+    });
+    a.onRead = null;
+    pass.held = false;
+    await pass.settled();
+
+    expect(a.textReads.keys.toSet(), <int>{1, 2, 6});
+    expect(pass.summary!.books, 1);
+    expect(pass.summary!.pages, 6);
   });
 
   test('SNO-F-IDX-04: книга открыта до начала — проход ждёт её '
@@ -351,10 +378,11 @@ void main() {
     await pass.settled();
 
     // «Не знаю» не запоминается как «текста нет».
-    expect(
-      (await data.pageTexts.cachedPages(keyOf('a'))).keys.toSet(),
-      <int>{1, 3, 4},
-    );
+    expect((await data.pageTexts.cachedPages(keyOf('a'))).keys.toSet(), <int>{
+      1,
+      3,
+      4,
+    });
     expect(pass.summary!.books, 0);
     expect(pass.summary!.unread, <String>['Том a']);
 

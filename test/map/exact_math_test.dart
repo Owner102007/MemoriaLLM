@@ -17,9 +17,9 @@ void main() {
   late Map<String, Object?> golden;
 
   setUpAll(() {
-    golden =
-        jsonDecode(File(_goldenPath).readAsStringSync())
-            as Map<String, Object?>;
+    golden = jsonDecode(
+      File(_goldenPath).readAsStringSync(),
+    ) as Map<String, Object?>;
   });
 
   group('ALG-MAP-06: генератор случайных чисел', () {
@@ -27,10 +27,11 @@ void main() {
       final Map<String, Object?> expected =
           golden['random']! as Map<String, Object?>;
       final MapRandom random = MapRandom(expected['seed']! as int);
-      final List<int> first = (expected['first']! as List<Object?>)
-          .cast<int>();
+      final List<int> first = (expected['first']! as List<Object?>).cast<int>();
       expect(first.length, greaterThanOrEqualTo(8));
-      expect(<int>[for (int i = 0; i < first.length; i++) random.next()], first);
+      expect(<int>[
+        for (int i = 0; i < first.length; i++) random.next(),
+      ], first);
     });
 
     test('ALG-MAP-06: известные значения Mulberry32 с зерном 1', () {

@@ -10,6 +10,7 @@ import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/library/book_storage.dart';
 import 'package:memoria/domain/library/shelf_archive.dart';
+import 'package:memoria/domain/map/book_map.dart';
 import 'package:memoria/domain/prompts/selection_prompt.dart';
 import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reading.dart';
@@ -557,6 +558,19 @@ void main() {
         const BookFrame(odd: CropBox.full, fingerprint: 'hash-a1'),
       );
       await data.library.setCoverPath('a1', '/covers/a1.png');
+      // Итог подготовки книг и карта — тоже выведенное из книг
+      // (SNO-F-IDX-04): в снимок они не идут, и сброс их не трогает.
+      await data.settings.write(SnoSettingsKeys.shelfIndex, 'итог');
+      await data.bookMap.replace(
+        const StoredBookMap(
+          layoutKey: 'набор',
+          version: kBookMapVersion,
+          points: <String, MapPoint>{
+            'a1': MapPoint(key: 'hash-a1', x: 0.5, y: -0.5),
+            'l1': MapPoint(key: 'hash-l1', x: -0.5, y: 0.5),
+          },
+        ),
+      );
       expect((await first.snapshot()).matches(reference!), isFalse);
 
       final ResetReport report = await keeper(
@@ -599,6 +613,11 @@ void main() {
       expect(await data.pageTexts.cachedPages(texts), hasLength(1));
       expect(await data.reading.bookFrame('a1'), isNotNull);
       expect((await data.library.bookById('a1'))!.coverPath, '/covers/a1.png');
+      expect(await data.settings.read(SnoSettingsKeys.shelfIndex), 'итог');
+      expect((await data.bookMap.load())!.points.keys.toSet(), <String>{
+        'a1',
+        'l1',
+      });
       // Устройство — то же, эталон и время сброса — на месте.
       expect(await data.settings.read(SettingsKeys.nodeId), node);
       expect(await keeper().reference(), isNotNull);

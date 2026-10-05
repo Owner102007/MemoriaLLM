@@ -65,8 +65,7 @@ double? shelfReadingShare(ShelfReadingProgress progress) {
       final double inBook = progress.pages > 0
           ? progress.page / progress.pages
           : 0.0;
-      final double share =
-          (progress.booksDone + inBook) / progress.booksTotal;
+      final double share = (progress.booksDone + inBook) / progress.booksTotal;
       return share.clamp(0, 1).toDouble();
     case ShelfReadingPhase.mapping:
       if (progress.mapTotal <= 0) {
@@ -172,8 +171,7 @@ bool shelfIndexNeedsRetry(
   if (summary == null || !summary.complete) {
     return true;
   }
-  return summary.unread.isNotEmpty ||
-      summary.map?.state == MapSummary.failed;
+  return summary.unread.isNotEmpty || summary.map?.state == MapSummary.failed;
 }
 
 /// Полоска над полкой, пока книги готовятся (SNO-F-IDX-04).
@@ -250,8 +248,10 @@ class ShelfIndexBlock extends StatelessWidget {
         return Padding(
           key: const Key('sno-shelf-index'),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          // Блок раскрытого списка ставит детей по середине: колонка во
+          // всю ширину держит строки у левого края.
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Text('Подготовка книг', style: theme.textTheme.titleSmall),
               const SizedBox(height: 4),

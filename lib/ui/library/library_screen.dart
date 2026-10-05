@@ -835,38 +835,42 @@ class _LibraryScreenState extends State<LibraryScreen> {
         appBar: _bar(wide: wide),
         body: _underReadingStrip(
           StreamBuilder<List<BookCategory>>(
-          stream: _categoryStream,
-          builder:
-              (
-                BuildContext context,
-                AsyncSnapshot<List<BookCategory>> categories,
-              ) {
-                return StreamBuilder<List<Book>>(
-                  stream: _bookStream,
-                  builder:
-                      (BuildContext context, AsyncSnapshot<List<Book>> books) {
-                        return StreamBuilder<Map<String, ReadingPosition>>(
-                          stream: _positionStream,
-                          builder:
-                              (
-                                BuildContext context,
-                                AsyncSnapshot<Map<String, ReadingPosition>>
-                                positions,
-                              ) {
-                                return _buildShelf(
-                                  categories:
-                                      categories.data ?? const <BookCategory>[],
-                                  books: books.data ?? const <Book>[],
-                                  positions:
-                                      positions.data ??
-                                      const <String, ReadingPosition>{},
-                                  wide: wide,
-                                );
-                              },
-                        );
-                      },
-                );
-              },
+            stream: _categoryStream,
+            builder:
+                (
+                  BuildContext context,
+                  AsyncSnapshot<List<BookCategory>> categories,
+                ) {
+                  return StreamBuilder<List<Book>>(
+                    stream: _bookStream,
+                    builder:
+                        (
+                          BuildContext context,
+                          AsyncSnapshot<List<Book>> books,
+                        ) {
+                          return StreamBuilder<Map<String, ReadingPosition>>(
+                            stream: _positionStream,
+                            builder:
+                                (
+                                  BuildContext context,
+                                  AsyncSnapshot<Map<String, ReadingPosition>>
+                                  positions,
+                                ) {
+                                  return _buildShelf(
+                                    categories:
+                                        categories.data ??
+                                        const <BookCategory>[],
+                                    books: books.data ?? const <Book>[],
+                                    positions:
+                                        positions.data ??
+                                        const <String, ReadingPosition>{},
+                                    wide: wide,
+                                  );
+                                },
+                          );
+                        },
+                  );
+                },
           ),
         ),
       ),

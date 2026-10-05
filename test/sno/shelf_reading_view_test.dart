@@ -60,9 +60,7 @@ void main() {
     test('SNO-F-IDX-04: полоска говорит, что делается', () {
       expect(describeShelfReading(_reading), 'Читаю книги · 12 из 40');
       expect(
-        describeShelfReading(
-          _reading.copyWith(phase: ShelfReadingPhase.held),
-        ),
+        describeShelfReading(_reading.copyWith(phase: ShelfReadingPhase.held)),
         'Чтение книг приостановлено: открыта книга · 12 из 40',
       );
       expect(
@@ -222,9 +220,7 @@ void main() {
       expect(
         shelfIndexNeedsRetry(
           idle,
-          _finished.copyWith(
-            map: const MapSummary(state: MapSummary.failed),
-          ),
+          _finished.copyWith(map: const MapSummary(state: MapSummary.failed)),
         ),
         isTrue,
       );

@@ -135,7 +135,12 @@ void main() {
     test('ALG-MAP-02: мешок не зависит от разбивки текста на страницы', () {
       const String text = 'артерия вена капилляр артерия сосуд вена артерия';
       final BookBag whole = bagOfBook(
-        const BagRequest(key: 'k', group: '', title: 'т', pages: <String>[text]),
+        const BagRequest(
+          key: 'k',
+          group: '',
+          title: 'т',
+          pages: <String>[text],
+        ),
       );
       final BookBag split = bagOfBook(
         BagRequest(key: 'k', group: '', title: 'т', pages: text.split(' ')),
