@@ -290,6 +290,29 @@ void main() {
       cache.close();
     });
 
+    test('BUG-51: текст всей книги с сотней переносов книгу о каждом не '
+        'спрашивает', () async {
+      final MemoryPageTextStore store = MemoryPageTextStore();
+      final BookTextCache cache = cacheOf(book(), store);
+      cache.startPass(from: 1);
+      await cache.passDone();
+      final int before = store.textQueries;
+      // «Выделить всё» в ленте: разрезанных слов — как в целой книге.
+      final String whole = <String>[
+        for (int i = 0; i < 100; i++) 'word$i${mark}tail',
+        'self${mark}made',
+      ].join(' ');
+
+      final String clean = await cache.leaving(whole);
+
+      expect(clean, isNot(contains(mark)));
+      expect(clean, startsWith('word0tail word1tail'));
+      // Дефисов в таком тексте нет вовсе — и знакомому слову тоже.
+      expect(clean, endsWith('selfmade'));
+      expect(store.textQueries, before);
+      cache.close();
+    });
+
     test('BUG-51: текст без знака в базу не ходит', () async {
       final MemoryPageTextStore store = MemoryPageTextStore();
       final BookTextCache cache = cacheOf(book(), store);

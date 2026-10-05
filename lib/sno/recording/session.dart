@@ -483,9 +483,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   DateTime? _hiddenAt;
   int _hiddenT = 0;
 
-  /// Сверка часов за идущее возвращение: шагов к переднему плану
-  /// несколько, а событие о сверке одно.
-  ({int driftMs, bool applied})? _returnCheck;
+  /// Записана ли уже сверка часов за идущую отлучку: шагов к переднему
+  /// плану несколько, и сверка, которая ничего не сдвинула, пишется
+  /// один раз — по возвращении и только если сдвигов не было.
+  bool _resyncSaid = false;
 
   /// Сколько за идущую отлучку приложения не было видно.
   int _hiddenMs = 0;
@@ -964,7 +965,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _hiddenAt = null;
     _hiddenMs = 0;
     _screenOff = false;
-    _returnCheck = null;
+    _resyncSaid = false;
     _away = const AwaySummary();
     _block = null;
     _blocks = const <BlockMark>[];
@@ -1430,19 +1431,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       _hiddenAt = null;
       _hiddenMs = 0;
       _screenOff = false;
-      _returnCheck = null;
+      _resyncSaid = false;
       return;
     }
     final bool returned = to == _onScreen;
     // Сверка — на каждом шаге к переднему плану и до его события:
     // монотонные часы стояли, пока устройство спало, и без сверки шаги
     // возвращения получили бы настенное время ухода.
-    if (_rank(to) < _rank(from)) {
-      final ({int driftMs, bool applied})? check = _clock?.resync();
-      if (check != null && !(_returnCheck?.applied ?? false)) {
-        _returnCheck = check;
-      }
-    }
+    final ({int driftMs, bool applied})? check = _rank(to) < _rank(from)
+        ? _clock?.resync()
+        : null;
     final DateTime now = _now();
     final int t = _tNow();
     _write(
@@ -1463,6 +1461,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         _openAbsence(to, now, t);
       } else {
         _deepest = _deeper(_deepest, to);
+      }
+      // Сверка, сдвинувшая часы, пишется сразу: устройство может уснуть
+      // снова, не дойдя до переднего плана, и каждый сдвиг нужен
+      // разбору отдельно.
+      if (check != null && check.applied) {
+        _sayResync(check);
+        _resyncSaid = true;
       }
       unawaited(_readScreen(_leaveRun));
       unawaited(_journal?.flush());
@@ -1498,22 +1503,25 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _hiddenAt = null;
     _hiddenMs = 0;
     _screenOff = false;
-    final ({int driftMs, bool applied})? check = _returnCheck;
-    _returnCheck = null;
-    if (check != null) {
-      _write(
-        SnoEventType.clockResync,
-        data: <String, Object?>{
-          'drift_ms': check.driftMs,
-          'applied': check.applied,
-        },
-      );
+    if (check != null && (check.applied || !_resyncSaid)) {
+      _sayResync(check);
     }
+    _resyncSaid = false;
     if (over) {
       unawaited(_stopOnce(StopReason.auto, endedAway: leftAt != null));
     } else {
       unawaited(_journal?.flush());
     }
+  }
+
+  void _sayResync(({int driftMs, bool applied}) check) {
+    _write(
+      SnoEventType.clockResync,
+      data: <String, Object?>{
+        'drift_ms': check.driftMs,
+        'applied': check.applied,
+      },
+    );
   }
 
   /// Место состояния на пути от переднего плана: `resumed` — 0,
@@ -1647,7 +1655,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _hiddenAt = null;
     _hiddenMs = 0;
     _screenOff = false;
-    _returnCheck = null;
+    _resyncSaid = false;
     _bookOpenedT = null;
     // Замок и точка записи меняются сразу; диск догоняет.
     _notify();

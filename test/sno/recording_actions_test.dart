@@ -563,6 +563,69 @@ void main() {
       kit.session.dispose();
     });
 
+    test('SNO-F-REC-10: время вышло во сне, а узнал об этом счёт секунд — '
+        'отлучка всё равно сочтена до конца записи', () async {
+      final SessionKit kit = SessionKit(planned: const Duration(minutes: 10));
+      await kit.session.start(code);
+      kit.run(300);
+      kit.session.appState('inactive');
+      kit.session.appState('paused');
+      kit.time.sleep(const Duration(minutes: 15));
+      // Устройство проснулось, приложение ещё в фоне: тикнул счёт.
+      kit.session.tick();
+      await kit.settle();
+
+      expect(kit.session.phase, RecordingPhase.stopped);
+      final Map<String, Object?> stop = dataOf(
+        eventsOf(kit, 'recording.stop').single,
+      );
+      expect(stop['in_background'], isTrue);
+      expect(stop['late_ms'], 10 * 60 * 1000);
+      expect(recordingInfo(kit, kit.folder)['away'], <String, Object?>{
+        'count': 1,
+        'total_ms': 5 * 60 * 1000,
+        'hidden_ms': 5 * 60 * 1000,
+        'longest_ms': 5 * 60 * 1000,
+      });
+      // Возвращение после остановки второй отлучкой не становится.
+      kit.session.appState('resumed');
+      await kit.settle();
+      expect(kit.session.away!.count, 1);
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-10: устройство засыпало дважды за одну отлучку — в '
+        'журнале оба сдвига часов', () async {
+      final SessionKit kit = SessionKit();
+      await kit.session.start(code);
+      kit.run(30);
+      kit.session.appState('inactive');
+      kit.session.appState('hidden');
+      kit.session.appState('paused');
+      kit.time.sleep(const Duration(minutes: 5));
+      // Проснулось до экрана блокировки — и уснуло снова.
+      kit.session.appState('hidden');
+      kit.session.appState('inactive');
+      kit.session.appState('hidden');
+      kit.session.appState('paused');
+      kit.time.sleep(const Duration(minutes: 10));
+      kit.session.appState('hidden');
+      kit.session.appState('inactive');
+      kit.session.appState('resumed');
+      await kit.settle();
+
+      expect(eventsOf(kit, 'clock.resync').map(dataOf), <Map<String, Object?>>[
+        <String, Object?>{'drift_ms': 5 * 60 * 1000, 'applied': true},
+        <String, Object?>{'drift_ms': 10 * 60 * 1000, 'applied': true},
+      ]);
+      final Map<String, Object?> back = dataOf(
+        eventsOf(kit, 'app.foreground').single,
+      );
+      expect(back['away_ms'], 15 * 60 * 1000);
+      expect(back['hidden_ms'], 15 * 60 * 1000);
+      kit.session.dispose();
+    });
+
     test('SNO-F-REC-10: шаги возвращения после сна стоят в журнале '
         'настоящим временем', () async {
       final SessionKit kit = SessionKit();
@@ -1113,6 +1176,95 @@ void main() {
       expect(told.away.count, 1);
       expect(told.away.totalMs, 20000);
       expect(told.away.hiddenMs, 20000);
+    });
+
+    test('SNO-F-REC-10: о конце записи узнали по возвращении — последняя '
+        'отлучка идёт в итог до конца записи', () {
+      const int quarter = 15 * 60 * 1000;
+      final JournalSummary told = summarizeJournal(<EventMarks>[
+        at(0, SnoEventType.recordingStart),
+        at(300000, SnoEventType.appState, <String, Object?>{
+          'from': 'resumed',
+          'to': 'paused',
+        }),
+        at(300000, SnoEventType.appBackground, <String, Object?>{
+          'state': 'paused',
+        }),
+        at(300000, SnoEventType.appState, <String, Object?>{
+          'from': 'paused',
+          'to': 'resumed',
+        }, quarter),
+        at(300000, SnoEventType.appForeground, <String, Object?>{
+          'away_ms': quarter,
+          'hidden_ms': quarter,
+        }, quarter),
+        at(300000, SnoEventType.recordingStop, <String, Object?>{
+          'stopped_by': 'auto',
+          'late_ms': 10 * 60 * 1000,
+          'in_background': true,
+        }, quarter),
+      ]);
+
+      expect(told.away.count, 1);
+      expect(told.away.totalMs, 5 * 60 * 1000);
+      expect(told.away.hiddenMs, 5 * 60 * 1000);
+      // Отлучка закрыта возвращением: открытой журнал её не называет.
+      expect(told.inBackground, isFalse);
+    });
+
+    test('SNO-F-REC-10: запись началась при свёрнутом окне и оборвалась — '
+        'время, когда приложения не было видно, сочтено', () {
+      final JournalSummary told = summarizeJournal(<EventMarks>[
+        at(0, SnoEventType.recordingStart),
+        at(0, SnoEventType.appBackground, <String, Object?>{'state': 'hidden'}),
+        at(10000, SnoEventType.heartbeat, <String, Object?>{'state': 'hidden'}),
+      ]);
+
+      expect(told.inBackground, isTrue);
+      expect(told.away.totalMs, 10000);
+      expect(told.away.hiddenMs, 10000);
+    });
+
+    test('SNO-F-REC-10: строки, дописанные после сбоя, концом записи не '
+        'считаются', () {
+      const int hour = 60 * 60 * 1000;
+      final JournalSummary told = summarizeJournal(<EventMarks>[
+        at(0, SnoEventType.recordingStart),
+        at(1000, SnoEventType.blockStart, <String, Object?>{'n': 1}),
+        at(5000, SnoEventType.appState, <String, Object?>{
+          'from': 'resumed',
+          'to': 'hidden',
+        }),
+        at(5000, SnoEventType.appBackground, <String, Object?>{
+          'state': 'hidden',
+        }),
+        at(9000, SnoEventType.heartbeat, <String, Object?>{'state': 'hidden'}),
+        // Приложение перезапустили через час: эти строки — его время.
+        at(9000, SnoEventType.blockEnd, <String, Object?>{
+          'n': 1,
+          'duration_ms': 8000,
+          'by': 'crash',
+          'late': true,
+        }, hour),
+        at(9000, SnoEventType.recordingStop, <String, Object?>{
+          'stopped_by': 'crash',
+          'duration_ms': 9000,
+          'late': true,
+          'in_background': true,
+        }, hour),
+      ]);
+
+      // Отлучка — до последней строки самой записи, а не до перезапуска.
+      expect(told.away.totalMs, 4000);
+      expect(told.away.hiddenMs, 4000);
+      // Блок закрыт дописанной строкой и открытым больше не считается.
+      expect(told.openBlock, isNull);
+      expect(told.blocks.single.toJson(), <String, Object?>{
+        'n': 1,
+        'start_ms': 1000,
+        'duration_ms': 8000,
+        'closed_by': 'crash',
+      });
     });
 
     test('SNO-F-CFG-03: блоки — закрытые как записаны, открытый до '

@@ -389,6 +389,14 @@ class BookTextCache {
   /// сбрасывается и набирается заново.
   static const int _unspelledLimit = 256;
 
+  /// О скольких написаниях разом спрашивают книгу, чистя один текст.
+  ///
+  /// В выделении разрезанных слов единицы. Сотни и тысячи их — в тексте
+  /// всей книги («Выделить всё» в ленте): искать каждое по всем
+  /// страницам значило бы остановить приложение, и такой текст уходит
+  /// просто без знака.
+  static const int _spellingAsk = 32;
+
   /// Тексты, которые чистят прямо сейчас: об одном выделении спрашивают
   /// сразу несколько мест, и читать книгу на каждое незачем.
   final Map<String, Future<String>> _leaving = <String, Future<String>>{};
@@ -493,7 +501,11 @@ class BookTextCache {
   }
 
   Future<String> _cleaned(String text) async {
-    final Set<String> known = await spelledWhole(hyphenSpellings(text));
+    final Set<String> asked = hyphenSpellings(text);
+    if (asked.length > _spellingAsk) {
+      return leavingText(text);
+    }
+    final Set<String> known = await spelledWhole(asked);
     return leavingText(text, hyphenated: known);
   }
 

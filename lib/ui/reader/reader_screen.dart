@@ -548,6 +548,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     _selectTimer = Timer(_selectRest, () {
       _selectTimer = null;
+      // Экран за это время могли закрыть: о выделении в книге, которая
+      // в журнале уже закрыта, не пишут.
+      if (!(_log?.recording ?? false)) {
+        return;
+      }
       _selectSaid = true;
       unawaited(_actions?.settled(selection));
     });
@@ -2536,7 +2541,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (selectable && text.isCopyAllowed && text.hasSelectedText)
         ContextMenuButtonItem(
           type: ContextMenuButtonType.copy,
-          onPressed: () => unawaited(_copyRibbonSelection(text)),
+          onPressed: () => unawaited(_copyRibbonSelection(text, clear: true)),
         ),
       if (selectable && !text.isSelectingAllText)
         ContextMenuButtonItem(
@@ -2567,9 +2572,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Сам просмотрщик кладёт в буфер текст страницы как есть — со
   /// знаком, которым движок отмечает перенос слова. Поэтому текст
   /// берётся у него, чистится тем же правилом, что цитата и заметка, и
-  /// в буфер его кладём мы. Выделение после этого снимается — как у
-  /// просмотрщика.
-  Future<void> _copyRibbonSelection(PdfTextSelectionDelegate text) async {
+  /// в буфер его кладём мы. Выделение после кнопки меню снимается, а
+  /// после `Ctrl+C` остаётся ([clear]) — как у просмотрщика.
+  Future<void> _copyRibbonSelection(
+    PdfTextSelectionDelegate text, {
+    required bool clear,
+  }) async {
     if (!text.isCopyAllowed) {
       return;
     }
@@ -2585,7 +2593,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     // SNO-F-REC-02: места в тексте страницы у выделения ленты нет —
     // действие пишется с текстом и пометкой ленты.
     unawaited(actions?.copiedLoose(clean));
-    await text.clearTextSelection();
+    if (clear) {
+      await text.clearTextSelection();
+    }
   }
 
   /// `Ctrl+C` в ленте: просмотрщик скопировал бы сам, мимо правила
@@ -2603,7 +2613,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (_viewer.isReady) {
       final PdfTextSelectionDelegate text = _viewer.textSelectionDelegate;
       if (text.hasSelectedText) {
-        unawaited(_copyRibbonSelection(text));
+        unawaited(_copyRibbonSelection(text, clear: false));
       }
     }
     return true;

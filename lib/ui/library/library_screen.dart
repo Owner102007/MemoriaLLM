@@ -818,6 +818,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
           // — и то, что увело из другого раздела, и то, что запись не
           // пустила дальше полки. Событие — только когда поиск открыт.
           if (_searchActive || _searchField.text.isNotEmpty) {
+            // Запрос, не достоявший срока, — раньше «назад», которое
+            // его закрыло.
+            _flushQuery();
             _log?.log(
               SnoEventType.navBack,
               data: const <String, Object?>{'closes': 'shelf_search'},

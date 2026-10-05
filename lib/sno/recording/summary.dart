@@ -89,7 +89,10 @@ class BlockMark {
   /// Номер блока.
   final int number;
 
-  /// Когда блок начат, в миллисекундах от старта записи.
+  /// Когда блок начат — временем `t` события `block.start`, тем же,
+  /// что у строк журнала. Длительность считается иначе ([durationMs]),
+  /// поэтому после сна устройства `startMs + durationMs` концом блока
+  /// по `t` не будет: конец — у события `block.end`.
   final int startMs;
 
   /// Сколько блок длился — по счёту записи: сон устройства в блок
@@ -191,24 +194,42 @@ int _between(EventMarks from, EventMarks to) {
 /// сколько участник отсутствовал, знает только журнал. Отлучка и блок,
 /// открытые в конце журнала, считаются до его последней строки — или
 /// до строки остановки, если она уже записана.
+///
+/// Строки, дописанные после сбоя (`late`), несут время перезапуска, а
+/// не записи: блок по такой строке закрывается, но концом журнала она
+/// не считается. Время после конца записи (`late_ms` остановки) в
+/// отлучку не входит — как у живой записи.
 JournalSummary summarizeJournal(List<EventMarks> events) {
   if (events.isEmpty) {
     return const JournalSummary();
   }
-  EventMarks end = events.last;
-  for (final EventMarks event in events) {
-    if (event.type == SnoEventType.recordingStop.wire) {
-      end = event;
+  // Остановка — последняя в журнале; всё, что записано за ней, к записи
+  // не относится.
+  int last = events.length - 1;
+  EventMarks? stop;
+  for (int i = 0; i < events.length; i++) {
+    if (events[i].type == SnoEventType.recordingStop.wire) {
+      stop = events[i];
+      last = i;
+    }
+  }
+  // Конец журнала для счёта времени — последняя строка самой записи.
+  EventMarks end = events[last];
+  for (int i = last; i >= 0; i--) {
+    if (events[i].data['late'] != true) {
+      end = events[i];
+      break;
     }
   }
   const Set<String> seen = <String>{'resumed', 'inactive'};
-  AwaySummary away = const AwaySummary();
+  final List<({int away, int hidden})> absences = <({int away, int hidden})>[];
   final List<BlockMark> blocks = <BlockMark>[];
   EventMarks? blockStart;
   EventMarks? left;
   EventMarks? hiddenSince;
   int hiddenMs = 0;
-  for (final EventMarks event in events) {
+  for (int i = 0; i <= last; i++) {
+    final EventMarks event = events[i];
     final String type = event.type;
     if (type == SnoEventType.blockStart.wire) {
       blockStart = event;
@@ -232,12 +253,17 @@ JournalSummary summarizeJournal(List<EventMarks> events) {
       }
       blockStart = null;
     } else if (type == SnoEventType.appBackground.wire) {
-      left ??= event;
+      if (left == null) {
+        left = event;
+        // Отлучка, начатая уже невидимым приложением (запись стартовала
+        // при свёрнутом окне): смены состояния перед ней в журнале нет.
+        if (hiddenSince == null && !seen.contains(event.data['state'])) {
+          hiddenSince = event;
+        }
+      }
     } else if (type == SnoEventType.appState.wire) {
-      final Object? from = event.data['from'];
-      final Object? to = event.data['to'];
-      final bool was = seen.contains(from);
-      final bool now = seen.contains(to);
+      final bool was = seen.contains(event.data['from']);
+      final bool now = seen.contains(event.data['to']);
       final EventMarks? since = hiddenSince;
       if (was && !now) {
         hiddenSince = event;
@@ -249,24 +275,32 @@ JournalSummary summarizeJournal(List<EventMarks> events) {
       final Object? gone = event.data['away_ms'];
       final Object? hidden = event.data['hidden_ms'];
       if (gone is int) {
-        away = away.plus(awayMs: gone, hiddenMs: hidden is int ? hidden : 0);
+        absences.add((away: gone, hidden: hidden is int ? hidden : 0));
       }
       left = null;
       hiddenSince = null;
       hiddenMs = 0;
     }
-    if (identical(event, end)) {
-      break;
-    }
   }
-  final Object? late = end.data['late_ms'];
-  final int past = late is int && late > 0 ? late : 0;
   final EventMarks? leftAt = left;
   if (leftAt != null) {
     final EventMarks? since = hiddenSince;
+    absences.add((
+      away: _between(leftAt, end),
+      hidden: hiddenMs + (since == null ? 0 : _between(since, end)),
+    ));
+  }
+  // Запись, кончившаяся в отсутствие участника: последняя отлучка идёт
+  // в итог только до конца записи.
+  final Object? late = stop?.data['late_ms'];
+  final int past = late is int && late > 0 ? late : 0;
+  final bool endedAway = leftAt != null || stop?.data['in_background'] == true;
+  AwaySummary away = const AwaySummary();
+  for (int i = 0; i < absences.length; i++) {
+    final bool clipped = endedAway && i == absences.length - 1;
     away = away.plus(
-      awayMs: _between(leftAt, end) - past,
-      hiddenMs: hiddenMs + (since == null ? 0 : _between(since, end)),
+      awayMs: absences[i].away - (clipped ? past : 0),
+      hiddenMs: absences[i].hidden,
     );
   }
   final EventMarks? start = blockStart;
