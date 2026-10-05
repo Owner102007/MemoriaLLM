@@ -385,6 +385,15 @@ jobs:
             printf '%s' "$SNO_KEYSTORE_BASE64" | tr -d '\r\n ' \
               | base64 -d > "$RUNNER_TEMP/sno.jks"
             export SNO_KEYSTORE_FILE="$RUNNER_TEMP/sno.jks"
+            # Отпечаток самого ключа — пока ключ ещё лежит на диске. С
+            # ним шаг «Чем подписан APK» сверит подпись собранного: так
+            # видно, что сборка подписана ключом из секретов, а не
+            # отладочным, которым она подписалась бы молча.
+            keytool -list -v -keystore "$RUNNER_TEMP/sno.jks" \
+              -storepass:env SNO_KEYSTORE_PASSWORD \
+              -alias "$SNO_KEY_ALIAS" 2>/dev/null \
+              | sed -n 's/^[[:space:]]*SHA256: //p' | head -1 \
+              | tr 'A-F' 'a-f' | tr -d ': \r' > "$RUNNER_TEMP/sno.sha256" || true
           fi
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
           flutter build apk --release \
@@ -535,12 +544,27 @@ jobs:
           if [ -z "${SNO_BRANCH:-}" ]; then
             exit 0
           fi
-          # Чужой форк секретов не видит: его сборка ветви подписана
-          # случайным ключом, и это не ошибка — её никто не ставит
-          # поверх нашей.
+          # Ключ в секретах есть — сборка ветви обязана быть подписана
+          # именно им. Отпечаток ключа посчитан шагом сборки по самому
+          # файлу ключа, и расхождение значит, что сборка взяла другую
+          # подпись (отладочную), хотя ключ ей дали.
+          key=''
+          if [ -s "$RUNNER_TEMP/sno.sha256" ]; then
+            key=$(tr -d ' \r\n' < "$RUNNER_TEMP/sno.sha256")
+          fi
+          if [ -n "$key" ] && [ "$digest" != "$key" ]; then
+            echo "::error $title::сборка ветви подписана не ключом из секретов: ${digest:-подпись не прочитана} вместо $key"
+            exit 1
+          fi
+          # Чужой репозиторий и запрос из форка секретов не видят: их
+          # сборка ветви подписана случайным ключом, и это не ошибка —
+          # её никто не ставит поверх нашей.
           outside=false
-          if [ "$HAS_KEY" != 'true' ] && [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
-            outside=true
+          if [ "$HAS_KEY" != 'true' ]; then
+            if [ "$GITHUB_EVENT_NAME" = 'pull_request' ] \
+              || [ "$GITHUB_REPOSITORY" != 'Owner102007/MemoriaLLM' ]; then
+              outside=true
+            fi
           fi
           if [ -n "$wanted" ]; then
             # Отпечаток записан — сборка ветви обязана быть подписана

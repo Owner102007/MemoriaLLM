@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -209,6 +210,85 @@ void main() {
       await again.refresh();
 
       expect(named(again, first).copiedAt, now);
+    });
+
+    test('SNO-F-REC-13: общая папка не знает, лежит ли копия, — отметка '
+        'остаётся какой была', () async {
+      await folderOf(first, id: firstId);
+      await archiveOf(second, id: secondId);
+      final FileDeviceRecords records = open();
+      await records.pack(first);
+
+      outlet.backupUnknown = true;
+      final FileDeviceRecords again = open();
+      await again.backupPending();
+      await again.refresh();
+
+      // Помеченная осталась помеченной, непомеченная — без отметки.
+      expect(named(again, first).copiedAt, now);
+      expect(named(again, second).copiedAt, isNull);
+    });
+
+    test('SNO-F-REC-13: общая папка молчит — упаковка её не ждёт, копии '
+        'нет', () async {
+      outlet.backupGate = Completer<void>();
+      await folderOf(first, id: firstId);
+      final FileDeviceRecords records = FileDeviceRecords(
+        root: () async => folder,
+        outlet: outlet,
+        now: () => now,
+        backupTimeout: const Duration(milliseconds: 20),
+      );
+      addTearDown(records.dispose);
+
+      final DeviceRecord? record = await records.pack(first);
+
+      expect(record!.packed, isTrue);
+      expect(record.copiedAt, isNull);
+      // Список и удаление за молчащей папкой не стоят.
+      await records.refresh();
+      expect(records.entries, hasLength(1));
+      outlet.backupGate!.complete();
+    });
+
+    test('SNO-F-REC-13: перед удалением отметка о копии сверяется с '
+        'общей папкой', () async {
+      await folderOf(first, id: firstId);
+      final FileDeviceRecords records = open();
+      final DeviceRecord record = (await records.pack(first))!;
+
+      // Копия на месте — обещание «копия останется» в силе.
+      expect(await records.copyStands(record), isTrue);
+      expect(named(records, first).copiedAt, now);
+
+      // Общая папка не ответила: отметка стоит, а обещать нечего.
+      outlet.backupUnknown = true;
+      expect(await records.copyStands(named(records, first)), isFalse);
+      expect(named(records, first).copiedAt, now);
+      outlet.backupUnknown = false;
+
+      // Копию убрали из «Загрузок», и положить заново не вышло.
+      outlet.backupWorks = false;
+      expect(await records.copyStands(record), isFalse);
+      expect(named(records, first).copiedAt, isNull);
+      expect(named(records, first).taken, isFalse);
+
+      // Положить заново вышло — копия снова есть.
+      outlet.backupWorks = true;
+      expect(await records.copyStands(named(records, first)), isTrue);
+      expect(named(records, first).copiedAt, now);
+    });
+
+    test('SNO-F-REC-13: на устройстве без общей папки сверка отвечает по '
+        'отметке', () async {
+      // ПК: копию сохранял экспериментатор, и сверять её не с чем.
+      outlet.backs = false;
+      await archiveOf(first, id: firstId);
+      final FileDeviceRecords records = open();
+      await records.refresh();
+
+      expect(await records.copyStands(named(records, first)), isFalse);
+      expect(outlet.backups, isEmpty);
     });
 
     test('SNO-F-REC-13: файл отметок потерян — отметки о копиях '
@@ -446,8 +526,14 @@ void main() {
         describeBackup(record(), backs: true),
         startsWith('Копии в «Загрузках» нет'),
       );
-      // ПК вторых копий сам не кладёт: и говорить не о чем.
-      expect(describeBackup(record(), backs: false), isNull);
+      // Телефон, который копий не кладёт (Android 9 и старше), об
+      // этом говорит: архив там лежит только в приложении.
+      expect(
+        describeBackup(record(), backs: false),
+        startsWith('Второй копии в «Загрузках» нет'),
+      );
+      // На ПК копию сохраняет экспериментатор: и говорить не о чем.
+      expect(describeBackup(record(), backs: false, shares: false), isNull);
     });
 
     test('SNO-F-REC-14: после окна «Поделиться» сказано, чем оно '
@@ -482,7 +568,7 @@ class _ThrowingOutlet extends NoRecordOutlet {
   Future<bool> canBackup() async => true;
 
   @override
-  Future<bool> backup(
+  Future<bool?> backup(
     String path, {
     required String sha256,
     required String folder,

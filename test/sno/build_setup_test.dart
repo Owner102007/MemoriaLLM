@@ -430,6 +430,10 @@ void main() {
       ]) {
         expect(ci, contains('secrets.$secret'), reason: secret);
       }
+      // Подпись собранного сверяется с отпечатком самого ключа: сборка,
+      // которой дали ключ, не вправе молча подписаться отладочным.
+      expect(ci, contains('keytool -list -v'));
+      expect(ci, contains(r'"$RUNNER_TEMP/sno.sha256"'));
       final String ignored = File('.gitignore').readAsStringSync();
       expect(ignored, contains('*.jks'));
       expect(ignored, contains('*.keystore'));

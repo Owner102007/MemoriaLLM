@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -141,6 +142,28 @@ void main() {
         )['service'],
         isFalse,
       );
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-13: запись остановили, пока служба заводилась, — '
+        'служба не остаётся висеть', () async {
+      final FakeRecordingGuard guard = FakeRecordingGuard()
+        ..holdGate = Completer<void>();
+      final SessionKit kit = SessionKit(guard: guard);
+      await kit.session.start(code);
+      kit.run(2);
+
+      await kit.session.stop(StopReason.experimenter);
+      expect(guard.calls, <String>['hold', 'release']);
+      // Служба ответила уже после остановки: её снимают ещё раз, а в
+      // журнал остановленной записи о ней не пишут.
+      guard.holdGate!.complete();
+      await kit.settle();
+
+      expect(guard.calls, <String>['hold', 'release', 'release']);
+      expect(guard.held, isFalse);
+      expect(eventsOf(kit, kit.folder, SnoEventType.recordingGuard), isEmpty);
+      expect(kit.store.types(kit.folder).last, 'recording.stop');
       kit.session.dispose();
     });
 
@@ -436,6 +459,36 @@ void main() {
       expect(marked.check, isNotNull);
       expect(guard.held, isFalse);
       expect(kit.status.screen.last, isFalse);
+    });
+
+    test('SNO-F-REC-13: оборванная запись, не сверенная при первом '
+        'запуске, и при втором «целой» не названа', () async {
+      final SessionKit first = SessionKit();
+      await first.session.start(code);
+      first.run(5);
+      await first.settle();
+      first.session.dispose();
+
+      // Первый запуск после сбоя журнала не прочитал.
+      first.store.failBytes = true;
+      final SessionKit second = restarted(first);
+      await second.session.restore();
+      expect(second.session.state!.stoppedBy, StopReason.crash);
+      expect(second.session.check, isNull);
+      second.session.dispose();
+
+      first.store.failBytes = false;
+      final SessionKit third = restarted(first);
+      await third.session.restore();
+
+      final JournalCheck check = third.session.check!;
+      expect(check.intact, isTrue);
+      expect(check.late, isTrue);
+      expect(
+        describeJournalCheck(check),
+        startsWith('Журнал цел до обрыва записи'),
+      );
+      third.session.dispose();
     });
 
     test('SNO-F-REC-13: итог проверки переживает перезапуск '

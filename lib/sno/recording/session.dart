@@ -787,9 +787,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (state.phase == RecordingPhase.stopped) {
       // Запись остановлена прежней сборкой, которая журнал не
       // перечитывала: он сверяется сейчас, пока его не открыли.
+      // У записи, закрытой после сбоя, «цела» не говорится и теперь:
+      // потерянного за последней строкой проверка не видит.
       final JournalCheck? check =
           state.check ??
-          await _checkJournal(state.folder, expected: state.events);
+          await _checkJournal(
+            state.folder,
+            expected: state.events,
+            late: state.stoppedBy == StopReason.crash,
+          );
       final List<EventMarks> tail = await _tail(state.folder);
       _state = state.withCheck(check);
       _setChecked(true);

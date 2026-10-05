@@ -31,8 +31,10 @@ abstract interface class RecordOutlet {
 
   /// Кладёт копию файла [path] в папку [folder] общих «Загрузок» и
   /// сверяет её с суммой [sha256]. Отвечает, лежит ли там теперь
-  /// сверенная копия — новая или положенная раньше.
-  Future<bool> backup(
+  /// сверенная копия — новая или положенная раньше; `null` — узнать
+  /// не удалось: общая папка не ответила, и копию не подтвердили, но
+  /// и не опровергли.
+  Future<bool?> backup(
     String path, {
     required String sha256,
     required String folder,
@@ -68,7 +70,7 @@ class NoRecordOutlet implements RecordOutlet {
   Future<bool> canBackup() async => false;
 
   @override
-  Future<bool> backup(
+  Future<bool?> backup(
     String path, {
     required String sha256,
     required String folder,
@@ -105,7 +107,8 @@ ShareOutcome shareOutcomeOf(Object? told) {
 /// приложение, `dismissed` — закрыто без выбора, `untold` — система не
 /// сообщила, `failed` — не открылось (SNO-F-REC-14); `canBackup` → есть
 /// ли общая папка; `backup` с `path`, `sha256` и `folder` → лежит ли в
-/// ней сверенная копия (SNO-F-REC-13). Архивы отдаются окну ссылками
+/// ней сверенная копия, или `null`, если хранилище загрузок не
+/// ответило (SNO-F-REC-13). Архивы отдаются окну ссылками
 /// `content://` через поставщика файлов сборки ветви: чужое приложение
 /// получает право прочитать только эти файлы.
 class AndroidRecordOutlet implements RecordOutlet {
@@ -152,19 +155,19 @@ class AndroidRecordOutlet implements RecordOutlet {
   }
 
   @override
-  Future<bool> backup(
+  Future<bool?> backup(
     String path, {
     required String sha256,
     required String folder,
   }) async {
     try {
-      final bool? there = await _channel.invokeMethod<bool>(
-        'backup',
-        <String, Object?>{'path': path, 'sha256': sha256, 'folder': folder},
-      );
-      return there ?? false;
+      return await _channel.invokeMethod<bool>('backup', <String, Object?>{
+        'path': path,
+        'sha256': sha256,
+        'folder': folder,
+      });
     } on PlatformException {
-      return false;
+      return null;
     } on MissingPluginException {
       return false;
     }
@@ -205,7 +208,7 @@ class WindowsRecordOutlet implements RecordOutlet {
   Future<bool> canBackup() async => false;
 
   @override
-  Future<bool> backup(
+  Future<bool?> backup(
     String path, {
     required String sha256,
     required String folder,

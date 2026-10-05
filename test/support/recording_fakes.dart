@@ -268,6 +268,10 @@ class FakeRecordingGuard implements RecordingGuard {
   /// С какими словами службу заводили в последний раз.
   ({String title, String text})? words;
 
+  /// Придерживает ответ службы, пока тест не отпустит: по нему видно,
+  /// что бывает, когда запись остановили, пока служба заводилась.
+  Completer<void>? holdGate;
+
   /// Заведена ли служба сейчас.
   bool get held => calls.isNotEmpty && calls.last == 'hold';
 
@@ -285,6 +289,7 @@ class FakeRecordingGuard implements RecordingGuard {
   Future<bool> hold({required String title, required String text}) async {
     calls.add('hold');
     words = (title: title, text: text);
+    await holdGate?.future;
     return holds;
   }
 
@@ -640,6 +645,13 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
   /// Сколько раз докладывали вторые копии прежних записей.
   int backedUp = 0;
 
+  /// Лежит ли копия в общей папке на самом деле — что ответит сверка
+  /// перед удалением; `false` — копию убрали руками.
+  bool copyThere = true;
+
+  /// Записи, копию которых сверяли, по порядку.
+  final List<String> verified = <String>[];
+
   /// Что отдавали окну «Поделиться», по вызовам: имена записей.
   final List<List<String>> shared = <List<String>>[];
 
@@ -795,6 +807,35 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
   Future<bool> reveal([DeviceRecord? record]) async {
     revealed.add(record?.name);
     return revealOpens;
+  }
+
+  @override
+  Future<bool> copyStands(DeviceRecord record) async {
+    verified.add(record.name);
+    if (record.copiedAt == null) {
+      return false;
+    }
+    if (copyThere) {
+      return true;
+    }
+    // Как у настоящих записей: опровергнутая отметка снимается.
+    _replace(
+      DeviceRecord(
+        name: record.name,
+        bytes: record.bytes,
+        packed: record.packed,
+        damaged: record.damaged,
+        branch: record.branch,
+        participant: record.participant,
+        startedAt: record.startedAt,
+        durationMs: record.durationMs,
+        events: record.events,
+        stoppedBy: record.stoppedBy,
+        sharedAt: record.sharedAt,
+      ),
+    );
+    notifyListeners();
+    return false;
   }
 
   @override

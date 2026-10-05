@@ -370,6 +370,41 @@ void main() {
       expect(find.text('Эта запись никуда не отправлена'), findsOneWidget);
       await tap(tester, 'sno-record-confirm');
       expect(records.deleted, <String>[copied.name, fresh.name]);
+      // Сверяли только ту, чьё удаление обещало «копия останется».
+      expect(records.verified, <String>[copied.name]);
+    });
+
+    testWidgets('SNO-F-REC-13: копию убрали из «Загрузок» — запись '
+        'удаляется только вторым подтверждением', (WidgetTester tester) async {
+      final DeviceRecord copied = DeviceRecord(
+        name: fresh.name,
+        bytes: fresh.bytes,
+        startedAt: fresh.startedAt,
+        durationMs: fresh.durationMs,
+        copiedAt: DateTime(2026, 11, 3, 14, 45),
+      );
+      records
+        ..put(copied)
+        ..copyThere = false;
+      await pumpList(tester);
+      expect(
+        aboutOf(tester, copied),
+        '40:00 · 6,8 МБ · не отправлена · копия есть',
+      );
+
+      await tap(tester, 'sno-record-delete-${copied.rowId}');
+
+      // Обещания «копия останется» в вопросе нет, а отметка снята.
+      expect(find.textContaining('копия останется'), findsNothing);
+      expect(
+        aboutOf(tester, copied),
+        '40:00 · 6,8 МБ · не отправлена · копии нет',
+      );
+      await tap(tester, 'sno-record-confirm');
+      expect(records.deleted, isEmpty);
+      expect(find.text('Эта запись никуда не отправлена'), findsOneWidget);
+      await tap(tester, 'sno-record-confirm');
+      expect(records.deleted, <String>[copied.name]);
     });
   });
 

@@ -225,6 +225,15 @@ abstract interface class DeviceRecords implements Listenable {
   /// Открывает папку записей; с [record] — на его файле.
   Future<bool> reveal([DeviceRecord? record]);
 
+  /// Лежит ли вторая копия записи в общей папке на самом деле
+  /// (SNO-F-REC-13): отметку «копия есть» сверяют с папкой перед тем,
+  /// как удалить запись одним подтверждением, — копию могли убрать из
+  /// «Загрузок» руками. Убранную кладёт заново; не вышло — отметка
+  /// снята, и ответ «нет». Сверить не удалось — тоже «нет», но
+  /// отметка остаётся: обещать копию нечем, а опровергнуть её нечем
+  /// тоже. Там, где копий не кладут, отвечает по отметке.
+  Future<bool> copyStands(DeviceRecord record);
+
   /// Удаляет запись с устройства. Отвечает, удалена ли.
   Future<bool> delete(DeviceRecord record);
 }
@@ -355,10 +364,23 @@ String describeShared(ShareReport report) {
 }
 
 /// Строка о второй копии готового архива на экране завершения
-/// (SNO-F-REC-13); `null` — устройство вторых копий само не кладёт.
-String? describeBackup(DeviceRecord record, {required bool backs}) {
-  if (!backs || !record.packed) {
+/// (SNO-F-REC-13); `null` — говорить не о чем: это ПК, там копию
+/// сохраняет экспериментатор.
+///
+/// [shares] — телефон. Телефон, который вторых копий не кладёт
+/// (Android 9 и старше), об этом говорит: архив там лежит только в
+/// приложении, и отправить его надо сразу.
+String? describeBackup(
+  DeviceRecord record, {
+  required bool backs,
+  bool shares = true,
+}) {
+  if (!record.packed || !shares) {
     return null;
+  }
+  if (!backs) {
+    return 'Второй копии в «Загрузках» нет: этот телефон её не кладёт. '
+        'Архив лежит только в приложении — отправьте его сейчас.';
   }
   return record.copiedAt != null
       ? 'Копия: $kBackupPlace'

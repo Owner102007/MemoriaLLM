@@ -319,7 +319,11 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     DeviceRecord record,
   ) {
     final String? notice = _notice;
-    final String? backup = describeBackup(record, backs: records.backs);
+    final String? backup = describeBackup(
+      record,
+      backs: records.backs,
+      shares: records.shares,
+    );
     return <Widget>[
       Text('Архив записи готов', style: theme.textTheme.titleSmall),
       const SizedBox(height: 4),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -117,6 +118,14 @@ class FakeRecordOutlet implements RecordOutlet {
   /// Ложится ли вторая копия в общую папку.
   bool backupWorks = true;
 
+  /// Не знает ли общая папка, лежит ли в ней копия: хранилище
+  /// загрузок не ответило.
+  bool backupUnknown = false;
+
+  /// Придерживает ответ общей папки, пока тест не отпустит: по нему
+  /// видно, что бывает, когда она молчит.
+  Completer<void>? backupGate;
+
   /// Что клали в общую папку, по вызовам: путь, сумма, папка.
   final List<({String path, String sha256, String folder})> backups =
       <({String path, String sha256, String folder})>[];
@@ -144,13 +153,14 @@ class FakeRecordOutlet implements RecordOutlet {
   Future<bool> canBackup() async => backs;
 
   @override
-  Future<bool> backup(
+  Future<bool?> backup(
     String path, {
     required String sha256,
     required String folder,
   }) async {
     backups.add((path: path, sha256: sha256, folder: folder));
-    return backupWorks;
+    await backupGate?.future;
+    return backupUnknown ? null : backupWorks;
   }
 
   @override

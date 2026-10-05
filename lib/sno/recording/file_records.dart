@@ -66,11 +66,17 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     String? Function()? activeFolder,
     bool Function()? sessionKnown,
     DateTime Function()? now,
+    this.backupTimeout = const Duration(seconds: 60),
   }) : _root = root,
        _outlet = outlet,
        _activeFolder = activeFolder,
        _sessionKnown = sessionKnown,
        _now = now ?? DateTime.now;
+
+  /// Сколько ждать общую папку устройства (SNO-F-REC-13): дольше —
+  /// копию не подтвердили и не опровергли, а упаковка и список записей
+  /// идут дальше. Подменяется в тестах.
+  final Duration backupTimeout;
 
   /// Имя файла отметок в папке записей.
   static const String stateName = '.state.json';
@@ -495,12 +501,9 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     return name;
   }
 
-  /// Сколько ждать общую папку устройства: дольше — копия считается
-  /// не лёгшей, а упаковка и список записей идут дальше.
-  static const Duration backupTimeout = Duration(seconds: 60);
-
   /// Кладёт вторую копию архива записи [name] в общую папку устройства
-  /// (SNO-F-REC-13). Отвечает, лежит ли там теперь сверенная копия.
+  /// (SNO-F-REC-13). Отвечает, лежит ли там теперь сверенная копия;
+  /// `null` — копия помечена, но сверить её сейчас не удалось.
   ///
   /// [again] — сверить и ту копию, что уже помечена: её могли убрать
   /// из общей папки руками. Нет её там и положить заново не вышло —
@@ -508,9 +511,11 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   ///
   /// Ни один отказ упаковке и списку не мешает: копии нет — у записи
   /// «копии нет», и попытка повторится при следующем запуске. Отказ
-  /// самой общей папки (ошибка, молчание) прежней отметки не снимает:
-  /// копию не проверили, но и не опровергли.
-  Future<bool> _backup(
+  /// самой общей папки (ошибка, молчание, ответ «не знаю») прежней
+  /// отметки не снимает: копию не проверили, но и не опровергли. Пока
+  /// файл отметок не прочитан, отметки не сверяются вовсе: какие из
+  /// них стоят, неизвестно, и опровергнутая вернулась бы с диска.
+  Future<bool?> _backup(
     Directory records,
     String name, {
     bool again = false,
@@ -518,13 +523,16 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     if (!await _canBackup()) {
       return false;
     }
-    final bool marked;
-    final bool there;
+    bool marked = false;
+    final bool? told;
     try {
       await _readState(records);
       marked = _marks[name]?['copied_at'] != null;
       if (marked && !again) {
         return true;
+      }
+      if (again && !_stateRead) {
+        return null;
       }
       final File archive = File(
         p.join(records.path, '$name$kArchiveExtension'),
@@ -532,7 +540,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       if (!await archive.exists()) {
         return false;
       }
-      there = await _outlet
+      told = await _outlet
           .backup(
             archive.path,
             sha256: await fileSha256(archive),
@@ -540,8 +548,14 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
           )
           .timeout(backupTimeout);
     } on Object {
-      return false;
+      // Отказ или молчание общей папки: отметка остаётся какой была.
+      return marked ? null : false;
     }
+    if (told == null) {
+      // Общая папка не знает: отметка остаётся какой была.
+      return marked ? null : false;
+    }
+    final bool there = told;
     if (there == marked) {
       return there;
     }
@@ -766,6 +780,29 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       }
     }
     return _outlet.reveal(folder.path, file: false);
+  }
+
+  @override
+  Future<bool> copyStands(DeviceRecord record) async {
+    if (!record.packed) {
+      return false;
+    }
+    if (!await _canBackup()) {
+      // Копий устройство само не кладёт: на ПК её сохранял
+      // экспериментатор, и сверять её не с чем.
+      return record.copiedAt != null;
+    }
+    return _locked(() async {
+      final bool? there = await _backup(
+        await _records(),
+        record.name,
+        again: true,
+      );
+      await _scan();
+      // Не сверили — не обещаем: отметка стоит, а «копия останется»
+      // сказать нечем.
+      return there ?? false;
+    }).whenComplete(_notify);
   }
 
   @override

@@ -289,10 +289,15 @@ class MainActivity : FlutterActivity() {
         }
         val pending = pendingNotifications ?: return
         pendingNotifications = null
+        // Пустой ответ — окно прервали (поворот, другое окно поверх):
+        // читатель ничего не выбрал, и спросить его можно ещё раз.
         answer(
             pending,
-            grantResults.isNotEmpty() &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED,
+            if (grantResults.isEmpty()) {
+                null
+            } else {
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            },
         )
     }
 
@@ -345,9 +350,11 @@ class MainActivity : FlutterActivity() {
      * Заводит службу переднего плана записи (SNO-F-REC-13).
      *
      * Службой переднего плана она становится в своём `onStartCommand`,
-     * чуть позже этого вызова, поэтому ответ даётся с задержкой — по
-     * тому, что вышло на самом деле. В основном приложении службы в
-     * манифесте нет: `startService` вернёт `null`, ответ — «нет».
+     * чуть позже этого вызова, поэтому ответ даётся не сразу — по
+     * тому, что вышло на самом деле: на медленном телефоне служба
+     * заводится дольше, и её ждут до трёх секунд. В основном
+     * приложении службы в манифесте нет: `startService` вернёт
+     * `null`, ответ — «нет».
      */
     private fun holdRecording(
         title: String?,
@@ -370,10 +377,19 @@ class MainActivity : FlutterActivity() {
             result.success(false)
             return
         }
-        handler.postDelayed(
-            { answer(result, RecordingService.foreground) },
-            GUARD_SETTLE_MS,
-        )
+        awaitGuard(result, GUARD_TRIES)
+    }
+
+    /**
+     * Ждёт, пока служба записи станет службой переднего плана, и
+     * отвечает Dart; попыток осталось [left].
+     */
+    private fun awaitGuard(result: MethodChannel.Result, left: Int) {
+        if (RecordingService.foreground || left <= 0 || !guardRequested) {
+            answer(result, guardRequested && RecordingService.foreground)
+            return
+        }
+        handler.postDelayed({ awaitGuard(result, left - 1) }, GUARD_STEP_MS)
     }
 
     /** Снимает службу переднего плана записи и её уведомление. */
@@ -521,6 +537,17 @@ class MainActivity : FlutterActivity() {
             startActivity(
                 Intent.createChooser(send, null, callback.intentSender),
             )
+            // Окно выбора заслоняет приложение. Не заслонило — оно не
+            // открылось, хотя система об этом промолчала: без этого
+            // ответа «Поделиться» ждало бы вечно.
+            handler.postDelayed(
+                {
+                    if (resumed && !shareLeft) {
+                        answerShare(token, SHARE_FAILED)
+                    }
+                },
+                SHARE_OPEN_MS,
+            )
         } catch (error: IllegalArgumentException) {
             // Файл лежит не в папке записей, или поставщика в этой
             // сборке нет.
@@ -570,7 +597,8 @@ class MainActivity : FlutterActivity() {
 
     /**
      * Кладёт вторую копию архива записи в общие «Загрузки»
-     * (SNO-F-REC-13) и отвечает, лежит ли там теперь сверенная копия.
+     * (SNO-F-REC-13) и отвечает, лежит ли там теперь сверенная копия;
+     * `null` — хранилище загрузок отказало, и узнать этого не вышло.
      *
      * Копирование идёт не в главном потоке: архив с потоком взгляда
      * будет большим, а экран в это время стоять не должен.
@@ -588,11 +616,13 @@ class MainActivity : FlutterActivity() {
             return
         }
         Thread {
-            val there =
+            val there: Boolean? =
                 try {
                     copyToDownloads(File(path), expected, folder)
                 } catch (error: Exception) {
-                    false
+                    // Хранилище не ответило: о копии, положенной
+                    // раньше, это ничего не говорит.
+                    null
                 }
             handler.post { answer(result, there) }
         }.start()
@@ -974,8 +1004,17 @@ class MainActivity : FlutterActivity() {
          */
         const val SHARE_SETTLE_MS = 1000L
 
-        /** Через сколько служба записи успевает стать службой. */
-        const val GUARD_SETTLE_MS = 800L
+        /**
+         * Сколько ждать, что окно «Поделиться» заслонит приложение,
+         * прежде чем считать его неоткрывшимся.
+         */
+        const val SHARE_OPEN_MS = 5000L
+
+        /** Как часто спрашивать службу записи, стала ли она службой. */
+        const val GUARD_STEP_MS = 300L
+
+        /** Сколько раз спрашивать: вместе — три секунды. */
+        const val GUARD_TRIES = 10
 
         const val POST_NOTIFICATIONS =
             "android.permission.POST_NOTIFICATIONS"

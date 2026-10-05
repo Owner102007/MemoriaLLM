@@ -206,10 +206,30 @@ class _DeviceRecordsScreenState extends State<DeviceRecordsScreen> {
     }
     // SNO-F-REC-13: у записи, которая не отправлена, но лежит копией в
     // «Загрузках» телефона, подтверждение одно — и в нём сказано, что
-    // от неё останется.
+    // от неё останется. Обещание сверяется с общей папкой до вопроса:
+    // копию могли убрать руками, и тогда эта запись — последняя.
+    bool taken = record.taken;
+    bool keepsCopy = widget.records.backs && record.keepsOnlyCopy;
+    if (keepsCopy) {
+      setState(() => _busy = true);
+      bool stands;
+      try {
+        stands = await widget.records.copyStands(record);
+      } on Object {
+        stands = false;
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() => _busy = false);
+      if (!stands) {
+        taken = false;
+        keepsCopy = false;
+      }
+    }
     final bool first = await _confirm(
       title: 'Удалить запись с устройства?',
-      body: widget.records.backs && record.keepsOnlyCopy
+      body: keepsCopy
           ? '${record.fileName}\n\n'
                 'Запись не отправлена. Её копия останется в «Загрузках» '
                 'телефона — в папке $kBackupFolder.'
@@ -219,7 +239,7 @@ class _DeviceRecordsScreenState extends State<DeviceRecordsScreen> {
     if (!first || !mounted) {
       return;
     }
-    if (!record.taken) {
+    if (!taken) {
       final bool second = await _confirm(
         title: widget.records.shares
             ? 'Эта запись никуда не отправлена'
