@@ -65,13 +65,9 @@ void main() {
   }
 
   Map<String, Object?> marksOnDisk() {
-    final Map<String, Object?> state =
-        jsonDecode(
-              File(
-                p.join(folder.path, FileDeviceRecords.stateName),
-              ).readAsStringSync(),
-            )
-            as Map<String, Object?>;
+    final Map<String, Object?> state = jsonDecode(
+      File(p.join(folder.path, FileDeviceRecords.stateName)).readAsStringSync(),
+    ) as Map<String, Object?>;
     return state['records']! as Map<String, Object?>;
   }
 
@@ -148,20 +144,89 @@ void main() {
 
       await records.backupPending();
 
-      expect(<String>[
-        for (final ({String path, String sha256, String folder}) one
-            in outlet.backups)
-          p.basename(one.path),
-      ], <String>['$first.zip', '$second.zip']);
+      expect(
+        <String>[
+          for (final ({String path, String sha256, String folder}) one
+              in outlet.backups)
+            p.basename(one.path),
+        ],
+        <String>['$first.zip', '$second.zip'],
+      );
       expect(named(records, first).copiedAt, now);
       expect(named(records, second).copiedAt, now);
 
-      // Второй запуск: копии уже лежат, класть нечего.
+      // Второй запуск: копии лежат, и это сверено с общей папкой —
+      // отметки остаются прежними.
+      final Map<String, Object?> before = marksOnDisk();
+      now = now.add(const Duration(hours: 1));
       final FileDeviceRecords again = open();
       await again.backupPending();
-      expect(outlet.backups, hasLength(2));
+      expect(outlet.backups, hasLength(4));
+      expect(marksOnDisk(), before);
+    });
+
+    test('SNO-F-REC-13: копию убрали из общей папки, а положить заново не '
+        'вышло — отметка снята', () async {
+      await folderOf(first, id: firstId);
+      final FileDeviceRecords records = open();
+      await records.pack(first);
+      expect(named(records, first).taken, isTrue);
+
+      // Копии в «Загрузках» больше нет, и общая папка её не принимает.
+      outlet.backupWorks = false;
+      final FileDeviceRecords again = open();
+      await again.backupPending();
+
+      expect(named(again, first).copiedAt, isNull);
+      // Запись снова удаляется только вторым подтверждением.
+      expect(named(again, first).taken, isFalse);
+      final Map<String, Object?> mark =
+          marksOnDisk()[first]! as Map<String, Object?>;
+      expect(mark.containsKey('copied_at'), isFalse);
+      expect(mark.containsKey('copied_to'), isFalse);
+
+      // Общая папка заработала — копия и отметка возвращаются.
+      outlet.backupWorks = true;
+      final FileDeviceRecords third = open();
+      await third.backupPending();
+      expect(named(third, first).copiedAt, now);
+    });
+
+    test('SNO-F-REC-13: общая папка не ответила — прежняя отметка '
+        'остаётся', () async {
+      await folderOf(first, id: firstId);
+      final FileDeviceRecords records = open();
+      await records.pack(first);
+
+      // Копию не проверили, но и не опровергли.
+      final FileDeviceRecords again = FileDeviceRecords(
+        root: () async => folder,
+        outlet: _ThrowingOutlet(),
+        now: () => now,
+      );
+      addTearDown(again.dispose);
+      await again.backupPending();
       await again.refresh();
+
       expect(named(again, first).copiedAt, now);
+    });
+
+    test('SNO-F-REC-13: файл отметок потерян — отметки о копиях '
+        'возвращаются, об отправке нет', () async {
+      await folderOf(first, id: firstId);
+      final FileDeviceRecords records = open();
+      await records.pack(first);
+      await records.share(records.entries);
+      expect(named(records, first).sharedAt, now);
+      await File(p.join(folder.path, FileDeviceRecords.stateName)).delete();
+
+      final FileDeviceRecords again = open();
+      await again.backupPending();
+
+      // Копия лежит в общей папке, и это сверено; а кому запись
+      // отправляли, узнать больше не у кого.
+      expect(named(again, first).copiedAt, now);
+      expect(named(again, first).sharedAt, isNull);
     });
 
     test('SNO-F-REC-13: копия, не лёгшая в прошлый раз, кладётся при '

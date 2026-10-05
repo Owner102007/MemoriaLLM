@@ -337,9 +337,7 @@ void main() {
       ).readAsStringSync();
       expect(service, contains('R.drawable.ic_recording'));
       expect(
-        File(
-          'android/app/src/main/res/drawable/ic_recording.xml',
-        ).existsSync(),
+        File('android/app/src/main/res/drawable/ic_recording.xml').existsSync(),
         isTrue,
       );
     });

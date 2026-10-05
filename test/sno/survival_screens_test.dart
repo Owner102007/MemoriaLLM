@@ -357,6 +357,9 @@ void main() {
       await pumpList(tester);
 
       await tap(tester, 'sno-record-delete-${copied.rowId}');
+      // В единственном вопросе сказано, что от записи останется.
+      expect(find.textContaining('Запись не отправлена'), findsOneWidget);
+      expect(find.textContaining(kBackupFolder), findsOneWidget);
       await tap(tester, 'sno-record-confirm');
       expect(records.deleted, <String>[copied.name]);
 
@@ -416,10 +419,7 @@ void main() {
       kit = SessionKit(guard: guard);
       await pumpTesting(tester);
       // До вопроса раздел уже говорит, что уведомления выключены.
-      expect(
-        find.byKey(const Key('sno-record-notifications')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('sno-record-notifications')), findsOneWidget);
       expect(guard.asked, 0);
 
       await tap(tester, 'sno-record-start');
@@ -445,10 +445,7 @@ void main() {
       kit.session.dispose();
       kit = SessionKit(guard: guard);
       await pumpTesting(tester);
-      expect(
-        find.byKey(const Key('sno-record-notifications')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('sno-record-notifications')), findsOneWidget);
 
       await tap(tester, 'sno-record-start');
       await tap(tester, 'sno-code-cancel');

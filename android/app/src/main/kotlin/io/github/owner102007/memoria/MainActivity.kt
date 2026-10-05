@@ -99,6 +99,13 @@ class MainActivity : FlutterActivity() {
     /** Ответ, которого ждёт Dart от вопроса об уведомлениях. */
     private var pendingNotifications: MethodChannel.Result? = null
 
+    /**
+     * Просили ли завести службу записи (SNO-F-REC-13). Снимать её при
+     * закрытии экрана надо, только если просили: в основном приложении
+     * службы нет, и лишний раз звать её незачем.
+     */
+    private var guardRequested = false
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
@@ -265,7 +272,9 @@ class MainActivity : FlutterActivity() {
         // SNO-F-REC-13: движок Flutter уходит вместе с экраном, и
         // запись вместе с ним — уведомление «Идёт запись» пережить её
         // не должно.
-        releaseRecording()
+        if (guardRequested) {
+            releaseRecording()
+        }
         super.onDestroy()
     }
 
@@ -345,6 +354,7 @@ class MainActivity : FlutterActivity() {
         text: String?,
         result: MethodChannel.Result,
     ) {
+        guardRequested = true
         val started =
             try {
                 startService(
@@ -368,6 +378,7 @@ class MainActivity : FlutterActivity() {
 
     /** Снимает службу переднего плана записи и её уведомление. */
     private fun releaseRecording() {
+        guardRequested = false
         try {
             stopService(Intent(this, RecordingService::class.java))
         } catch (error: RuntimeException) {
@@ -403,7 +414,7 @@ class MainActivity : FlutterActivity() {
      * приложение (система сообщает об этом приёмнику выбора);
      * `dismissed` — окно закрыто без выбора; `untold` — система о
      * выборе не сообщила (пункт окна без приложения, окно
-     * производителя, старый Android); `failed` — окно не открылось.
+     * производителя); `failed` — окно не открылось.
      * Дошёл ли архив до адресата, Android не сообщает никогда.
      *
      * В основном приложении поставщика нет — ссылки не получится, и
@@ -449,23 +460,29 @@ class MainActivity : FlutterActivity() {
                 clip.addItem(ClipData.Item(uris[index]))
             }
             send.clipData = clip
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) {
-                // О выборе в окне система здесь не сообщает вовсе.
-                startActivity(Intent.createChooser(send, null))
-                result.success(SHARE_UNTOLD)
-                return
-            }
             val token = ++shareToken
             val action = "$packageName$SHARE_ACTION"
             val receiver =
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context, intent: Intent) {
+                        // Сообщение прежнего окна нынешнему не ответ.
                         val chosen =
-                            IntentCompat.getParcelableExtra(
-                                intent,
-                                Intent.EXTRA_CHOSEN_COMPONENT,
-                                ComponentName::class.java,
-                            )
+                            try {
+                                if (intent.getIntExtra(SHARE_TOKEN, -1) !=
+                                    token
+                                ) {
+                                    return
+                                }
+                                IntentCompat.getParcelableExtra(
+                                    intent,
+                                    Intent.EXTRA_CHOSEN_COMPONENT,
+                                    ComponentName::class.java,
+                                )
+                            } catch (error: RuntimeException) {
+                                // Окно производителя вложило в
+                                // сообщение то, что не читается.
+                                null
+                            }
                         answerShare(
                             token,
                             if (chosen != null) SHARE_CHOSEN else SHARE_UNTOLD,
@@ -491,11 +508,15 @@ class MainActivity : FlutterActivity() {
                 PendingIntent.getBroadcast(
                     this,
                     token,
-                    Intent(action).setPackage(packageName),
+                    Intent(action)
+                        .setPackage(packageName)
+                        .putExtra(SHARE_TOKEN, token),
                     flags,
                 )
             pendingShare = result
-            shareLeft = false
+            // Окно могли позвать, когда приложение уже не на экране:
+            // тогда возвращение на экран — уже возвращение из окна.
+            shareLeft = !resumed
             shareHidden = false
             startActivity(
                 Intent.createChooser(send, null, callback.intentSender),
@@ -507,6 +528,10 @@ class MainActivity : FlutterActivity() {
         } catch (error: ActivityNotFoundException) {
             failShare(result)
         } catch (error: SecurityException) {
+            failShare(result)
+        } catch (error: RuntimeException) {
+            // Что бы ни отказало, окно не открыто: ответ один, и
+            // следующее «Поделиться» не должно упереться в это.
             failShare(result)
         }
     }
@@ -939,6 +964,9 @@ class MainActivity : FlutterActivity() {
 
         /** Хвост имени сообщения о выборе: за идентификатором сборки. */
         const val SHARE_ACTION = ".SHARE_CHOSEN"
+
+        /** Номер окна в сообщении о выборе. */
+        const val SHARE_TOKEN = "token"
 
         /**
          * Сколько ждать сообщения о выборе после возвращения из окна

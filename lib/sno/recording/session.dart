@@ -168,6 +168,7 @@ class SessionState {
     this.blocks = const <BlockMark>[],
     this.inBackground = false,
     this.check,
+    this.passport = const <String, Object?>{},
   });
 
   /// Идентификатор записи.
@@ -227,6 +228,13 @@ class SessionState {
   /// — запись идёт, или журнал перечитать не удалось.
   final JournalCheck? check;
 
+  /// Паспорт устройства, каким он был в миг старта (SNO-F-REC-13).
+  ///
+  /// Помнится между запусками: сведения записи переписываются при
+  /// остановке, после сбоя и при завершении, а окно на ПК к тому
+  /// времени может быть другим — и до первого кадра его нет вовсе.
+  final Map<String, Object?> passport;
+
   /// То же состояние с итогом самопроверки журнала.
   SessionState withCheck(JournalCheck? check) {
     return SessionState(
@@ -246,6 +254,7 @@ class SessionState {
       blocks: blocks,
       inBackground: inBackground,
       check: check,
+      passport: passport,
     );
   }
 
@@ -268,6 +277,7 @@ class SessionState {
       blocks: blocks,
       inBackground: inBackground,
       check: check,
+      passport: passport,
     );
   }
 
@@ -302,6 +312,7 @@ class SessionState {
       blocks: blocks ?? this.blocks,
       inBackground: inBackground ?? this.inBackground,
       check: check,
+      passport: passport,
     );
   }
 
@@ -324,6 +335,7 @@ class SessionState {
       'blocks': <Object?>[for (final BlockMark mark in blocks) mark.toJson()],
       'in_background': inBackground,
       'check': check?.toJson(),
+      'passport': passport,
     });
   }
 
@@ -347,6 +359,7 @@ class SessionState {
       final Object? lastT = raw['last_t'];
       final Object? resyncs = raw['resyncs'];
       final Object? failed = raw['write_failed'];
+      final Object? passport = raw['passport'];
       final ParticipantCode? participant = ParticipantCode.fromJson(
         raw['participant'],
       );
@@ -382,6 +395,9 @@ class SessionState {
         blocks: BlockMark.listFromJson(raw['blocks']),
         inBackground: raw['in_background'] == true,
         check: JournalCheck.fromJson(raw['check']),
+        passport: passport is Map<String, Object?>
+            ? passport
+            : const <String, Object?>{},
       );
     } on FormatException {
       return null;
@@ -611,10 +627,6 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// прочитана ([restore]) или записана заново (старт записи).
   bool _known = false;
 
-  /// Паспорт устройства, каким его отдали в первый раз: устройство за
-  /// запись не меняется, а окно на ПК — меняется.
-  Map<String, Object?>? _passportKnown;
-
   /// Заряд и свободное место по последнему ответу устройства
   /// (SNO-F-REC-13): их несёт сердцебиение.
   int? _vitalBattery;
@@ -777,10 +789,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       // перечитывала: он сверяется сейчас, пока его не открыли.
       final JournalCheck? check =
           state.check ??
-          await _checkJournal(state.folder, expected: state.events, late: true);
+          await _checkJournal(state.folder, expected: state.events);
       final List<EventMarks> tail = await _tail(state.folder);
       _state = state.withCheck(check);
-      checked.value = true;
+      _setChecked(true);
       _known = true;
       _failed = state.failed ?? false;
       // Номер продолжает журнал: отметка сессии могла отстать от него.
@@ -799,7 +811,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       await _tail(state.folder, count: _wholeJournal),
       check,
     );
-    checked.value = true;
+    _setChecked(true);
     _known = true;
     _notify();
   }
@@ -1097,6 +1109,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       return false;
     }
 
+    // SNO-F-REC-13: паспорт — до часов записи: вопрос к устройству в
+    // её время не входит.
+    final Map<String, Object?> passport = await _passportOf();
     final int Function() elapsed = _monotonic();
     final RecordingClock clock = RecordingClock(now: _now, elapsedMs: elapsed);
     final SessionState state = SessionState(
@@ -1106,6 +1121,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       startedAt: clock.anchor,
       plannedSeconds: _planned.inSeconds,
       phase: RecordingPhase.recording,
+      passport: passport,
     );
     try {
       // Код — раньше отметки о сессии: отказ на нём не оставит сессии,
@@ -1156,7 +1172,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _vitalFree = null;
     _lowBattery = false;
     _lowSpace = false;
-    checked.value = false;
+    _setChecked(false);
     _state = state;
 
     final Object? reference = snapshot['reference'];
@@ -1285,12 +1301,17 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     } on Object {
       answer = null;
     }
+    if (answer == null) {
+      // Система не ответила — окно могло и не показаться: спросим ещё
+      // раз при следующем старте.
+      return false;
+    }
     try {
       await _settings.write(SnoSettingsKeys.notificationsAsked, 'true');
     } on Object {
       // Отметка не легла: спросим ещё раз при следующем старте.
     }
-    return answer ?? false;
+    return answer;
   }
 
   /// Заводит службу переднего плана и пишет в журнал, заведена ли она
@@ -1384,16 +1405,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Паспорт устройства для сведений о записи; не отдали — пустой.
   Future<Map<String, Object?>> _passportOf() async {
-    final Map<String, Object?>? known = _passportKnown;
-    if (known != null) {
-      return known;
-    }
     try {
-      final Map<String, Object?> told = await _passport();
-      if (told.isNotEmpty) {
-        _passportKnown = told;
-      }
-      return told;
+      return await _passport();
     } on Object {
       return const <String, Object?>{};
     }
@@ -1475,10 +1488,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       'branch': branch,
       'app': build,
       // SNO-F-REC-13: паспорт устройства — производитель, модель,
-      // система, экран, масштаб шрифта; узел и код стоят последними:
-      // паспорт их не подменит.
+      // система, экран, масштаб шрифта, какими они были в миг старта;
+      // узел и код стоят последними: паспорт их не подменит.
       'device': <String, Object?>{
-        ...await _passportOf(),
+        ...state.passport,
         'node_id': _nodeId,
         'code': device,
       },
@@ -2065,7 +2078,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         .withFailure(writeFailed)
         .withCheck(check);
     _state = marked;
-    checked.value = true;
+    _setChecked(true);
     try {
       await _settings.write(SnoSettingsKeys.session, marked.encode());
     } on Object {
@@ -2146,7 +2159,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _state = null;
     _seq = 0;
     _failed = false;
-    checked.value = false;
+    _setChecked(false);
     _notify();
   }
 
@@ -2183,6 +2196,14 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   void _notify() {
     if (!_disposed) {
       notifyListeners();
+    }
+  }
+
+  /// Отмечает, перечитан ли журнал; сессию могли снять, пока остановка
+  /// дописывала своё, — тогда отмечать уже некому.
+  void _setChecked(bool value) {
+    if (!_disposed) {
+      checked.value = value;
     }
   }
 

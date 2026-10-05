@@ -232,6 +232,28 @@ void main() {
       kit.session.dispose();
     });
 
+    test('SNO-F-REC-13: система на вопрос не ответила — спросят ещё '
+        'раз', () async {
+      final FakeRecordingGuard guard = FakeRecordingGuard(allowed: false)
+        ..answer = null;
+      final SessionKit kit = SessionKit(guard: guard);
+
+      expect(await kit.session.prepareGuard(), isFalse);
+
+      // Окно могло и не показаться: отметки «спрашивали» нет.
+      expect(guard.asked, 1);
+      expect(
+        kit.settings.values.containsKey(SnoSettingsKeys.notificationsAsked),
+        isFalse,
+      );
+      guard
+        ..allowed = false
+        ..answer = true;
+      expect(await kit.session.prepareGuard(), isTrue);
+      expect(guard.asked, 2);
+      kit.session.dispose();
+    });
+
     test('SNO-F-REC-13: настройки не ответили — второго вопроса подряд '
         'нет', () async {
       final FakeRecordingGuard guard = FakeRecordingGuard(allowed: false);
@@ -389,9 +411,31 @@ void main() {
       expect(second.session.checked.value, isTrue);
       final JournalCheck check = second.session.check!;
       expect(check.intact, isTrue);
-      expect(check.late, isTrue);
+      // Сколько событий посчитала запись, известно: проверка полная.
+      expect(check.late, isFalse);
       expect(check.lines, old.events);
       second.session.dispose();
+    });
+
+    test('SNO-F-REC-13: сессию сняли, пока остановка дописывала своё, — '
+        'остановка доходит до конца', () async {
+      final FakeRecordingGuard guard = FakeRecordingGuard();
+      final SessionKit kit = SessionKit(guard: guard);
+      await kit.session.start(code);
+      kit.run(5);
+
+      final Future<void> stopping = kit.session.stop(StopReason.experimenter);
+      kit.session.dispose();
+      await stopping;
+
+      // Отметка об остановке легла, служба снята, экран отпущен.
+      final SessionState? marked = SessionState.decode(
+        kit.settings.values[SnoSettingsKeys.session],
+      );
+      expect(marked!.phase, RecordingPhase.stopped);
+      expect(marked.check, isNotNull);
+      expect(guard.held, isFalse);
+      expect(kit.status.screen.last, isFalse);
     });
 
     test('SNO-F-REC-13: итог проверки переживает перезапуск '
@@ -482,23 +526,19 @@ void main() {
       await kit.session.finish();
 
       // Манифест — то же, что сведения записи, плюс перечень файлов.
-      final Map<String, Object?> manifest =
-          jsonDecode(
-                jsonEncode(
-                  buildManifest(
-                    info: kit.store.json(folder, kRecordingFile),
-                    archiveName: '$folder.zip',
-                    packedAt: kit.time.now(),
-                    files: const <PackedFile>[],
-                  ),
-                ),
-              )
-              as Map<String, Object?>;
-      final Map<String, Object?> schema =
-          jsonDecode(
-                await File('tool/sno_manifest.schema.json').readAsString(),
-              )
-              as Map<String, Object?>;
+      final Map<String, Object?> manifest = jsonDecode(
+        jsonEncode(
+          buildManifest(
+            info: kit.store.json(folder, kRecordingFile),
+            archiveName: '$folder.zip',
+            packedAt: kit.time.now(),
+            files: const <PackedFile>[],
+          ),
+        ),
+      ) as Map<String, Object?>;
+      final Map<String, Object?> schema = jsonDecode(
+        await File('tool/sno_manifest.schema.json').readAsString(),
+      ) as Map<String, Object?>;
 
       expect(schemaProblems(manifest, schema), isEmpty);
       expect((manifest['device']! as Map<String, Object?>)['model'], 'Pixel 7');
@@ -521,6 +561,45 @@ void main() {
       expect(device['node_id'], kTestNode);
       expect(device['code'], 'a91f3c');
       kit.session.dispose();
+    });
+
+    test('SNO-F-REC-13: паспорт снят в миг старта и переживает '
+        'перезапуск', () async {
+      final SessionKit first = SessionKit(
+        passport: const <String, Object?>{
+          'model': 'Pixel 7',
+          'screen': <String, Object?>{
+            'width_px': 1080,
+            'height_px': 2400,
+            'density': 2.625,
+          },
+        },
+      );
+      await first.session.start(code);
+      final String folder = first.folder;
+      first.run(5);
+      await first.settle();
+      first.session.dispose();
+
+      // После перезапуска окна ещё нет: устройство о себе молчит.
+      final SessionKit second = restarted(first);
+      await second.session.restore();
+      await second.session.finish();
+
+      expect(
+        second.store.json(folder, kRecordingFile)['device'],
+        <String, Object?>{
+          'model': 'Pixel 7',
+          'screen': <String, Object?>{
+            'width_px': 1080,
+            'height_px': 2400,
+            'density': 2.625,
+          },
+          'node_id': kTestNode,
+          'code': 'a91f3c',
+        },
+      );
+      second.session.dispose();
     });
 
     test('SNO-F-REC-13: устройство ничего о себе не сказало — узел и код '
@@ -654,8 +733,10 @@ void main() {
       );
       await kit.session.start(code);
       await kit.settle();
-      kit.run(kHeartbeatTicks);
+      // Вопрос к устройству уходит с сердцебиением и ответить не
+      // успевает: запись остановлена раньше.
       kit.status.battery = 2;
+      kit.run(kHeartbeatTicks);
 
       await kit.session.stop(StopReason.experimenter);
       await kit.settle();
@@ -672,10 +753,7 @@ void main() {
       const Readiness ready = Readiness(batteryPercent: 84, freeBytes: 1 << 30);
 
       expect(describeReadinessWarnings(ready), isEmpty);
-      expect(
-        describeReadinessWarnings(ready.withReference(true)),
-        isEmpty,
-      );
+      expect(describeReadinessWarnings(ready.withReference(true)), isEmpty);
       expect(describeReadinessWarnings(ready.withReference(false)), <String>[
         'Устройство отличается от эталона — сбросьте его перед записью.',
       ]);

@@ -129,10 +129,9 @@ class AndroidRecordOutlet implements RecordOutlet {
     }
     try {
       return shareOutcomeOf(
-        await _channel.invokeMethod<Object?>(
-          'share',
-          <String, Object?>{'paths': paths},
-        ),
+        await _channel.invokeMethod<Object?>('share', <String, Object?>{
+          'paths': paths,
+        }),
       );
     } on PlatformException {
       return ShareOutcome.failed;

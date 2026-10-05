@@ -202,6 +202,23 @@ void main() {
       );
     });
 
+    test('SNO-F-REC-13: об оборванной записи «цела» не говорится', () {
+      // Проверка видит только то, что успело лечь на диск: событий,
+      // потерянных за последней строкой, она не найдёт.
+      expect(
+        describeJournalCheck(
+          const JournalCheck(lines: 152, gaps: 0, torn: false, late: true),
+        ),
+        'Журнал цел до обрыва записи: 152 строки, пропусков нет',
+      );
+      expect(
+        describeJournalCheck(
+          const JournalCheck(lines: 152, gaps: 0, torn: true, late: true),
+        ),
+        'Запись неполная: 152 строки, последняя оборвана',
+      );
+    });
+
     test('SNO-F-REC-13: «строка» склоняется по числу', () {
       expect(describeLineCount(1), '1 строка');
       expect(describeLineCount(2), '2 строки');

@@ -381,7 +381,9 @@ jobs:
         run: |
           set -eu
           if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_KEYSTORE_BASE64:-}" ]; then
-            printf '%s' "$SNO_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/sno.jks"
+            # Секрет могли вставить с переводами строк — их в ключе нет.
+            printf '%s' "$SNO_KEYSTORE_BASE64" | tr -d '\r\n ' \
+              | base64 -d > "$RUNNER_TEMP/sno.jks"
             export SNO_KEYSTORE_FILE="$RUNNER_TEMP/sno.jks"
           fi
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
@@ -390,6 +392,7 @@ jobs:
             --dart-define=SNO_BRANCH="${SNO_BRANCH:-}" \
             --dart-define=APP_VERSION="$version-$SUFFIX" \
             --dart-define=APP_COMMIT="$GITHUB_SHA"
+          rm -f "$RUNNER_TEMP/sno.jks"
           mkdir -p out
           cp "build/app/outputs/flutter-apk/app-$FLAVOR-release.apk" "out/$FILE"
 
@@ -490,8 +493,14 @@ jobs:
                   if not exact('android.permission.' + name):
                       problems.append('в сборке ветви нет разрешения '
                                       + name)
-          elif has('RecordingService'):
-              problems.append('в основной сборке есть служба записи')
+          else:
+              if has('RecordingService'):
+                  problems.append('в основной сборке есть служба записи')
+              for name in ('FOREGROUND_SERVICE', 'POST_NOTIFICATIONS',
+                           'PROPERTY_SPECIAL_USE_FGS_SUBTYPE'):
+                  if has(name):
+                      problems.append('в основной сборке есть след '
+                                      'службы записи: ' + name)
           for problem in problems:
               print(f'::error title=Что внутри APK::{problem}')
           print(f'{sys.argv[1]}: {package}, «{label}», '
@@ -512,33 +521,52 @@ jobs:
           HAS_KEY: ${{ secrets.SNO_KEYSTORE_BASE64 != '' }}
         run: |
           set -eu
+          title='title=Чем подписан APK'
           signer=$(ls -d "${ANDROID_HOME:-/nonexistent}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
-          if [ -z "$signer" ]; then
-            echo '::warning title=Чем подписан APK::apksigner не найден — подпись не проверена'
-            exit 0
+          digest=''
+          if [ -n "$signer" ]; then
+            digest=$("$signer" verify --print-certs "out/$FILE" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+              | tr 'A-F' 'a-f' | tr -d ': ' || true)
           fi
-          digest=$("$signer" verify --print-certs "out/$FILE" \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
-            | tr 'A-F' 'a-f' | tr -d ': ' || true)
           wanted=$(grep -v '^#' tool/sno_signing_sha256.txt \
             | tr 'A-F' 'a-f' | tr -d ': \r' | grep -m1 . || true)
-          echo "out/$FILE: отпечаток подписи $digest"
+          echo "out/$FILE: отпечаток подписи ${digest:-не прочитан}"
           if [ -z "${SNO_BRANCH:-}" ]; then
             exit 0
           fi
-          if [ "$HAS_KEY" != 'true' ]; then
-            echo '::warning title=Чем подписан APK::секретов ключа в репозитории нет — сборка ветви подписана случайным ключом прогона и поверх прежней сборки не встанет (записи на телефоне сотрутся вместе с ней)'
-            exit 0
+          # Чужой форк секретов не видит: его сборка ветви подписана
+          # случайным ключом, и это не ошибка — её никто не ставит
+          # поверх нашей.
+          outside=false
+          if [ "$HAS_KEY" != 'true' ] && [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
+            outside=true
           fi
-          if [ -z "$wanted" ]; then
-            echo "::notice title=Чем подписан APK::отпечаток ключа сборок ветвей: $digest — впишите его в tool/sno_signing_sha256.txt"
-            exit 0
-          fi
-          if [ "$digest" != "$wanted" ]; then
-            echo "::error title=Чем подписан APK::сборка ветви подписана не тем ключом: $digest вместо $wanted"
+          if [ -n "$wanted" ]; then
+            # Отпечаток записан — сборка ветви обязана быть подписана
+            # этим ключом, чем бы она ни была собрана: иначе в `latest`
+            # уйдёт сборка, которая не встанет поверх прежней.
+            if [ "$digest" = "$wanted" ]; then
+              echo 'подпись сходится с tool/sno_signing_sha256.txt'
+              exit 0
+            fi
+            said="сборка ветви подписана не тем ключом: ${digest:-подпись не прочитана} вместо $wanted"
+            if [ "$outside" = 'true' ]; then
+              echo "::warning $title::$said (секретов ключа у этого прогона нет)"
+              exit 0
+            fi
+            echo "::error $title::$said"
             exit 1
           fi
-          echo 'подпись сходится с tool/sno_signing_sha256.txt'
+          if [ "$HAS_KEY" != 'true' ]; then
+            echo "::warning $title::секретов ключа в репозитории нет — сборка ветви подписана случайным ключом прогона и поверх прежней сборки не встанет (записи на телефоне сотрутся вместе с ней)"
+            exit 0
+          fi
+          if [ -z "$digest" ]; then
+            echo "::error $title::ключ в секретах есть, а подпись сборки ветви прочитать не удалось"
+            exit 1
+          fi
+          echo "::notice $title::отпечаток ключа сборок ветвей: $digest — впишите его в tool/sno_signing_sha256.txt"
 
       - name: Выложить APK
         if: steps.probe.outputs.ready == 'true'

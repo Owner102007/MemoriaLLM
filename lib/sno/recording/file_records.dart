@@ -32,7 +32,15 @@ import 'store.dart';
 /// и удаление приложения, и новую сборку. Копия кладётся сразу за
 /// упаковкой и сверяется по сумме; не легла — у записи «копии нет», и
 /// попытка повторится при следующем запуске. Удаление записи из
-/// приложения копию не трогает.
+/// приложения копию не трогает — поэтому запись с копией удаляется
+/// одним подтверждением, и в нём сказано, что копия остаётся.
+///
+/// **Отметка «копия есть» сверяется с общей папкой при каждом
+/// запуске**: копию могли убрать из «Загрузок» руками. Нет её там —
+/// она кладётся заново; не легла — отметка снимается, и запись снова
+/// удаляется только вторым подтверждением. Потерянный `.state.json`
+/// отметки о копиях тем же проходом возвращает: копии лежат на месте,
+/// и это проверено. Отметки «отправлена» он не возвращает.
 ///
 /// Всё, что меняет папку, идёт по очереди ([_locked]): упаковка при
 /// запуске и упаковка только что завершённой записи не встречаются на
@@ -487,18 +495,35 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     return name;
   }
 
+  /// Сколько ждать общую папку устройства: дольше — копия считается
+  /// не лёгшей, а упаковка и список записей идут дальше.
+  static const Duration backupTimeout = Duration(seconds: 60);
+
   /// Кладёт вторую копию архива записи [name] в общую папку устройства
   /// (SNO-F-REC-13). Отвечает, лежит ли там теперь сверенная копия.
   ///
+  /// [again] — сверить и ту копию, что уже помечена: её могли убрать
+  /// из общей папки руками. Нет её там и положить заново не вышло —
+  /// отметка снимается.
+  ///
   /// Ни один отказ упаковке и списку не мешает: копии нет — у записи
-  /// «копии нет», и попытка повторится при следующем запуске.
-  Future<bool> _backup(Directory records, String name) async {
+  /// «копии нет», и попытка повторится при следующем запуске. Отказ
+  /// самой общей папки (ошибка, молчание) прежней отметки не снимает:
+  /// копию не проверили, но и не опровергли.
+  Future<bool> _backup(
+    Directory records,
+    String name, {
+    bool again = false,
+  }) async {
     if (!await _canBackup()) {
       return false;
     }
+    final bool marked;
+    final bool there;
     try {
       await _readState(records);
-      if (_marks[name]?['copied_at'] != null) {
+      marked = _marks[name]?['copied_at'] != null;
+      if (marked && !again) {
         return true;
       }
       final File archive = File(
@@ -507,22 +532,30 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       if (!await archive.exists()) {
         return false;
       }
-      final bool there = await _outlet.backup(
-        archive.path,
-        sha256: await fileSha256(archive),
-        folder: kBackupFolder,
-      );
-      if (!there) {
-        return false;
-      }
+      there = await _outlet
+          .backup(
+            archive.path,
+            sha256: await fileSha256(archive),
+            folder: kBackupFolder,
+          )
+          .timeout(backupTimeout);
     } on Object {
       return false;
     }
-    _mark(name)
-      ..['copied_at'] = isoWithOffset(_now())
-      ..['copied_to'] = '$kBackupPlace/$name$kArchiveExtension';
+    if (there == marked) {
+      return there;
+    }
+    if (there) {
+      _mark(name)
+        ..['copied_at'] = isoWithOffset(_now())
+        ..['copied_to'] = '$kBackupPlace/$name$kArchiveExtension';
+    } else {
+      _mark(name)
+        ..remove('copied_at')
+        ..remove('copied_to');
+    }
     await _writeState(records);
-    return true;
+    return there;
   }
 
   @override
@@ -544,13 +577,11 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
           if (entity is File &&
               !base.startsWith('.') &&
               base.endsWith(kArchiveExtension)) {
-            final String name = base.substring(
-              0,
-              base.length - kArchiveExtension.length,
+            // Все архивы, а не только без отметки: помеченную копию
+            // могли убрать из общей папки, и отметка о ней сверяется.
+            found.add(
+              base.substring(0, base.length - kArchiveExtension.length),
             );
-            if (_marks[name]?['copied_at'] == null) {
-              found.add(name);
-            }
           }
         }
       } on FileSystemException {
@@ -564,7 +595,9 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     }
     try {
       for (final String name in names) {
-        await _locked(() async => _backup(await _records(), name));
+        await _locked(() async {
+          return _backup(await _records(), name, again: true);
+        });
       }
       await _locked(_scan);
     } finally {
