@@ -280,6 +280,10 @@ class _HomeShellState extends State<HomeShell> {
   /// Закрытие может прийти и после того, как оболочку сняли с экрана:
   /// полка сообщает о нём, когда вернулся её экран чтения.
   void _readingChanged(bool reading) {
+    // SNO-F-IDX-04: пока книгу читают, проход по полке стоит — движок
+    // PDF отдан странице. Сказать ему об этом надо и тогда, когда
+    // оболочку уже сняли с экрана: иначе он простоял бы до перезапуска.
+    widget.services.shelfReading?.held = reading;
     if (mounted && reading != _reading) {
       setState(() => _reading = reading);
       _tellScreen();

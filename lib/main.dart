@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'application/app_services.dart';
 import 'application/data/app_data.dart';
 import 'application/theme/theme_controller.dart';
+import 'sno/index/shelf_reading.dart';
 import 'sno/recording/records.dart';
 import 'ui/app.dart';
 
@@ -19,7 +20,23 @@ Future<void> main() async {
   // незавершённой сессии встаёт под замок сразу.
   final bool restored = await restoreRecording(services);
   await recoverRecords(services, restored: restored);
+  await prepareShelf(services);
   runApp(MemoriaApp(themeController: themeController, services: services));
+}
+
+/// Поднимает итог подготовки книг и продолжает её (SNO-F-IDX-04).
+///
+/// Только в сборке ветви II; в остальных подготовки нет, и вызов пуст.
+/// Итог читается до первого кадра — это одна запись настроек, — а сам
+/// проход по полке начинается чуть погодя: первые секунды движок PDF
+/// занят обложками.
+Future<void> prepareShelf(AppServices services) async {
+  final ShelfReading? reading = services.shelfReading;
+  if (reading == null) {
+    return;
+  }
+  await reading.restore();
+  reading.start(delay: kShelfReadingDelay);
 }
 
 /// Поднимает сессию записи, если она есть в этой сборке.

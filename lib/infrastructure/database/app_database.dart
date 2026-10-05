@@ -19,8 +19,10 @@ part 'app_database.g.dart';
 /// страницы в настройках книги (шаг 05, F-READ-12 и F-READ-13). 10 — рамка
 /// обрезки книги (шаг 06, F-READ-15): своя таблица устройства, без полей
 /// CRDT. 11 — текст страниц книги (шаг 09, F-TEXT-04): ещё одна таблица
-/// устройства, тоже производное и тоже без полей CRDT.
-const int appSchemaVersion = 11;
+/// устройства, тоже производное и тоже без полей CRDT. 12 — места книг
+/// на карте «Галактика» (шаг 21, F-MAP-02): третья таблица устройства
+/// с производным.
+const int appSchemaVersion = 12;
 
 /// База данных приложения.
 ///
@@ -43,6 +45,7 @@ const int appSchemaVersion = 11;
     SelectionPrompts,
     BookFrames,
     PageTexts,
+    MapPoints,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -133,6 +136,11 @@ class AppDatabase extends _$AppDatabase {
           // он извлекается из файла при первом же открытии книги — в
           // фоне и по мере поиска.
           await m.createTable(pageTexts);
+        }
+        if (from < 12) {
+          // Таблица заводится пустой: карту неоткуда перенести, она
+          // считается по тексту книг, когда он прочитан.
+          await m.createTable(mapPoints);
         }
       },
       beforeOpen: (OpeningDetails details) async {

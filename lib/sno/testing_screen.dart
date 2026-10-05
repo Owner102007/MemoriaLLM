@@ -15,6 +15,8 @@ import '../domain/library/storage_access.dart';
 import '../domain/reading/reader_document.dart';
 import 'flags.dart';
 import 'hold_button.dart';
+import 'index/shelf_reading.dart';
+import 'index/shelf_reading_view.dart';
 import 'literature_archive.dart';
 import 'participant_code.dart';
 import 'recording/code_screen.dart';
@@ -630,6 +632,9 @@ class _TestingScreenState extends State<TestingScreen>
     }
     // Тема и порядок полки лежат в памяти оболочки — пора перечитать.
     widget.onStateReset?.call();
+    // SNO-F-IDX-04: сброс вернул книги в их категории — карта сверяется
+    // с полкой заново; текст страниц сброс не трогает.
+    widget.services.shelfReading?.start();
     return describeReset(report);
   }
 
@@ -798,6 +803,9 @@ class _TestingScreenState extends State<TestingScreen>
         }
         // SNO-F-CFG-04: эталон — полка, какой её положил архив.
         await _rememberReference(unpacked);
+        // SNO-F-IDX-04: новые книги читаются сразу — пока
+        // экспериментатор смотрит итог архива.
+        widget.services.shelfReading?.start();
       } finally {
         if (mounted) {
           setState(() {
@@ -1019,7 +1027,24 @@ class _TestingScreenState extends State<TestingScreen>
           ],
         ),
       ),
+      ..._shelfIndex(),
       ..._referenceState(theme),
+    ];
+  }
+
+  /// Блок «Для экспериментатора»: подготовка книг — текст всех книг и
+  /// карта (SNO-F-IDX-04).
+  ///
+  /// Есть только в сборке ветви II. Стоит между архивами и эталоном:
+  /// архив добавлен — книги читаются — устройство готово к участнику.
+  List<Widget> _shelfIndex() {
+    final ShelfReading? reading = widget.services.shelfReading;
+    if (reading == null) {
+      return const <Widget>[];
+    }
+    return <Widget>[
+      const Divider(indent: 16, endIndent: 16),
+      ShelfIndexBlock(reading: reading),
     ];
   }
 

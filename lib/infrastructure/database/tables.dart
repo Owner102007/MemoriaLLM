@@ -542,6 +542,42 @@ class PageTexts extends Table {
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId, page};
 }
 
+/// Место книги на карте «Галактика» (F-MAP-02, SNO-F-MAP-01).
+///
+/// **Без полей CRDT намеренно.** Карта — производное: её посчитал наш
+/// код по тексту книг, а не создал читатель. В облако она не уходит, на
+/// втором устройстве считается заново — и выходит той же самой, потому
+/// что расчёт точный. После смены расчёта карта пересчитывается сама —
+/// по номеру версии в строке (ALG-DATA-09); после смены набора книг или
+/// их категорий — по ключу набора.
+@DataClassName('MapPointRow')
+class MapPoints extends Table {
+  /// Книга — она же ключ: место у книги одно. Вычищена книга — уходит
+  /// и её место.
+  TextColumn get bookId =>
+      text().references(Books, #id, onDelete: KeyAction.cascade)();
+
+  /// Абсцисса точки, от −1 до 1.
+  RealColumn get x => real()();
+
+  /// Ордината точки, от −1 до 1.
+  RealColumn get y => real()();
+
+  /// Отпечаток файла книги, по которому её место посчитано.
+  TextColumn get fingerprint =>
+      text().withDefault(const Constant<String>(''))();
+
+  /// Ключ набора книг, по которому посчитана вся карта: он один у всех
+  /// строк одной карты.
+  TextColumn get layoutKey => text()();
+
+  /// Версия расчёта, которым карта посчитана.
+  IntColumn get algorithmVersion => integer()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{bookId};
+}
+
 /// Локальные настройки приложения. Без полей CRDT: они не
 /// синхронизируются намеренно — см. `AppSettingsRepository`.
 @DataClassName('AppSettingRow')

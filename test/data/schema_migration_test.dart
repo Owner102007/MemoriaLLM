@@ -10,6 +10,7 @@ import 'package:memoria/domain/annotations/annotations.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/device_files.dart';
+import 'package:memoria/domain/map/book_map.dart';
 import 'package:memoria/domain/prompts/selection_prompt.dart';
 import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reading.dart';
@@ -57,8 +58,14 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 11: мест книг на карте тогда не было.
+  Future<void> undoMapPoints(AppData data) async {
+    await data.database.customStatement('DROP TABLE map_points');
+  }
+
   /// Откатывает базу к версии 10: текста страниц книги тогда не было.
   Future<void> undoPageTexts(AppData data) async {
+    await undoMapPoints(data);
     await data.database.customStatement('DROP TABLE page_texts');
   }
 
@@ -153,8 +160,59 @@ void main() {
       await columnsOf(data, 'page_texts'),
       containsAll(<String>['book_id', 'page', 'content']),
     );
+    expect(
+      await columnsOf(data, 'map_points'),
+      containsAll(<String>['book_id', 'x', 'y', 'layout_key']),
+    );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('F-MAP-02: база версии 11 доезжает до 12 с местами на карте', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    // Текст страниц прочитан до обновления — он обязан его пережить:
+    // по нему карта и посчитается.
+    const PageTextKey key = PageTextKey(
+      bookId: 'book-1',
+      fingerprint: 'hash-1',
+    );
+    await first.pageTexts.savePageTexts(key, <int, String>{3: 'тройка'});
+    await undoMapPoints(first);
+    await first.database.customStatement('PRAGMA user_version = 11');
+    expect(await columnsOf(first, 'map_points'), isEmpty);
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(
+      await columnsOf(second, 'map_points'),
+      containsAll(<String>['fingerprint', 'algorithm_version']),
+    );
+    expect(await second.pageTexts.pageTexts(key, from: 1, to: 9), <int, String>{
+      3: 'тройка',
+    });
+
+    // Таблица заводится пустой: карту неоткуда перенести, она считается
+    // по тексту книг.
+    expect(await second.bookMap.load(), isNull);
+
+    // И после миграции карта пишется и читается.
+    await second.bookMap.replace(
+      const StoredBookMap(
+        layoutKey: 'набор',
+        version: kBookMapVersion,
+        points: <String, MapPoint>{
+          'book-1': MapPoint(key: 'hash-1', x: 0.25, y: -0.5),
+        },
+      ),
+    );
+    final StoredBookMap? stored = await second.bookMap.load();
+    expect(stored?.layoutKey, 'набор');
+    expect(stored?.points, <String, MapPoint>{
+      'book-1': const MapPoint(key: 'hash-1', x: 0.25, y: -0.5),
+    });
+    await second.close();
   });
 
   test('F-TEXT-04: база версии 10 доезжает до 11 с текстом страниц', () async {

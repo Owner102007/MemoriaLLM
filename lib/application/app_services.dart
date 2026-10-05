@@ -22,6 +22,7 @@ import '../infrastructure/pdf/pdfrx_document.dart';
 import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
 import '../sno/flags.dart';
+import '../sno/index/shelf_reading.dart';
 import '../sno/participant_code.dart';
 import '../sno/recording/device_passport.dart';
 import '../sno/recording/device_status.dart';
@@ -36,6 +37,7 @@ import 'build_info.dart';
 import 'data/app_data.dart';
 import 'library/cover_service.dart';
 import 'library/device_library.dart';
+import 'map/map_builder.dart';
 
 /// Всё, чем приложение пользуется извне, собранное в одном месте.
 ///
@@ -57,6 +59,7 @@ class AppServices {
     this.archiveSearch = noArchiveSearch,
     this.recording,
     this.records,
+    this.shelfReading,
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -94,10 +97,11 @@ class AppServices {
     final RecordingSession? recording = Sno.recording
         ? _recordingFor(data, storage)
         : null;
+    final DocumentOpener opener = PdfrxDocumentOpener(storage: storage);
     return AppServices(
       data: data,
       storage: storage,
-      opener: PdfrxDocumentOpener(storage: storage),
+      opener: opener,
       picker: const FastBookPicker(),
       coverStore: FileCoverStore(),
       access: platformStorageAccess(),
@@ -121,6 +125,36 @@ class AppServices {
       records: Sno.recording && recording != null
           ? _recordsFor(recording)
           : null,
+      // SNO-F-IDX-04: текст всех книг и карта заранее — только в ветви
+      // II. Условие — константа сборки: в основное приложение и в
+      // ветвь I проход по полке не попадает.
+      shelfReading: Sno.galaxy
+          ? _shelfReadingFor(data, opener, recording)
+          : null,
+    );
+  }
+
+  /// Подготовка книг полки сборки ветви II (SNO-F-IDX-04): текст всех
+  /// книг в кэш текста страниц и карта по нему.
+  static ShelfReading _shelfReadingFor(
+    AppData data,
+    DocumentOpener opener,
+    RecordingSession? recording,
+  ) {
+    return ShelfReading(
+      library: data.library,
+      opener: opener,
+      texts: data.pageTexts,
+      settings: data.settings,
+      map: MapBuilder(
+        library: data.library,
+        categories: data.categories,
+        texts: data.pageTexts,
+        store: data.bookMap,
+      ),
+      device: const PlatformDeviceStatus(),
+      // Пока идёт запись, экран держит она: подготовка его не трогает.
+      screenBusy: () => recording?.recording ?? false,
     );
   }
 
@@ -219,4 +253,9 @@ class AppServices {
   /// Записи на устройстве — архивы завершённых сессий (SNO-F-REC-07);
   /// `null` — записей в этой сборке нет.
   final DeviceRecords? records;
+
+  /// Подготовка книг полки — текст всех книг и карта (SNO-F-IDX-04);
+  /// `null` — в этой сборке её нет: основное приложение, ветвь I и
+  /// тесты, которым она не нужна.
+  final ShelfReading? shelfReading;
 }

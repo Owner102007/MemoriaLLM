@@ -12,6 +12,8 @@ import '../../domain/library/shelf_title_search.dart';
 import '../../domain/navigation/sections.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
+import '../../sno/index/shelf_reading.dart';
+import '../../sno/index/shelf_reading_view.dart';
 import '../../sno/recording/action_log.dart';
 import '../../sno/recording/event.dart';
 import '../../sno/recording/thinning.dart';
@@ -831,7 +833,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       },
       child: Scaffold(
         appBar: _bar(wide: wide),
-        body: StreamBuilder<List<BookCategory>>(
+        body: _underReadingStrip(
+          StreamBuilder<List<BookCategory>>(
           stream: _categoryStream,
           builder:
               (
@@ -864,8 +867,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       },
                 );
               },
+          ),
         ),
       ),
+    );
+  }
+
+  /// Кладёт над полкой полоску подготовки книг (SNO-F-IDX-04).
+  ///
+  /// Подготовка есть только в сборке ветви II; в остальных полка стоит
+  /// как стояла. Полоска видна, только пока книги читаются или
+  /// считается карта, и нажатий не принимает.
+  Widget _underReadingStrip(Widget shelf) {
+    final ShelfReading? reading = widget.services.shelfReading;
+    if (reading == null) {
+      return shelf;
+    }
+    return Column(
+      children: <Widget>[
+        ShelfReadingStrip(reading: reading),
+        Expanded(child: shelf),
+      ],
     );
   }
 

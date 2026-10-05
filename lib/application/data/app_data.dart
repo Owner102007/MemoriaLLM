@@ -7,6 +7,7 @@ import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/library/device_files.dart';
 import '../../domain/llm/llm_query.dart';
+import '../../domain/map/book_map.dart';
 import '../../domain/prompts/selection_prompt.dart';
 import '../../domain/reading/page_text.dart';
 import '../../domain/reading/reading.dart';
@@ -17,6 +18,7 @@ import '../../infrastructure/database/connection.dart';
 import '../../infrastructure/database/search_index.dart';
 import '../../infrastructure/repositories/drift_annotation_repository.dart';
 import '../../infrastructure/repositories/drift_app_settings_repository.dart';
+import '../../infrastructure/repositories/drift_book_map_repository.dart';
 import '../../infrastructure/repositories/drift_category_repository.dart';
 import '../../infrastructure/repositories/drift_device_file_repository.dart';
 import '../../infrastructure/repositories/drift_library_repository.dart';
@@ -39,6 +41,7 @@ class AppData {
     required this.categories,
     required this.reading,
     required this.pageTexts,
+    required this.bookMap,
     required this.annotations,
     required this.llmHistory,
     required this.prompts,
@@ -74,6 +77,7 @@ class AppData {
       categories: DriftCategoryRepository(database, clock, library),
       reading: DriftReadingRepository(database, clock),
       pageTexts: DriftPageTextRepository(database),
+      bookMap: DriftBookMapRepository(database),
       annotations: DriftAnnotationRepository(database, clock),
       llmHistory: DriftLlmHistoryRepository(database, clock),
       prompts: prompts,
@@ -103,6 +107,10 @@ class AppData {
   /// Текст страниц книг: производное, лежит только на этом устройстве
   /// и не синхронизируется (F-TEXT-04).
   final PageTextRepository pageTexts;
+
+  /// Места книг на карте «Галактика»: производное, лежит только на этом
+  /// устройстве и не синхронизируется (F-MAP-02).
+  final BookMapRepository bookMap;
 
   /// Цитаты, заметки и закладки.
   final AnnotationRepository annotations;

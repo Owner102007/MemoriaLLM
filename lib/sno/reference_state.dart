@@ -56,7 +56,8 @@ const String kReferenceSchema = 'sno2026-reference/1';
 /// незавершённой — сбросить устройство посреди неё раздел
 /// «Тестирование» не даёт, и отметка сессии от сброса не зависит;
 /// о разрешении на уведомления спрашивают один раз за всё время
-/// (SNO-F-REC-13).
+/// (SNO-F-REC-13); итог подготовки книг — о тексте страниц и карте,
+/// которых сброс не трогает (SNO-F-IDX-04).
 const Set<String> _keptSettings = <String>{
   SettingsKeys.nodeId,
   SettingsKeys.lastHlc,
@@ -66,6 +67,7 @@ const Set<String> _keptSettings = <String>{
   SnoSettingsKeys.knownCodes,
   SnoSettingsKeys.session,
   SnoSettingsKeys.notificationsAsked,
+  SnoSettingsKeys.shelfIndex,
 };
 
 /// Настройки, которых нет в снимке состояния: их пишет само приложение,

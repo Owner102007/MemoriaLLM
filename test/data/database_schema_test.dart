@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — одиннадцатая: текст страниц книги', () {
+  test('версия схемы — двенадцатая: места книг на карте', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 11);
+    expect(appSchemaVersion, 12);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -63,6 +63,7 @@ void main() {
         'selection_prompts',
         'book_frames',
         'page_texts',
+        'map_points',
       ]),
     );
   });
@@ -143,6 +144,27 @@ void main() {
       'page',
       'content',
       'fingerprint',
+      'algorithm_version',
+    ]);
+  });
+
+  test('F-MAP-02: место книги на карте полей CRDT не несёт', () async {
+    // Карта — производное: её посчитал наш код по тексту книг. В
+    // слияние она не идёт и в облако не уходит.
+    final List<String> columns = await _columnNames(
+      data.database,
+      'map_points',
+    );
+    expect(columns, isNot(contains('hlc')));
+    expect(columns, isNot(contains('node_id')));
+    expect(columns, isNot(contains('modified')));
+    expect(columns, isNot(contains('is_deleted')));
+    expect(columns, <String>[
+      'book_id',
+      'x',
+      'y',
+      'fingerprint',
+      'layout_key',
       'algorithm_version',
     ]);
   });

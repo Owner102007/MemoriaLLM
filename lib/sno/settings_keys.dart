@@ -38,4 +38,12 @@ abstract final class SnoSettingsKeys {
   /// его не покажет, а экспериментатору он перед каждым участником не
   /// нужен. Сброс к эталону отметку не трогает.
   static const String notificationsAsked = 'sno.notifications_asked';
+
+  /// Итог подготовки книг полки — JSON (`ShelfIndexSummary.encode`):
+  /// сколько книг и страниц прочитано, сколько это заняло и что вышло с
+  /// картой (SNO-F-IDX-04).
+  ///
+  /// Сброс к эталону его не трогает: текст страниц и карта — производное
+  /// от файлов книг, а не след читателя, и сброс их не стирает.
+  static const String shelfIndex = 'sno.shelf_index';
 }
