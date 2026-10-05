@@ -636,35 +636,55 @@ class MainActivity : FlutterActivity() {
      * этого не нужно, а файл остаётся на телефоне и после удаления
      * приложения. Копия, уже лежащая там с той же суммой, второй раз
      * не кладётся; копия, не сошедшаяся с суммой, убирается.
+     *
+     * Ответов три: `true` — сверенная копия лежит, `false` — её нет и
+     * положить не вышло, `null` — положить не вышло, а лежит ли там
+     * прежняя, узнать не удалось (хранилище не отдало список или
+     * файл не прочитался).
+     *
+     * Копию ищут не только под именем архива: если под ним уже лежит
+     * другой файл, система называет новую копию «имя (1).zip», и
+     * искать её только по точному имени значило бы класть ещё одну
+     * при каждой сверке.
      */
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun copyToDownloads(
         file: File,
         expected: String,
         folder: String,
-    ): Boolean {
+    ): Boolean? {
         if (!file.isFile) {
             return false
         }
+        var unsure = false
         val resolver = contentResolver
         val collection =
             MediaStore.Downloads.getContentUri(
                 MediaStore.VOLUME_EXTERNAL_PRIMARY,
             )
         val relative = Environment.DIRECTORY_DOWNLOADS + "/" + folder + "/"
-        resolver.query(
-            collection,
-            arrayOf(MediaStore.MediaColumns._ID),
-            MediaStore.MediaColumns.DISPLAY_NAME + " = ? AND " +
-                MediaStore.MediaColumns.RELATIVE_PATH + " = ?",
-            arrayOf(file.name, relative),
-            null,
-        )?.use { cursor ->
+        val found =
+            resolver.query(
+                collection,
+                arrayOf(MediaStore.MediaColumns._ID),
+                MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ? AND " +
+                    MediaStore.MediaColumns.RELATIVE_PATH + " = ?",
+                arrayOf(file.nameWithoutExtension + "%", relative),
+                null,
+            )
+        if (found == null) {
+            unsure = true
+        }
+        found?.use { cursor ->
             while (cursor.moveToNext()) {
                 val known =
                     ContentUris.withAppendedId(collection, cursor.getLong(0))
-                if (sha256Of(known) == expected) {
+                val sum = sha256Of(known)
+                if (sum == expected) {
                     return true
+                }
+                if (sum == null) {
+                    unsure = true
                 }
             }
         }
@@ -673,7 +693,9 @@ class MainActivity : FlutterActivity() {
         values.put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
         values.put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
         values.put(MediaStore.MediaColumns.IS_PENDING, 1)
-        val uri = resolver.insert(collection, values) ?: return false
+        val uri =
+            resolver.insert(collection, values)
+                ?: return if (unsure) null else false
         try {
             val out =
                 resolver.openOutputStream(uri)
@@ -697,7 +719,7 @@ class MainActivity : FlutterActivity() {
         } catch (error: RuntimeException) {
             // Обрывок остался в «Загрузках»: убрать его нечем.
         }
-        return false
+        return if (unsure) null else false
     }
 
     /** SHA-256 содержимого [uri] строчными шестнадцатеричными знаками. */

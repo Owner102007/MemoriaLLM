@@ -291,6 +291,55 @@ void main() {
       expect(outlet.backups, isEmpty);
     });
 
+    test('SNO-F-REC-13: файл отметок не отдал диск — копии кладутся, а '
+        'отметки не снимаются', () async {
+      if (Platform.isWindows) {
+        // Отказ чтения здесь ставится правами файла.
+        return;
+      }
+      await folderOf(first, id: firstId);
+      await archiveOf(second, id: secondId);
+      await open().pack(first);
+      final File state = File(p.join(folder.path, FileDeviceRecords.stateName));
+      await Process.run('chmod', <String>['000', state.path]);
+      addTearDown(() => Process.run('chmod', <String>['644', state.path]));
+      try {
+        await state.readAsBytes();
+        // Права не действуют (тест идёт от имени root): отказа чтения
+        // не устроить.
+        return;
+      } on FileSystemException {
+        // Диск файла не отдаёт — как и нужно.
+      }
+
+      // Запуск, при котором общая папка копий не держит: отметку,
+      // которой не видно, снять нельзя.
+      outlet.backupWorks = false;
+      final FileDeviceRecords blind = open();
+      await blind.backupPending();
+      await Process.run('chmod', <String>['644', state.path]);
+      await blind.refresh();
+      expect(named(blind, first).copiedAt, now);
+      expect(named(blind, second).copiedAt, isNull);
+
+      // Запуск, при котором отметок опять не видно, а общая папка
+      // работает: копии кладутся, отметки ждут диска в памяти.
+      await Process.run('chmod', <String>['000', state.path]);
+      outlet
+        ..backupWorks = true
+        ..backups.clear();
+      final FileDeviceRecords waiting = open();
+      await waiting.backupPending();
+      expect(outlet.backups, hasLength(2));
+      expect(named(waiting, second).copiedAt, now);
+
+      await Process.run('chmod', <String>['644', state.path]);
+      await waiting.refresh();
+      expect(marksOnDisk().keys.toSet(), <String>{first, second});
+      expect(named(waiting, first).copiedAt, now);
+      expect(named(waiting, second).copiedAt, now);
+    });
+
     test('SNO-F-REC-13: файл отметок потерян — отметки о копиях '
         'возвращаются, об отправке нет', () async {
       await folderOf(first, id: firstId);

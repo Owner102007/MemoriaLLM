@@ -513,8 +513,9 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   /// «копии нет», и попытка повторится при следующем запуске. Отказ
   /// самой общей папки (ошибка, молчание, ответ «не знаю») прежней
   /// отметки не снимает: копию не проверили, но и не опровергли. Пока
-  /// файл отметок не прочитан, отметки не сверяются вовсе: какие из
-  /// них стоят, неизвестно, и опровергнутая вернулась бы с диска.
+  /// файл отметок не прочитан, копии кладутся и новые отметки ждут в
+  /// памяти, но ни одна не снимается: какие из них стоят на диске,
+  /// неизвестно, и опровергнутая вернулась бы оттуда.
   Future<bool?> _backup(
     Directory records,
     String name, {
@@ -530,9 +531,6 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       marked = _marks[name]?['copied_at'] != null;
       if (marked && !again) {
         return true;
-      }
-      if (again && !_stateRead) {
-        return null;
       }
       final File archive = File(
         p.join(records.path, '$name$kArchiveExtension'),
@@ -563,6 +561,10 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       _mark(name)
         ..['copied_at'] = isoWithOffset(_now())
         ..['copied_to'] = '$kBackupPlace/$name$kArchiveExtension';
+    } else if (!_stateRead) {
+      // Снять отметку нечем: с диска она вернулась бы. Копии нет, а
+      // отметка остаётся до тех пор, пока диск не отдаст отметки.
+      return null;
     } else {
       _mark(name)
         ..remove('copied_at')

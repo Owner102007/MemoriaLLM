@@ -408,6 +408,38 @@ void main() {
     });
   });
 
+  group('SNO-F-REC-13: отметка о копии без сверки', () {
+    testWidgets('SNO-F-REC-13: телефон, которому сверить копию нечем, '
+        'одним подтверждением запись не удаляет', (WidgetTester tester) async {
+      // Общая папка не ответила при запуске: копий устройство «не
+      // кладёт», а отметка о прежней копии с диска пришла.
+      final MemoryDeviceRecords blind = MemoryDeviceRecords(shares: true);
+      addTearDown(blind.dispose);
+      final DeviceRecord copied = DeviceRecord(
+        name: fresh.name,
+        bytes: fresh.bytes,
+        startedAt: fresh.startedAt,
+        durationMs: fresh.durationMs,
+        copiedAt: DateTime(2026, 11, 3, 14, 45),
+      );
+      blind.put(copied);
+      await tester.pumpWidget(
+        MaterialApp(home: DeviceRecordsScreen(records: blind)),
+      );
+      await tester.pumpAndSettle();
+
+      await tap(tester, 'sno-record-delete-${copied.rowId}');
+      expect(find.textContaining('копия останется'), findsNothing);
+      await tap(tester, 'sno-record-confirm');
+
+      expect(blind.deleted, isEmpty);
+      expect(find.text('Эта запись никуда не отправлена'), findsOneWidget);
+      await tap(tester, 'sno-record-confirm');
+      expect(blind.deleted, <String>[copied.name]);
+      expect(blind.verified, isEmpty);
+    });
+  });
+
   group('SNO-F-REC-13: «Тестирование» и уведомления', () {
     Future<void> pumpTesting(WidgetTester tester) async {
       await tester.pumpWidget(

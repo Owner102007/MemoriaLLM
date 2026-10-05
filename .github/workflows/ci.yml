@@ -552,6 +552,10 @@ jobs:
           if [ -s "$RUNNER_TEMP/sno.sha256" ]; then
             key=$(tr -d ' \r\n' < "$RUNNER_TEMP/sno.sha256")
           fi
+          if [ "$HAS_KEY" = 'true' ] && [ -z "$key" ]; then
+            echo "::error $title::ключ в секретах есть, а его отпечаток шаг сборки не посчитал — сверить подпись сборки ветви не с чем"
+            exit 1
+          fi
           if [ -n "$key" ] && [ "$digest" != "$key" ]; then
             echo "::error $title::сборка ветви подписана не ключом из секретов: ${digest:-подпись не прочитана} вместо $key"
             exit 1
