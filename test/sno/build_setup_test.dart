@@ -480,4 +480,22 @@ void main() {
       expect(cmake, contains('"SNO_BRANCH_II"'));
     });
   });
+
+  group('SNO-F-IDX-04: подготовка книг — только в ветви II', () {
+    test('SNO-F-IDX-04: проход по полке заводится под флагом карты', () {
+      // Условие — константа сборки: в основном приложении и в ветви I
+      // прохода по полке нет вовсе, и код его туда не попадает.
+      final String services = File(
+        'lib/application/app_services.dart',
+      ).readAsStringSync();
+      expect(
+        services,
+        matches(RegExp(r'shelfReading:\s*Sno\.galaxy\s*\?')),
+      );
+      expect(BranchFlags.of('').galaxy, isFalse);
+      expect(BranchFlags.of(snoBranchCore).galaxy, isFalse);
+      expect(BranchFlags.of(snoBranchTest).galaxy, isTrue);
+      expect(Sno.galaxy, Sno.branch == snoBranchTest);
+    });
+  });
 }

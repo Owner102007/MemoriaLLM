@@ -14,6 +14,7 @@ import 'package:memoria/ui/app.dart';
 import 'package:memoria/ui/library/device_book_card.dart';
 
 import 'data/test_data.dart';
+import 'support/shown_reading.dart';
 import 'support/test_services.dart';
 
 /// F-APP-02: три раздела главной навигации в собранном приложении.
@@ -407,6 +408,34 @@ void main() {
       await open(tester, 'device');
       expect(services.deviceLibrary.isScanning, isTrue);
       expect(feeds.length, 2);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-IDX-04: пока книгу читают, проход по полке стоит', (
+      WidgetTester tester,
+    ) async {
+      await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      await data.library.save(testBook());
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      final AppServices services = testServices(
+        data: data,
+        shelfReading: reading,
+      );
+      await pumpApp(tester, services);
+      expect(reading.held, isFalse);
+
+      // Книгу открыли: движок PDF отдан странице.
+      await tester.tap(find.byKey(const Key('library-book-book-1')));
+      await tester.pumpAndSettle();
+      expect(reading.held, isTrue);
+
+      // Книгу закрыли: проход вправе продолжать.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('library-shelf')), findsOneWidget);
+      expect(reading.held, isFalse);
 
       await unmount(tester);
     });

@@ -12,6 +12,7 @@ import 'package:memoria/domain/reading/full_screen.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/volume_keys.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
+import 'package:memoria/sno/index/shelf_reading.dart';
 import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/session.dart';
 
@@ -41,6 +42,8 @@ import 'fake_reading.dart';
 /// [recording] — сессия записи (SNO-F-REC-01); без неё записи в
 /// приложении нет, как в основной сборке. [records] — записи на
 /// устройстве (SNO-F-REC-07); без них нет ни списка, ни архива.
+/// [shelfReading] — подготовка книг полки (SNO-F-IDX-04); без неё её
+/// нет, как в основной сборке и в ветви I.
 AppServices testServices({
   required AppData data,
   ReaderDocument? document,
@@ -58,6 +61,7 @@ AppServices testServices({
   ArchiveSearch? archiveSearch,
   RecordingSession? recording,
   DeviceRecords? records,
+  ShelfReading? shelfReading,
 }) {
   final ReaderDocument doc =
       document ?? FakeReaderDocument(pages: <String>['текст']);
@@ -77,6 +81,7 @@ AppServices testServices({
     archiveSearch: archiveSearch ?? fakeArchiveSearch(archives),
     recording: recording,
     records: records,
+    shelfReading: shelfReading,
     covers: CoverService(
       opener: FakeDocumentOpener(
         doc,
