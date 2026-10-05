@@ -51,10 +51,7 @@ void main() {
     }
   });
 
-  FileDeviceRecords open({
-    String? Function()? active,
-    bool Function()? known,
-  }) {
+  FileDeviceRecords open({String? Function()? active, bool Function()? known}) {
     final FileDeviceRecords records = FileDeviceRecords(
       root: () async => folder,
       outlet: outlet,
@@ -750,9 +747,7 @@ void main() {
       final FileDeviceRecords before = open();
       await before.refresh();
       expect(await before.share(<DeviceRecord>[before.entries.last]), 1);
-      final File state = File(
-        p.join(folder.path, FileDeviceRecords.stateName),
-      );
+      final File state = File(p.join(folder.path, FileDeviceRecords.stateName));
       await Process.run('chmod', <String>['000', state.path]);
       addTearDown(() => Process.run('chmod', <String>['644', state.path]));
       try {
@@ -787,9 +782,8 @@ void main() {
     test('SNO-F-REC-06: файл отметок с испорченной кодировкой — мусор, а '
         'не отказ диска: новая отметка ложится', () async {
       await both();
-      await File(
-        p.join(folder.path, FileDeviceRecords.stateName),
-      ).writeAsBytes(<int>[0xFF, 0xFE, 0x7B, 0x22]);
+      await File(p.join(folder.path, FileDeviceRecords.stateName))
+          .writeAsBytes(<int>[0xFF, 0xFE, 0x7B, 0x22]);
       final FileDeviceRecords records = open();
       await records.refresh();
       expect(untaken(records.entries), hasLength(2));
