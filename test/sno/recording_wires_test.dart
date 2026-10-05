@@ -152,10 +152,7 @@ void main() {
       await tester.tap(find.byKey(const Key('library-search')));
       await tester.pumpAndSettle();
       // Запрос набирают по буквам: в журнал идёт то, что простояло.
-      await tester.enterText(
-        find.byKey(const Key('shelf-search-field')),
-        'ан',
-      );
+      await tester.enterText(find.byKey(const Key('shelf-search-field')), 'ан');
       await tester.pump(const Duration(milliseconds: 50));
       await tester.enterText(
         find.byKey(const Key('shelf-search-field')),
@@ -211,10 +208,11 @@ void main() {
         'page': 1,
       });
       final List<Map<String, Object?>> shown = only('page.shown');
-      expect(
-        shown.map((Map<String, Object?> event) => event['page']),
-        <int>[1, 2, 3],
-      );
+      expect(shown.map((Map<String, Object?> event) => event['page']), <int>[
+        1,
+        2,
+        3,
+      ]);
       expect(
         shown.map((Map<String, Object?> event) => dataOf(event)['cause']),
         <String>['open', 'key', 'key'],
@@ -383,7 +381,8 @@ void main() {
       await kit.session.start(code);
       await pumpReader(tester);
       final ReaderController controller = scaffoldOf(tester).controller;
-      final ReadingFilter next = controller.settings.filter == ReadingFilter.sepia
+      final ReadingFilter next =
+          controller.settings.filter == ReadingFilter.sepia
           ? ReadingFilter.warm
           : ReadingFilter.sepia;
 
