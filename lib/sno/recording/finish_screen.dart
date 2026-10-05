@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../hold_button.dart';
+import 'journal_check.dart';
 import 'records.dart';
 import 'records_screen.dart';
 import 'session.dart';
@@ -52,6 +53,11 @@ Future<void> openSessionFinish(
 /// сверяют с бланком, — а сессия завершается удержанием кнопки. Тест
 /// нагрузки встанет сюда же вместе со своей функцией.
 ///
+/// **До завершения журнал перечитан с диска** (SNO-F-REC-13): под
+/// числом событий стоит «Запись цела: … пропусков нет» или чего в ней
+/// не хватает — экспериментатор узнаёт о неполной записи, пока
+/// участник ещё рядом. Завершению это не мешает.
+///
 /// **После завершения запись упаковывается в архив** (SNO-F-REC-05,
 /// кадр SNO-SCR-08.3), и экран не закрывается: на нём имя архива,
 /// длительность, число событий и размер — и выход для него
@@ -60,7 +66,8 @@ Future<void> openSessionFinish(
 /// остановки записи: между ними позже встанет тест нагрузки, и его
 /// ответы должны попасть в тот же архив. Архив не собрался — запись
 /// цела и лежит папкой; об этом сказано, упаковка повторится при
-/// следующем запуске.
+/// следующем запуске. На телефоне под архивом сказано, легла ли его
+/// вторая копия в «Загрузки» (SNO-F-REC-13).
 class SessionFinishScreen extends StatefulWidget {
   /// Создаёт экран.
   ///
@@ -96,6 +103,11 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   String? _blocks;
   String? _away;
 
+  /// Итог самопроверки журнала словами и цел ли он (SNO-F-REC-13);
+  /// `null` — журнал ещё не перечитан.
+  String? _check;
+  bool _intact = true;
+
   /// Завершена ли сессия: экран показывает архив, а не код.
   bool _finished = false;
 
@@ -116,6 +128,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   void initState() {
     super.initState();
     widget.session.addListener(_changed);
+    widget.session.checked.addListener(_changed);
     _remember();
   }
 
@@ -133,11 +146,17 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     _failed = session.writeFailed;
     _blocks = describeBlocks(state.blocks);
     _away = describeAway(state.away);
+    if (session.checked.value) {
+      final JournalCheck? check = session.check;
+      _check = describeJournalCheck(check);
+      _intact = check?.intact ?? false;
+    }
   }
 
   @override
   void dispose() {
     widget.session.removeListener(_changed);
+    widget.session.checked.removeListener(_changed);
     super.dispose();
   }
 
@@ -300,6 +319,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     DeviceRecord record,
   ) {
     final String? notice = _notice;
+    final String? backup = describeBackup(record, backs: records.backs);
     return <Widget>[
       Text('Архив записи готов', style: theme.textTheme.titleSmall),
       const SizedBox(height: 4),
@@ -315,6 +335,19 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
         'Архив лежит в «Записях на устройстве».',
         style: theme.textTheme.bodySmall,
       ),
+      if (backup != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            backup,
+            key: const Key('sno-finish-backup'),
+            style: record.copiedAt != null
+                ? theme.textTheme.bodySmall
+                : theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+          ),
+        ),
       const SizedBox(height: 20),
       if (records.shares)
         FilledButton.icon(
@@ -366,6 +399,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     final bool open = widget.session.phase == RecordingPhase.stopped;
     final String? blocks = _blocks;
     final String? away = _away;
+    final String? check = _check;
     return <Widget>[
       Text(
         _title,
@@ -390,6 +424,15 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
       const Text('Впишите код в бланк'),
       const SizedBox(height: 28),
       Text('Записано событий: $_events', key: const Key('sno-finish-events')),
+      if (check != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            check,
+            key: const Key('sno-finish-check'),
+            style: _intact ? null : TextStyle(color: theme.colorScheme.error),
+          ),
+        ),
       if (blocks != null)
         Padding(
           padding: const EdgeInsets.only(top: 4),

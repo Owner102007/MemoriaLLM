@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:memoria/sno/recording/event.dart';
 import 'package:memoria/sno/recording/record_outlet.dart';
+import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/store.dart';
 import 'package:path/path.dart' as p;
 
@@ -105,6 +106,21 @@ class FakeRecordOutlet implements RecordOutlet {
   /// Открывается ли окно «Поделиться».
   bool opens = true;
 
+  /// Чем кончается открывшееся окно (SNO-F-REC-14): выбрано ли в нём
+  /// приложение.
+  ShareOutcome outcome = ShareOutcome.chosen;
+
+  /// Есть ли у устройства общая папка для вторых копий
+  /// (SNO-F-REC-13).
+  bool backs = false;
+
+  /// Ложится ли вторая копия в общую папку.
+  bool backupWorks = true;
+
+  /// Что клали в общую папку, по вызовам: путь, сумма, папка.
+  final List<({String path, String sha256, String folder})> backups =
+      <({String path, String sha256, String folder})>[];
+
   /// Что отдавали окну «Поделиться», по вызовам.
   final List<List<String>> shared = <List<String>>[];
 
@@ -119,9 +135,22 @@ class FakeRecordOutlet implements RecordOutlet {
   final List<String?> initials = <String?>[];
 
   @override
-  Future<bool> share(List<String> paths) async {
+  Future<ShareOutcome> share(List<String> paths) async {
     shared.add(List<String>.of(paths));
-    return opens;
+    return opens ? outcome : ShareOutcome.failed;
+  }
+
+  @override
+  Future<bool> canBackup() async => backs;
+
+  @override
+  Future<bool> backup(
+    String path, {
+    required String sha256,
+    required String folder,
+  }) async {
+    backups.add((path: path, sha256: sha256, folder: folder));
+    return backupWorks;
   }
 
   @override

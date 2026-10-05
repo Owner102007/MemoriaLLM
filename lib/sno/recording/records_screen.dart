@@ -59,8 +59,11 @@ Future<bool> confirmLargeShare(
 /// Экран ведёт экспериментатор; во время записи сюда не попасть.
 ///
 /// На телефоне запись «отправляют» — системным окном «Поделиться»,
-/// одну или все неотправленные разом. На ПК «сохраняют копию» в
-/// выбранную папку и открывают папку записей в «Проводнике».
+/// одну или все неотправленные разом; отправленной она считается,
+/// когда в окне выбрано приложение (SNO-F-REC-14), а вторая её копия
+/// сама ложится в «Загрузки» (SNO-F-REC-13) — отметок у записи две.
+/// На ПК «сохраняют копию» в выбранную папку и открывают папку записей
+/// в «Проводнике».
 ///
 /// Удаление — с подтверждением; запись, которая ещё никуда не ушла,
 /// удаляется только вторым подтверждением.
@@ -241,7 +244,11 @@ class _DeviceRecordsScreenState extends State<DeviceRecordsScreen> {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  describeRecord(record, shares: records.shares),
+                  describeRecord(
+                    record,
+                    shares: records.shares,
+                    backs: records.backs,
+                  ),
                   key: Key('sno-record-about-${record.rowId}'),
                   style: theme.textTheme.bodySmall,
                 ),

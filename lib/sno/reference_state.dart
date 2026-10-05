@@ -54,7 +54,9 @@ const String kReferenceSchema = 'sno2026-reference/1';
 /// участников, уже выданные на устройстве, не должны выдаться снова
 /// (SNO-ALG-CFG-03); незавершённая сессия записи обязана остаться
 /// незавершённой — сбросить устройство посреди неё раздел
-/// «Тестирование» не даёт, и отметка сессии от сброса не зависит.
+/// «Тестирование» не даёт, и отметка сессии от сброса не зависит;
+/// о разрешении на уведомления спрашивают один раз за всё время
+/// (SNO-F-REC-13).
 const Set<String> _keptSettings = <String>{
   SettingsKeys.nodeId,
   SettingsKeys.lastHlc,
@@ -63,6 +65,7 @@ const Set<String> _keptSettings = <String>{
   SnoSettingsKeys.lastReset,
   SnoSettingsKeys.knownCodes,
   SnoSettingsKeys.session,
+  SnoSettingsKeys.notificationsAsked,
 };
 
 /// Настройки, которых нет в снимке состояния: их пишет само приложение,

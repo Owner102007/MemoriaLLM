@@ -21,7 +21,34 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
+    <!-- Запись сессии не должна оборваться оттого, что участник
+         свернул приложение (SNO-F-REC-13, решение владельца Ч3 от
+         05.10.2026): пока запись идёт, работает служба переднего плана
+         с уведомлением «Идёт запись» — такое приложение Android не
+         выгружает. Вид службы — «особое назначение»: она ничего не
+         качает и не проигрывает, а только держит запись живой.
+
+         Разрешение на уведомления спрашивается один раз, перед первой
+         записью. Отказ ничего не ломает: запись идёт, но свёрнутое
+         приложение защищено хуже — об этом сказано в разделе
+         «Тестирование». -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application android:requestLegacyExternalStorage="true">
+        <!-- Служба записи (SNO-F-REC-13). Наружу не выставлена и уходит
+             вместе с задачей приложения: уведомление «Идёт запись» не
+             должно пережить запись. -->
+        <service
+            android:name="io.github.owner102007.memoria.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="true">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="keeps a timed reading-study session recording alive while the app is in the background" />
+        </service>
         <!-- Архив записи сессии уходит с телефона системным окном
              «Поделиться» (SNO-F-REC-06). Поставщик наружу не выставлен:
              чужое приложение читает только тот архив, ссылку на который

@@ -359,6 +359,14 @@ jobs:
         if: steps.probe.outputs.ready == 'true'
         run: dart run build_runner build
 
+      # Сборки ветвей подписываются постоянным ключом (SNO-F-REC-13):
+      # новая сборка встаёт поверх прежней, и записи сессий на телефоне
+      # остаются на месте. Ключ лежит у владельца и приходит сюда
+      # четырьмя секретами репозитория; в файл он раскладывается вне
+      # рабочей папки и только для сборки ветви. Секретов нет (чужой
+      # форк, запрос на слияние со стороны) — сборка подписывается
+      # отладочным ключом прогона, как раньше, и шаг «Чем подписан APK»
+      # говорит об этом предупреждением.
       - name: Собрать APK
         if: steps.probe.outputs.ready == 'true'
         env:
@@ -366,8 +374,16 @@ jobs:
           SNO_BRANCH: ${{ matrix.branch }}
           SUFFIX: ${{ matrix.suffix }}
           FILE: ${{ matrix.file }}
+          SNO_KEYSTORE_BASE64: ${{ secrets.SNO_KEYSTORE_BASE64 }}
+          SNO_KEYSTORE_PASSWORD: ${{ secrets.SNO_KEYSTORE_PASSWORD }}
+          SNO_KEY_ALIAS: ${{ secrets.SNO_KEY_ALIAS }}
+          SNO_KEY_PASSWORD: ${{ secrets.SNO_KEY_PASSWORD }}
         run: |
           set -eu
+          if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$SNO_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/sno.jks"
+            export SNO_KEYSTORE_FILE="$RUNNER_TEMP/sno.jks"
+          fi
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
           flutter build apk --release \
             --flavor "$FLAVOR" \
@@ -382,9 +398,10 @@ jobs:
       # есть у всех трёх приложений: основное ищет книги, ветвь — архив
       # с литературой (SNO-F-LIT-03); записи в чужие файлы и доступа к
       # фото, видео и звуку нет ни у кого. Поставщик файлов для архивов
-      # записей (SNO-F-REC-06) есть у ветвей и только у них. Строки в
-      # двоичном манифесте лежат в UTF-8 или в UTF-16 — ищутся обе
-      # записи.
+      # записей (SNO-F-REC-06) есть у ветвей и только у них; так же —
+      # служба переднего плана записи и её разрешения (SNO-F-REC-13).
+      # Строки в двоичном манифесте лежат в UTF-8 или в UTF-16 — ищутся
+      # обе записи.
       - name: Что внутри APK
         if: steps.probe.outputs.ready == 'true'
         env:
@@ -459,12 +476,69 @@ jobs:
           if not branch and provider:
               problems.append('в основной сборке есть поставщик файлов '
                               'для архивов записей')
+          # SNO-F-REC-13: пока идёт запись сессии, сборка ветви держит
+          # службу переднего плана с уведомлением — свёрнутое
+          # приложение не выгружается. В основном приложении записи
+          # нет, и службы тоже.
+          service = 'io.github.owner102007.memoria.RecordingService'
+          if branch:
+              if not exact(service):
+                  problems.append('в сборке ветви нет службы записи')
+              for name in ('FOREGROUND_SERVICE',
+                           'FOREGROUND_SERVICE_SPECIAL_USE',
+                           'POST_NOTIFICATIONS'):
+                  if not exact('android.permission.' + name):
+                      problems.append('в сборке ветви нет разрешения '
+                                      + name)
+          elif has('RecordingService'):
+              problems.append('в основной сборке есть служба записи')
           for problem in problems:
               print(f'::error title=Что внутри APK::{problem}')
           print(f'{sys.argv[1]}: {package}, «{label}», '
                 f'разрешения на файлы: {storage or "нет"}')
           sys.exit(1 if problems else 0)
           PY
+
+      # SNO-F-REC-13: сборка ветви обязана быть подписана одним и тем
+      # же ключом от прогона к прогону — иначе она не встанет поверх
+      # прежней и унесёт записи с телефонов. Отпечаток ключа (не
+      # секрет) записан в `tool/sno_signing_sha256.txt`; пока его там
+      # нет, прогон печатает отпечаток, чтобы его туда вписали.
+      - name: Чем подписан APK
+        if: steps.probe.outputs.ready == 'true'
+        env:
+          FILE: ${{ matrix.file }}
+          SNO_BRANCH: ${{ matrix.branch }}
+          HAS_KEY: ${{ secrets.SNO_KEYSTORE_BASE64 != '' }}
+        run: |
+          set -eu
+          signer=$(ls -d "${ANDROID_HOME:-/nonexistent}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$signer" ]; then
+            echo '::warning title=Чем подписан APK::apksigner не найден — подпись не проверена'
+            exit 0
+          fi
+          digest=$("$signer" verify --print-certs "out/$FILE" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | tr 'A-F' 'a-f' | tr -d ': ' || true)
+          wanted=$(grep -v '^#' tool/sno_signing_sha256.txt \
+            | tr 'A-F' 'a-f' | tr -d ': \r' | grep -m1 . || true)
+          echo "out/$FILE: отпечаток подписи $digest"
+          if [ -z "${SNO_BRANCH:-}" ]; then
+            exit 0
+          fi
+          if [ "$HAS_KEY" != 'true' ]; then
+            echo '::warning title=Чем подписан APK::секретов ключа в репозитории нет — сборка ветви подписана случайным ключом прогона и поверх прежней сборки не встанет (записи на телефоне сотрутся вместе с ней)'
+            exit 0
+          fi
+          if [ -z "$wanted" ]; then
+            echo "::notice title=Чем подписан APK::отпечаток ключа сборок ветвей: $digest — впишите его в tool/sno_signing_sha256.txt"
+            exit 0
+          fi
+          if [ "$digest" != "$wanted" ]; then
+            echo "::error title=Чем подписан APK::сборка ветви подписана не тем ключом: $digest вместо $wanted"
+            exit 1
+          fi
+          echo 'подпись сходится с tool/sno_signing_sha256.txt'
 
       - name: Выложить APK
         if: steps.probe.outputs.ready == 'true'

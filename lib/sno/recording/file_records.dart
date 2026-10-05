@@ -26,6 +26,14 @@ import 'store.dart';
 /// Файл потерялся — все записи снова «не отправлены»: ошибка в
 /// безопасную сторону, запись не удалят одним нажатием.
 ///
+/// **На телефоне у каждого архива есть вторая копия** — в общей папке
+/// `Загрузки/Memoria-SNO2026/` (SNO-F-REC-13): папка `Записи/` лежит в
+/// данных приложения и пропадает вместе с ним, а «Загрузки» переживают
+/// и удаление приложения, и новую сборку. Копия кладётся сразу за
+/// упаковкой и сверяется по сумме; не легла — у записи «копии нет», и
+/// попытка повторится при следующем запуске. Удаление записи из
+/// приложения копию не трогает.
+///
 /// Всё, что меняет папку, идёт по очереди ([_locked]): упаковка при
 /// запуске и упаковка только что завершённой записи не встречаются на
 /// одной папке.
@@ -89,6 +97,10 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   /// сверяются один раз, пока файл не изменился.
   final Map<String, _Known> _checked = <String, _Known>{};
 
+  /// Есть ли у устройства общая папка для вторых копий; `null` — ещё
+  /// не спрашивали.
+  bool? _backs;
+
   Future<void> _queue = Future<void>.value();
 
   @override
@@ -96,6 +108,25 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
 
   @override
   bool get saves => _outlet.saves;
+
+  @override
+  bool get backs => _backs ?? false;
+
+  /// Спрашивает устройство об общей папке — один раз за запуск.
+  Future<bool> _canBackup() async {
+    final bool? known = _backs;
+    if (known != null) {
+      return known;
+    }
+    bool can;
+    try {
+      can = await _outlet.canBackup();
+    } on Object {
+      can = false;
+    }
+    _backs = can;
+    return can;
+  }
 
   @override
   bool get loaded => _loaded;
@@ -233,6 +264,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
 
   Future<void> _read() async {
     final Directory records = await _records();
+    await _canBackup();
     await _readState(records);
     if (_unsaved && _stateRead) {
       await _writeState(records);
@@ -434,8 +466,10 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   }
 
   /// Упаковывает папку; отвечает именем записи в списке или `null`,
-  /// если папка осталась папкой.
+  /// если папка осталась папкой. Готовый архив тут же получает вторую
+  /// копию (SNO-F-REC-13).
   Future<String?> _packFolder(Directory folder) async {
+    final String name;
     try {
       if (await _isEmpty(folder)) {
         await folder.delete(recursive: true);
@@ -443,11 +477,98 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       }
       final File archive = await packRecording(folder, now: _now);
       final String base = p.basename(archive.path);
-      return base.substring(0, base.length - kArchiveExtension.length);
+      name = base.substring(0, base.length - kArchiveExtension.length);
     } on PackException {
       return null;
     } on FileSystemException {
       return null;
+    }
+    await _backup(folder.parent, name);
+    return name;
+  }
+
+  /// Кладёт вторую копию архива записи [name] в общую папку устройства
+  /// (SNO-F-REC-13). Отвечает, лежит ли там теперь сверенная копия.
+  ///
+  /// Ни один отказ упаковке и списку не мешает: копии нет — у записи
+  /// «копии нет», и попытка повторится при следующем запуске.
+  Future<bool> _backup(Directory records, String name) async {
+    if (!await _canBackup()) {
+      return false;
+    }
+    try {
+      await _readState(records);
+      if (_marks[name]?['copied_at'] != null) {
+        return true;
+      }
+      final File archive = File(
+        p.join(records.path, '$name$kArchiveExtension'),
+      );
+      if (!await archive.exists()) {
+        return false;
+      }
+      final bool there = await _outlet.backup(
+        archive.path,
+        sha256: await fileSha256(archive),
+        folder: kBackupFolder,
+      );
+      if (!there) {
+        return false;
+      }
+    } on Object {
+      return false;
+    }
+    _mark(name)
+      ..['copied_at'] = isoWithOffset(_now())
+      ..['copied_to'] = '$kBackupPlace/$name$kArchiveExtension';
+    await _writeState(records);
+    return true;
+  }
+
+  @override
+  Future<void> backupPending() async {
+    if (!await _canBackup()) {
+      return;
+    }
+    // Что копировать, читается один раз; каждый архив копируется под
+    // своим замком — как упаковка папок прежних сборок.
+    final List<String> names = await _locked(() async {
+      final Directory records = await _records();
+      await _readState(records);
+      final List<String> found = <String>[];
+      try {
+        await for (final FileSystemEntity entity in records.list(
+          followLinks: false,
+        )) {
+          final String base = p.basename(entity.path);
+          if (entity is File &&
+              !base.startsWith('.') &&
+              base.endsWith(kArchiveExtension)) {
+            final String name = base.substring(
+              0,
+              base.length - kArchiveExtension.length,
+            );
+            if (_marks[name]?['copied_at'] == null) {
+              found.add(name);
+            }
+          }
+        }
+      } on FileSystemException {
+        // Папка не прочиталась: копии лягут при следующем запуске.
+      }
+      found.sort();
+      return found;
+    });
+    if (names.isEmpty) {
+      return;
+    }
+    try {
+      for (final String name in names) {
+        await _locked(() async => _backup(await _records(), name));
+      }
+      await _locked(_scan);
+    } finally {
+      _notify();
     }
   }
 
@@ -497,7 +618,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   }
 
   @override
-  Future<int> share(List<DeviceRecord> records) async {
+  Future<ShareReport> share(List<DeviceRecord> records) async {
     final Directory folder = await _records();
     final List<DeviceRecord> ready = <DeviceRecord>[];
     final List<String> paths = <String>[];
@@ -512,10 +633,16 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       // Архив убрали с диска, пока список был на экране.
       await refresh();
     }
-    if (paths.isEmpty || !await _outlet.share(paths)) {
-      return 0;
+    if (paths.isEmpty) {
+      return const ShareReport(ShareOutcome.failed);
     }
-    // Помечается факт вызова окна: дошёл ли архив, система не говорит.
+    // SNO-F-REC-14: помечается выбор приложения в окне, а не то, что
+    // окно открылось; дошёл ли архив, система не говорит. Закрыли без
+    // выбора или система о выборе промолчала — отметки нет.
+    final ShareOutcome outcome = await _outlet.share(paths);
+    if (outcome != ShareOutcome.chosen) {
+      return ShareReport(outcome);
+    }
     final String at = isoWithOffset(_now());
     return _locked(() async {
       for (final DeviceRecord record in ready) {
@@ -523,7 +650,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       }
       await _writeState(folder);
       await _scan();
-      return ready.length;
+      return ShareReport(ShareOutcome.chosen, sent: ready.length);
     }).whenComplete(_notify);
   }
 

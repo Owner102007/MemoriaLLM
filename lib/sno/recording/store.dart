@@ -63,6 +63,14 @@ abstract interface class RecordingStore {
   /// обрывком нельзя. Зовётся только тогда, когда журнал не открыт.
   Future<List<String>> lastLines(String folder, {int count = kTailLines});
 
+  /// Журнал записи [folder] целиком, как он лежит на диске; `null` —
+  /// журнала нет.
+  ///
+  /// Файла не трогает и оборванного хвоста не отрезает: по этим байтам
+  /// журнал сверяют сам с собой (SNO-F-REC-13, `journal_check.dart`).
+  /// Журнал при этом может быть открыт на дозапись.
+  Future<List<int>?> journalBytes(String folder);
+
   /// Убирает папку незавершённой записи, которая так и не началась.
   Future<void> discard(String folder);
 

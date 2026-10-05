@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/recording/file_store.dart';
+import 'package:memoria/sno/recording/record_outlet.dart';
+import 'package:memoria/sno/recording/records.dart';
 
 /// SNO-ALG-CFG-01: три приложения из одного кода — согласие исходников.
 ///
@@ -260,6 +262,193 @@ void main() {
       expect(activity, contains('RECORDS_AUTHORITY = ".records"'));
       // Библиотека с `FileProvider` названа сборке явно.
       expect(gradle, contains('implementation("androidx.core:core:'));
+    });
+  });
+
+  group('SNO-F-REC-13: служба записи, вторая копия и подпись', () {
+    const List<String> branches = <String>['sno2026core', 'sno2026test'];
+    final String activity = File(
+      'android/app/src/main/kotlin/io/github/owner102007/memoria/'
+      'MainActivity.kt',
+    ).readAsStringSync();
+
+    test('SNO-F-REC-13: у ветви служба записи есть, наружу не выставлена '
+        'и уходит вместе с задачей', () {
+      for (final String name in branches) {
+        final String own = File('android/app/src/$name/AndroidManifest.xml')
+            .readAsStringSync();
+        expect(
+          own,
+          contains(
+            'android:name="io.github.owner102007.memoria.RecordingService"',
+          ),
+          reason: 'флейвор $name',
+        );
+        expect(
+          own,
+          contains('android:foregroundServiceType="specialUse"'),
+          reason: 'флейвор $name',
+        );
+        // Уведомление «Идёт запись» не должно пережить запись.
+        expect(
+          own,
+          contains('android:stopWithTask="true"'),
+          reason: 'флейвор $name',
+        );
+        for (final String permission in <String>[
+          'FOREGROUND_SERVICE',
+          'FOREGROUND_SERVICE_SPECIAL_USE',
+          'POST_NOTIFICATIONS',
+        ]) {
+          expect(
+            own,
+            contains('android:name="android.permission.$permission"'),
+            reason: 'флейвор $name',
+          );
+        }
+        expect(own, contains('SNO-F-REC-13'), reason: 'флейвор $name');
+      }
+    });
+
+    test('SNO-F-REC-13: в основном приложении службы и её разрешений '
+        'нет', () {
+      for (final String name in <String>['main', 'full']) {
+        final String own = File('android/app/src/$name/AndroidManifest.xml')
+            .readAsStringSync();
+        expect(own, isNot(contains('<service')), reason: 'манифест $name');
+        expect(
+          own,
+          isNot(contains('FOREGROUND_SERVICE')),
+          reason: 'манифест $name',
+        );
+        expect(
+          own,
+          isNot(contains('POST_NOTIFICATIONS')),
+          reason: 'манифест $name',
+        );
+      }
+    });
+
+    test('SNO-F-REC-13: значок уведомления лежит там, где его ищет '
+        'служба', () {
+      final String service = File(
+        'android/app/src/main/kotlin/io/github/owner102007/memoria/'
+        'RecordingService.kt',
+      ).readAsStringSync();
+      expect(service, contains('R.drawable.ic_recording'));
+      expect(
+        File(
+          'android/app/src/main/res/drawable/ic_recording.xml',
+        ).existsSync(),
+        isTrue,
+      );
+    });
+
+    test('SNO-F-REC-13: каналы и их слова у Kotlin и у Dart одни', () {
+      final String guard = File('lib/sno/recording/recording_guard.dart')
+          .readAsStringSync();
+      final String outlet = File('lib/sno/recording/record_outlet.dart')
+          .readAsStringSync();
+      final String passport = File('lib/sno/recording/device_passport.dart')
+          .readAsStringSync();
+
+      expect(activity, contains('GUARD_CHANNEL = "memoria/guard"'));
+      expect(guard, contains("MethodChannel('memoria/guard')"));
+      for (final String method in <String>[
+        'notifications',
+        'askNotifications',
+        'hold',
+        'release',
+      ]) {
+        expect(activity, contains('"$method" ->'), reason: method);
+        expect(guard, contains("'$method'"), reason: method);
+      }
+      for (final String method in <String>['share', 'canBackup', 'backup']) {
+        expect(activity, contains('"$method" ->'), reason: method);
+        expect(outlet, contains("'$method'"), reason: method);
+      }
+      expect(activity, contains('"passport" ->'));
+      expect(passport, contains("'passport'"));
+      expect(passport, contains("MethodChannel('memoria/device')"));
+    });
+
+    test('SNO-F-REC-14: слова ответа окна «Поделиться» у Kotlin и у Dart '
+        'одни', () {
+      const Map<String, ShareOutcome> words = <String, ShareOutcome>{
+        'chosen': ShareOutcome.chosen,
+        'dismissed': ShareOutcome.dismissed,
+        'untold': ShareOutcome.untold,
+        'failed': ShareOutcome.failed,
+      };
+      for (final MapEntry<String, ShareOutcome> word in words.entries) {
+        expect(
+          activity,
+          contains('= "${word.key}"'),
+          reason: 'слово ${word.key}',
+        );
+        expect(shareOutcomeOf(word.key), word.value);
+      }
+      // Каждому исходу окна соответствует своё слово.
+      expect(words.values.toSet(), ShareOutcome.values.toSet());
+    });
+
+    test('SNO-F-REC-13: вторая копия пишется без разрешения на чужие '
+        'файлы — через хранилище загрузок', () {
+      expect(activity, contains('MediaStore.Downloads'));
+      // Папка копий названа в одном месте — в Dart.
+      expect(activity, isNot(contains(kBackupFolder)));
+      expect(kBackupPlace, endsWith('/$kBackupFolder'));
+    });
+
+    test('SNO-F-REC-13: сборки ветвей подписываются ключом из окружения, '
+        'в репозитории его нет', () {
+      expect(gradle, contains('System.getenv("SNO_KEYSTORE_FILE")'));
+      for (final String secret in <String>[
+        'SNO_KEYSTORE_PASSWORD',
+        'SNO_KEY_ALIAS',
+        'SNO_KEY_PASSWORD',
+      ]) {
+        expect(gradle, contains('System.getenv("$secret")'), reason: secret);
+      }
+      // Ни пароля, ни пути к ключу строкой в сборке нет.
+      expect(gradle, isNot(contains(RegExp('Password = "'))));
+      expect(gradle, isNot(contains(RegExp(r'\.(jks|keystore)"'))));
+      for (final String name in branches) {
+        expect(
+          flavor(name),
+          contains('signingConfig = branchSigning'),
+          reason: 'флейвор $name',
+        );
+      }
+      // Основное приложение этим ключом не подписывается (F-REL-08).
+      expect(flavor('full'), contains('signingConfig = debugSigning'));
+
+      final String ci = File('.github/workflows/ci.yml').readAsStringSync();
+      for (final String secret in <String>[
+        'SNO_KEYSTORE_BASE64',
+        'SNO_KEYSTORE_PASSWORD',
+        'SNO_KEY_ALIAS',
+        'SNO_KEY_PASSWORD',
+      ]) {
+        expect(ci, contains('secrets.$secret'), reason: secret);
+      }
+      final String ignored = File('.gitignore').readAsStringSync();
+      expect(ignored, contains('*.jks'));
+      expect(ignored, contains('*.keystore'));
+    });
+
+    test('SNO-F-REC-13: отпечаток ключа — 64 шестнадцатеричных знака '
+        'одной строкой или ничего', () {
+      final List<String> lines = <String>[
+        for (final String line in File(
+          'tool/sno_signing_sha256.txt',
+        ).readAsLinesSync())
+          if (line.trim().isNotEmpty && !line.startsWith('#')) line.trim(),
+      ];
+      expect(lines.length, lessThanOrEqualTo(1));
+      for (final String line in lines) {
+        expect(line, matches(RegExp(r'^[0-9a-fA-F]{64}$')));
+      }
     });
   });
 

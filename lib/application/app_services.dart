@@ -23,10 +23,12 @@ import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
 import '../sno/flags.dart';
 import '../sno/participant_code.dart';
+import '../sno/recording/device_passport.dart';
 import '../sno/recording/device_status.dart';
 import '../sno/recording/file_records.dart';
 import '../sno/recording/file_store.dart';
 import '../sno/recording/record_outlet.dart';
+import '../sno/recording/recording_guard.dart';
 import '../sno/recording/records.dart';
 import '../sno/recording/session.dart';
 import '../sno/reference_state.dart';
@@ -165,6 +167,12 @@ class AppServices {
         'flags': Sno.flags.enabledNames,
       },
       status: const PlatformDeviceStatus(),
+      // SNO-F-REC-13: служба переднего плана есть только у телефона —
+      // свёрнутое окно на ПК никто не выгружает.
+      guard: Platform.isAndroid
+          ? const AndroidRecordingGuard()
+          : const NoRecordingGuard(),
+      passport: platformPassport,
     );
   }
 

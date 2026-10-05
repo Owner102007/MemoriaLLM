@@ -14,6 +14,49 @@ import 'package:flutter/foundation.dart';
 import '../../domain/library/archive_scan.dart';
 import 'session.dart';
 
+/// Папка в «Загрузках» устройства, куда телефон кладёт вторую копию
+/// каждого архива (SNO-F-REC-13): она переживает и удаление
+/// приложения, и новую сборку.
+const String kBackupFolder = 'Memoria-SNO2026';
+
+/// Та же папка словами — как её увидит экспериментатор в файловом
+/// менеджере телефона.
+const String kBackupPlace = 'Загрузки/$kBackupFolder';
+
+/// Чем кончилось системное окно «Поделиться» (SNO-F-REC-14).
+enum ShareOutcome {
+  /// В окне выбрано приложение: архив отдан ему. Дошёл ли он до
+  /// адресата, система не говорит.
+  chosen,
+
+  /// Окно закрыли, ничего не выбрав.
+  dismissed,
+
+  /// Система не сообщила, выбрано ли приложение: окно производителя
+  /// или пункт окна, за которым приложения нет («Копировать»,
+  /// «Печать»). Запись остаётся неотправленной: ошибка в безопасную
+  /// сторону — её не удалят одним вопросом.
+  untold,
+
+  /// Окно не открылось, или отдавать нечего.
+  failed,
+}
+
+/// Итог «Поделиться»: чем кончилось окно и сколько записей помечено
+/// отправленными.
+@immutable
+class ShareReport {
+  /// Создаёт итог.
+  const ShareReport(this.outcome, {this.sent = 0});
+
+  /// Чем кончилось окно.
+  final ShareOutcome outcome;
+
+  /// Сколько записей помечено отправленными: все отданные окну, если
+  /// в нём выбрано приложение, иначе ноль.
+  final int sent;
+}
+
 /// Запись на устройстве — строка списка.
 @immutable
 class DeviceRecord {
@@ -66,11 +109,14 @@ class DeviceRecord {
   /// Кем остановлена: имя причины, как в журнале ([StopReason.wire]).
   final String? stoppedBy;
 
-  /// Когда запись отдали системному окну «Поделиться»; `null` — не
-  /// отдавали. Это факт вызова окна, а не доставки.
+  /// Когда в системном окне «Поделиться» для записи выбрали
+  /// приложение (SNO-F-REC-14); `null` — не выбирали. Это факт выбора,
+  /// а не доставки.
   final DateTime? sharedAt;
 
-  /// Когда копию архива сохранили в другую папку; `null` — копии нет.
+  /// Когда копия архива легла вне папки приложения: на ПК — в папку,
+  /// выбранную экспериментатором, на телефоне — в «Загрузки»
+  /// (SNO-F-REC-13); `null` — копии нет.
   final DateTime? copiedAt;
 
   /// Имя файла архива.
@@ -85,8 +131,9 @@ class DeviceRecord {
   /// Оборвалась ли запись: приложение закрыли или оно упало.
   bool get interrupted => stoppedBy == StopReason.crash.wire;
 
-  /// Ушла ли запись с устройства хоть одним путём: такую можно
-  /// удалить одним подтверждением, остальные — двумя.
+  /// Есть ли запись где-то, кроме папки приложения, — отправлена или
+  /// лежит копией: такую можно удалить одним подтверждением,
+  /// остальные — двумя.
   bool get taken => sharedAt != null || copiedAt != null;
 }
 
@@ -118,6 +165,11 @@ abstract interface class DeviceRecords implements Listenable {
   /// Есть ли у устройства папки, куда сохраняют копию (ПК).
   bool get saves;
 
+  /// Кладёт ли устройство вторую копию каждого архива само — в общую
+  /// папку «Загрузки» (телефон с Android 10 и новее; SNO-F-REC-13).
+  /// До первого чтения списка — «нет».
+  bool get backs;
+
   /// Прочитан ли список хоть раз.
   bool get loaded;
 
@@ -138,18 +190,26 @@ abstract interface class DeviceRecords implements Listenable {
   /// приложения. Запуска приложения не задерживает.
   Future<void> packPending();
 
+  /// Кладёт вторую копию каждого архива, у которого её ещё нет, в
+  /// общую папку устройства (SNO-F-REC-13): записи прежних сборок и
+  /// те, чья копия в прошлый раз не легла. Запуска приложения не
+  /// задерживает; там, где общей папки нет, не делает ничего.
+  Future<void> backupPending();
+
   /// Упаковывает завершённую запись из папки [folder] в архив.
   ///
   /// Отвечает строкой этой записи: архивом, если упаковка удалась, и
   /// папкой, если нет; `null` — записи с таким именем нет вовсе.
+  /// Готовый архив тут же получает вторую копию ([backs]).
   Future<DeviceRecord?> pack(String folder);
 
   /// Отдаёт архивы системному окну «Поделиться».
   ///
-  /// Отвечает, сколько архивов ушло в окно; они помечены
-  /// отправленными. Ноль — окно не открылось или отдавать нечего:
-  /// архив убрали с диска, пока список был на экране.
-  Future<int> share(List<DeviceRecord> records);
+  /// Записи помечаются отправленными, только когда в окне выбрано
+  /// приложение (SNO-F-REC-14); окно, закрытое без выбора, отметки не
+  /// оставляет. «Не открылось» — и тогда, когда отдавать нечего: архив
+  /// убрали с диска, пока список был на экране.
+  Future<ShareReport> share(List<DeviceRecord> records);
 
   /// Сохраняет копию архива в папку, которую выберет экспериментатор.
   Future<CopyOutcome> saveCopy(DeviceRecord record);
@@ -161,7 +221,7 @@ abstract interface class DeviceRecords implements Listenable {
   Future<bool> delete(DeviceRecord record);
 }
 
-/// Записи, которые ещё никуда не ушли с устройства.
+/// Записи, которых нет нигде, кроме папки приложения.
 List<DeviceRecord> untaken(List<DeviceRecord> records) {
   return <DeviceRecord>[
     for (final DeviceRecord record in records)
@@ -190,7 +250,14 @@ String describeRecordsCount(
   if (records.isEmpty) {
     return 'нет';
   }
-  final int left = untaken(records).length;
+  // На телефоне считают неотправленные: вторая копия в «Загрузках»
+  // лежит на том же телефоне и отправки не заменяет (SNO-F-REC-13).
+  int left = 0;
+  for (final DeviceRecord record in records) {
+    if (shares ? record.sharedAt == null : !record.taken) {
+      left++;
+    }
+  }
   if (left == 0) {
     return '${records.length}';
   }
@@ -200,12 +267,27 @@ String describeRecordsCount(
 }
 
 /// Строка под именем записи: «40:00 · 0,4 МБ · не отправлена».
-String describeRecord(DeviceRecord record, {required bool shares}) {
+///
+/// [backs] — телефон сам кладёт вторую копию в «Загрузки»: тогда у
+/// записи две независимые отметки, и отсутствие копии названо тоже —
+/// «не отправлена · копия есть», «отправлена · копии нет»
+/// (SNO-F-REC-13).
+String describeRecord(
+  DeviceRecord record, {
+  required bool shares,
+  bool backs = false,
+}) {
   final int? duration = record.durationMs;
+  final bool sent = record.sharedAt != null;
+  final bool copied = record.copiedAt != null;
   final String state;
-  if (record.sharedAt != null) {
-    state = record.copiedAt != null ? 'отправлена · копия есть' : 'отправлена';
-  } else if (record.copiedAt != null) {
+  if (shares && backs && record.packed) {
+    state =
+        '${sent ? 'отправлена' : 'не отправлена'} · '
+        '${copied ? 'копия есть' : 'копии нет'}';
+  } else if (sent) {
+    state = copied ? 'отправлена · копия есть' : 'отправлена';
+  } else if (copied) {
     state = 'копия есть';
   } else {
     state = shares ? 'не отправлена' : 'копии нет';
@@ -247,16 +329,33 @@ String describeArchive(DeviceRecord record) {
   ].join(' · ');
 }
 
-/// Что сказать после «Поделиться»; [shared] — сколько архивов ушло
-/// в системное окно.
-String describeShared(int shared) {
-  if (shared <= 0) {
-    return 'Поделиться не получилось: окно не открылось или архива уже '
-        'нет на устройстве.';
+/// Что сказать после «Поделиться» (SNO-F-REC-14).
+String describeShared(ShareReport report) {
+  return switch (report.outcome) {
+    ShareOutcome.chosen =>
+      report.sent == 1
+          ? 'Запись помечена отправленной.'
+          : 'Записи помечены отправленными: ${report.sent}.',
+    ShareOutcome.dismissed => 'Окно закрыто без выбора — запись не отправлена.',
+    ShareOutcome.untold =>
+      'Телефон не сообщил, выбрано ли приложение: запись осталась '
+          'неотправленной. Если архив ушёл, ничего делать не нужно.',
+    ShareOutcome.failed =>
+      'Поделиться не получилось: окно не открылось или архива уже '
+          'нет на устройстве.',
+  };
+}
+
+/// Строка о второй копии готового архива на экране завершения
+/// (SNO-F-REC-13); `null` — устройство вторых копий само не кладёт.
+String? describeBackup(DeviceRecord record, {required bool backs}) {
+  if (!backs || !record.packed) {
+    return null;
   }
-  return shared == 1
-      ? 'Запись помечена отправленной.'
-      : 'Записи помечены отправленными: $shared.';
+  return record.copiedAt != null
+      ? 'Копия: $kBackupPlace'
+      : 'Копии в «Загрузках» нет: общая папка телефона файл не '
+            'приняла. Архив лежит в приложении — отправьте его.';
 }
 
 /// Что сказать после «Сохранить архив как…»; `null` — папку не

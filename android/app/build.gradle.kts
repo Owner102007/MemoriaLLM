@@ -41,29 +41,58 @@ android {
     //
     // Основной флейвор не назван `main`: это имя у Gradle занято общим
     // набором исходников.
+    //
+    // Подпись (SNO-F-REC-13, решение владельца Ч2 от 05.10.2026).
+    // Сборки ветвей подписываются постоянным ключом: тогда новая сборка
+    // встаёт поверх прежней и записи сессий, накопленные на телефоне,
+    // остаются на месте. Отладочный ключ у каждого прогона CI свой, и
+    // сборка, подписанная им, ставится только после удаления прежней —
+    // вместе со всеми записями.
+    //
+    // Ключа в репозитории нет и быть не может: он лежит у владельца, а
+    // сборке приходит переменными окружения — в CI из секретов
+    // репозитория (`ci.yml`, шаг «Собрать APK»). Переменных нет —
+    // сборка ветви подписывается отладочным ключом, как раньше: чужой
+    // форк и локальная сборка от этого не ломаются.
+    //
+    // Основное приложение пока подписывается отладочным ключом: его
+    // релизная подпись — отдельное решение (F-REL-08).
+    //
+    // Подпись названа у флейвора, а не у вида сборки `release`: у вида
+    // сборки она одна на все три приложения и сильнее названной у
+    // флейвора.
+    val branchKeystore: String? = System.getenv("SNO_KEYSTORE_FILE")
+    signingConfigs {
+        if (!branchKeystore.isNullOrEmpty()) {
+            create("sno") {
+                storeFile = file(branchKeystore)
+                storePassword = System.getenv("SNO_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SNO_KEY_ALIAS")
+                keyPassword = System.getenv("SNO_KEY_PASSWORD")
+            }
+        }
+    }
+    val debugSigning = signingConfigs.getByName("debug")
+    val branchSigning = signingConfigs.findByName("sno") ?: debugSigning
+
     flavorDimensions += "app"
     productFlavors {
         create("full") {
             dimension = "app"
             manifestPlaceholders["appLabel"] = "Memoria LLM HB"
+            signingConfig = debugSigning
         }
         create("sno2026core") {
             dimension = "app"
             applicationIdSuffix = ".sno2026.core"
             manifestPlaceholders["appLabel"] = "Memoria · СНО2026 · I"
+            signingConfig = branchSigning
         }
         create("sno2026test") {
             dimension = "app"
             applicationIdSuffix = ".sno2026.test"
             manifestPlaceholders["appLabel"] = "Memoria · СНО2026 · II"
-        }
-    }
-
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = branchSigning
         }
     }
 }

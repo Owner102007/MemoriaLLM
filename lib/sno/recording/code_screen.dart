@@ -8,11 +8,16 @@ import 'session.dart';
 /// О чём предупредить перед стартом записи; пусто — не о чем.
 ///
 /// Предупреждение, а не запрет (SNO-F-REC-01): экспериментатор может
-/// знать, что зарядка уже воткнута.
+/// знать, что зарядка уже воткнута. Так же и с эталоном
+/// (SNO-F-REC-13): участника не отправляют домой из-за замечания, но
+/// сказать о нём надо до старта — запись на несброшенном устройстве
+/// начинается не с того, с чего у остальных.
 List<String> describeReadinessWarnings(Readiness readiness) {
   final int? battery = readiness.batteryPercent;
   final int? free = readiness.freeBytes;
   return <String>[
+    if (readiness.differs)
+      'Устройство отличается от эталона — сбросьте его перед записью.',
     if (readiness.lowBattery && battery != null)
       'Заряд $battery % — поставьте устройство на зарядку.',
     if (readiness.lowSpace && free != null)
@@ -44,7 +49,7 @@ class ParticipantCodeScreen extends StatefulWidget {
   /// Код, выданный приложением.
   final ParticipantCode proposed;
 
-  /// Заряд и свободное место — для предупреждений.
+  /// Заряд, свободное место и сверка с эталоном — для предупреждений.
   final Readiness readiness;
 
   /// Разбирает введённый код; `null` — код не сходится.

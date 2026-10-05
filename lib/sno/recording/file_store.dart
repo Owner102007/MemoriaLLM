@@ -129,6 +129,16 @@ class FileRecordingStore implements RecordingStore {
   }
 
   @override
+  Future<List<int>?> journalBytes(String folder) async {
+    final Directory directory = await _folder(folder);
+    final File file = File(p.join(directory.path, kEventsFile));
+    if (!await file.exists()) {
+      return null;
+    }
+    return file.readAsBytes();
+  }
+
+  @override
   Future<void> discard(String folder) async {
     final Directory records = await _records();
     final Directory open = Directory(p.join(_current(records).path, folder));

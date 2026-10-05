@@ -203,7 +203,7 @@ void main() {
       expect(record.damaged, isTrue);
       expect(record.durationMs, isNull);
       // Отправить его всё равно можно: разбор решит, что с ним делать.
-      expect(await records.share(<DeviceRecord>[record]), 1);
+      expect((await records.share(<DeviceRecord>[record])).sent, 1);
       expect(outlet.shared.single, <String>[p.join(folder.path, '$first.zip')]);
     });
 
@@ -224,7 +224,7 @@ void main() {
       expect(record.durationMs, 61000);
       expect(record.bytes, greaterThan(0));
       // Папку окну «Поделиться» не отдать.
-      expect(await records.share(<DeviceRecord>[record]), 0);
+      expect((await records.share(<DeviceRecord>[record])).sent, 0);
       expect(outlet.shared, isEmpty);
     });
 
@@ -630,7 +630,7 @@ void main() {
         (DeviceRecord record) => record.packed,
       );
 
-      expect(await records.share(<DeviceRecord>[archive]), 1);
+      expect((await records.share(<DeviceRecord>[archive])).sent, 1);
 
       expect(records.entries, hasLength(2));
       expect(
@@ -653,7 +653,7 @@ void main() {
       await records.refresh();
       final DeviceRecord record = records.entries.last;
 
-      expect(await records.share(<DeviceRecord>[record]), 1);
+      expect((await records.share(<DeviceRecord>[record])).sent, 1);
 
       expect(outlet.shared.single, <String>[p.join(folder.path, '$first.zip')]);
       final DeviceRecord marked = records.entries.last;
@@ -685,7 +685,7 @@ void main() {
       final FileDeviceRecords records = open();
       await records.refresh();
 
-      expect(await records.share(records.entries), 0);
+      expect((await records.share(records.entries)).sent, 0);
 
       expect(records.entries.any((DeviceRecord r) => r.taken), isFalse);
       expect(
@@ -699,7 +699,7 @@ void main() {
       final FileDeviceRecords records = open();
       await records.refresh();
 
-      expect(await records.share(unshared(records.entries)), 2);
+      expect((await records.share(unshared(records.entries))).sent, 2);
 
       expect(outlet.shared, hasLength(1));
       expect(outlet.shared.single, <String>[
@@ -717,7 +717,7 @@ void main() {
       final DeviceRecord record = records.entries.single;
       await File(p.join(folder.path, '$first.zip')).delete();
 
-      expect(await records.share(<DeviceRecord>[record]), 0);
+      expect((await records.share(<DeviceRecord>[record])).sent, 0);
 
       expect(outlet.shared, isEmpty);
       expect(records.entries, isEmpty);
@@ -746,7 +746,7 @@ void main() {
       await both();
       final FileDeviceRecords before = open();
       await before.refresh();
-      expect(await before.share(<DeviceRecord>[before.entries.last]), 1);
+      expect((await before.share(<DeviceRecord>[before.entries.last])).sent, 1);
       final File state = File(p.join(folder.path, FileDeviceRecords.stateName));
       await Process.run('chmod', <String>['000', state.path]);
       addTearDown(() => Process.run('chmod', <String>['644', state.path]));
@@ -763,7 +763,10 @@ void main() {
       // Прежняя отметка не видна: ошибка в безопасную сторону.
       expect(untaken(records.entries), hasLength(2));
 
-      expect(await records.share(<DeviceRecord>[records.entries.first]), 1);
+      expect(
+        (await records.share(<DeviceRecord>[records.entries.first])).sent,
+        1,
+      );
       expect(records.entries.first.taken, isTrue);
 
       // Диск ответил: прежняя отметка цела, новая легла рядом с ней.
@@ -788,7 +791,7 @@ void main() {
       await records.refresh();
       expect(untaken(records.entries), hasLength(2));
 
-      expect(await records.share(records.entries), 2);
+      expect((await records.share(records.entries)).sent, 2);
 
       expect(
         (stateOnDisk()['records']! as Map<String, Object?>).keys.toSet(),

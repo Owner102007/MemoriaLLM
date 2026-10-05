@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Значок уведомления «Идёт запись» (SNO-F-REC-13): та же точка, что
+     стоит в углу экрана во время записи. Значку уведомления положено
+     быть одноцветным силуэтом — цвет ему даёт система. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,12m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+</vector>

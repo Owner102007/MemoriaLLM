@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Манифест архива записи сессии СНО2026 (SNO-ALG-REC-03)",
-  "description": "manifest.json — первый файл архива sno2026_<ветвь>_<код>_<устройство>_<дата-время>.zip. Всё, что было в recording.json папки записи, и перечень файлов архива с суммами.",
+  "description": "manifest.json — первый файл архива sno2026_<ветвь>_<код>_<устройство>_<дата-время>.zip. Всё, что было в recording.json папки записи, и перечень файлов архива с суммами. С шага 20 (SNO-F-REC-13) у устройства есть паспорт — система, производитель, модель, экран, масштаб шрифта, — а у записи итог самопроверки журнала check; оба добавлены без смены версии: архивы прежних сборок без них проходят эту же схему.",
   "type": "object",
   "required": ["schema", "eye_tracker", "archive", "files"],
   "properties": {
@@ -13,7 +13,23 @@
       "required": ["node_id", "code"],
       "properties": {
         "node_id": {"type": "string"},
-        "code": {"type": "string"}
+        "code": {"type": "string"},
+        "os": {"type": "string"},
+        "os_version": {"type": "string"},
+        "sdk": {"type": "integer", "minimum": 1},
+        "manufacturer": {"type": "string"},
+        "brand": {"type": "string"},
+        "model": {"type": "string"},
+        "screen": {
+          "type": "object",
+          "required": ["width_px", "height_px", "density"],
+          "properties": {
+            "width_px": {"type": "integer", "minimum": 0},
+            "height_px": {"type": "integer", "minimum": 0},
+            "density": {"type": "number", "minimum": 0}
+          }
+        },
+        "font_scale": {"type": "number", "minimum": 0}
       }
     },
     "participant": {
@@ -42,6 +58,16 @@
         "write_failed": {"type": ["boolean", "null"]},
         "finished": {"type": "boolean"},
         "in_background": {"type": ["boolean", "null"]},
+        "check": {
+          "type": "object",
+          "required": ["lines", "gaps", "torn"],
+          "properties": {
+            "lines": {"type": "integer", "minimum": 0},
+            "gaps": {"type": "integer", "minimum": 0},
+            "torn": {"type": "boolean"},
+            "late": {"const": true}
+          }
+        },
         "away": {
           "type": ["object", "null"],
           "required": ["count", "total_ms", "hidden_ms", "longest_ms"],

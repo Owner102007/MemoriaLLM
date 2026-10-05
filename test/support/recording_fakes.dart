@@ -7,6 +7,7 @@ import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/sno/recording/action_log.dart';
 import 'package:memoria/sno/recording/device_status.dart';
 import 'package:memoria/sno/recording/event.dart';
+import 'package:memoria/sno/recording/recording_guard.dart';
 import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/session.dart';
 import 'package:memoria/sno/recording/store.dart';
@@ -158,6 +159,18 @@ class MemoryRecordingStore implements RecordingStore {
     return lines.length > count ? lines.sublist(lines.length - count) : lines;
   }
 
+  /// Отказывать ли в чтении журнала целиком: «диск не ответил».
+  bool failBytes = false;
+
+  @override
+  Future<List<int>?> journalBytes(String folder) async {
+    if (failBytes) {
+      throw StateError('журнал не читается');
+    }
+    final StringBuffer? journal = journals[folder];
+    return journal == null ? null : utf8.encode(journal.toString());
+  }
+
   @override
   Future<void> discard(String folder) async {
     current.remove(folder);
@@ -226,6 +239,59 @@ class _MemoryJournal implements JournalFile {
 
   @override
   Future<void> close() async => _closed();
+}
+
+/// Защита записи от выгрузки в фоне, которой распоряжается тест
+/// (SNO-F-REC-13).
+class FakeRecordingGuard implements RecordingGuard {
+  /// Создаёт заглушку; [allowed] — разрешены ли уведомления.
+  FakeRecordingGuard({this.allowed = true, this.holds = true});
+
+  @override
+  bool get guards => true;
+
+  /// Разрешены ли уведомления; `null` — система не знает.
+  bool? allowed;
+
+  /// Что ответит системное окно разрешения.
+  bool? answer = true;
+
+  /// Заводится ли служба.
+  bool holds;
+
+  /// Сколько раз спрашивали разрешение системным окном.
+  int asked = 0;
+
+  /// Что делали со службой, по порядку: `hold` и `release`.
+  final List<String> calls = <String>[];
+
+  /// С какими словами службу заводили в последний раз.
+  ({String title, String text})? words;
+
+  /// Заведена ли служба сейчас.
+  bool get held => calls.isNotEmpty && calls.last == 'hold';
+
+  @override
+  Future<bool?> notificationsAllowed() async => allowed;
+
+  @override
+  Future<bool?> askNotifications() async {
+    asked++;
+    allowed = answer;
+    return answer;
+  }
+
+  @override
+  Future<bool> hold({required String title, required String text}) async {
+    calls.add('hold');
+    words = (title: title, text: text);
+    return holds;
+  }
+
+  @override
+  Future<void> release() async {
+    calls.add('release');
+  }
 }
 
 /// Устройство, которым распоряжается тест.
@@ -327,6 +393,8 @@ class SessionKit {
     FakeDeviceStatus? status,
     Map<String, Object?>? snapshot,
     Duration planned = kRecordingLength,
+    this.guard,
+    this.passport = const <String, Object?>{},
   }) : settings = settings ?? MemorySettings(),
        store = store ?? MemoryRecordingStore(),
        time =
@@ -347,6 +415,8 @@ class SessionKit {
       device: 'a91f3c',
       build: const <String, Object?>{'version': 'test'},
       status: this.status,
+      guard: guard ?? const NoRecordingGuard(),
+      passport: () async => passport,
       planned: planned,
       now: this.time.now,
       monotonic: () =>
@@ -373,6 +443,13 @@ class SessionKit {
 
   /// Снимок состояния, который получит запись.
   final Map<String, Object?> snapshot;
+
+  /// Защита записи в фоне (SNO-F-REC-13); `null` — у устройства её
+  /// нет, как у ПК.
+  final FakeRecordingGuard? guard;
+
+  /// Паспорт устройства, который получит запись.
+  final Map<String, Object?> passport;
 
   /// Сессия.
   late final RecordingSession session;
@@ -509,6 +586,7 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
   MemoryDeviceRecords({
     this.shares = false,
     this.saves = false,
+    this.backs = false,
     List<DeviceRecord> entries = const <DeviceRecord>[],
     DateTime? now,
   }) : _entries = List<DeviceRecord>.of(entries),
@@ -519,6 +597,9 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
 
   @override
   bool saves;
+
+  @override
+  bool backs;
 
   @override
   bool loaded = false;
@@ -547,6 +628,17 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
 
   /// Открывается ли окно «Поделиться».
   bool shareOpens = true;
+
+  /// Чем кончается открывшееся окно (SNO-F-REC-14).
+  ShareOutcome shareOutcome = ShareOutcome.chosen;
+
+  /// Ложится ли вторая копия свежего архива в общую папку
+  /// (SNO-F-REC-13); спрашивается, только когда устройство их кладёт
+  /// ([backs]).
+  bool backupWorks = true;
+
+  /// Сколько раз докладывали вторые копии прежних записей.
+  int backedUp = 0;
 
   /// Что отдавали окну «Поделиться», по вызовам: имена записей.
   final List<List<String>> shared = <List<String>>[];
@@ -634,11 +726,16 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
   }
 
   @override
+  Future<void> backupPending() async {
+    backedUp++;
+  }
+
+  @override
   Future<DeviceRecord?> pack(String folder) async {
     packed.add(folder);
     await packGate?.future;
     final DeviceRecord? Function(String folder)? answer = onPack;
-    final DeviceRecord? record = answer != null
+    final DeviceRecord? made = answer != null
         ? answer(folder)
         : DeviceRecord(
             name: folder,
@@ -650,6 +747,12 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
             events: 1482,
             stoppedBy: StopReason.experimenter.wire,
           );
+    // Как у настоящих записей: готовый архив тут же получает вторую
+    // копию — там, где устройство их кладёт.
+    final DeviceRecord? record =
+        made != null && made.packed && backs && backupWorks
+        ? _with(made, copiedAt: now)
+        : made;
     if (record != null) {
       _entries
         ..removeWhere((DeviceRecord known) => known.name == record.name)
@@ -661,18 +764,21 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
   }
 
   @override
-  Future<int> share(List<DeviceRecord> records) async {
+  Future<ShareReport> share(List<DeviceRecord> records) async {
     shared.add(<String>[
       for (final DeviceRecord record in records) record.name,
     ]);
     if (!shareOpens) {
-      return 0;
+      return const ShareReport(ShareOutcome.failed);
+    }
+    if (shareOutcome != ShareOutcome.chosen) {
+      return ShareReport(shareOutcome);
     }
     for (final DeviceRecord record in records) {
       _replace(_with(record, sharedAt: now));
     }
     notifyListeners();
-    return records.length;
+    return ShareReport(ShareOutcome.chosen, sent: records.length);
   }
 
   @override

@@ -28,9 +28,12 @@ import '../participant_code.dart';
 import '../settings_keys.dart';
 import 'action_log.dart';
 import 'clock.dart';
+import 'device_passport.dart';
 import 'device_status.dart';
 import 'event.dart';
 import 'journal.dart';
+import 'journal_check.dart';
+import 'recording_guard.dart';
 import 'store.dart';
 import 'summary.dart';
 
@@ -45,6 +48,22 @@ const int kLowBatteryPercent = 30;
 
 /// Меньше какого свободного места перед стартом звучит предупреждение.
 const int kLowSpaceBytes = 200 * 1024 * 1024;
+
+/// Ниже какого заряда посреди записи журнал уходит на диск сразу, в
+/// процентах (SNO-F-REC-13).
+const int kCriticalBatteryPercent = 5;
+
+/// Меньше какого свободного места посреди записи журнал уходит на
+/// диск сразу (SNO-F-REC-13).
+const int kCriticalSpaceBytes = 20 * 1024 * 1024;
+
+/// Заголовок уведомления, которое висит в шторке, пока идёт запись
+/// (SNO-F-REC-13). Ни времени, ни кода участника в нём нет: сколько
+/// осталось, участнику не показывается нигде.
+const String kGuardTitle = 'Идёт запись';
+
+/// Строка под заголовком уведомления.
+const String kGuardText = 'Не закрывайте приложение';
 
 /// Версия сведений о записи.
 const String kRecordingSchema = 'sno2026-recording/1';
@@ -88,16 +107,33 @@ enum StopReason {
   }
 }
 
-/// Готово ли устройство к записи: заряд и свободное место.
+/// Готово ли устройство к записи: заряд, свободное место и совпадает
+/// ли оно с эталоном.
 class Readiness {
   /// Создаёт ответ.
-  const Readiness({this.batteryPercent, this.freeBytes});
+  const Readiness({this.batteryPercent, this.freeBytes, this.matchesReference});
 
   /// Заряд в процентах; `null` — батареи нет или устройство не ответило.
   final int? batteryPercent;
 
   /// Свободное место там, где лежат записи; `null` — не узнать.
   final int? freeBytes;
+
+  /// Совпадает ли устройство с эталоном (SNO-F-REC-13); `null` —
+  /// эталона нет или сверить не удалось.
+  final bool? matchesReference;
+
+  /// Отличается ли устройство от эталона: предупреждение, не запрет.
+  bool get differs => matchesReference == false;
+
+  /// Тот же ответ с итогом сверки с эталоном.
+  Readiness withReference(bool? matches) {
+    return Readiness(
+      batteryPercent: batteryPercent,
+      freeBytes: freeBytes,
+      matchesReference: matches,
+    );
+  }
 
   /// Мало ли заряда: предупреждение, не запрет.
   bool get lowBattery {
@@ -131,6 +167,7 @@ class SessionState {
     this.away,
     this.blocks = const <BlockMark>[],
     this.inBackground = false,
+    this.check,
   });
 
   /// Идентификатор записи.
@@ -186,6 +223,32 @@ class SessionState {
   /// (SNO-F-REC-10).
   final bool inBackground;
 
+  /// Итог самопроверки журнала после остановки (SNO-F-REC-13); `null`
+  /// — запись идёт, или журнал перечитать не удалось.
+  final JournalCheck? check;
+
+  /// То же состояние с итогом самопроверки журнала.
+  SessionState withCheck(JournalCheck? check) {
+    return SessionState(
+      id: id,
+      folder: folder,
+      participant: participant,
+      startedAt: startedAt,
+      plannedSeconds: plannedSeconds,
+      phase: phase,
+      stoppedBy: stoppedBy,
+      durationMs: durationMs,
+      events: events,
+      lastT: lastT,
+      resyncs: resyncs,
+      failed: failed,
+      away: away,
+      blocks: blocks,
+      inBackground: inBackground,
+      check: check,
+    );
+  }
+
   /// То же состояние с отметкой о том, лёг ли журнал на диск.
   SessionState withFailure(bool? failed) {
     return SessionState(
@@ -204,6 +267,7 @@ class SessionState {
       away: away,
       blocks: blocks,
       inBackground: inBackground,
+      check: check,
     );
   }
 
@@ -237,6 +301,7 @@ class SessionState {
       away: away ?? this.away,
       blocks: blocks ?? this.blocks,
       inBackground: inBackground ?? this.inBackground,
+      check: check,
     );
   }
 
@@ -258,6 +323,7 @@ class SessionState {
       'away': away?.toJson(),
       'blocks': <Object?>[for (final BlockMark mark in blocks) mark.toJson()],
       'in_background': inBackground,
+      'check': check?.toJson(),
     });
   }
 
@@ -315,6 +381,7 @@ class SessionState {
         away: AwaySummary.fromJson(raw['away']),
         blocks: BlockMark.listFromJson(raw['blocks']),
         inBackground: raw['in_background'] == true,
+        check: JournalCheck.fromJson(raw['check']),
       );
     } on FormatException {
       return null;
@@ -404,8 +471,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// первые шесть знаков идентификатора устройства, версия и коммит
   /// сборки. [endSnapshot] — снимок конца записи (SNO-ALG-REC-03): то
   /// же состояние и то, что участник оставил; не назван — берётся
-  /// [snapshot]. [now], [monotonic], [ticker] и [random] подменяются в
-  /// тестах.
+  /// [snapshot]. [guard] держит приложение живым в фоне, [passport]
+  /// называет устройство в сведениях записи (SNO-F-REC-13). [now],
+  /// [monotonic], [ticker] и [random] подменяются в тестах.
   RecordingSession({
     required AppSettingsRepository settings,
     required RecordingStore store,
@@ -416,6 +484,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     this.device = '',
     this.build = const <String, Object?>{},
     DeviceStatus status = const NoDeviceStatus(),
+    RecordingGuard guard = const NoRecordingGuard(),
+    PassportSource passport = noPassport,
     Duration planned = kRecordingLength,
     DateTime Function()? now,
     MonotonicSource? monotonic,
@@ -427,6 +497,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
        _snapshot = snapshot,
        _endSnapshot = endSnapshot ?? snapshot,
        _status = status,
+       _guard = guard,
+       _passport = passport,
        _planned = planned,
        _now = now ?? DateTime.now,
        _monotonic = monotonic ?? _stopwatchSource,
@@ -439,6 +511,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   final SnapshotSource _snapshot;
   final SnapshotSource _endSnapshot;
   final DeviceStatus _status;
+  final RecordingGuard _guard;
+  final PassportSource _passport;
   final Duration _planned;
   final DateTime Function() _now;
   final MonotonicSource _monotonic;
@@ -463,6 +537,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// Открыт ли экран завершения сессии: пока он открыт, плашка,
   /// ведущая на него, не нужна.
   final ValueNotifier<bool> finishOpen = ValueNotifier<bool>(false);
+
+  /// Перечитан ли журнал остановленной записи с диска (SNO-F-REC-13):
+  /// итог — в [check]. Остановка меняет состояние раньше диска, и
+  /// экран завершения узнаёт об итоге отсюда.
+  final ValueNotifier<bool> checked = ValueNotifier<bool>(false);
 
   SessionState? _state;
   RecordingClock? _clock;
@@ -532,6 +611,24 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// прочитана ([restore]) или записана заново (старт записи).
   bool _known = false;
 
+  /// Паспорт устройства, каким его отдали в первый раз: устройство за
+  /// запись не меняется, а окно на ПК — меняется.
+  Map<String, Object?>? _passportKnown;
+
+  /// Заряд и свободное место по последнему ответу устройства
+  /// (SNO-F-REC-13): их несёт сердцебиение.
+  int? _vitalBattery;
+  int? _vitalFree;
+
+  /// Сказано ли уже, что заряд или место на исходе: строка об этом
+  /// пишется один раз, а не каждые десять секунд.
+  bool _lowBattery = false;
+  bool _lowSpace = false;
+
+  /// Номер вопроса о заряде и месте: запоздавший ответ прежнего не
+  /// принимается.
+  int _vitalsRun = 0;
+
   /// Состояние незавершённой сессии; `null` — сессии нет.
   SessionState? get state => _state;
 
@@ -567,6 +664,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// — запись идёт или её нет. У оборванной записи итог собран по
   /// журналу.
   AwaySummary? get away => recording ? null : _state?.away;
+
+  /// Итог самопроверки журнала остановленной записи (SNO-F-REC-13);
+  /// `null` — запись идёт, ещё не проверена ([checked]) или журнал не
+  /// перечитался.
+  JournalCheck? get check => recording ? null : _state?.check;
 
   /// Блоки тестирования, закрытые за запись.
   List<BlockMark> get blocks {
@@ -664,11 +766,21 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         await _settings.remove(SnoSettingsKeys.session);
       }
       _known = true;
+      _releaseGuard();
       return;
     }
+    // SNO-F-REC-13: служба переднего плана пережить запуск не должна —
+    // запись, которую застал перезапуск, не продолжается.
+    _releaseGuard();
     if (state.phase == RecordingPhase.stopped) {
+      // Запись остановлена прежней сборкой, которая журнал не
+      // перечитывала: он сверяется сейчас, пока его не открыли.
+      final JournalCheck? check =
+          state.check ??
+          await _checkJournal(state.folder, expected: state.events, late: true);
       final List<EventMarks> tail = await _tail(state.folder);
-      _state = state;
+      _state = state.withCheck(check);
+      checked.value = true;
       _known = true;
       _failed = state.failed ?? false;
       // Номер продолжает журнал: отметка сессии могла отстать от него.
@@ -677,14 +789,40 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       _notify();
       return;
     }
+    // SNO-F-REC-13: журнал сверяется таким, каким его оставило умершее
+    // приложение, — до того, как чтение отрежет оборванный хвост.
+    final JournalCheck? check = await _checkJournal(state.folder, late: true);
     // Оборванной записи нужен журнал целиком: блоки и отлучки остались
     // только в нём.
     _state = await _stoppedByCrash(
       state,
       await _tail(state.folder, count: _wholeJournal),
+      check,
     );
+    checked.value = true;
     _known = true;
     _notify();
+  }
+
+  /// Перечитывает журнал записи [folder] с диска и сверяет его сам с
+  /// собой (SNO-F-REC-13); `null` — журнал не прочитался.
+  ///
+  /// [expected] — сколько событий запись посчитала; [late] — проверка
+  /// идёт при следующем запуске, а не в миг остановки.
+  Future<JournalCheck?> _checkJournal(
+    String folder, {
+    int? expected,
+    bool late = false,
+  }) async {
+    try {
+      final List<int>? bytes = await _store.journalBytes(folder);
+      if (bytes == null) {
+        return null;
+      }
+      return checkJournal(bytes, expected: expected, late: late);
+    } on Object {
+      return null;
+    }
   }
 
   /// Столько строк, чтобы журнал прочитался целиком.
@@ -713,6 +851,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   Future<SessionState> _stoppedByCrash(
     SessionState state,
     List<EventMarks> tail,
+    JournalCheck? check,
   ) async {
     final int limit = state.plannedSeconds * 1000;
     int clip(int value) => value < 0 ? 0 : (value > limit ? limit : value);
@@ -840,7 +979,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     }
     // Лёг ли журнал умершего приложения на диск, узнать не у кого:
     // известно только то, что не записалось сейчас.
-    final SessionState marked = stopped.withFailure(_failed ? true : null);
+    final SessionState marked = stopped
+        .withFailure(_failed ? true : null)
+        .withCheck(check);
     try {
       await _settings.write(SnoSettingsKeys.session, marked.encode());
     } on Object {
@@ -1011,6 +1152,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _blocks = const <BlockMark>[];
     _visits.clear();
     _bookOpenedT = null;
+    _vitalBattery = null;
+    _vitalFree = null;
+    _lowBattery = false;
+    _lowSpace = false;
+    checked.value = false;
     _state = state;
 
     final Object? reference = snapshot['reference'];
@@ -1050,6 +1196,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       unawaited(_readScreen(_leaveRun));
     }
     _stopTicker = _ticker(tick);
+    // SNO-F-REC-13: служба переднего плана — на всё время записи;
+    // заряд и место — для первого же сердцебиения. Ни того, ни
+    // другого запись не ждёт.
+    unawaited(_holdGuard());
+    unawaited(_readVitals());
     // Замок и точка записи появляются сразу; диск догоняет.
     final Future<void> tail = _startFiles(state, journal, snapshot);
     _startTail = tail;
@@ -1091,6 +1242,160 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     } on Object {
       // Экран погаснет или останется включённым — запись от этого не
       // пропадает.
+    }
+  }
+
+  /// Разрешены ли приложению уведомления (SNO-F-REC-13); `null` —
+  /// спрашивать не о чем: защиты записи у устройства нет, или система
+  /// не ответила.
+  Future<bool?> notificationsAllowed() async {
+    if (!_guard.guards) {
+      return null;
+    }
+    try {
+      return await _guard.notificationsAllowed();
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Готовит защиту записи перед стартом (SNO-F-REC-13): если
+  /// уведомления не разрешены, один раз за всё время спрашивает о них
+  /// системным окном. Отвечает, разрешены ли они теперь.
+  ///
+  /// Отказ старту не мешает: без уведомления запись идёт, но в фоне
+  /// защищена хуже — об этом говорит раздел «Тестирование».
+  Future<bool?> prepareGuard() async {
+    final bool? allowed = await notificationsAllowed();
+    if (allowed != false) {
+      return allowed;
+    }
+    try {
+      if (await _settings.read(SnoSettingsKeys.notificationsAsked) != null) {
+        return false;
+      }
+    } on Object {
+      // Спрашивали или нет, неизвестно: второй вопрос подряд хуже
+      // пропущенного.
+      return false;
+    }
+    bool? answer;
+    try {
+      answer = await _guard.askNotifications();
+    } on Object {
+      answer = null;
+    }
+    try {
+      await _settings.write(SnoSettingsKeys.notificationsAsked, 'true');
+    } on Object {
+      // Отметка не легла: спросим ещё раз при следующем старте.
+    }
+    return answer ?? false;
+  }
+
+  /// Заводит службу переднего плана и пишет в журнал, заведена ли она
+  /// (SNO-F-REC-13).
+  Future<void> _holdGuard() async {
+    if (!_guard.guards) {
+      return;
+    }
+    bool held;
+    try {
+      held = await _guard.hold(title: kGuardTitle, text: kGuardText);
+    } on Object {
+      held = false;
+    }
+    final bool? allowed = await notificationsAllowed();
+    if (!_logging) {
+      // Запись остановили, пока служба заводилась: держать ей нечего.
+      _releaseGuard();
+      return;
+    }
+    _write(
+      SnoEventType.recordingGuard,
+      data: <String, Object?>{
+        'service': held,
+        if (allowed != null) 'notifications': allowed,
+      },
+    );
+  }
+
+  /// Снимает службу переднего плана; ответа не ждёт.
+  void _releaseGuard() {
+    if (_guard.guards) {
+      unawaited(_askRelease());
+    }
+  }
+
+  Future<void> _askRelease() async {
+    try {
+      await _guard.release();
+    } on Object {
+      // Уведомление осталось висеть: его снимет закрытие приложения.
+    }
+  }
+
+  /// Спрашивает у устройства заряд и свободное место — для следующего
+  /// сердцебиения (SNO-F-REC-13).
+  ///
+  /// Заряд ниже [kCriticalBatteryPercent] или места меньше
+  /// [kCriticalSpaceBytes] — журнал уходит на диск сразу, а в журнале
+  /// остаётся строка о причине: устройство может выключиться раньше
+  /// следующей секунды. Строка пишется один раз на каждое падение ниже
+  /// порога.
+  Future<void> _readVitals() async {
+    final int run = ++_vitalsRun;
+    final int? battery = await _battery();
+    final int? free = await _freeBytes();
+    if (run != _vitalsRun || !_logging) {
+      return;
+    }
+    _vitalBattery = battery;
+    _vitalFree = free;
+    final bool lowBattery =
+        battery != null && battery < kCriticalBatteryPercent;
+    final bool lowSpace = free != null && free < kCriticalSpaceBytes;
+    final List<String> what = <String>[
+      if (lowBattery && !_lowBattery) 'battery',
+      if (lowSpace && !_lowSpace) 'space',
+    ];
+    _lowBattery = lowBattery;
+    _lowSpace = lowSpace;
+    if (what.isEmpty) {
+      return;
+    }
+    _write(
+      SnoEventType.deviceLow,
+      data: <String, Object?>{'what': what, ..._vitals()},
+    );
+    unawaited(_journal?.flush());
+  }
+
+  /// Заряд и свободное место для события; чего устройство не сказало,
+  /// того нет.
+  Map<String, Object?> _vitals() {
+    final int? battery = _vitalBattery;
+    final int? free = _vitalFree;
+    return <String, Object?>{
+      if (battery != null) 'battery': battery,
+      if (free != null) 'free_mb': free ~/ (1024 * 1024),
+    };
+  }
+
+  /// Паспорт устройства для сведений о записи; не отдали — пустой.
+  Future<Map<String, Object?>> _passportOf() async {
+    final Map<String, Object?>? known = _passportKnown;
+    if (known != null) {
+      return known;
+    }
+    try {
+      final Map<String, Object?> told = await _passport();
+      if (told.isNotEmpty) {
+        _passportKnown = told;
+      }
+      return told;
+    } on Object {
+      return const <String, Object?>{};
     }
   }
 
@@ -1164,11 +1469,19 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   Future<void> _putInfo(SessionState state, {required bool finished}) async {
     final int? duration = state.durationMs;
     final bool running = state.phase == RecordingPhase.recording;
+    final JournalCheck? check = state.check;
     final Map<String, Object?> info = <String, Object?>{
       'schema': kRecordingSchema,
       'branch': branch,
       'app': build,
-      'device': <String, Object?>{'node_id': _nodeId, 'code': device},
+      // SNO-F-REC-13: паспорт устройства — производитель, модель,
+      // система, экран, масштаб шрифта; узел и код стоят последними:
+      // паспорт их не подменит.
+      'device': <String, Object?>{
+        ...await _passportOf(),
+        'node_id': _nodeId,
+        'code': device,
+      },
       'participant': state.participant.toJson(),
       'recording': <String, Object?>{
         'id': state.id,
@@ -1190,6 +1503,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
             : <Object?>[
                 for (final BlockMark mark in state.blocks) mark.toJson(),
               ],
+        // SNO-F-REC-13: итог самопроверки журнала после остановки.
+        if (!running && check != null) 'check': check.toJson(),
       },
     };
     try {
@@ -1431,10 +1746,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (_beats % kHeartbeatTicks == 0) {
       // SNO-F-REC-10: вне переднего плана сердцебиение называет
       // состояние — приложение жило, но участник на него не смотрел.
+      // SNO-F-REC-13: заряд и свободное место — по последнему ответу
+      // устройства; новый вопрос уходит сейчас, к следующему разу.
       _write(
         SnoEventType.heartbeat,
-        data: <String, Object?>{if (_appState != _onScreen) 'state': _appState},
+        data: <String, Object?>{
+          if (_appState != _onScreen) 'state': _appState,
+          ..._vitals(),
+        },
       );
+      unawaited(_readVitals());
     }
     unawaited(_journal?.flush());
     ticks.value++;
@@ -1733,9 +2054,18 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     // Снимок конца — сразу за журналом, пока устройство не трогали
     // (SNO-ALG-REC-03); и до отметки: отказ диска на нём попадёт в неё.
     await _putEndSnapshot(state.folder, late: false);
+    // SNO-F-REC-13: журнал перечитывается с диска и сверяется сам с
+    // собой — все ли посчитанные события на месте, цел ли хвост.
+    final JournalCheck? check = await _checkJournal(
+      state.folder,
+      expected: stopped.events,
+    );
     // Отказ диска — в отметку сессии: его помнят и после перезапуска.
-    final SessionState marked = stopped.withFailure(writeFailed);
+    final SessionState marked = stopped
+        .withFailure(writeFailed)
+        .withCheck(check);
     _state = marked;
+    checked.value = true;
     try {
       await _settings.write(SnoSettingsKeys.session, marked.encode());
     } on Object {
@@ -1744,6 +2074,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     }
     await _putInfo(marked, finished: false);
     _keepScreen(false);
+    _releaseGuard();
     if (writeFailed) {
       // Экран завершения открыт сразу после остановки, раньше диска:
       // о том, что журнал не лёг, он узнаёт отсюда.
@@ -1815,6 +2146,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _state = null;
     _seq = 0;
     _failed = false;
+    checked.value = false;
     _notify();
   }
 
@@ -1861,6 +2193,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _stopTicker = null;
     ticks.dispose();
     finishOpen.dispose();
+    checked.dispose();
     super.dispose();
   }
 }

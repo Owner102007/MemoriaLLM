@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 import 'package:flutter/services.dart';
 
+import 'records.dart';
+
 /// Как запись уходит с устройства (SNO-F-REC-06, SNO-ALG-REC-04).
 ///
 /// Сетевого кода у записей нет: приложение не знает адресов и не
@@ -17,9 +19,24 @@ abstract interface class RecordOutlet {
   /// Есть ли папки, куда сохраняют копию, и «Проводник».
   bool get saves;
 
-  /// Отдаёт файлы [paths] системному окну «Поделиться». Отвечает,
-  /// открылось ли окно: дошёл ли файл до адресата, система не говорит.
-  Future<bool> share(List<String> paths);
+  /// Отдаёт файлы [paths] системному окну «Поделиться» и ждёт, чем
+  /// оно кончится (SNO-F-REC-14): выбрано ли в нём приложение. Дошёл
+  /// ли файл до адресата, система не говорит.
+  Future<ShareOutcome> share(List<String> paths);
+
+  /// Есть ли у устройства общая папка, куда можно положить вторую
+  /// копию архива без спроса (SNO-F-REC-13): «Загрузки» на Android 10
+  /// и новее.
+  Future<bool> canBackup();
+
+  /// Кладёт копию файла [path] в папку [folder] общих «Загрузок» и
+  /// сверяет её с суммой [sha256]. Отвечает, лежит ли там теперь
+  /// сверенная копия — новая или положенная раньше.
+  Future<bool> backup(
+    String path, {
+    required String sha256,
+    required String folder,
+  });
 
   /// Открывает папку [path]; [file] — это файл, и открыть надо папку,
   /// где он лежит, выделив его.
@@ -43,7 +60,21 @@ class NoRecordOutlet implements RecordOutlet {
   bool get saves => false;
 
   @override
-  Future<bool> share(List<String> paths) async => false;
+  Future<ShareOutcome> share(List<String> paths) async {
+    return ShareOutcome.failed;
+  }
+
+  @override
+  Future<bool> canBackup() async => false;
+
+  @override
+  Future<bool> backup(
+    String path, {
+    required String sha256,
+    required String folder,
+  }) async {
+    return false;
+  }
 
   @override
   Future<bool> reveal(String path, {required bool file}) async => false;
@@ -52,12 +83,29 @@ class NoRecordOutlet implements RecordOutlet {
   Future<String?> pickFolder({String? initial}) async => null;
 }
 
-/// Телефон: системное окно «Поделиться» через канал `memoria/records`
-/// в `MainActivity`.
+/// Чем кончилось окно «Поделиться» по слову канала.
+///
+/// Незнакомое слово — «система не сообщила»: запись останется
+/// неотправленной.
+ShareOutcome shareOutcomeOf(Object? told) {
+  return switch (told) {
+    'chosen' => ShareOutcome.chosen,
+    'dismissed' => ShareOutcome.dismissed,
+    'failed' || false || null => ShareOutcome.failed,
+    _ => ShareOutcome.untold,
+  };
+}
+
+/// Телефон: системное окно «Поделиться» и общая папка «Загрузки» через
+/// канал `memoria/records` в `MainActivity`.
 ///
 /// Своего плагина ради одного намерения не заводится — та же причина,
 /// что у канала `memoria/device`. Договор канала: `share` со списком
-/// путей `paths` → открылось ли окно. Архивы отдаются ссылками
+/// путей `paths` → чем кончилось окно: `chosen` — в нём выбрано
+/// приложение, `dismissed` — закрыто без выбора, `untold` — система не
+/// сообщила, `failed` — не открылось (SNO-F-REC-14); `canBackup` → есть
+/// ли общая папка; `backup` с `path`, `sha256` и `folder` → лежит ли в
+/// ней сверенная копия (SNO-F-REC-13). Архивы отдаются окну ссылками
 /// `content://` через поставщика файлов сборки ветви: чужое приложение
 /// получает право прочитать только эти файлы.
 class AndroidRecordOutlet implements RecordOutlet {
@@ -75,16 +123,47 @@ class AndroidRecordOutlet implements RecordOutlet {
   bool get saves => false;
 
   @override
-  Future<bool> share(List<String> paths) async {
+  Future<ShareOutcome> share(List<String> paths) async {
     if (paths.isEmpty) {
-      return false;
+      return ShareOutcome.failed;
     }
     try {
-      final bool? opened = await _channel.invokeMethod<bool>(
-        'share',
-        <String, Object?>{'paths': paths},
+      return shareOutcomeOf(
+        await _channel.invokeMethod<Object?>(
+          'share',
+          <String, Object?>{'paths': paths},
+        ),
       );
-      return opened ?? false;
+    } on PlatformException {
+      return ShareOutcome.failed;
+    } on MissingPluginException {
+      return ShareOutcome.failed;
+    }
+  }
+
+  @override
+  Future<bool> canBackup() async {
+    try {
+      return await _channel.invokeMethod<bool>('canBackup') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> backup(
+    String path, {
+    required String sha256,
+    required String folder,
+  }) async {
+    try {
+      final bool? there = await _channel.invokeMethod<bool>(
+        'backup',
+        <String, Object?>{'path': path, 'sha256': sha256, 'folder': folder},
+      );
+      return there ?? false;
     } on PlatformException {
       return false;
     } on MissingPluginException {
@@ -116,7 +195,24 @@ class WindowsRecordOutlet implements RecordOutlet {
   bool get saves => true;
 
   @override
-  Future<bool> share(List<String> paths) async => false;
+  Future<ShareOutcome> share(List<String> paths) async {
+    return ShareOutcome.failed;
+  }
+
+  // На ПК второй копии сама сборка не кладёт (SNO-F-REC-13): папка
+  // записей в данных приложения переживает и обновление, и удаление
+  // портативной сборки, а копию ставит «Сохранить архив как…».
+  @override
+  Future<bool> canBackup() async => false;
+
+  @override
+  Future<bool> backup(
+    String path, {
+    required String sha256,
+    required String folder,
+  }) async {
+    return false;
+  }
 
   @override
   Future<bool> reveal(String path, {required bool file}) async {

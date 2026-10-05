@@ -312,6 +312,10 @@ class _TestingScreenState extends State<TestingScreen>
   /// Заряд и свободное место; `null` — ещё не спрашивали.
   Readiness? _readiness;
 
+  /// Разрешены ли приложению уведомления (SNO-F-REC-13); `null` —
+  /// спрашивать не о чем или ещё не спрашивали.
+  bool? _notifications;
+
   /// Номер вопроса о готовности: запоздавший ответ не принимается.
   int _readinessRun = 0;
 
@@ -399,8 +403,27 @@ class _TestingScreenState extends State<TestingScreen>
     }
     final int run = ++_readinessRun;
     final Readiness readiness = await session.readiness();
+    final bool? notifications = await session.notificationsAllowed();
     if (mounted && run == _readinessRun) {
-      setState(() => _readiness = readiness);
+      setState(() {
+        _readiness = readiness;
+        _notifications = notifications;
+      });
+    }
+  }
+
+  /// Совпадает ли устройство с эталоном — для предупреждения перед
+  /// стартом (SNO-F-REC-13); `null` — эталона нет или база не ответила.
+  Future<bool?> _matchesReference() async {
+    try {
+      final ReferenceKeeper keeper = _keeper();
+      final ReferenceState? reference = await keeper.reference();
+      if (reference == null) {
+        return null;
+      }
+      return (await keeper.snapshot()).matches(reference);
+    } on Object {
+      return null;
     }
   }
 
@@ -415,12 +438,21 @@ class _TestingScreenState extends State<TestingScreen>
       _startFailure = null;
     });
     try {
-      final Readiness readiness = await session.readiness();
+      // SNO-F-REC-13: о несброшенном устройстве говорится до старта, на
+      // экране кода; разрешение на уведомления спрашивается один раз
+      // за всё время — без него запись идёт, но в фоне защищена хуже.
+      final Readiness readiness = (await session.readiness()).withReference(
+        await _matchesReference(),
+      );
+      final bool? notifications = await session.prepareGuard();
       final ParticipantCode proposed = await session.proposeCode();
       if (!mounted) {
         return;
       }
-      setState(() => _readiness = readiness);
+      setState(() {
+        _readiness = readiness;
+        _notifications = notifications;
+      });
       final ParticipantCode? code =
           await Navigator.of(context, rootNavigator: true).push(
             MaterialPageRoute<ParticipantCode>(
@@ -1130,6 +1162,16 @@ class _TestingScreenState extends State<TestingScreen>
             child: Text(
               ready,
               key: const Key('sno-record-ready'),
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        if (_notifications == false)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              'Уведомления выключены: в фоне запись защищена хуже. '
+              'Включить их можно в настройках телефона.',
+              key: const Key('sno-record-notifications'),
               style: theme.textTheme.bodySmall,
             ),
           ),
