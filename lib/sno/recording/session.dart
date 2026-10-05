@@ -654,10 +654,7 @@ class RecordingSession extends ChangeNotifier {
       },
     );
     if (lastReset != null) {
-      _write(
-        SnoEventType.stateReset,
-        data: <String, Object?>{'at': lastReset},
-      );
+      _write(SnoEventType.stateReset, data: <String, Object?>{'at': lastReset});
     }
     _stopTicker = _ticker(tick);
     // Замок и точка записи появляются сразу; диск догоняет.
@@ -709,9 +706,7 @@ class RecordingSession extends ChangeNotifier {
         'duration_ms': duration,
         'stopped_by': state.stoppedBy?.wire,
         'resyncs': _clock?.resyncs ?? 0,
-        'events': state.phase == RecordingPhase.recording
-            ? null
-            : state.events,
+        'events': state.phase == RecordingPhase.recording ? null : state.events,
         'finished': finished,
       },
     };

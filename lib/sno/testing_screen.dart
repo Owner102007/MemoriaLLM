@@ -373,21 +373,19 @@ class _TestingScreenState extends State<TestingScreen>
         return;
       }
       setState(() => _readiness = readiness);
-      final ParticipantCode? code = await Navigator.of(
-        context,
-        rootNavigator: true,
-      ).push(
-        MaterialPageRoute<ParticipantCode>(
-          builder: (BuildContext context) {
-            return ParticipantCodeScreen(
-              proposed: proposed,
-              readiness: readiness,
-              parse: session.enteredCode,
-              minutes: session.planned.inMinutes,
-            );
-          },
-        ),
-      );
+      final ParticipantCode? code =
+          await Navigator.of(context, rootNavigator: true).push(
+            MaterialPageRoute<ParticipantCode>(
+              builder: (BuildContext context) {
+                return ParticipantCodeScreen(
+                  proposed: proposed,
+                  readiness: readiness,
+                  parse: session.enteredCode,
+                  minutes: session.planned.inMinutes,
+                );
+              },
+            ),
+          );
       if (code == null) {
         return;
       }
@@ -411,10 +409,7 @@ class _TestingScreenState extends State<TestingScreen>
   /// Открывает завершение сессии (SNO-SCR-08).
   void _openFinish(RecordingSession session) {
     unawaited(
-      openSessionFinish(
-        Navigator.of(context, rootNavigator: true),
-        session,
-      ),
+      openSessionFinish(Navigator.of(context, rootNavigator: true), session),
     );
   }
 
@@ -1068,9 +1063,7 @@ class _TestingScreenState extends State<TestingScreen>
             icon: const Icon(Icons.fiber_manual_record),
             label: Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                'Старт записи · ${session.planned.inMinutes} мин',
-              ),
+              child: Text('Старт записи · ${session.planned.inMinutes} мин'),
             ),
           ),
         ),
@@ -1112,9 +1105,7 @@ class _TestingScreenState extends State<TestingScreen>
               );
             },
           ),
-          subtitle: const Text(
-            'Остановить: удерживайте точку в углу экрана',
-          ),
+          subtitle: const Text('Остановить: удерживайте точку в углу экрана'),
         ),
       if (session.phase == RecordingPhase.stopped)
         ListTile(

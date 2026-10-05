@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../domain/navigation/sections.dart';
@@ -232,14 +234,13 @@ class _EndedPlaque extends StatelessWidget {
 ///
 /// Удержание точки [hold] зовёт [onHeld]; короткое нажатие не делает
 /// ничего. Нажатия точка не отбирает: под ней может стоять кнопка
-/// экрана, и та работает как прежде.
+/// экрана — «назад» в левом углу, — и короткое нажатие достаётся ей,
+/// как прежде. А вот додержанное нажатие кнопке уже не достаётся: оно
+/// отменяется для всех, иначе отпущенный палец нажал бы «назад» и
+/// закрыл только что открытый вопрос об остановке.
 class RecordingDot extends StatefulWidget {
   /// Создаёт точку.
-  const RecordingDot({
-    required this.onHeld,
-    this.hold = kStopHold,
-    super.key,
-  });
+  const RecordingDot({required this.onHeld, this.hold = kStopHold, super.key});
 
   /// Что сделать, когда точку додержали.
   final VoidCallback onHeld;
@@ -258,6 +259,9 @@ class _RecordingDotState extends State<RecordingDot>
     duration: widget.hold,
   )..addStatusListener(_statusChanged);
 
+  /// Палец, который держит точку; `null` — её не держат.
+  int? _pointer;
+
   @override
   void dispose() {
     _fill.dispose();
@@ -268,11 +272,31 @@ class _RecordingDotState extends State<RecordingDot>
     if (status != AnimationStatus.completed) {
       return;
     }
+    final int? pointer = _pointer;
+    _pointer = null;
     _fill.reset();
+    if (pointer != null) {
+      // Додержали: это нажатие больше ничьё — ни кнопки под точкой, ни
+      // прокрутки списка.
+      GestureBinding.instance.cancelPointer(pointer);
+    }
     widget.onHeld();
   }
 
-  void _release() {
+  void _press(PointerDownEvent event) {
+    // Второй палец удержания не начинает и не сбивает.
+    if (_pointer != null) {
+      return;
+    }
+    _pointer = event.pointer;
+    _fill.forward(from: 0);
+  }
+
+  void _release(PointerEvent event) {
+    if (event.pointer != _pointer) {
+      return;
+    }
+    _pointer = null;
     if (_fill.isAnimating) {
       _fill.reset();
     }
@@ -285,9 +309,9 @@ class _RecordingDotState extends State<RecordingDot>
       child: Listener(
         // Прозрачна для нажатий: кнопка под точкой получает их тоже.
         behavior: HitTestBehavior.translucent,
-        onPointerDown: (PointerDownEvent event) => _fill.forward(from: 0),
-        onPointerUp: (PointerUpEvent event) => _release(),
-        onPointerCancel: (PointerCancelEvent event) => _release(),
+        onPointerDown: _press,
+        onPointerUp: _release,
+        onPointerCancel: _release,
         child: SizedBox(
           width: 32,
           height: 32,
@@ -319,8 +343,8 @@ class _DotPainter extends CustomPainter {
     if (held > 0) {
       canvas.drawArc(
         Rect.fromCircle(center: centre, radius: 11),
-        -1.5707963267948966,
-        6.283185307179586 * held,
+        -math.pi / 2,
+        2 * math.pi * held,
         false,
         Paint()
           ..color = kRecordingDotRing
@@ -329,6 +353,12 @@ class _DotPainter extends CustomPainter {
       );
     }
   }
+
+  /// Картинка нажатий не ловит: иначе отрисовщик закрыл бы собой
+  /// кнопку под точкой (как подсветка найденного в BUG-43). Удержание
+  /// слушает `Listener` над ней.
+  @override
+  bool? hitTest(Offset position) => false;
 
   @override
   bool shouldRepaint(_DotPainter oldDelegate) => oldDelegate.held != held;

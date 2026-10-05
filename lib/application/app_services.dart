@@ -122,10 +122,7 @@ class AppServices {
         return Directory(p.join(root.path, FileRecordingStore.folderName));
       }),
       nodeId: nodeId,
-      snapshot: ReferenceKeeper(
-        data: data,
-        storage: storage,
-      ).recordingSnapshot,
+      snapshot: ReferenceKeeper(data: data, storage: storage).recordingSnapshot,
       branch: Sno.branch,
       device: deviceCodeOf(nodeId),
       build: <String, Object?>{

@@ -197,12 +197,8 @@ class ParticipantCode {
       other.attempt == attempt;
 
   @override
-  int get hashCode => Object.hash(
-    code,
-    generated,
-    generatedAt.millisecondsSinceEpoch,
-    attempt,
-  );
+  int get hashCode =>
+      Object.hash(code, generated, generatedAt.millisecondsSinceEpoch, attempt);
 
   @override
   String toString() => 'ParticipantCode($display)';
