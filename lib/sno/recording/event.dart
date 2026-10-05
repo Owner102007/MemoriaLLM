@@ -199,17 +199,18 @@ EventMarks? eventMarks(String line) {
   }
 }
 
-/// Последняя читаемая строка из [lines]; `null` — читаемых нет.
+/// Читаемые события из [lines], в порядке записи.
 ///
-/// Последняя целая строка журнала может оказаться мусором — обрывком,
-/// за которым успели дописать перевод строки. Тогда отметки берутся у
-/// ближайшей читаемой перед ней.
-EventMarks? lastEventMarks(List<String> lines) {
-  for (int i = lines.length - 1; i >= 0; i--) {
-    final EventMarks? marks = eventMarks(lines[i]);
+/// Целая строка журнала может оказаться мусором — обрывком, за которым
+/// успели дописать перевод строки. Такие строки пропускаются: счёт и
+/// время берутся у читаемых.
+List<EventMarks> readableEvents(List<String> lines) {
+  final List<EventMarks> events = <EventMarks>[];
+  for (final String line in lines) {
+    final EventMarks? marks = eventMarks(line);
     if (marks != null) {
-      return marks;
+      events.add(marks);
     }
   }
-  return null;
+  return events;
 }

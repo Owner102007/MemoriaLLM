@@ -67,6 +67,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   String _title = '';
   String _code = '';
   int _events = 0;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -86,6 +87,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
         '${describeRecordingTime(session.elapsedMs)}';
     _code = state.participant.display;
     _events = session.events;
+    _failed = session.writeFailed;
   }
 
   @override
@@ -161,7 +163,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
                 'Записано событий: $_events',
                 key: const Key('sno-finish-events'),
               ),
-              if (session.writeFailed)
+              if (_failed)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(

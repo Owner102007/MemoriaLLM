@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../domain/navigation/sections.dart';
+import '../../ui/claimed_pointers.dart';
 import '../hold_button.dart';
 import 'finish_screen.dart';
 import 'session.dart';
@@ -108,6 +110,31 @@ class _RecordingOverlayState extends State<RecordingOverlay>
       // событием не пишется: запись закроется при следующем запуске.
       widget.session.appLeft(state.name);
     }
+  }
+
+  /// Приложение просят закрыть: крестик окна на ПК, Alt+F4.
+  ///
+  /// Пока запись идёт, окно не закрывается — как «назад» на полке
+  /// телефона: закрытое приложение оборвало бы запись участника.
+  /// Сначала запись останавливают, потом закрывают окно.
+  @override
+  Future<AppExitResponse> didRequestAppExit() async {
+    if (!widget.session.recording) {
+      return AppExitResponse.exit;
+    }
+    final BuildContext? host = widget.navigator.currentContext;
+    if (host != null) {
+      ScaffoldMessenger.maybeOf(host)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            key: Key('sno-exit-refused'),
+            content: Text('Идёт запись: окно закроется после её остановки'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+    }
+    return AppExitResponse.cancel;
   }
 
   /// Спрашивает экспериментатора, остановить ли запись.
@@ -294,6 +321,10 @@ class _RecordingDotState extends State<RecordingDot>
 
   @override
   void dispose() {
+    final int? pointer = _claimed;
+    if (pointer != null) {
+      ClaimedPointers.release(pointer);
+    }
     _fill.dispose();
     super.dispose();
   }
@@ -306,11 +337,27 @@ class _RecordingDotState extends State<RecordingDot>
     widget.onHeld();
   }
 
-  void _held() {
+  /// Нажатие, которое точка забрала себе; `null` — её не держат.
+  int? _claimed;
+
+  /// Удержание узнано: нажатие указателя [pointer] теперь точки.
+  void _held(int? pointer) {
+    // Страница книги узнаёт нажатие мимо спора жестов и о том, что
+    // проиграла его, не знает: без этой отметки отпущенный палец
+    // перелистнул бы страницу.
+    if (pointer != null) {
+      ClaimedPointers.claim(pointer);
+      _claimed = pointer;
+    }
     _fill.forward(from: 0);
   }
 
   void _release() {
+    final int? pointer = _claimed;
+    if (pointer != null) {
+      ClaimedPointers.release(pointer);
+      _claimed = null;
+    }
     if (_fill.isAnimating) {
       _fill.reset();
     }
@@ -331,7 +378,7 @@ class _RecordingDotState extends State<RecordingDot>
                 (LongPressGestureRecognizer instance) {
                   instance
                     ..onLongPressStart = (LongPressStartDetails details) {
-                      _held();
+                      _held(instance.primaryPointer);
                     }
                     ..onLongPressEnd = (LongPressEndDetails details) {
                       _release();

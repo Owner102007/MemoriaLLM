@@ -139,6 +139,7 @@ void main() {
       expect(recording['planned_s'], 2400);
       expect(recording['stopped_by'], isNull);
       expect(recording['finished'], isFalse);
+      expect(recording['write_failed'], isFalse);
 
       kit.session.dispose();
     });
@@ -308,6 +309,11 @@ void main() {
       expect(kit.session.locked, isFalse);
       expect(kit.settings.values.containsKey(SnoSettingsKeys.session), isFalse);
       expect(kit.store.current, isEmpty);
+      // Несостоявшийся старт записью после сброса не считается.
+      expect(
+        kit.settings.values.containsKey(SnoSettingsKeys.recordingsSinceReset),
+        isFalse,
+      );
       // После перезапуска поднимать нечего.
       final SessionKit next = SessionKit(
         settings: kit.settings,
@@ -511,6 +517,8 @@ void main() {
         'away_ms': 41 * 60 * 1000,
         'deepest': 'paused',
       });
+      // Настенное время возвращения — настоящее, а не отставшее на сон.
+      expect(back['wall'], isoWithOffset(kit.time.wall));
       final Map<String, Object?> resync = events[events.length - 2];
       expect(resync['data'], <String, Object?>{
         'drift_ms': 41 * 60 * 1000,
@@ -1016,6 +1024,66 @@ void main() {
       // 11 минут 20 секунд после старта по настенным часам.
       expect(second.session.state!.durationMs, (11 * 60 + 20) * 1000);
       expect(second.session.state!.lastT, 80000);
+      second.session.dispose();
+    });
+
+    test('SNO-F-REC-08: часы перевели назад, потом сбой — длительность не '
+        'обнуляется', () async {
+      final SessionKit first = SessionKit();
+      await first.session.start(code);
+      first.run(60);
+      first.time.wall = first.time.wall.subtract(const Duration(hours: 2));
+      first.session.appLeft('inactive');
+      first.session.appReturned();
+      first.run(30);
+      await first.settle();
+      first.session.dispose();
+
+      final SessionKit second = SessionKit(
+        settings: first.settings,
+        store: first.store,
+        time: first.time,
+      );
+      await second.session.restore();
+
+      // Настенное время последнего события — «до старта»; счёт идёт по
+      // монотонным часам: сердцебиение на 90-й секунде.
+      expect(second.session.state!.durationMs, 90000);
+      // Сколько раз переставляли якорь, после сбоя неизвестно.
+      expect(second.session.state!.resyncs, isNull);
+      second.session.dispose();
+    });
+
+    test('SNO-F-REC-08: в журнале и остановка, и завершение, а отметка '
+        'отстала на оба — второй остановки нет', () async {
+      final SessionKit first = SessionKit();
+      await first.session.start(code);
+      final String folder = first.folder;
+      first.run(45);
+      // Ни отметка об остановке, ни её снятие не записались.
+      first.settings.failKeys.add(SnoSettingsKeys.session);
+      first.settings.failRemoves = true;
+      await first.session.stop(StopReason.experimenter);
+      await first.session.finish();
+      first.session.dispose();
+      first.settings.failKeys.clear();
+      first.settings.failRemoves = false;
+      final int written = first.store.events(folder).length;
+      expect(first.store.types(folder).last, 'session.finish');
+
+      final SessionKit second = SessionKit(
+        settings: first.settings,
+        store: first.store,
+        time: first.time,
+      );
+      await second.session.restore();
+
+      expect(second.session.state!.stoppedBy, StopReason.experimenter);
+      expect(second.session.state!.durationMs, 45000);
+      expect(second.store.events(folder), hasLength(written));
+      // Номер продолжает журнал — за строкой завершения.
+      await second.session.finish();
+      expect(second.store.events(folder).last['seq'], written + 1);
       second.session.dispose();
     });
 

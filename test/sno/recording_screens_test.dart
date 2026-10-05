@@ -7,6 +7,7 @@ import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/theme/theme_controller.dart';
 import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/shelf_archive.dart';
+import 'package:memoria/domain/reading/reader_gestures.dart';
 import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/hold_button.dart';
 import 'package:memoria/sno/participant_code.dart';
@@ -18,6 +19,7 @@ import 'package:memoria/sno/reference_state.dart';
 import 'package:memoria/sno/testing_screen.dart';
 import 'package:memoria/ui/app.dart';
 import 'package:memoria/ui/library/library_screen.dart';
+import 'package:memoria/ui/reader/quick_tap.dart';
 
 import '../data/test_data.dart';
 import '../support/fake_reading.dart';
@@ -342,6 +344,8 @@ void main() {
       // Старт, 139 сердцебиений и остановка.
       expect(find.text('Записано событий: 141'), findsOneWidget);
       expect(find.byKey(const Key('sno-finish-failed')), findsNothing);
+      // За сорок минут заряд изменился.
+      kit.status.battery = 61;
 
       // Сессию завершают удержанием; пока экран уходит с глаз, на нём
       // по-прежнему стоят код и итог записи, а не пустые строки.
@@ -370,6 +374,8 @@ void main() {
       expect(kit.session.phase, RecordingPhase.idle);
       expect(find.byKey(const Key('sno-record-start')), findsOneWidget);
       expect(find.byKey(const Key('sno-participant')), findsNothing);
+      // Готовность под кнопкой — нынешняя, а не сорокаминутной давности.
+      expect(find.textContaining('заряд 61 %'), findsOneWidget);
 
       await unmount(tester);
     });
@@ -686,6 +692,92 @@ void main() {
       await holdDot(tester, enough);
       expect(pageHolds, 1);
       expect(find.byKey(const Key('sno-stop-dialog')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-01: сорванное удержание точки страницу не '
+        'листает', (WidgetTester tester) async {
+      // Страница, как в книге, узнаёт нажатие по сырым событиям
+      // указателя — мимо спора жестов.
+      int pageTaps = 0;
+      await pumpOverlay(
+        tester,
+        home: QuickTap(
+          watch: TapWatch(),
+          onTap: (Offset at) => pageTaps++,
+          child: likeReader(),
+        ),
+      );
+      await kit.session.start(code);
+      await tester.pump();
+      final Offset dot = tester.getCenter(
+        find.byKey(const Key('sno-recording-dot')),
+      );
+
+      // Короткое нажатие на точке достаётся странице: она листает.
+      await tester.tapAt(dot);
+      await tester.pump();
+      expect(pageTaps, 1);
+
+      // Точку начали держать и отпустили через треть секунды: нажатие
+      // уже её, и страница его нажатием не считает.
+      final TestGesture gesture = await tester.startGesture(dot);
+      await tester.pump(const Duration(milliseconds: 350));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(pageTaps, 1);
+      expect(pageHolds, 0);
+      expect(find.byKey(const Key('sno-stop-dialog')), findsNothing);
+
+      // Следующее короткое нажатие — снова страницы.
+      await tester.tapAt(dot);
+      await tester.pump();
+      expect(pageTaps, 2);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-01: окно с идущей записью не закрывается', (
+      WidgetTester tester,
+    ) async {
+      /// Система просит приложение закрыться — крестик окна на ПК;
+      /// отвечает, что приложение сказало: `exit` или `cancel`.
+      Future<Object?> askToExit() async {
+        const JSONMethodCodec codec = JSONMethodCodec();
+        ByteData? reply;
+        await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          'flutter/platform',
+          codec.encodeMethodCall(
+            const MethodCall('System.requestAppExit', <Object?>[
+              <String, Object?>{'type': 'cancelable'},
+            ]),
+          ),
+          (ByteData? data) => reply = data,
+        );
+        final Object? answer = codec.decodeEnvelope(reply!);
+        return (answer! as Map<String, Object?>)['response'];
+      }
+
+      await pumpOverlay(tester);
+      // Записи нет — приложение закрывается как обычно.
+      expect(await askToExit(), 'exit');
+
+      await kit.session.start(code);
+      await tester.pump();
+      expect(await askToExit(), 'cancel');
+      await tester.pump();
+      expect(find.byKey(const Key('sno-exit-refused')), findsOneWidget);
+      expect(kit.session.recording, isTrue);
+      // Сообщение уходит само.
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('sno-exit-refused')), findsNothing);
+
+      // Запись остановлена — окно можно закрыть.
+      await kit.session.stop(StopReason.experimenter);
+      await tester.pump();
+      expect(await askToExit(), 'exit');
 
       await unmount(tester);
     });

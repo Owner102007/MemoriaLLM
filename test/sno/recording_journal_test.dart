@@ -186,7 +186,7 @@ void main() {
       expect(bare.data, isEmpty);
     });
 
-    test('SNO-F-REC-08: отметки берутся у последней читаемой строки', () {
+    test('SNO-F-REC-08: из хвоста журнала берутся только читаемые строки', () {
       String line(int seq) {
         return encodeEvent(
           seq: seq,
@@ -197,13 +197,22 @@ void main() {
         );
       }
 
-      expect(lastEventMarks(<String>[line(1), line(2)])!.seq, 2);
+      List<int> numbers(List<String> lines) {
+        return <int>[
+          for (final EventMarks marks in readableEvents(lines)) marks.seq,
+        ];
+      }
+
+      expect(numbers(<String>[line(1), line(2)]), <int>[1, 2]);
       // За обрывком успели дописать перевод строки: строка целая, но
-      // не читается — отметки у той, что перед ней.
-      final List<String> torn = <String>[line(1), line(2), '{"seq": 3, "t'];
-      expect(lastEventMarks(torn)!.seq, 2);
-      expect(lastEventMarks(<String>['мусор', '{']), isNull);
-      expect(lastEventMarks(const <String>[]), isNull);
+      // не читается — её в счёт не берут, остальные на месте.
+      expect(
+        numbers(<String>[line(1), '{"seq": 2, "t', line(3)]),
+        <int>[1, 3],
+      );
+      expect(numbers(<String>[line(1), line(2), '{"seq": 3, "t']), <int>[1, 2]);
+      expect(readableEvents(<String>['мусор', '{']), isEmpty);
+      expect(readableEvents(const <String>[]), isEmpty);
     });
 
     test('SNO-F-REC-02: виды событий названы по одному образцу и не '

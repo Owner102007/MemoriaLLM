@@ -117,7 +117,7 @@ class _ParticipantCodeScreenState extends State<ParticipantCodeScreen> {
 
   List<Widget> _entry(ThemeData theme) {
     return <Widget>[
-      Text('Код участника', style: theme.textTheme.titleMedium),
+      Text('Код, уже выданный участнику', style: theme.textTheme.titleMedium),
       const SizedBox(height: 12),
       TextField(
         key: const Key('sno-code-field'),
@@ -159,7 +159,7 @@ class _ParticipantCodeScreenState extends State<ParticipantCodeScreen> {
           _entering = false;
           _error = null;
         }),
-        child: const Text('Выдать новый код'),
+        child: const Text('Вернуться к выданному коду'),
       ),
     ];
   }

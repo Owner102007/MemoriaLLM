@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../domain/reading/reader_gestures.dart';
+import '../claimed_pointers.dart';
 
 /// Слушает сырые события указателя над [child] и сообщает о нажатии в
 /// тот миг, когда указатель поднят (BUG-37).
@@ -47,6 +48,12 @@ class QuickTap extends StatelessWidget {
       onPointerMove: (PointerMoveEvent event) =>
           watch.move(pointer: event.pointer, position: event.localPosition),
       onPointerUp: (PointerUpEvent event) {
+        if (ClaimedPointers.contains(event.pointer)) {
+          // Нажатие забрал слой поверх экрана (точка записи,
+          // SNO-F-REC-01): нажатием по странице оно уже не станет.
+          watch.cancel(pointer: event.pointer);
+          return;
+        }
         final Offset? at = watch.up(
           pointer: event.pointer,
           position: event.localPosition,

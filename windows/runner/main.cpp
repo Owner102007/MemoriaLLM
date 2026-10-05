@@ -30,8 +30,14 @@
 //
 // Возвращает true, если это первый экземпляр.
 static bool ClaimSingleInstance() {
-  ::CreateMutexW(nullptr, FALSE, MEMORIA_SINGLE_INSTANCE);
-  if (::GetLastError() != ERROR_ALREADY_EXISTS) {
+  const HANDLE claim = ::CreateMutexW(nullptr, FALSE, MEMORIA_SINGLE_INSTANCE);
+  const DWORD error = ::GetLastError();
+  // Объект уже есть — или есть, но не даётся: его держит экземпляр,
+  // запущенный с другими правами.
+  const bool running =
+      error == ERROR_ALREADY_EXISTS ||
+      (claim == nullptr && error == ERROR_ACCESS_DENIED);
+  if (!running) {
     return true;
   }
   HWND running = ::FindWindowW(nullptr, MEMORIA_WINDOW_TITLE);
