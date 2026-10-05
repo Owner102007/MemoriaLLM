@@ -434,6 +434,10 @@ void main() {
       // которой дали ключ, не вправе молча подписаться отладочным.
       expect(ci, contains('keytool -list -v'));
       expect(ci, contains(r'"$RUNNER_TEMP/sno.sha256"'));
+      // Чем подписан собранный APK, читает свой разбор блока подписи:
+      // `apksigner` на раннере отпечатка не отдал.
+      expect(ci, contains('python3 tool/apk_cert_sha256.py'));
+      expect(File('tool/apk_cert_sha256.py').existsSync(), isTrue);
       final String ignored = File('.gitignore').readAsStringSync();
       expect(ignored, contains('*.jks'));
       expect(ignored, contains('*.keystore'));

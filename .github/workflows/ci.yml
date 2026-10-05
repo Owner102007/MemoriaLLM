@@ -531,12 +531,35 @@ jobs:
         run: |
           set -eu
           title='title=Чем подписан APK'
+          # Отпечаток читается из блока подписи самого APK своим
+          # разбором: `apksigner` на раннере его не отдал (прогон
+          # №255, вторая попытка), а логов шага сессии разработки не
+          # видно. Блоков подписи может быть несколько — сертификат в
+          # них обязан быть один.
+          digest=$(python3 tool/apk_cert_sha256.py "out/$FILE" | sort -u || true)
+          count=$(printf '%s\n' "$digest" | grep -c . || true)
+          if [ "$count" -gt 1 ]; then
+            echo "::error $title::в блоках подписи out/$FILE разные сертификаты: $(printf '%s' "$digest" | tr '\n' ' ')"
+            exit 1
+          fi
+          # `apksigner` — вторым мнением: согласен — хорошо, расходится
+          # — отказ, молчит — замечание с его словами, чтобы причину
+          # было видно в сводке прогона.
           signer=$(ls -d "${ANDROID_HOME:-/nonexistent}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
-          digest=''
           if [ -n "$signer" ]; then
-            digest=$("$signer" verify --print-certs "out/$FILE" \
+            status=0
+            said=$("$signer" verify --print-certs "out/$FILE" 2>&1) || status=$?
+            second=$(printf '%s\n' "$said" \
               | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
-              | tr 'A-F' 'a-f' | tr -d ': ' || true)
+              | head -1 | tr 'A-F' 'a-f' | tr -d ': \r' || true)
+            if [ -z "$second" ]; then
+              echo "::notice $title::apksigner ($signer) отпечатка не отдал, код $status: $(printf '%s' "$said" | head -c 400 | tr '\r\n' '  ')"
+            elif [ "$second" != "$digest" ]; then
+              echo "::error $title::apksigner и разбор блока подписи расходятся: $second и ${digest:-ничего}"
+              exit 1
+            fi
+          else
+            echo "::notice $title::apksigner на раннере не найден (ANDROID_HOME=${ANDROID_HOME:-не задан})"
           fi
           wanted=$(grep -v '^#' tool/sno_signing_sha256.txt \
             | tr 'A-F' 'a-f' | tr -d ': \r' | grep -m1 . || true)
