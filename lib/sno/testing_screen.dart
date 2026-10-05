@@ -1282,8 +1282,10 @@ class _TestingScreenState extends State<TestingScreen>
               ),
               if (session != null) ..._recording(theme, session),
               // SNO-F-REC-07: записи видны, только пока сессии нет —
-              // участнику чужие записи не показываются.
-              if (records != null && !_sessionOpen)
+              // участнику чужие записи не показываются. Пока идёт
+              // старт записи, строки тоже нет: список, открытый в этот
+              // миг, остался бы поверх начавшейся записи.
+              if (records != null && !_sessionOpen && !_starting)
                 ListTile(
                   key: const Key('sno-records'),
                   leading: const Icon(Icons.inventory_2_outlined),

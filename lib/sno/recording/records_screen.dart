@@ -148,8 +148,7 @@ class _DeviceRecordsScreenState extends State<DeviceRecordsScreen> {
       return;
     }
     await _act(() async {
-      final bool opened = await widget.records.share(records);
-      return describeShared(opened: opened, count: records.length);
+      return describeShared(await widget.records.share(records));
     });
   }
 
@@ -232,7 +231,7 @@ class _DeviceRecordsScreenState extends State<DeviceRecordsScreen> {
   Widget _row(ThemeData theme, DeviceRecord record) {
     final DeviceRecords records = widget.records;
     return Padding(
-      key: Key('sno-record-${record.name}'),
+      key: Key('sno-record-${record.rowId}'),
       padding: const EdgeInsets.fromLTRB(16, 10, 8, 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -243,13 +242,13 @@ class _DeviceRecordsScreenState extends State<DeviceRecordsScreen> {
               Expanded(
                 child: Text(
                   describeRecord(record, shares: records.shares),
-                  key: Key('sno-record-about-${record.name}'),
+                  key: Key('sno-record-about-${record.rowId}'),
                   style: theme.textTheme.bodySmall,
                 ),
               ),
               if (records.shares && record.packed)
                 IconButton(
-                  key: Key('sno-record-share-${record.name}'),
+                  key: Key('sno-record-share-${record.rowId}'),
                   icon: const Icon(Icons.share_outlined),
                   tooltip: 'Поделиться',
                   onPressed: _busy
@@ -258,12 +257,12 @@ class _DeviceRecordsScreenState extends State<DeviceRecordsScreen> {
                 ),
               if (records.saves && record.packed)
                 TextButton(
-                  key: Key('sno-record-save-${record.name}'),
+                  key: Key('sno-record-save-${record.rowId}'),
                   onPressed: _busy ? null : () => unawaited(_save(record)),
                   child: const Text('Сохранить как…'),
                 ),
               IconButton(
-                key: Key('sno-record-delete-${record.name}'),
+                key: Key('sno-record-delete-${record.rowId}'),
                 icon: const Icon(Icons.delete_outline),
                 tooltip: 'Удалить',
                 onPressed: _busy ? null : () => unawaited(_delete(record)),

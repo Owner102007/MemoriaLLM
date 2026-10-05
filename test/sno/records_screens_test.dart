@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
+import 'package:memoria/main.dart' show recoverRecords;
 import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/hold_button.dart';
 import 'package:memoria/sno/participant_code.dart';
@@ -113,7 +114,7 @@ void main() {
 
   /// Строка под именем записи [record].
   String aboutOf(WidgetTester tester, DeviceRecord record) {
-    return textOf(tester, 'sno-record-about-${record.name}');
+    return textOf(tester, 'sno-record-about-${record.rowId}');
   }
 
   group('SNO-F-REC-07: список записей', () {
@@ -128,7 +129,7 @@ void main() {
     List<String> shownNames(WidgetTester tester) {
       double top(DeviceRecord record) {
         return tester
-            .getTopLeft(find.byKey(Key('sno-record-${record.name}')))
+            .getTopLeft(find.byKey(Key('sno-record-${record.rowId}')))
             .dy;
       }
 
@@ -160,11 +161,7 @@ void main() {
         ..put(sent);
       await pumpList(tester);
 
-      expect(shownNames(tester), <String>[
-        fresh.name,
-        sent.name,
-        broken.name,
-      ]);
+      expect(shownNames(tester), <String>[fresh.name, sent.name, broken.name]);
       expect(aboutOf(tester, fresh), '40:00 · 6,8 МБ · не отправлена');
       expect(aboutOf(tester, sent), '40:00 · 7,1 МБ · отправлена');
       expect(
@@ -216,10 +213,7 @@ void main() {
         'Записи помечены отправленными: 2.',
       );
       expect(find.byKey(const Key('sno-records-share-all')), findsNothing);
-      expect(
-        aboutOf(tester, broken),
-        '17:42 · 3,0 МБ · прервана · отправлена',
-      );
+      expect(aboutOf(tester, broken), '17:42 · 3,0 МБ · прервана · отправлена');
     });
 
     testWidgets('SNO-F-REC-06: окно не открылось — запись не помечена, об '
@@ -234,7 +228,8 @@ void main() {
       expect(aboutOf(tester, fresh), '40:00 · 6,8 МБ · не отправлена');
       expect(
         textOf(tester, 'sno-records-notice'),
-        'Окно «Поделиться» не открылось. Архив остался на устройстве.',
+        'Поделиться не получилось: окно не открылось или архива уже нет '
+        'на устройстве.',
       );
     });
 
@@ -374,12 +369,9 @@ void main() {
       );
       // Папку окну «Поделиться» не отдать; повреждённый архив — можно:
       // разбор решит, что с ним делать.
+      expect(find.byKey(Key('sno-record-share-${folder.rowId}')), findsNothing);
       expect(
-        find.byKey(Key('sno-record-share-${folder.name}')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(Key('sno-record-share-${damaged.name}')),
+        find.byKey(Key('sno-record-share-${damaged.rowId}')),
         findsOneWidget,
       );
       // «Все неотправленные» — только то, что можно отдать.
@@ -412,10 +404,7 @@ void main() {
           ..put(sent);
         await pumpList(tester);
 
-        expect(
-          find.byKey(Key('sno-record-share-${fresh.name}')),
-          findsNothing,
-        );
+        expect(find.byKey(Key('sno-record-share-${fresh.name}')), findsNothing);
         expect(find.byKey(const Key('sno-records-share-all')), findsNothing);
         expect(
           find.byKey(Key('sno-record-save-${fresh.name}')),
@@ -641,7 +630,8 @@ void main() {
 
       expect(
         textOf(tester, 'sno-finish-notice'),
-        'Окно «Поделиться» не открылось. Архив остался на устройстве.',
+        'Поделиться не получилось: окно не открылось или архива уже нет '
+        'на устройстве.',
       );
       expect(records.entries.single.taken, isFalse);
 
@@ -793,6 +783,28 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-REC-07: пока идёт старт записи, строки тоже нет', (
+      WidgetTester tester,
+    ) async {
+      records.put(sent);
+      await pumpTesting(tester);
+
+      await tap(tester, 'sno-record-start');
+
+      // Открыт экран кода; под ним в разделе строки записей уже нет —
+      // список, открытый в этот миг, остался бы поверх записи.
+      expect(find.text('Ваш код'), findsOneWidget);
+      expect(
+        find.byKey(const Key('sno-records'), skipOffstage: false),
+        findsNothing,
+      );
+
+      await tap(tester, 'sno-code-cancel');
+      expect(find.byKey(const Key('sno-records')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-REC-07: строка ведёт к списку, а счёт на ней следует '
         'за списком', (WidgetTester tester) async {
       records
@@ -851,6 +863,41 @@ void main() {
     });
   });
 
+  group('SNO-F-REC-08: записи при запуске приложения', () {
+    test('SNO-F-REC-08: сессия поднялась — папки без сессии подбираются, '
+        'оставшееся упаковывается', () async {
+      await recoverRecords(
+        testServices(data: data, recording: kit.session, records: records),
+        restored: true,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(records.adopted, 1);
+      expect(records.pending, 1);
+    });
+
+    test('SNO-F-REC-08: сессия не поднялась — папки среди незавершённых '
+        'не трогают', () async {
+      // Чья папка лежит среди незавершённых, неизвестно: это может
+      // быть запись, которую ещё предстоит закрыть.
+      await recoverRecords(
+        testServices(data: data, recording: kit.session, records: records),
+        restored: false,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(records.adopted, 0);
+      expect(records.pending, 1);
+    });
+
+    test('SNO-F-REC-08: записей в сборке нет — делать нечего', () async {
+      await recoverRecords(testServices(data: data), restored: true);
+
+      expect(records.adopted, 0);
+      expect(records.pending, 0);
+    });
+  });
+
   group('SNO-F-REC-07: слова о записях', () {
     test('SNO-F-REC-07: «событие» согласуется с числом', () {
       expect(describeEventCount(1), '1 событие');
@@ -866,14 +913,8 @@ void main() {
     });
 
     test('SNO-F-REC-07: счёт записей — сколько всего и сколько не ушло', () {
-      expect(
-        describeRecordsCount(const <DeviceRecord>[], shares: true),
-        'нет',
-      );
-      expect(
-        describeRecordsCount(<DeviceRecord>[sent], shares: true),
-        '1',
-      );
+      expect(describeRecordsCount(const <DeviceRecord>[], shares: true), 'нет');
+      expect(describeRecordsCount(<DeviceRecord>[sent], shares: true), '1');
       expect(
         describeRecordsCount(<DeviceRecord>[sent, fresh, broken], shares: true),
         '3 · не отправлено 2',
@@ -925,9 +966,7 @@ void main() {
             'stopped_by': 'crash',
           },
         },
-        state: <String, Object?>{
-          'shared_at': '2026-11-03T15:00:00.000+03:00',
-        },
+        state: <String, Object?>{'shared_at': '2026-11-03T15:00:00.000+03:00'},
       );
 
       expect(record.branch, 'II');

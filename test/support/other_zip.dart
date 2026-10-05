@@ -74,8 +74,7 @@ Future<OtherZip?> readWithPython(File archive) async {
       // Заглушка на месте Python (Windows без него): пробуем другое имя.
       continue;
     }
-    final Map<String, Object?> raw =
-        jsonDecode(output) as Map<String, Object?>;
+    final Map<String, Object?> raw = jsonDecode(output) as Map<String, Object?>;
     final Object? problem = raw['problem'];
     return OtherZip(
       names: <String>[

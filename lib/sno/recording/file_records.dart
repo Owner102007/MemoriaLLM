@@ -29,6 +29,11 @@ import 'store.dart';
 /// Всё, что меняет папку, идёт по очереди ([_locked]): упаковка при
 /// запуске и упаковка только что завершённой записи не встречаются на
 /// одной папке.
+///
+/// **Папку незавершённой сессии записи не трогают**, где бы она ни
+/// лежала: обычно она среди незавершённых, но завершение, оборванное
+/// на полпути, могло перенести её к остальным, не сняв отметки о
+/// сессии. Такой папки нет ни в списке, ни в упаковке, ни в удалении.
 class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   /// Создаёт записи; [root] отдаёт папку `Записи/`.
   ///
@@ -119,14 +124,28 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
     super.dispose();
   }
 
+  /// Читает отметки с диска — один раз за запуск.
+  ///
+  /// Файла нет или в нём мусор — отметок нет. Файл есть, но диск его
+  /// не отдал — чтение повторится в следующий раз: иначе первая же
+  /// новая отметка записалась бы поверх всех прежних.
   Future<void> _readState(Directory records) async {
     if (_stateRead) {
       return;
     }
+    final File file = File(p.join(records.path, stateName));
+    Map<String, Object?>? raw;
+    try {
+      if (await file.exists()) {
+        final Object? decoded = jsonDecode(await file.readAsString());
+        raw = decoded is Map<String, Object?> ? decoded : null;
+      }
+    } on FormatException {
+      raw = null;
+    } on FileSystemException {
+      return;
+    }
     _stateRead = true;
-    final Map<String, Object?>? raw = await readJsonFile(
-      File(p.join(records.path, stateName)),
-    );
     final Object? marks = raw?['records'];
     if (marks is Map<String, Object?>) {
       for (final MapEntry<String, Object?> mark in marks.entries) {
@@ -148,13 +167,12 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   /// Пишет отметки через временный файл: оборванная запись не оставит
   /// под именем отметок половину JSON.
   Future<void> _writeState(Directory records) async {
-    final String text = const JsonEncoder.withIndent('  ').convert(
-      <String, Object?>{
-        'schema': stateSchema,
-        'copy_dir': _copyDir,
-        'records': _marks,
-      },
-    );
+    final String text = const JsonEncoder.withIndent('  ')
+        .convert(<String, Object?>{
+          'schema': stateSchema,
+          'copy_dir': _copyDir,
+          'records': _marks,
+        });
     try {
       final File part = File(p.join(records.path, '$stateName$kPartSuffix'));
       await part.writeAsString(text, flush: true);
@@ -190,6 +208,11 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
         continue;
       }
       try {
+        if (entity is Directory && base == _activeFolder?.call()) {
+          // Папка незавершённой сессии: её покажут, когда сессию
+          // завершат.
+          continue;
+        }
         if (entity is File && base.endsWith(kArchiveExtension)) {
           final String name = base.substring(
             0,
@@ -214,10 +237,11 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
               name: base,
               bytes: await _sizeOf(entity),
               packed: false,
+              // Отметок у папки нет: «отправлена» и «копия есть»
+              // говорят об архиве, а архива у неё ещё нет.
               info: await readJsonFile(
                 File(p.join(entity.path, kRecordingFile)),
               ),
-              state: _marks[base] ?? const <String, Object?>{},
             ),
           );
         }
@@ -310,36 +334,57 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   }
 
   @override
-  Future<void> packPending() {
-    return _locked(() async {
-      final Directory records = await _records();
-      final List<Directory> folders = <Directory>[];
-      await for (final FileSystemEntity entity in records.list(
-        followLinks: false,
-      )) {
-        final String base = p.basename(entity.path);
-        if (base.startsWith('.')) {
+  Future<void> packPending() async {
+    // Что упаковывать, читается один раз; каждая папка упаковывается
+    // под своим замком — между ними проходят список записей и упаковка
+    // только что завершённой сессии, которым иначе пришлось бы ждать
+    // всех папок прежних сборок.
+    final List<Directory> folders = await _locked(_pendingFolders);
+    try {
+      for (final Directory folder in folders) {
+        await _locked(() async {
+          if (p.basename(folder.path) != _activeFolder?.call()) {
+            await _packFolder(folder);
+          }
+        });
+      }
+      await _locked(_scan);
+    } finally {
+      _notify();
+    }
+  }
+
+  /// Папки записей, которые ждут упаковки, от старых к новым; заодно
+  /// убирает то, что осталось от оборванных упаковок.
+  Future<List<Directory>> _pendingFolders() async {
+    final Directory records = await _records();
+    final List<Directory> folders = <Directory>[];
+    await for (final FileSystemEntity entity in records.list(
+      followLinks: false,
+    )) {
+      final String base = p.basename(entity.path);
+      try {
+        if (entity is Directory && base.startsWith(kGonePrefix)) {
+          // Папка упакованной записи, которую не успели убрать: её
+          // архив уже лежит и сверен.
+          await entity.delete(recursive: true);
+        } else if (base.startsWith('.')) {
           continue;
-        }
-        if (entity is File &&
+        } else if (entity is File &&
             base.endsWith('$kArchiveExtension$kPartSuffix')) {
           // Обрывок архива: упаковку оборвало закрытие приложения.
-          try {
-            await entity.delete();
-          } on FileSystemException {
-            // Останется: следующая упаковка запишет поверх.
-          }
+          await entity.delete();
         } else if (entity is Directory) {
           folders.add(entity);
         }
+      } on FileSystemException {
+        // Останется: следующая упаковка запишет поверх, следующий
+        // запуск уберёт.
       }
-      // От старых к новым: имя кончается временем старта.
-      folders.sort((Directory a, Directory b) => a.path.compareTo(b.path));
-      for (final Directory folder in folders) {
-        await _packFolder(folder);
-      }
-      await _scan();
-    }).whenComplete(_notify);
+    }
+    // От старых к новым: имя кончается временем старта.
+    folders.sort((Directory a, Directory b) => a.path.compareTo(b.path));
+    return folders;
   }
 
   /// Упаковывает папку; отвечает именем записи в списке или `null`,
@@ -362,17 +407,26 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
 
   @override
   Future<DeviceRecord?> pack(String folder) {
+    // Имя папки — одно слово: пустое или с разделителем увело бы
+    // упаковку в саму папку записей или мимо неё.
+    if (folder.isEmpty ||
+        folder.startsWith('.') ||
+        folder.contains('/') ||
+        folder.contains(r'\')) {
+      return Future<DeviceRecord?>.value();
+    }
     return _locked(() async {
+      if (_activeFolder?.call() == folder) {
+        return null;
+      }
       final Directory records = await _records();
       final Directory done = Directory(p.join(records.path, folder));
       final Directory open = Directory(
         p.join(records.path, FileRecordingStore.currentName, folder),
       );
       // Завершение сессии не сумело перенести папку: она переезжает
-      // сейчас. Папку идущей сессии не трогает никто.
-      if (!await done.exists() &&
-          await open.exists() &&
-          _activeFolder?.call() != folder) {
+      // сейчас.
+      if (!await done.exists() && await open.exists()) {
         try {
           await open.rename(done.path);
         } on FileSystemException {
@@ -394,7 +448,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   }
 
   @override
-  Future<bool> share(List<DeviceRecord> records) async {
+  Future<int> share(List<DeviceRecord> records) async {
     final Directory folder = await _records();
     final List<DeviceRecord> ready = <DeviceRecord>[];
     final List<String> paths = <String>[];
@@ -405,13 +459,12 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
         paths.add(archive.path);
       }
     }
-    if (paths.isEmpty) {
+    if (ready.length != records.length) {
       // Архив убрали с диска, пока список был на экране.
       await refresh();
-      return false;
     }
-    if (!await _outlet.share(paths)) {
-      return false;
+    if (paths.isEmpty || !await _outlet.share(paths)) {
+      return 0;
     }
     // Помечается факт вызова окна: дошёл ли архив, система не говорит.
     final String at = isoWithOffset(_now());
@@ -421,7 +474,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
       }
       await _writeState(folder);
       await _scan();
-      return true;
+      return ready.length;
     }).whenComplete(_notify);
   }
 
@@ -449,6 +502,11 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
         File target = File(p.join(chosen, record.fileName));
         bool there = false;
         for (int number = 2; await target.exists(); number++) {
+          // Папка записей под другим именем — ярлыком, сетевым путём,
+          // подставным диском: «копия» оказалась бы самим архивом.
+          if (await FileSystemEntity.identical(target.path, source.path)) {
+            return CopyOutcome.inside;
+          }
           if (await fileSha256(target) == sum) {
             // Та же копия уже лежит здесь: второй рядом не нужно.
             there = true;
@@ -504,6 +562,9 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
   @override
   Future<bool> delete(DeviceRecord record) {
     return _locked(() async {
+      if (!record.packed && _activeFolder?.call() == record.name) {
+        return false;
+      }
       final Directory folder = await _records();
       try {
         if (record.packed) {
@@ -512,9 +573,7 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
             await archive.delete();
           }
         } else {
-          final Directory streams = Directory(
-            p.join(folder.path, record.name),
-          );
+          final Directory streams = Directory(p.join(folder.path, record.name));
           if (await streams.exists()) {
             await streams.delete(recursive: true);
           }
@@ -523,7 +582,9 @@ class FileDeviceRecords extends ChangeNotifier implements DeviceRecords {
         await _scan();
         return false;
       }
-      if (_marks.remove(record.name) != null) {
+      // Отметки — об архиве: с папкой, которая носила то же имя, они
+      // не уходят.
+      if (record.packed && _marks.remove(record.name) != null) {
         await _writeState(folder);
       }
       await _scan();

@@ -89,6 +89,12 @@ class FileRecordingStore implements RecordingStore {
   }
 
   @override
+  Future<bool> has(String folder, String name) async {
+    final Directory directory = await _folder(folder);
+    return File(p.join(directory.path, name)).exists();
+  }
+
+  @override
   Future<List<String>> lastLines(
     String folder, {
     int count = kTailLines,

@@ -52,6 +52,9 @@ abstract interface class RecordingStore {
   /// Кладёт в папку записи файл [name] целиком.
   Future<void> put(String folder, String name, String content);
 
+  /// Лежит ли в папке записи файл [name].
+  Future<bool> has(String folder, String name);
+
   /// Последние целые строки журнала записи [folder], не больше [count],
   /// в порядке записи; пусто — журнала нет или целых строк в нём нет.
   ///

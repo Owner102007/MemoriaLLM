@@ -182,7 +182,10 @@ void main() {
             .readAsStringSync();
         expect(
           own,
-          contains('android:name=".RecordsFileProvider"'),
+          contains(
+            'android:name="io.github.owner102007.memoria.'
+            'RecordsFileProvider"',
+          ),
           reason: 'флейвор $name',
         );
         // Имя поставщика — от идентификатора сборки: у ветвей они
@@ -248,9 +251,8 @@ void main() {
         'android/app/src/main/kotlin/io/github/owner102007/memoria/'
         'MainActivity.kt',
       ).readAsStringSync();
-      final String outlet = File(
-        'lib/sno/recording/record_outlet.dart',
-      ).readAsStringSync();
+      final String outlet = File('lib/sno/recording/record_outlet.dart')
+          .readAsStringSync();
 
       expect(activity, contains('RECORDS_CHANNEL = "memoria/records"'));
       expect(outlet, contains("MethodChannel('memoria/records')"));

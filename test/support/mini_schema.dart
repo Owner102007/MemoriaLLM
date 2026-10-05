@@ -95,9 +95,7 @@ List<String> schemaProblems(
     for (final MapEntry<String, Object?> field in value.entries) {
       final Object? own = known[field.key];
       if (own is Map<String, Object?>) {
-        problems.addAll(
-          schemaProblems(field.value, own, '$path.${field.key}'),
-        );
+        problems.addAll(schemaProblems(field.value, own, '$path.${field.key}'));
       } else if (rest is Map<String, Object?>) {
         problems.addAll(
           schemaProblems(field.value, rest, '$path.${field.key}'),

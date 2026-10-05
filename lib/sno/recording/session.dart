@@ -813,6 +813,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         inBackground: away,
       );
     }
+    // Снимок конца оборванной записи — сейчас, при первом же запуске:
+    // раньше его снять было некому. И до отметки о сессии: запуск,
+    // оборванный между ними, снимет его в следующий раз, а отказ диска
+    // на нём попадёт в отметку. Снимок, снятый вовремя, остаётся: если
+    // в журнале уже есть остановка, прежнее приложение успело его
+    // положить — или это сделал прошлый запуск.
+    if (stop == null || !await _hasEndSnapshot(state.folder)) {
+      await _putEndSnapshot(state.folder, late: true);
+    }
     // Лёг ли журнал умершего приложения на диск, узнать не у кого:
     // известно только то, что не записалось сейчас.
     final SessionState marked = stopped.withFailure(_failed ? true : null);
@@ -823,10 +832,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       // так же — по строке остановки, которая уже лежит в журнале.
     }
     await _putInfo(marked, finished: false);
-    // Снимок конца оборванной записи — сейчас, при первом же запуске:
-    // раньше его снять было некому.
-    await _putEndSnapshot(marked.folder, late: true);
     return marked;
+  }
+
+  Future<bool> _hasEndSnapshot(String folder) async {
+    try {
+      return await _store.has(folder, kSnapshotEndFile);
+    } on Object {
+      return false;
+    }
   }
 
   /// Заряд и свободное место — перед стартом.

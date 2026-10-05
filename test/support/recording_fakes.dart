@@ -110,6 +110,11 @@ class MemoryRecordingStore implements RecordingStore {
   }
 
   @override
+  Future<bool> has(String folder, String name) async {
+    return files[folder]?.containsKey(name) ?? false;
+  }
+
+  @override
   Future<List<String>> lastLines(
     String folder, {
     int count = kTailLines,
@@ -592,6 +597,9 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
   @override
   Future<void> refresh() async {
     refreshed++;
+    // Как у настоящих записей: список перечитывается не в том же
+    // такте, и слушатели узнают об этом позже вызова.
+    await null;
     loaded = true;
     notifyListeners();
   }
@@ -634,18 +642,18 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
   }
 
   @override
-  Future<bool> share(List<DeviceRecord> records) async {
+  Future<int> share(List<DeviceRecord> records) async {
     shared.add(<String>[
       for (final DeviceRecord record in records) record.name,
     ]);
     if (!shareOpens) {
-      return false;
+      return 0;
     }
     for (final DeviceRecord record in records) {
       _replace(_with(record, sharedAt: now));
     }
     notifyListeners();
-    return true;
+    return records.length;
   }
 
   @override

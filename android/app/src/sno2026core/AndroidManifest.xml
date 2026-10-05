@@ -27,7 +27,7 @@
              чужое приложение читает только тот архив, ссылку на который
              ему выдали, и только пока ему это разрешено. -->
         <provider
-            android:name=".RecordsFileProvider"
+            android:name="io.github.owner102007.memoria.RecordsFileProvider"
             android:authorities="${applicationId}.records"
             android:exported="false"
             android:grantUriPermissions="true">

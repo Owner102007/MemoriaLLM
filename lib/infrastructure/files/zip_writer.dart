@@ -188,8 +188,16 @@ class ZipWriter {
       deflate.process(chunk, 0, chunk.length);
       await drain(end: false);
     }
+    if (size == 0) {
+      // Пустому содержимому сжатие всё равно нужно показать пустой
+      // кусок: фильтр, которому не дали ни байта, при завершении
+      // читает длину входа, которую никто не выставил, — и через раз
+      // отвечает ошибкой. Так же поступает и сам `dart:io`.
+      deflate.process(const <int>[], 0, 0);
+    }
     await drain(end: true);
-    if (size > _limit32 || packed > _limit32 || _position > _limit32) {
+    // Ровно 0xFFFFFFFF в обычном ZIP — не число, а знак «смотри ZIP64».
+    if (size >= _limit32 || packed >= _limit32 || _position >= _limit32) {
       throw ZipWriteException('запись больше 4 ГБ', entry: name);
     }
     entry
@@ -235,7 +243,7 @@ class ZipWriter {
       await _write(_centralHeader(entry));
     }
     final int directorySize = _position - directory;
-    if (_position > _limit32) {
+    if (_position >= _limit32) {
       throw const ZipWriteException('архив больше 4 ГБ');
     }
     final ByteData end = ByteData(22)
@@ -250,9 +258,14 @@ class ZipWriter {
       // Комментария нет.
       ..setUint16(20, 0, Endian.little);
     await _write(end.buffer.asUint8List());
-    _closed = true;
-    await _file.flush();
-    await _file.close();
+    // Файл закрывается и тогда, когда сброс на диск не удался: иначе
+    // обрывок остался бы открытым, и убрать его было бы нельзя.
+    try {
+      await _file.flush();
+    } finally {
+      _closed = true;
+      await _file.close();
+    }
   }
 
   /// Закрывает файл, не дописывая оглавления: архив не состоялся, и

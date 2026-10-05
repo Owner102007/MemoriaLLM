@@ -123,9 +123,8 @@ void main() {
       await target.writeAsString(file.value, flush: true);
     }
     if (about != null) {
-      await File(
-        p.join(directory.path, kRecordingFile),
-      ).writeAsString(jsonEncode(about), flush: true);
+      await File(p.join(directory.path, kRecordingFile))
+          .writeAsString(jsonEncode(about), flush: true);
     }
     return directory;
   }
@@ -212,10 +211,7 @@ void main() {
       expect(manifest['schema'], 'sno2026-recording/1');
       expect(manifest['branch'], 'I');
       expect(manifest['app'], <String, Object?>{'version': '0.25.0-sno2026.I'});
-      expect(
-        (manifest['device']! as Map<String, Object?>)['code'],
-        'a91f3c',
-      );
+      expect((manifest['device']! as Map<String, Object?>)['code'], 'a91f3c');
       expect(
         (manifest['participant']! as Map<String, Object?>)['code'],
         '67954332',
@@ -345,10 +341,12 @@ void main() {
       expect(fileOf(manifest, kEventsFile)['lines'], 5);
     });
 
-    test('SNO-ALG-REC-03: недописанный файл в архив не попадает', () async {
+    test('SNO-F-REC-05: недописанный файл ложится в архив как есть: из '
+        'папки не пропадает ничего', () async {
+      // Приложение закрыли между записью снимка и его переименованием.
       final Directory folder = await make(<String, String>{
-        ...usual(),
-        '$kRecordingFile$kPartSuffix': '{"schema": "sno2026-re',
+        kEventsFile: journal(2),
+        '$kSnapshotEndFile$kPartSuffix': '{"schema": "sno2026-snapshot/1"',
       }, about: info());
 
       final Map<String, Uint8List> entries = await entriesOf(
@@ -356,17 +354,62 @@ void main() {
       );
 
       expect(
-        entries.keys.where((String entry) => entry.endsWith(kPartSuffix)),
-        isEmpty,
+        utf8.decode(entries['$kSnapshotEndFile$kPartSuffix']!),
+        '{"schema": "sno2026-snapshot/1"',
+      );
+      expect(
+        (manifestOf(entries)['files']! as Map<String, Object?>).keys,
+        unorderedEquals(<String>[
+          kEventsFile,
+          '$kSnapshotEndFile$kPartSuffix',
+        ]),
+      );
+    });
+
+    test('SNO-F-REC-05: сведения о записи не разбираются — файл ложится в '
+        'архив как есть, манифест говорит об этом', () async {
+      final Directory folder = await make(usual());
+      await File(
+        p.join(folder.path, kRecordingFile),
+      ).writeAsString('{"schema": "sno2026-recording/1", "branch": "I", "rec');
+
+      final Map<String, Uint8List> entries = await entriesOf(
+        await packRecording(folder, now: () => packedAt),
+      );
+
+      final Map<String, Object?> manifest = manifestOf(entries);
+      expect(manifest['info_missing'], isTrue);
+      expect(
+        utf8.decode(entries[kRecordingFile]!),
+        '{"schema": "sno2026-recording/1", "branch": "I", "rec',
+      );
+      expect(fileOf(manifest, kRecordingFile)['bytes'], 53);
+      expect(await listing(), <String>['$name.zip']);
+    });
+
+    test('SNO-F-REC-05: в папке лежит свой manifest.json — отказ, папка '
+        'цела', () async {
+      final Directory folder = await make(<String, String>{
+        ...usual(),
+        kManifestFile: '{"чужой": true}',
+      }, about: info());
+
+      await expectLater(
+        packRecording(folder, now: () => packedAt),
+        throwsA(isA<PackException>()),
+      );
+
+      expect(await listing(), <String>[name]);
+      expect(
+        await File(p.join(folder.path, kManifestFile)).readAsString(),
+        '{"чужой": true}',
       );
     });
 
     test('SNO-ALG-REC-03: манифест проходит схему', () async {
-      final Map<String, Object?> schema =
-          jsonDecode(
-                await File('tool/sno_manifest.schema.json').readAsString(),
-              )
-              as Map<String, Object?>;
+      final Map<String, Object?> schema = jsonDecode(
+        await File('tool/sno_manifest.schema.json').readAsString(),
+      ) as Map<String, Object?>;
 
       // Обычная запись, оборванная и запись без сведений.
       final List<Directory> folders = <Directory>[
@@ -391,11 +434,9 @@ void main() {
     });
 
     test('SNO-ALG-REC-03: схема ловит манифест без сумм', () async {
-      final Map<String, Object?> schema =
-          jsonDecode(
-                await File('tool/sno_manifest.schema.json').readAsString(),
-              )
-              as Map<String, Object?>;
+      final Map<String, Object?> schema = jsonDecode(
+        await File('tool/sno_manifest.schema.json').readAsString(),
+      ) as Map<String, Object?>;
       final Map<String, Object?> manifest = buildManifest(
         info: info(),
         archiveName: '$name.zip',
@@ -511,6 +552,67 @@ void main() {
     });
   });
 
+  group('SNO-F-REC-05: архив уже лежит, а папка — другая', () {
+    test('SNO-F-REC-05: в папке появился файл, которого нет в архиве, — '
+        'она упаковывается заново, а не убирается', () async {
+      final Map<String, String> files = usual();
+      await packRecording(
+        await make(files, about: info()),
+        now: () => packedAt,
+      );
+      // После первой упаковки в папку той же записи дописали снимок:
+      // приложение закрыли до уборки, а следующий запуск закрывал
+      // сессию ещё раз.
+      final Directory again = await make(<String, String>{
+        ...files,
+        kSnapshotEndFile: '{"schema": "sno2026-snapshot/1", "late": true}',
+      }, about: info());
+
+      final File second = await packRecording(again, now: () => packedAt);
+
+      expect(p.basename(second.path), '$name-2.zip');
+      expect(await listing(), <String>['$name-2.zip', '$name.zip']);
+      expect(
+        utf8.decode((await entriesOf(second))[kSnapshotEndFile]!),
+        '{"schema": "sno2026-snapshot/1", "late": true}',
+      );
+    });
+
+    test('SNO-F-REC-05: сведения о записи в папке новее, чем в архиве, — '
+        'папка упаковывается заново', () async {
+      final Map<String, String> files = usual();
+      await packRecording(
+        await make(files, about: info()),
+        now: () => packedAt,
+      );
+      final Map<String, Object?> newer = info();
+      (newer['recording']! as Map<String, Object?>)['events'] = 6;
+      final Directory again = await make(files, about: newer);
+
+      final File second = await packRecording(again, now: () => packedAt);
+
+      expect(p.basename(second.path), '$name-2.zip');
+      expect(
+        (manifestOf(await entriesOf(second))['recording']!
+            as Map<String, Object?>)['events'],
+        6,
+      );
+    });
+
+    test('SNO-F-REC-05: архив без сведений не даёт убрать папку, в которой '
+        'сведения есть', () async {
+      final Map<String, String> files = usual();
+      // Первый раз сведения о записи не прочитались.
+      await packRecording(await make(files), now: () => packedAt);
+      final Directory again = await make(files, about: info());
+
+      final File second = await packRecording(again, now: () => packedAt);
+
+      expect(p.basename(second.path), '$name-2.zip');
+      expect(manifestOf(await entriesOf(second))['branch'], 'I');
+    });
+  });
+
   group('SNO-F-REC-05: запись не теряется при упаковке', () {
     test('SNO-F-REC-05: архив не сошёлся с записью — папка цела, обрывка '
         'нет', () async {
@@ -541,10 +643,7 @@ void main() {
           reason: file.key,
         );
       }
-      expect(
-        await File(p.join(folder.path, kRecordingFile)).exists(),
-        isTrue,
-      );
+      expect(await File(p.join(folder.path, kRecordingFile)).exists(), isTrue);
     });
 
     test('SNO-F-REC-05: в архиве подменён один байт журнала — сверка '
@@ -625,13 +724,70 @@ void main() {
 
     test('SNO-F-REC-05: обрывок прежней упаковки не мешает новой', () async {
       final Directory folder = await make(usual(), about: info());
-      await File(
-        p.join(records.path, '$name.zip$kPartSuffix'),
-      ).writeAsString('обрывок');
+      await File(p.join(records.path, '$name.zip$kPartSuffix'))
+          .writeAsString('обрывок');
 
       await packRecording(folder, now: () => packedAt);
 
       expect(await listing(), <String>['$name.zip']);
+    });
+
+    test('SNO-F-REC-05: папка изменилась, пока её упаковывали, — она '
+        'остаётся, архива нет', () async {
+      final Directory folder = await make(usual(), about: info());
+
+      await expectLater(
+        packRecording(
+          folder,
+          now: () => packedAt,
+          // Пока архив писался, в журнал дописали строку.
+          beforeVerify: (File part) => File(
+            p.join(folder.path, kEventsFile),
+          ).writeAsString('{"seq":6}\n', mode: FileMode.append, flush: true),
+        ),
+        throwsA(isA<PackException>()),
+      );
+
+      expect(await listing(), <String>[name]);
+      expect(
+        await File(p.join(folder.path, kEventsFile)).readAsString(),
+        endsWith('{"seq":6}\n'),
+      );
+
+      // Вторая попытка берёт папку какой она стала.
+      final File archive = await packRecording(folder, now: () => packedAt);
+      expect(
+        fileOf(manifestOf(await entriesOf(archive)), kEventsFile)['lines'],
+        6,
+      );
+    });
+
+    test('SNO-F-REC-05: в папке появился новый файл, пока её упаковывали, '
+        '— она остаётся', () async {
+      final Directory folder = await make(usual(), about: info());
+
+      await expectLater(
+        packRecording(
+          folder,
+          now: () => packedAt,
+          beforeVerify: (File part) => File(
+            p.join(folder.path, 'input.jsonl'),
+          ).writeAsString('{"seq":1}\n', flush: true),
+        ),
+        throwsA(isA<PackException>()),
+      );
+
+      expect(await listing(), <String>[name]);
+    });
+
+    test('SNO-F-REC-05: упакованная папка убирается целиком, скрытых '
+        'остатков нет', () async {
+      final Directory folder = await make(usual(), about: info());
+
+      await packRecording(folder, now: () => packedAt);
+
+      expect(await listing(), <String>['$name.zip']);
+      expect(await folder.exists(), isFalse);
     });
 
     test('SNO-ALG-REC-03: в папке нет файлов — отказ, а не пустой '
@@ -731,6 +887,60 @@ void main() {
                   sha256: '${sha256.convert(utf8.encode('{}\n'))}',
                 ),
               ],
+            ),
+          ),
+        ),
+      );
+      await writer.finish();
+
+      expect((await checkArchive(archive)).intact, isFalse);
+    });
+
+    test('SNO-F-REC-07: заголовок записи расходится с оглавлением — архив '
+        'помечен', () async {
+      final File archive = await packRecording(
+        await make(usual(), about: info()),
+        now: () => packedAt,
+      );
+      // Сумма в заголовке записи журнала: её читают «Проводник» и
+      // 7-Zip, а свой читатель и Python берут сумму из оглавления и
+      // подмены не заметили бы.
+      final Uint8List bytes = await archive.readAsBytes();
+      final List<int> entry = utf8.encode(kEventsFile);
+      int at = -1;
+      for (int i = 0; at < 0 && i + entry.length < bytes.length; i++) {
+        bool same = true;
+        for (int j = 0; same && j < entry.length; j++) {
+          same = bytes[i + j] == entry[j];
+        }
+        if (same) {
+          at = i;
+        }
+      }
+      expect(at, greaterThan(30));
+      // Заголовок — тридцать байт перед именем; сумма — с четырнадцатого.
+      bytes[at - 30 + 14] ^= 0xFF;
+      await archive.writeAsBytes(bytes, flush: true);
+
+      final ArchiveCheck check = await checkArchive(archive);
+
+      expect(check.intact, isFalse);
+      expect(check.manifest, isNotNull);
+    });
+
+    test('SNO-F-REC-07: архив с пустым перечнем файлов целым не '
+        'считается', () async {
+      final File archive = File(p.join(records.path, '$name.zip'));
+      final ZipWriter writer = await ZipWriter.create(archive);
+      await writer.addBytes(
+        kManifestFile,
+        utf8.encode(
+          jsonEncode(
+            buildManifest(
+              info: info(),
+              archiveName: '$name.zip',
+              packedAt: packedAt,
+              files: const <PackedFile>[],
             ),
           ),
         ),

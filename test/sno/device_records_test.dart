@@ -117,11 +117,8 @@ void main() {
 
   Map<String, Object?> stateOnDisk() {
     return jsonDecode(
-          File(
-            p.join(folder.path, FileDeviceRecords.stateName),
-          ).readAsStringSync(),
-        )
-        as Map<String, Object?>;
+      File(p.join(folder.path, FileDeviceRecords.stateName)).readAsStringSync(),
+    ) as Map<String, Object?>;
   }
 
   group('SNO-F-REC-07: список читается из папки записей', () {
@@ -205,7 +202,7 @@ void main() {
       expect(record.damaged, isTrue);
       expect(record.durationMs, isNull);
       // Отправить его всё равно можно: разбор решит, что с ним делать.
-      expect(await records.share(<DeviceRecord>[record]), isTrue);
+      expect(await records.share(<DeviceRecord>[record]), 1);
       expect(outlet.shared.single, <String>[p.join(folder.path, '$first.zip')]);
     });
 
@@ -226,7 +223,7 @@ void main() {
       expect(record.durationMs, 61000);
       expect(record.bytes, greaterThan(0));
       // Папку окну «Поделиться» не отдать.
-      expect(await records.share(<DeviceRecord>[record]), isFalse);
+      expect(await records.share(<DeviceRecord>[record]), 0);
       expect(outlet.shared, isEmpty);
     });
 
@@ -236,9 +233,8 @@ void main() {
         Directory(p.join(folder.path, FileRecordingStore.currentName)),
         'sno2026_I_11111111_a91f3c_20261104-1000',
       );
-      await File(
-        p.join(folder.path, FileDeviceRecords.stateName),
-      ).writeAsString('{}');
+      await File(p.join(folder.path, FileDeviceRecords.stateName))
+          .writeAsString('{}');
       await File(p.join(folder.path, 'заметка.txt')).writeAsString('чужое');
       final FileDeviceRecords records = open();
 
@@ -278,9 +274,8 @@ void main() {
 
     test('SNO-ALG-REC-03: обрывок архива и пустая папка убираются', () async {
       await both();
-      await File(
-        p.join(folder.path, '$first-2.zip$kPartSuffix'),
-      ).writeAsString('обрывок');
+      await File(p.join(folder.path, '$first-2.zip$kPartSuffix'))
+          .writeAsString('обрывок');
       final Directory empty = Directory(p.join(folder.path, 'пустая'));
       await empty.create();
       await File(p.join(empty.path, kEventsFile)).writeAsString('');
@@ -297,9 +292,8 @@ void main() {
       // нечего, но и выбрасывать запись приложение не вправе.
       final Directory bare = Directory(p.join(folder.path, first));
       await bare.create();
-      await File(
-        p.join(bare.path, kRecordingFile),
-      ).writeAsString(jsonEncode(recordingInfo(id: firstId)));
+      await File(p.join(bare.path, kRecordingFile))
+          .writeAsString(jsonEncode(recordingInfo(id: firstId)));
       final FileDeviceRecords records = open();
 
       await records.packPending();
@@ -450,6 +444,107 @@ void main() {
     });
   });
 
+  group('SNO-F-REC-08: папку незавершённой сессии не трогают', () {
+    // Завершение сессии перенесло папку к остальным, а отметку о
+    // сессии снять не успело: после перезапуска сессия поднимется на
+    // этой папке, и завершат её ещё раз.
+    test('SNO-F-REC-08: папки незавершённой сессии нет ни в списке, ни в '
+        'упаковке, ни в удалении', () async {
+      await makeRecordingFolder(
+        folder,
+        first,
+        about: recordingInfo(id: firstId),
+      );
+      await makeRecordingFolder(
+        folder,
+        second,
+        about: recordingInfo(id: secondId),
+      );
+      String? active = first;
+      final FileDeviceRecords records = open(active: () => active);
+
+      await records.packPending();
+
+      // Упакована только чужая папка; папка сессии цела и не в списке.
+      expect(await listing(), <String>[first, '$second.zip']);
+      expect(namesOf(records), <String>[second]);
+      expect(await records.pack(first), isNull);
+      expect(
+        await records.delete(
+          const DeviceRecord(name: first, bytes: 1, packed: false),
+        ),
+        isFalse,
+      );
+      expect(await listing(), <String>[first, '$second.zip']);
+
+      // Сессию завершили — запись упаковывается как обычная.
+      active = null;
+      expect((await records.pack(first))?.packed, isTrue);
+      expect(await listing(), <String>['$first.zip', '$second.zip']);
+    });
+
+    test('SNO-F-REC-05: имя папки — одно слово: пустое и с разделителем '
+        'упаковка не принимает', () async {
+      await both();
+      await makeRecordingFolder(
+        folder,
+        'sno2026_I_11111111_a91f3c_20261104-1000',
+        about: recordingInfo(id: '01KB9A3M4N7Q8R9S0T1V2W3X4Y'),
+      );
+      final FileDeviceRecords records = open();
+      final List<String> before = await listing();
+
+      expect(await records.pack(''), isNull);
+      expect(await records.pack('.current'), isNull);
+      expect(await records.pack('../$first'), isNull);
+      expect(await records.pack(r'..\..'), isNull);
+
+      expect(await listing(), before);
+    });
+
+    test('SNO-ALG-REC-03: папка упакованной записи, которую не успели '
+        'убрать, убирается при запуске', () async {
+      await archiveOf(first, id: firstId);
+      await makeRecordingFolder(folder, '$kGonePrefix$first');
+      final FileDeviceRecords records = open();
+
+      await records.packPending();
+
+      expect(await listing(), <String>['$first.zip']);
+      expect(namesOf(records), <String>[first]);
+    });
+
+    test('SNO-F-REC-07: архив и папка с одним именем — две разные '
+        'строки, отметка — только у архива', () async {
+      await archiveOf(first, id: firstId);
+      // Папка другой записи с тем же именем: упаковка ещё не дошла.
+      await makeRecordingFolder(
+        folder,
+        first,
+        events: 2,
+        about: recordingInfo(id: secondId),
+      );
+      final FileDeviceRecords records = open();
+      await records.refresh();
+      final DeviceRecord archive = records.entries.firstWhere(
+        (DeviceRecord record) => record.packed,
+      );
+
+      expect(await records.share(<DeviceRecord>[archive]), 1);
+
+      expect(records.entries, hasLength(2));
+      expect(
+        <String>{
+          for (final DeviceRecord record in records.entries) record.rowId,
+        },
+        <String>{first, '$first/'},
+      );
+      for (final DeviceRecord record in records.entries) {
+        expect(record.taken, record.packed, reason: record.rowId);
+      }
+    });
+  });
+
   group('SNO-F-REC-06: поделиться', () {
     test('SNO-F-REC-06: архив уходит окну «Поделиться» и помечен '
         'отправленным', () async {
@@ -458,7 +553,7 @@ void main() {
       await records.refresh();
       final DeviceRecord record = records.entries.last;
 
-      expect(await records.share(<DeviceRecord>[record]), isTrue);
+      expect(await records.share(<DeviceRecord>[record]), 1);
 
       expect(outlet.shared.single, <String>[p.join(folder.path, '$first.zip')]);
       final DeviceRecord marked = records.entries.last;
@@ -481,10 +576,7 @@ void main() {
       expect(again.entries.first.sharedAt, isNull);
       final Map<String, Object?> state = stateOnDisk();
       expect(state['schema'], FileDeviceRecords.stateSchema);
-      expect(
-        (state['records']! as Map<String, Object?>).keys,
-        <String>[first],
-      );
+      expect((state['records']! as Map<String, Object?>).keys, <String>[first]);
     });
 
     test('SNO-F-REC-06: окно не открылось — запись не помечена', () async {
@@ -493,7 +585,7 @@ void main() {
       final FileDeviceRecords records = open();
       await records.refresh();
 
-      expect(await records.share(records.entries), isFalse);
+      expect(await records.share(records.entries), 0);
 
       expect(records.entries.any((DeviceRecord r) => r.taken), isFalse);
       expect(
@@ -507,7 +599,7 @@ void main() {
       final FileDeviceRecords records = open();
       await records.refresh();
 
-      expect(await records.share(unshared(records.entries)), isTrue);
+      expect(await records.share(unshared(records.entries)), 2);
 
       expect(outlet.shared, hasLength(1));
       expect(outlet.shared.single, <String>[
@@ -525,7 +617,7 @@ void main() {
       final DeviceRecord record = records.entries.single;
       await File(p.join(folder.path, '$first.zip')).delete();
 
-      expect(await records.share(<DeviceRecord>[record]), isFalse);
+      expect(await records.share(<DeviceRecord>[record]), 0);
 
       expect(outlet.shared, isEmpty);
       expect(records.entries, isEmpty);
@@ -548,9 +640,8 @@ void main() {
     test('SNO-F-REC-06: файл отметок не читается — записи не отправлены, '
         'список цел', () async {
       await both();
-      await File(
-        p.join(folder.path, FileDeviceRecords.stateName),
-      ).writeAsString('{"records": [');
+      await File(p.join(folder.path, FileDeviceRecords.stateName))
+          .writeAsString('{"records": [');
       final FileDeviceRecords records = open();
 
       await records.refresh();
@@ -575,10 +666,7 @@ void main() {
       final FileDeviceRecords records = open();
       await records.refresh();
 
-      expect(
-        await records.saveCopy(records.entries.single),
-        CopyOutcome.done,
-      );
+      expect(await records.saveCopy(records.entries.single), CopyOutcome.done);
 
       expect(await listing(target), <String>['$first.zip']);
       expect(
@@ -663,10 +751,7 @@ void main() {
       await records.refresh();
       await records.saveCopy(records.entries.single);
 
-      expect(
-        await records.saveCopy(records.entries.single),
-        CopyOutcome.done,
-      );
+      expect(await records.saveCopy(records.entries.single), CopyOutcome.done);
 
       expect(await listing(target), <String>['$first.zip']);
     });
@@ -678,10 +763,7 @@ void main() {
       final FileDeviceRecords records = open();
       await records.refresh();
 
-      expect(
-        await records.saveCopy(records.entries.single),
-        CopyOutcome.done,
-      );
+      expect(await records.saveCopy(records.entries.single), CopyOutcome.done);
 
       expect(await listing(target), <String>['$first (2).zip', '$first.zip']);
       expect(
@@ -707,6 +789,29 @@ void main() {
       );
 
       expect(records.entries.single.taken, isFalse);
+    });
+
+    test('SNO-F-REC-06: папка записей под другим именем копией тоже не '
+        'считается', () async {
+      if (Platform.isWindows) {
+        // Ссылку на папку без прав администратора там не завести.
+        return;
+      }
+      await archiveOf(first, id: firstId);
+      final Link alias = await Link(
+        p.join(temp.path, 'ярлык'),
+      ).create(folder.path);
+      outlet.folder = alias.path;
+      final FileDeviceRecords records = open();
+      await records.refresh();
+
+      expect(
+        await records.saveCopy(records.entries.single),
+        CopyOutcome.inside,
+      );
+
+      expect(records.entries.single.taken, isFalse);
+      expect(await listing(), <String>['$first.zip']);
     });
 
     test('SNO-ALG-REC-04: «Открыть папку» — на файле записи или на самой '
@@ -740,10 +845,9 @@ void main() {
         '$second.zip',
       ]);
       expect(records.entries.single.name, second);
-      expect(
-        (stateOnDisk()['records']! as Map<String, Object?>).keys,
-        <String>[second],
-      );
+      expect((stateOnDisk()['records']! as Map<String, Object?>).keys, <String>[
+        second,
+      ]);
     });
 
     test('SNO-F-REC-07: неупакованная запись удаляется папкой', () async {
@@ -831,7 +935,10 @@ void main() {
       expect(record.interrupted, isFalse);
       expect(record.participant, code.code);
       expect(record.durationMs, 12000);
-      expect(await listing(), <String>['$name.zip']);
+      expect(await listing(), <String>[
+        FileRecordingStore.currentName,
+        '$name.zip',
+      ]);
       final Map<String, String> texts = await textsOf(name);
       expect(texts.keys.toList(), <String>[
         kManifestFile,
@@ -982,7 +1089,11 @@ void main() {
       await records.pack(two);
 
       expect(two, '$one-2');
-      expect(await listing(), <String>['$two.zip', '$one.zip']);
+      expect(await listing(), <String>[
+        FileRecordingStore.currentName,
+        '$two.zip',
+        '$one.zip',
+      ]);
       recording.dispose();
     });
   });

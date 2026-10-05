@@ -156,6 +156,75 @@ void main() {
       expect(head.getUint32(22, Endian.little), text.length);
     });
 
+    test('SNO-ALG-REC-03: заголовок каждой записи сходится с '
+        'оглавлением', () async {
+      // Длины и сумму писатель вписывает в заголовок записи, вернувшись
+      // назад; свой читатель и Python берут их из оглавления, а
+      // «Проводник» и 7-Zip смотрят и в заголовок. Поэтому сверяется
+      // каждая запись, а не только первая.
+      final Map<String, List<int>> entries = sample();
+      final File archive = await write(entries);
+      final ByteData bytes = ByteData.sublistView(await archive.readAsBytes());
+      final FileBookHandle handle = await FileBookHandle.open(
+        FilePathSource(archive.path),
+      );
+      try {
+        final ZipArchive zip = await ZipArchive.read(handle);
+        expect(zip.entries, hasLength(entries.length));
+        for (final ZipEntry entry in zip.entries) {
+          final int at = entry.headerOffset;
+          expect(
+            bytes.getUint32(at, Endian.little),
+            0x04034b50,
+            reason: entry.name,
+          );
+          expect(
+            bytes.getUint32(at + 14, Endian.little),
+            entry.crc32,
+            reason: entry.name,
+          );
+          expect(
+            bytes.getUint32(at + 18, Endian.little),
+            entry.compressedSize,
+            reason: entry.name,
+          );
+          expect(
+            bytes.getUint32(at + 22, Endian.little),
+            entry.size,
+            reason: entry.name,
+          );
+          expect(entry.size, entries[entry.name]!.length, reason: entry.name);
+        }
+      } finally {
+        await handle.close();
+      }
+    });
+
+    test('SNO-ALG-REC-03: пустые записи пишутся и после того, как архив '
+        'читали', () async {
+      // Фильтру сжатия, которому не дали ни байта, при завершении нужен
+      // пустой кусок — иначе он читает невыставленную длину входа. Чаще
+      // всего это видно после распаковки: память фильтра занята её
+      // следами.
+      await readBack(await write(sample()));
+      final File archive = File(p.join(temp.path, 'empties.zip'));
+      final ZipWriter writer = await ZipWriter.create(archive);
+      for (int i = 0; i < 40; i++) {
+        await writer.addBytes('empty/$i.txt', const <int>[]);
+        await writer.add('stream/$i.txt', const Stream<List<int>>.empty());
+      }
+      await writer.finish();
+
+      final Map<String, Uint8List> found = await readBack(archive);
+      expect(found, hasLength(80));
+      expect(found.values.every((Uint8List bytes) => bytes.isEmpty), isTrue);
+      final OtherZip? other = await readWithPython(archive);
+      if (other != null) {
+        expect(other.problem, isNull);
+        expect(other.names, hasLength(80));
+      }
+    });
+
     test('SNO-ALG-REC-03: имя кириллицей помечено как UTF-8', () async {
       final File archive = await write(<String, List<int>>{
         'a.txt': const <int>[1],

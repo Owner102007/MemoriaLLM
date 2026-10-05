@@ -151,39 +151,41 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     if (_closing) {
       return;
     }
-    // Имя папки — до завершения: после него сессия его забывает.
-    final String? folder = widget.session.state?.folder;
+    // Имя папки и записи — до завершения: после него сессия имя
+    // забывает, а экран могут успеть закрыть.
+    final RecordingSession session = widget.session;
+    final DeviceRecords? records = widget.records;
+    final String? folder = session.state?.folder;
     setState(() => _closing = true);
     try {
-      await widget.session.finish();
+      await session.finish();
     } on Object {
       // Завершить не удалось: экран остаётся, кнопка снова доступна.
     }
+    // SNO-F-REC-05: сессия завершена — запись упаковывается в архив.
+    // Упаковка начинается и тогда, когда экран уже закрыли: иначе
+    // запись осталась бы папкой до следующего запуска приложения.
+    final bool done = session.phase == RecordingPhase.idle;
+    final Future<DeviceRecord?>? packing =
+        done && records != null && folder != null
+        ? _pack(records, folder)
+        : null;
     if (!mounted) {
       return;
     }
     setState(() => _closing = false);
-    if (widget.session.phase != RecordingPhase.idle) {
+    if (!done) {
       return;
     }
-    final DeviceRecords? records = widget.records;
-    if (records == null || folder == null) {
+    if (packing == null) {
       Navigator.of(context).pop();
       return;
     }
-    // SNO-F-REC-05: сессия завершена — запись упаковывается в архив.
     setState(() {
       _finished = true;
       _packing = true;
     });
-    DeviceRecord? record;
-    try {
-      record = await records.pack(folder);
-    } on Object {
-      // Архив не собрался: папка записи цела, упаковка повторится при
-      // следующем запуске.
-      record = null;
-    }
+    final DeviceRecord? record = await packing;
     if (!mounted) {
       return;
     }
@@ -191,6 +193,19 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
       _packing = false;
       _record = record;
     });
+  }
+
+  /// Упаковывает запись; не собралась — `null`: папка записи цела,
+  /// упаковка повторится при следующем запуске.
+  static Future<DeviceRecord?> _pack(
+    DeviceRecords records,
+    String folder,
+  ) async {
+    try {
+      return await records.pack(folder);
+    } on Object {
+      return null;
+    }
   }
 
   /// Выполняет действие над архивом и говорит, чем оно кончилось.
@@ -234,9 +249,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     if (!await confirmLargeShare(context, one) || !mounted) {
       return;
     }
-    await _act(() async {
-      return describeShared(opened: await records.share(one), count: 1);
-    });
+    await _act(() async => describeShared(await records.share(one)));
   }
 
   /// Экран после завершения сессии: архив и выход для него
@@ -318,9 +331,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
         const SizedBox(height: 8),
         OutlinedButton.icon(
           key: const Key('sno-finish-reveal'),
-          onPressed: _acting
-              ? null
-              : () => unawaited(_reveal(records, record)),
+          onPressed: _acting ? null : () => unawaited(_reveal(records, record)),
           icon: const Icon(Icons.folder_open),
           label: const Text('Открыть папку'),
         ),

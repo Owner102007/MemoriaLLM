@@ -80,16 +80,13 @@ Future<Directory> makeRecordingFolder(
 }) async {
   final Directory directory = Directory(p.join(parent.path, folder));
   await directory.create(recursive: true);
-  await File(
-    p.join(directory.path, kEventsFile),
-  ).writeAsString(journalLines(events), flush: true);
-  await File(
-    p.join(directory.path, kSnapshotStartFile),
-  ).writeAsString('{"schema": "sno2026-snapshot/1"}', flush: true);
+  await File(p.join(directory.path, kEventsFile))
+      .writeAsString(journalLines(events), flush: true);
+  await File(p.join(directory.path, kSnapshotStartFile))
+      .writeAsString('{"schema": "sno2026-snapshot/1"}', flush: true);
   if (about != null) {
-    await File(
-      p.join(directory.path, kRecordingFile),
-    ).writeAsString(jsonEncode(about), flush: true);
+    await File(p.join(directory.path, kRecordingFile))
+        .writeAsString(jsonEncode(about), flush: true);
   }
   return directory;
 }

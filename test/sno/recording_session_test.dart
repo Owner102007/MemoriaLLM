@@ -1416,6 +1416,36 @@ void main() {
       session.dispose();
       again.dispose();
     });
+
+    test('SNO-ALG-REC-03: снимок, снятый вовремя, следующий запуск не '
+        'затирает', () async {
+      final SessionKit kit = SessionKit();
+      final RecordingSession dead = sessionOn(kit);
+      await dead.start(code);
+      final String folder = dead.state!.folder;
+      // Приложение умерло между снимком конца и отметкой о сессии:
+      // остановка и снимок на диске, отметка — прежняя.
+      kit.settings.failKeys.add(SnoSettingsKeys.session);
+      await dead.stop(StopReason.experimenter);
+      kit.settings.failKeys.clear();
+      dead.dispose();
+      expect(
+        kit.store.json(folder, kSnapshotEndFile).containsKey('late'),
+        isFalse,
+      );
+
+      final RecordingSession session = sessionOn(kit);
+      await session.restore();
+
+      // Запись закрыта своей остановкой, снимок — тот, что снят в миг
+      // остановки.
+      expect(session.state!.stoppedBy, StopReason.experimenter);
+      expect(kit.store.json(folder, kSnapshotEndFile), <String, Object?>{
+        'schema': 'конец',
+        'traces': 3,
+      });
+      session.dispose();
+    });
   });
 
   group('SNO-F-REC-01: готовность устройства', () {

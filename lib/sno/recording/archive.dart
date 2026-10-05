@@ -13,7 +13,10 @@
 /// `.part`, открывается заново, каждая его запись распаковывается и
 /// сверяется с суммой, посчитанной по исходному файлу, — и только
 /// после этого архив получает своё имя, а папка потоков удаляется.
-/// Любой отказ оставляет папку как была.
+/// Любой отказ оставляет папку как была. Из папки не пропадает ничего,
+/// чего нет в архиве: недописанные файлы ложатся в него как есть,
+/// сведения о записи, которые не разбираются, — тоже; папка, которая
+/// изменилась, пока её упаковывали, не убирается.
 ///
 /// Виджетов здесь нет; диск настоящий, проверяется на временной папке.
 library;
@@ -42,6 +45,11 @@ const String kArchiveExtension = '.zip';
 /// Хвост имени недописанного файла.
 const String kPartSuffix = '.part';
 
+/// С чего начинается имя папки, которая уже упакована и убирается:
+/// точка прячет её от списка записей, а оборванную уборку доводит до
+/// конца следующий запуск.
+const String kGonePrefix = '.gone-';
+
 /// Чем собран архив: по этой строке разбор узнаёт раскладку.
 const String kArchivePacker = 'memoria-zip/1';
 
@@ -53,6 +61,12 @@ const int kManifestLimit = 4 * 1024 * 1024;
 const int _directoryLimit = 1024 * 1024;
 
 const int _newline = 0x0A;
+
+const int _localSignature = 0x04034b50;
+
+/// Признак «длины и сумма стоят после данных записи»: у такой записи
+/// в её заголовке их нет.
+const int _descriptorFlag = 0x8;
 
 /// Почему запись не упаковалась.
 class PackException implements Exception {
@@ -246,31 +260,52 @@ Future<int> _wholeLines(File file, int length) async {
   }
 }
 
-/// Файлы папки записи по именам, которые они получат в архиве.
+/// Файлы папки записи: имя, которое файл получит в архиве, и его
+/// длина.
 ///
-/// `recording.json` в перечень не входит — он переходит в манифест;
-/// недописанные файлы `.part` тоже.
-Future<List<_Source>> _sourcesOf(Directory folder) async {
-  final List<_Source> sources = <_Source>[];
+/// Папка читается целиком: в ней не должно остаться ничего, что
+/// убралось бы вместе с ней, не попав в архив. Ссылка или иное «не
+/// файл» — отказ: что за ней лежит, упаковка не знает.
+Future<Map<String, int>> _lengthsOf(Directory folder) async {
+  final Map<String, int> lengths = <String, int>{};
   await for (final FileSystemEntity entity in folder.list(
     recursive: true,
     followLinks: false,
   )) {
-    if (entity is! File) {
+    if (entity is Directory) {
       continue;
     }
     final String name = p
         .split(p.relative(entity.path, from: folder.path))
         .join('/');
-    if (name == kRecordingFile ||
-        name == kManifestFile ||
-        name.endsWith(kPartSuffix)) {
-      continue;
+    if (entity is! File) {
+      throw PackException('в папке записи лежит не файл: $name');
     }
-    sources.add(_Source(name, entity));
+    lengths[name] = await entity.length();
   }
-  sources.sort((_Source a, _Source b) => a.name.compareTo(b.name));
-  return sources;
+  return lengths;
+}
+
+/// Та же ли папка [folder], что была, когда её файлы считали
+/// ([before]): те же имена и те же длины. Не прочиталась — не та же.
+Future<bool> _unchanged(Directory folder, Map<String, int> before) async {
+  final Map<String, int> after;
+  try {
+    after = await _lengthsOf(folder);
+  } on PackException {
+    return false;
+  } on FileSystemException {
+    return false;
+  }
+  if (before.length != after.length) {
+    return false;
+  }
+  for (final MapEntry<String, int> file in before.entries) {
+    if (after[file.key] != file.value) {
+      return false;
+    }
+  }
+  return true;
 }
 
 Future<void> _measure(_Source source) async {
@@ -307,6 +342,16 @@ Future<Map<String, Object?>?> readJsonFile(File file) async {
   }
 }
 
+/// Объект JSON из байт [bytes]; `null` — это не объект JSON.
+Map<String, Object?>? _jsonObject(List<int> bytes) {
+  try {
+    final Object? raw = jsonDecode(utf8.decode(bytes));
+    return raw is Map<String, Object?> ? raw : null;
+  } on FormatException {
+    return null;
+  }
+}
+
 /// Что известно об архиве на диске.
 class ArchiveCheck {
   /// Создаёт ответ.
@@ -320,20 +365,46 @@ class ArchiveCheck {
   final bool intact;
 }
 
+/// Сходится ли заголовок записи [entry] с оглавлением архива.
+///
+/// Свой читатель и `zipfile` из Python берут длины и сумму из
+/// оглавления, а «Проводник» и 7-Zip смотрят и в заголовок записи —
+/// как раз в то место, которое писатель вписывает, вернувшись назад.
+/// У записи с описателем после данных в заголовке их нет: такие
+/// архивы собирает не приложение, и сверять там нечего.
+Future<bool> _localAgrees(FileBookHandle handle, ZipEntry entry) async {
+  if (entry.flags & _descriptorFlag != 0) {
+    return true;
+  }
+  final Uint8List head = Uint8List(30);
+  if (await handle.read(head, entry.headerOffset, 30) != 30) {
+    return false;
+  }
+  final ByteData data = ByteData.sublistView(head);
+  return data.getUint32(0, Endian.little) == _localSignature &&
+      data.getUint32(14, Endian.little) == entry.crc32 &&
+      data.getUint32(18, Endian.little) == entry.compressedSize &&
+      data.getUint32(22, Endian.little) == entry.size;
+}
+
 /// Открывает архив [archive], читает манифест и сверяет суммы.
 ///
 /// [sums] — имена и SHA-256, которые обязаны сойтись; без них сверка
-/// идёт по перечню самого манифеста. Ничего не бросает: архив, который
-/// не читается, — ответ, а не ошибка.
+/// идёт по перечню самого манифеста. Архив без единого файла в
+/// перечне целым не считается. Ничего не бросает: архив, который не
+/// читается, — ответ, а не ошибка.
 Future<ArchiveCheck> checkArchive(
   File archive, {
   Map<String, String>? sums,
 }) async {
   FileBookHandle? handle;
   try {
-    handle = await FileBookHandle.open(FilePathSource(archive.path));
+    final FileBookHandle opened = await FileBookHandle.open(
+      FilePathSource(archive.path),
+    );
+    handle = opened;
     final ZipArchive zip = await ZipArchive.read(
-      handle,
+      opened,
       directoryLimit: _directoryLimit,
     );
     final Map<String, ZipEntry> entries = <String, ZipEntry>{
@@ -346,17 +417,18 @@ Future<ArchiveCheck> checkArchive(
     final BytesBuilder text = BytesBuilder(copy: true);
     await zip.extract(first, (Uint8List chunk) async => text.add(chunk));
     final Uint8List manifestBytes = text.takeBytes();
-    final Object? raw = jsonDecode(utf8.decode(manifestBytes));
-    if (raw is! Map<String, Object?>) {
+    final Map<String, Object?>? raw = _jsonObject(manifestBytes);
+    if (raw == null) {
       return const ArchiveCheck(manifest: null, intact: false);
     }
+    final ArchiveCheck broken = ArchiveCheck(manifest: raw, intact: false);
     final Map<String, String> expected = <String, String>{};
     if (sums != null) {
       expected.addAll(sums);
     } else {
       final Object? files = raw['files'];
       if (files is! Map<String, Object?>) {
-        return ArchiveCheck(manifest: raw, intact: false);
+        return broken;
       }
       for (final MapEntry<String, Object?> file in files.entries) {
         final Object? about = file.value;
@@ -364,28 +436,31 @@ Future<ArchiveCheck> checkArchive(
             ? about['sha256']
             : null;
         if (sha is! String) {
-          return ArchiveCheck(manifest: raw, intact: false);
+          return broken;
         }
         expected[file.key] = sha;
       }
     }
+    if (expected.isEmpty || !await _localAgrees(opened, first)) {
+      return broken;
+    }
     for (final MapEntry<String, String> want in expected.entries) {
       if (want.key == kManifestFile) {
         if ('${sha256.convert(manifestBytes)}' != want.value) {
-          return ArchiveCheck(manifest: raw, intact: false);
+          return broken;
         }
         continue;
       }
       final ZipEntry? entry = entries[want.key];
-      if (entry == null) {
-        return ArchiveCheck(manifest: raw, intact: false);
+      if (entry == null || !await _localAgrees(opened, entry)) {
+        return broken;
       }
       final _DigestSink result = _DigestSink();
       final ByteConversionSink input = sha256.startChunkedConversion(result);
       await zip.extract(entry, (Uint8List chunk) async => input.add(chunk));
       input.close();
       if ('${result.value}' != want.value) {
-        return ArchiveCheck(manifest: raw, intact: false);
+        return broken;
       }
     }
     return ArchiveCheck(manifest: raw, intact: true);
@@ -407,29 +482,25 @@ Future<void> _remove(File file) async {
   }
 }
 
-/// Та же ли запись лежит в архиве с манифестом [manifest], что и в
-/// папке: по идентификатору записи, а без него — по сумме журнала.
-bool _sameRecording(
-  Map<String, Object?> manifest,
-  String? id,
-  List<_Source> sources,
-) {
-  final String? packed = recordingIdOf(manifest);
-  if (id != null && packed != null) {
-    return id == packed;
+/// Те же ли сведения о записи стоят в манифесте [manifest], что в
+/// папке ([info]; `null` — сведения в папке не разбираются или их
+/// нет).
+bool _sameInfo(Map<String, Object?> manifest, Map<String, Object?>? info) {
+  if (info == null) {
+    return manifest['info_missing'] == true;
   }
-  final Object? files = manifest['files'];
-  if (files is! Map<String, Object?>) {
+  if (manifest.containsKey('info_missing')) {
     return false;
   }
-  for (final _Source source in sources) {
-    if (source.name != kEventsFile) {
+  for (final MapEntry<String, Object?> field in info.entries) {
+    if (field.key == 'schema') {
       continue;
     }
-    final Object? about = files[kEventsFile];
-    return about is Map<String, Object?> && about['sha256'] == source.sha;
+    if (jsonEncode(manifest[field.key]) != jsonEncode(field.value)) {
+      return false;
+    }
   }
-  return false;
+  return true;
 }
 
 /// Упаковывает папку записи [folder] в архив рядом с ней
@@ -438,8 +509,8 @@ bool _sameRecording(
 /// Отвечает готовым архивом; папки после этого нет. Любой отказ —
 /// [PackException]: папка цела, обрывка архива не осталось, упаковку
 /// можно повторить. Если архив этой же записи уже лежит рядом —
-/// приложение закрыли между архивом и уборкой папки, — он сверяется, и
-/// папка убирается без второй упаковки.
+/// приложение закрыли между архивом и уборкой папки, — он сверяется с
+/// папкой файл за файлом, и папка убирается без второй упаковки.
 ///
 /// [now] подменяется в тестах; [beforeVerify] и [beforeCleanup] —
 /// тоже только там: по ним проверяется отказ на каждом шаге.
@@ -451,31 +522,63 @@ Future<File> packRecording(
 }) async {
   final String base = p.basename(folder.path);
   final Directory records = folder.parent;
-  final List<_Source> sources;
-  final Map<String, Object?>? info;
+  final Map<String, int> lengths;
+  final List<_Source> sources = <_Source>[];
+  Map<String, Object?>? info;
   try {
-    sources = await _sourcesOf(folder);
+    lengths = await _lengthsOf(folder);
+    if (lengths.containsKey(kManifestFile)) {
+      // Имя занято манифестом архива: чужой файл под ним затёр бы
+      // манифест либо пропал бы сам.
+      throw const PackException('в папке записи лежит свой manifest.json');
+    }
+    // Сведения о записи переходят в манифест. Не разбираются — файл
+    // ложится в архив как есть: что в нём, решит разбор. Не читаются
+    // вовсе (диск не ответил) — отказ: упаковка повторится.
+    bool raw = false;
+    if (lengths.containsKey(kRecordingFile)) {
+      info = _jsonObject(
+        await File(p.join(folder.path, kRecordingFile)).readAsBytes(),
+      );
+      raw = info == null;
+    }
+    for (final String name in lengths.keys.toList()..sort()) {
+      if (name == kRecordingFile && !raw) {
+        continue;
+      }
+      final File file = File(
+        p.joinAll(<String>[folder.path, ...name.split('/')]),
+      );
+      sources.add(_Source(name, file));
+    }
     if (sources.isEmpty) {
       throw const PackException('в папке записи нет файлов');
     }
     for (final _Source source in sources) {
       await _measure(source);
     }
-    info = await readJsonFile(File(p.join(folder.path, kRecordingFile)));
   } on FileSystemException catch (error) {
     throw PackException('папка записи не читается', cause: error);
   }
   final String? id = recordingIdOf(info);
+  final Map<String, String> sums = <String, String>{
+    for (final _Source source in sources) source.name: source.sha,
+  };
 
   // Имя архива — имя папки. Занято архивом другой записи (две записи
   // одного участника в одну минуту) — хвост `-2`, `-3`.
   File target = File(p.join(records.path, '$base$kArchiveExtension'));
   for (int number = 2; await target.exists(); number++) {
-    final ArchiveCheck known = await checkArchive(target);
+    // Тот же ли это архив: в нём лежит каждый файл папки с той же
+    // суммой и те же сведения о записи. Только тогда папку можно
+    // убрать, не упаковывая заново.
+    final ArchiveCheck known = await checkArchive(target, sums: sums);
     final Map<String, Object?>? manifest = known.manifest;
     if (known.intact &&
         manifest != null &&
-        _sameRecording(manifest, id, sources)) {
+        recordingIdOf(manifest) == id &&
+        _sameInfo(manifest, info) &&
+        await _unchanged(folder, lengths)) {
       await _cleanup(folder);
       return target;
     }
@@ -523,11 +626,19 @@ Future<File> packRecording(
       part,
       sums: <String, String>{
         kManifestFile: '${sha256.convert(manifest)}',
-        for (final _Source source in sources) source.name: source.sha,
+        ...sums,
       },
     );
     if (!check.intact) {
       throw const PackException('архив не сошёлся с записью');
+    }
+    // Папка — та же, что была, когда её считали: файл, появившийся
+    // или выросший за это время, в архив не попал, и убирать папку
+    // нельзя.
+    if (!await _unchanged(folder, lengths)) {
+      throw const PackException(
+        'папка записи изменилась, пока её упаковывали',
+      );
     }
     await part.rename(target.path);
   } on PackException {
@@ -545,11 +656,23 @@ Future<File> packRecording(
 
 /// Убирает папку потоков упакованной записи.
 ///
-/// Не убралась (файл занят, диск отказал) — не беда: архив уже лежит,
-/// а следующий запуск узнает в папке ту же запись и уберёт её.
+/// Сначала папка одним движением получает скрытое имя — и с этого
+/// мига её нет ни в списке записей, ни среди того, что упаковывают:
+/// уборка, оборванная на середине, не оставит папку с половиной
+/// файлов под именем записи. Не убралась (файл занят, диск отказал) —
+/// не беда: архив уже лежит, а следующий запуск доберёт остальное.
 Future<void> _cleanup(Directory folder) async {
+  Directory doomed = folder;
   try {
-    await folder.delete(recursive: true);
+    doomed = await folder.rename(
+      p.join(folder.parent.path, '$kGonePrefix${p.basename(folder.path)}'),
+    );
+  } on FileSystemException {
+    // Скрытое имя занято прежней недоубранной папкой или переименовать
+    // нельзя: папка убирается на месте.
+  }
+  try {
+    await doomed.delete(recursive: true);
   } on FileSystemException {
     // Останется до следующего запуска.
   }
