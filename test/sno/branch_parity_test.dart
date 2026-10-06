@@ -56,12 +56,11 @@ void main() {
   setUp(() async {
     data = await openTestData();
     await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
-    // Тем же условием, что в приложении: константа сборки ветви.
-    times = AppServices.bookTimesFor(data.settings);
+    times = null;
     kit = SessionKit(
       status: FakeDeviceStatus(battery: 84, free: 1288490189),
       hasTest: true,
-      closingFacts: times?.openFacts,
+      closingFacts: () => times?.openFacts() ?? const <String, Object?>{},
       branch: Sno.branch,
     );
     loadTest = LoadTest(
@@ -72,20 +71,9 @@ void main() {
     );
   });
   tearDown(() async {
-    debugPrint('PARITY T0');
     loadTest.dispose();
     kit.session.dispose();
-    debugPrint('PARITY T1');
-    await times?.settled().timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => debugPrint('PARITY: счёт времени не дописался'),
-    );
-    debugPrint('PARITY T2');
-    await data.close().timeout(
-      const Duration(seconds: 10),
-      onTimeout: () => debugPrint('PARITY: база не закрылась'),
-    );
-    debugPrint('PARITY T3');
+    await data.close();
   });
 
   Future<void> settle(WidgetTester tester) async {
@@ -208,141 +196,140 @@ void main() {
     ];
   }
 
-  testWidgets('SNO-F-REC-17: один сценарий действий даёт в ветвях I и II '
-      'одни события с одними полями и одни файлы записи', (
-    WidgetTester tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 1400);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    await data.library.save(testBook());
-    await data.library.save(
-      testBook(id: 'book-2', title: 'Анатомия человека', hash: 'hash-2'),
-    );
-    await tester.pumpWidget(
-      MemoriaApp(
-        themeController: ThemeController(),
-        services: testServices(
-          data: data,
-          recording: kit.session,
-          loadTest: loadTest,
-          bookTimes: times,
-          document: FakeReaderDocument(
-            pages: <String>['один', 'два', 'три', 'четыре'],
+  testWidgets(
+    'SNO-F-REC-17: один сценарий действий даёт в ветвях I и II '
+    'одни события с одними полями и одни файлы записи',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      // Счёт времени — тем же условием, что в приложении: константа
+      // сборки ветви. Заводится здесь, а не в `setUp`: его первая запись
+      // ждёт будущего, созданного вместе с ним, и вне времени теста
+      // она не досчиталась бы — а с ней не закрылась бы база.
+      times = AppServices.bookTimesFor(data.settings);
+      await data.library.save(testBook());
+      await data.library.save(
+        testBook(id: 'book-2', title: 'Анатомия человека', hash: 'hash-2'),
+      );
+      await tester.pumpWidget(
+        MemoriaApp(
+          themeController: ThemeController(),
+          services: testServices(
+            data: data,
+            recording: kit.session,
+            loadTest: loadTest,
+            bookTimes: times,
+            document: FakeReaderDocument(
+              pages: <String>['один', 'два', 'три', 'четыре'],
+            ),
           ),
         ),
-      ),
-    );
-    await settle(tester);
+      );
+      await settle(tester);
 
-    // Старт записи — в «Тестировании», с кодом участника.
-    await tap(tester, 'nav-testing');
-    await tap(tester, 'sno-record-start');
-    await tap(tester, 'sno-code-confirm');
-    expect(kit.session.recording, isTrue);
-    final String folder = kit.folder;
-    await pass(tester, 12);
+      // Старт записи — в «Тестировании», с кодом участника.
+      await tap(tester, 'nav-testing');
+      await tap(tester, 'sno-record-start');
+      await tap(tester, 'sno-code-confirm');
+      expect(kit.session.recording, isTrue);
+      final String folder = kit.folder;
+      await pass(tester, 12);
 
-    // Первая книга: открыл, полистал, вернулся на полку.
-    await readBook(tester, 'book-1');
-    Navigator.of(tester.element(find.byType(ReaderScreen))).pop();
-    await settle(tester);
-    await pass(tester, 3);
+      // Первая книга: открыл, полистал, вернулся на полку.
+      await readBook(tester, 'book-1');
+      Navigator.of(tester.element(find.byType(ReaderScreen))).pop();
+      await settle(tester);
+      await pass(tester, 3);
 
-    // Другой раздел и обратно.
-    await tap(tester, 'nav-settings');
-    await tap(tester, 'nav-library');
+      // Другой раздел и обратно.
+      await tap(tester, 'nav-settings');
+      await tap(tester, 'nav-library');
 
-    // Вторая книга открыта в миг остановки записи: её закрывает сама
-    // остановка (SNO-F-REC-16).
-    await readBook(tester, 'book-2');
-    await pass(tester, 6);
-    debugPrint('PARITY a');
-    await kit.session.stop(StopReason.experimenter);
-    debugPrint('PARITY b');
-    await settle(tester);
-    debugPrint('PARITY c');
-    expect(find.byType(SessionFinishScreen), findsOneWidget);
-    expect(find.byType(ReaderScreen), findsNothing);
+      // Вторая книга открыта в миг остановки записи: её закрывает сама
+      // остановка (SNO-F-REC-16).
+      await readBook(tester, 'book-2');
+      await pass(tester, 6);
+      await kit.session.stop(StopReason.experimenter);
+      await settle(tester);
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.byType(ReaderScreen), findsNothing);
 
-    // Тест нагрузки: пароль организатора, вступление, восемнадцать
-    // пунктов.
-    await tap(tester, 'sno-finish-test');
-    for (final String digit in password.split('')) {
-      await tap(tester, 'sno-clt-key-$digit');
-    }
-    await tap(tester, 'sno-clt-key-ok');
-    expect(find.byType(LoadTestRunScreen), findsOneWidget);
-    await tap(tester, 'sno-clt-begin');
-    for (int i = 0; i < 18; i++) {
-      kit.time.pass(const Duration(seconds: 2));
-      if (find.byKey(const Key('sno-clt-strip')).evaluate().isNotEmpty) {
-        await tap(tester, 'sno-clt-more');
-      } else {
-        await tap(tester, 'sno-clt-value-${2 + i % 4}');
+      // Тест нагрузки: пароль организатора, вступление, восемнадцать
+      // пунктов.
+      await tap(tester, 'sno-finish-test');
+      for (final String digit in password.split('')) {
+        await tap(tester, 'sno-clt-key-$digit');
       }
-      await tap(tester, 'sno-clt-next');
-    }
-    debugPrint('PARITY d');
-    await tap(tester, 'sno-clt-close');
-
-    debugPrint('PARITY 1');
-    await holdOn(tester, 'sno-finish-hold');
-    debugPrint('PARITY 2');
-    expect(kit.session.phase, RecordingPhase.idle);
-    expect(kit.store.finished, contains(folder));
-
-    final List<String> types = kit.store.types(folder);
-    // Перечень видов событий один: то, что пишет только ветвь II, —
-    // события экранов, которых в ветви I нет.
-    if (!Sno.galaxy) {
-      for (final SnoEventType type in kSecondBranchEvents) {
-        expect(types, isNot(contains(type.wire)), reason: type.wire);
+      await tap(tester, 'sno-clt-key-ok');
+      expect(find.byType(LoadTestRunScreen), findsOneWidget);
+      await tap(tester, 'sno-clt-begin');
+      for (int i = 0; i < 18; i++) {
+        kit.time.pass(const Duration(seconds: 2));
+        if (find.byKey(const Key('sno-clt-strip')).evaluate().isNotEmpty) {
+          await tap(tester, 'sno-clt-more');
+        } else {
+          await tap(tester, 'sno-clt-value-${2 + i % 4}');
+        }
+        await tap(tester, 'sno-clt-next');
       }
-    }
-    // `book.close` несёт время чтения на виду — в обеих ветвях: и то,
-    // что написал экран, и то, что написала остановка записи.
-    final List<Map<String, Object?>> closes = <Map<String, Object?>>[
-      for (final Map<String, Object?> event in kit.store.events(folder))
-        if (event['type'] == 'book.close')
-          event['data']! as Map<String, Object?>,
-    ];
-    expect(closes, hasLength(2));
-    for (final Map<String, Object?> close in closes) {
-      expect(close.keys, containsAll(<String>['read_ms', 'read_total_ms']));
-    }
-    expect(closes.first.containsKey('by'), isFalse);
-    expect(closes.last['by'], 'stop');
-    // Манифест различается только ветвью.
-    expect(kit.store.json(folder, kRecordingFile)['branch'], Sno.branch);
+      await tap(tester, 'sno-clt-close');
 
-    // Пробел в конце строки эталон не хранит: редакторы его снимают.
-    final List<String> actual = <String>[
-      for (final String line in told(folder)) line.trimRight(),
-    ];
-    final List<String> expected = golden();
-    // Приложение снимается до сверки: тест, упавший с приложением на
-    // экране, ждал бы его часов до своего срока.
-    debugPrint('PARITY 3');
-    await unmount(tester);
-    debugPrint('PARITY 4');
-    if (!listEquals(actual, expected)) {
-      // Что вышло — целиком: эталон правят по этим строкам.
-      for (final String line in actual) {
-        debugPrint('ЭТАЛОН ${Sno.branch}: $line');
+      await holdOn(tester, 'sno-finish-hold');
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(kit.store.finished, contains(folder));
+
+      final List<String> types = kit.store.types(folder);
+      // Перечень видов событий один: то, что пишет только ветвь II, —
+      // события экранов, которых в ветви I нет.
+      if (!Sno.galaxy) {
+        for (final SnoEventType type in kSecondBranchEvents) {
+          expect(types, isNot(contains(type.wire)), reason: type.wire);
+        }
       }
-    }
-    expect(
-      actual,
-      expected,
-      reason:
-          'запись или тест разошлись с эталоном $goldenPath; что вышло '
-          'в ветви ${Sno.branch} — в строках «ЭТАЛОН» выше',
-    );
-    // Основной прогон сценария не проходит: записи в нём нет, и
-    // проверяется он прогонами ветвей (--dart-define=SNO_BRANCH=I, II).
-    debugPrint('PARITY 5');
-  }, skip: !Sno.recording, timeout: const Timeout(Duration(minutes: 2)));
+      // `book.close` несёт время чтения на виду — в обеих ветвях: и то,
+      // что написал экран, и то, что написала остановка записи.
+      final List<Map<String, Object?>> closes = <Map<String, Object?>>[
+        for (final Map<String, Object?> event in kit.store.events(folder))
+          if (event['type'] == 'book.close')
+            event['data']! as Map<String, Object?>,
+      ];
+      expect(closes, hasLength(2));
+      for (final Map<String, Object?> close in closes) {
+        expect(close.keys, containsAll(<String>['read_ms', 'read_total_ms']));
+      }
+      expect(closes.first.containsKey('by'), isFalse);
+      expect(closes.last['by'], 'stop');
+      // Манифест различается только ветвью.
+      expect(kit.store.json(folder, kRecordingFile)['branch'], Sno.branch);
+
+      // Пробел в конце строки эталон не хранит: редакторы его снимают.
+      final List<String> actual = <String>[
+        for (final String line in told(folder)) line.trimRight(),
+      ];
+      final List<String> expected = golden();
+      // Приложение снимается до сверки: тест, упавший с приложением на
+      // экране, ждал бы его часов до своего срока.
+      await unmount(tester);
+      if (!listEquals(actual, expected)) {
+        // Что вышло — целиком: эталон правят по этим строкам.
+        for (final String line in actual) {
+          debugPrint('ЭТАЛОН ${Sno.branch}: $line');
+        }
+      }
+      expect(
+        actual,
+        expected,
+        reason:
+            'запись или тест разошлись с эталоном $goldenPath; что вышло '
+            'в ветви ${Sno.branch} — в строках «ЭТАЛОН» выше',
+      );
+      // Основной прогон сценария не проходит: записи в нём нет, и
+      // проверяется он прогонами ветвей (--dart-define=SNO_BRANCH=I, II).
+    },
+    skip: !Sno.recording,
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 
   test('SNO-F-REC-17: только ветвь II пишет события карты и подготовки '
       'книг — и больше никаких', () {
