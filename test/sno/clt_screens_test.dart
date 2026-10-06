@@ -19,9 +19,10 @@ import '../support/test_services.dart';
 
 /// SNO-F-CLT-01 … SNO-F-CLT-05: экраны теста нагрузки.
 ///
-/// Вторая версия теста (шаг 25): вступление и восемнадцать пунктов, два
-/// из них — маркеры честности; сессия завершается только после теста,
-/// а когда его пройти нельзя — выходом организатора.
+/// Третья версия теста (правка шага 25): вступление и двадцать пунктов,
+/// из них два маркера честности и два пункта шкалы лжи; сессия
+/// завершается только после теста, а когда его пройти нельзя — выходом
+/// организатора.
 ///
 /// Сессия записи — на памяти и подменённом времени; тест нагрузки
 /// получает те же часы. Что тест решает без экрана, проверено в
@@ -274,7 +275,7 @@ void main() {
   });
 
   group('SNO-F-CLT-02: пункт теста на экране', () {
-    testWidgets('SNO-F-CLT-02: пробный проход — вступление и восемнадцать '
+    testWidgets('SNO-F-CLT-02: пробный проход — вступление и двадцать '
         'пунктов по одному, мышью, цифрами и стрелками', (
       WidgetTester tester,
     ) async {
@@ -293,7 +294,7 @@ void main() {
       // SNO-F-CLT-04: перед первым пунктом — вступление без шкалы.
       expect(
         textOf(tester, 'sno-clt-intro'),
-        startsWith('Сейчас — короткий опрос о работе с книгами'),
+        startsWith('Сейчас — короткий опрос о том, как прошла работа'),
       );
       expect(find.byKey(const Key('sno-clt-progress')), findsNothing);
       expect(find.byKey(const Key('sno-clt-next')), findsNothing);
@@ -308,7 +309,7 @@ void main() {
       await tap(tester, 'sno-clt-begin');
 
       expect(find.byKey(const Key('sno-clt-intro')), findsNothing);
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 20');
       expect(
         textOf(tester, 'sno-clt-text'),
         'Сколько умственной работы потребовалось — думать, искать, '
@@ -356,24 +357,33 @@ void main() {
       // «Дальше» — клавишей ввода.
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-clt-progress'), '2 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '2 из 20');
       expect(textOf(tester, 'sno-clt-strip-value'), '—');
       expect(back().onPressed, isNotNull);
 
       // Назад — на один пункт: там прежний ответ, и дальше назад некуда.
       await tap(tester, 'sno-clt-back');
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 20');
       expect(textOf(tester, 'sno-clt-strip-value'), '90');
       expect(back().onPressed, isNull);
       await tap(tester, 'sno-clt-next');
 
       for (int i = 1; i < 6; i++) {
-        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 18');
+        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 20');
         await answerShown(tester);
       }
 
-      // Шкала 1…7 — кнопки; цифра клавиатуры выбирает деление.
-      expect(textOf(tester, 'sno-clt-progress'), '7 из 18');
+      // Шкала 1…7 — кнопки; цифра клавиатуры выбирает деление. Седьмым
+      // у всех стоит первый пункт шкалы лжи: на экране он ничем не
+      // отличается от соседей.
+      expect(textOf(tester, 'sno-clt-progress'), '7 из 20');
+      expect(run.item.id, 'lie.defer');
+      expect(
+        textOf(tester, 'sno-clt-text'),
+        'Мне случалось откладывать на потом дело, которое нужно было '
+        'сделать сразу.',
+      );
+      expect(find.textContaining('провер'), findsNothing);
       expect(find.byKey(const Key('sno-clt-strip')), findsNothing);
       for (int value = 1; value <= 7; value++) {
         expect(find.byKey(Key('sno-clt-value-$value')), findsOneWidget);
@@ -384,16 +394,18 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.digit9);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-clt-progress'), '7 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '7 из 20');
       await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
       await tester.pumpAndSettle();
       expect(run.selected, 3);
       await tester.sendKeyEvent(LogicalKeyboardKey.numpad6);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-clt-progress'), '8 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '8 из 20');
+      await answerShown(tester);
+      expect(textOf(tester, 'sno-clt-progress'), '9 из 20');
 
-      // SNO-F-CLT-04: восьмой пункт пробного прохода — маркер: на экране
+      // SNO-F-CLT-04: девятый пункт пробного прохода — маркер: на экране
       // он ничем не отличается от соседей.
       expect(run.item.id, 'chk.focus');
       expect(
@@ -407,8 +419,16 @@ void main() {
       expect(back().onPressed, isNotNull);
       expect(find.textContaining('провер'), findsNothing);
 
-      for (int i = 7; i < 18; i++) {
-        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 18');
+      for (int i = 8; i < 20; i++) {
+        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 20');
+        if (i == 18) {
+          // Предпоследний — второй пункт шкалы лжи.
+          expect(run.item.id, 'lie.late');
+          expect(
+            textOf(tester, 'sno-clt-text'),
+            'Я ни разу в жизни никуда не опоздал.',
+          );
+        }
         await answerShown(tester);
       }
 
@@ -438,7 +458,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('sno-clt-intro')), findsNothing);
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 20');
     });
   });
 
@@ -505,17 +525,17 @@ void main() {
       // SNO-F-CLT-04: первым — вступление; в счёт пунктов оно не входит.
       expect(
         textOf(tester, 'sno-clt-intro'),
-        contains('а не письменную работу'),
+        contains('и письменную часть'),
       );
       expect(find.byKey(const Key('sno-clt-progress')), findsNothing);
       await tap(tester, 'sno-clt-begin');
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 20');
       // С теста уйти можно: он продолжится с того же пункта.
       expect(find.byType(BackButton), findsOneWidget);
-      for (int i = 0; i < 18; i++) {
-        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 18');
-        if (i == 7) {
-          // У участника 67954332 восьмым стоит маркер.
+      for (int i = 0; i < 20; i++) {
+        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 20');
+        if (i == 8) {
+          // У участника 67954332 девятым стоит маркер.
           expect(
             textOf(tester, 'sno-clt-text'),
             'За всё время работы я ни разу не отвлёкся — ни на секунду.',
@@ -530,11 +550,11 @@ void main() {
       expect(find.textContaining('балл'), findsNothing);
       expect(find.textContaining('TLX'), findsNothing);
       expect(find.textContaining('отмет'), findsNothing);
-      expect(answersOf(folder, fileOf(folder, 'B')), hasLength(18));
+      expect(answersOf(folder, fileOf(folder, 'B')), hasLength(20));
       await tap(tester, 'sno-clt-close');
 
       expect(find.byType(LoadTestRunScreen), findsNothing);
-      expect(textOf(tester, 'sno-finish-test-done'), 'Тест пройден: 18 из 18');
+      expect(textOf(tester, 'sno-finish-test-done'), 'Тест пройден: 20 из 20');
       expect(find.byKey(const Key('sno-finish-test')), findsNothing);
       expect(find.byKey(const Key('sno-finish-waits')), findsNothing);
       expect(find.byKey(const Key('sno-finish-skip')), findsNothing);
@@ -574,25 +594,25 @@ void main() {
       for (int i = 0; i < 5; i++) {
         await answerShown(tester);
       }
-      expect(textOf(tester, 'sno-clt-progress'), '6 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '6 из 20');
 
       // Участник ушёл с теста посреди него.
       await tester.pageBack();
       await tester.pumpAndSettle();
 
-      expect(find.text('Продолжить тест · 5 из 18'), findsOneWidget);
+      expect(find.text('Продолжить тест · 5 из 20'), findsOneWidget);
       // Завершить сессию по-прежнему нельзя.
       expect(find.byKey(const Key('sno-finish-hold')), findsNothing);
       expect(
         textOf(tester, 'sno-finish-waits'),
-        'Тест начат: 5 из 18. Сессия завершится после него.',
+        'Тест начат: 5 из 20. Сессия завершится после него.',
       );
       await tap(tester, 'sno-finish-test');
 
       // Замок открыт до завершения сессии; пункт — шестой.
       expect(find.byType(LoadTestPasswordScreen), findsNothing);
       expect(find.byKey(const Key('sno-clt-intro')), findsNothing);
-      expect(textOf(tester, 'sno-clt-progress'), '6 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '6 из 20');
       expect(answersOf(folder, fileOf(folder, 'B')), hasLength(5));
     });
 
@@ -862,7 +882,7 @@ void main() {
       // Вступление показано и пробному проходу.
       expect(find.byKey(const Key('sno-clt-intro')), findsOneWidget);
       await tap(tester, 'sno-clt-begin');
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 20');
       // Пароль пробного прохода теста не отпирает.
       expect(test.unlocked, isFalse);
       expect(kit.store.files, isEmpty);
@@ -888,10 +908,10 @@ void main() {
       await tap(tester, 'sno-clt-begin');
       // Запись знает, что участник на экране теста.
       expect(kit.session.context.screen, 'clt');
-      for (int i = 0; i < 17; i++) {
+      for (int i = 0; i < 19; i++) {
         await answerShown(tester);
       }
-      expect(textOf(tester, 'sno-clt-progress'), '18 из 18');
+      expect(textOf(tester, 'sno-clt-progress'), '20 из 20');
       kit.store.failPutPrefix = 'clt/';
 
       await answerShown(tester);
@@ -908,7 +928,7 @@ void main() {
 
       expect(textOf(tester, 'sno-clt-thanks'), 'Спасибо, ответы сохранены');
       expect(test.finalDone, isTrue);
-      expect(answersOf(folder, fileOf(folder, 'B')), hasLength(18));
+      expect(answersOf(folder, fileOf(folder, 'B')), hasLength(20));
     });
   });
 }

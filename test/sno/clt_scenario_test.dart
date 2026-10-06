@@ -6,8 +6,9 @@ import 'package:memoria/sno/clt/scenario.dart';
 
 /// SNO-F-CLT-02, SNO-F-CLT-04: сценарий теста нагрузки как данные.
 ///
-/// Вторая версия встроенного сценария (шаг 25): одна часть, вступление,
-/// восемнадцать пунктов — среди них два маркера честности. Части «после
+/// Третья версия встроенного сценария (правка шага 25): одна часть,
+/// вступление, двадцать пунктов — среди них два маркера честности,
+/// которые сверяются с записью, и два пункта шкалы лжи. Части «после
 /// блока» в нём нет (SNO-F-REC-15), но вид такой части формат читает
 /// по-прежнему.
 ///
@@ -105,7 +106,7 @@ void main() {
 
       for (final CltScenario scenario in <CltScenario>[direct, decoded]) {
         expect(scenario.id, 'sno-clt-main');
-        expect(scenario.version, 2);
+        expect(scenario.version, 3);
         expect(scenario.lang, 'ru');
         expect(scenario.parts, hasLength(1));
       }
@@ -128,23 +129,24 @@ void main() {
       expect(old.partFor(kCltSessionEnd)!.length, kBuiltinCltItems);
     });
 
-    test('SNO-F-CLT-02: в конце сессии — восемнадцать пунктов по паролю: '
-        'шесть шкал нагрузки, восемь о задании, четыре о полке', () {
+    test('SNO-F-CLT-02: в конце сессии — двадцать пунктов по паролю: '
+        'шесть шкал нагрузки, пункт о себе, восемь о задании, пять о '
+        'полке', () {
       final CltPart part = parseCltScenario(kBuiltinCltScenario)
           .partFor(kCltSessionEnd)!;
 
       expect(part.id, 'B');
       expect(part.password, isTrue);
-      expect(part.length, 18);
+      expect(part.length, 20);
       expect(part.length, kBuiltinCltItems);
-      expect(part.items, hasLength(18));
+      expect(part.items, hasLength(20));
       expect(
         <String>[for (final CltSection section in part.sections) section.id],
-        <String>['tlx', 'types', 'orient'],
+        <String>['tlx', 'self', 'types', 'orient'],
       );
       expect(
         <bool>[for (final CltSection section in part.sections) section.shuffle],
-        <bool>[false, true, false],
+        <bool>[false, false, true, false],
       );
       final CltSection tlx = part.sections[0];
       expect(tlx.items, hasLength(6));
@@ -162,11 +164,13 @@ void main() {
         0: 'отлично',
         100: 'провал',
       });
-      expect(part.sections[1].items, hasLength(8));
-      expect(part.sections[2].items, hasLength(4));
+      expect(part.sections[1].items, hasLength(1));
+      expect(part.sections[2].items, hasLength(8));
+      expect(part.sections[3].items, hasLength(5));
       for (final CltItem item in <CltItem>[
         ...part.sections[1].items,
         ...part.sections[2].items,
+        ...part.sections[3].items,
       ]) {
         expect(item.scale.values, <int>[1, 2, 3, 4, 5, 6, 7], reason: item.id);
         expect(item.scale.labels, <int, String>{
@@ -184,22 +188,30 @@ void main() {
       );
     });
 
-    test('SNO-F-CLT-04: перед первым пунктом — вступление: что оценивать и '
-        'как отвечать', () {
+    test('SNO-F-CLT-04: перед первым пунктом — вступление: оценивается вся '
+        'работа, и изучение материала, и письменная часть', () {
       final CltPart part = parseCltScenario(kBuiltinCltScenario)
           .partFor(kCltSessionEnd)!;
 
-      expect(part.intro, startsWith('Сейчас — короткий опрос'));
-      expect(part.intro, contains('а не письменную работу'));
-      expect(part.intro, endsWith('как было на самом деле.'));
+      expect(
+        part.intro,
+        'Сейчас — короткий опрос о том, как прошла работа. Оценивайте её '
+        'целиком: и то время, когда вы искали и читали материал в '
+        'приложении, и письменную часть. Правильных и неправильных '
+        'ответов здесь нет.',
+      );
+      // К честности вступление впрямую не призывает (решение владельца
+      // АЗ): на неё отвечают пункты шкалы лжи.
+      expect(part.intro, isNot(contains('честн')));
+      expect(part.intro, isNot(contains('на самом деле')));
       // Сценарий без вступления читается как раньше.
       final Map<String, Object?> bare = builtin();
       partOf(bare, 'B').remove('intro');
       expect(parseCltScenario(bare).partFor(kCltSessionEnd)!.intro, isNull);
     });
 
-    test('SNO-F-CLT-04: два маркера честности — в перемешанном разделе и '
-        'вторым в разделе о полке', () {
+    test('SNO-F-CLT-04: два маркера, которые сверяются с записью, — в '
+        'перемешанном разделе и вторым в разделе о полке', () {
       final CltPart part = parseCltScenario(kBuiltinCltScenario)
           .partFor(kCltSessionEnd)!;
 
@@ -208,12 +220,12 @@ void main() {
           for (final CltItem item in part.items)
             if (item.isCheck) item.id,
         ],
-        <String>['chk.focus', 'chk.books'],
+        <String>['lie.defer', 'chk.focus', 'chk.books', 'lie.late'],
       );
-      expect(part.sections[1].items.last.id, 'chk.focus');
-      expect(part.sections[2].items[1].id, 'chk.books');
+      expect(part.sections[2].items.last.id, 'chk.focus');
+      expect(part.sections[3].items[1].id, 'chk.books');
 
-      final CltItem focus = part.sections[1].items.last;
+      final CltItem focus = part.sections[2].items.last;
       expect(
         focus.text,
         'За всё время работы я ни разу не отвлёкся — ни на секунду.',
@@ -229,7 +241,7 @@ void main() {
       expect(first.contradicts(5, 3), isFalse);
       expect(first.contradicts(7, 0), isFalse);
 
-      final CltItem books = part.sections[2].items[1];
+      final CltItem books = part.sections[3].items[1];
       expect(books.text, 'За время работы я не открыл ни одной книги.');
       final CltCheck second = books.check!;
       // Отметка — ответ 4 и больше.
@@ -246,8 +258,59 @@ void main() {
       expect(second.contradicts(1, 0), isTrue);
       expect(second.contradicts(4, 0), isFalse);
       // Маркер на экране — та же шкала, что у соседей.
-      expect(focus.scale.values, part.sections[1].items.first.scale.values);
-      expect(books.scale.values, part.sections[2].items.first.scale.values);
+      expect(focus.scale.values, part.sections[2].items.first.scale.values);
+      expect(books.scale.values, part.sections[3].items.first.scale.values);
+    });
+
+    test('SNO-F-CLT-04: шкала лжи — два пункта с противоположными ключами, '
+        'с записью не сверяются', () {
+      final CltPart part = parseCltScenario(kBuiltinCltScenario)
+          .partFor(kCltSessionEnd)!;
+
+      // Первый — слабость, которая есть у каждого: один в своём разделе,
+      // первым на шкале согласия.
+      final CltItem weakness = part.sections[1].items.single;
+      expect(weakness.id, 'lie.defer');
+      expect(
+        weakness.text,
+        'Мне случалось откладывать на потом дело, которое нужно было '
+        'сделать сразу.',
+      );
+      // Отметка — несогласие: 1–3.
+      expect(<int>[
+        for (int value = 1; value <= 7; value++)
+          if (weakness.check!.flag.holds(value)) value,
+      ], <int>[1, 2, 3]);
+
+      // Второй — достоинство, которого нет ни у кого: предпоследним в
+      // разделе о полке.
+      final CltItem virtue = part.sections[3].items[3];
+      expect(virtue.id, 'lie.late');
+      expect(virtue.text, 'Я ни разу в жизни никуда не опоздал.');
+      // Отметка — согласие: 5–7.
+      expect(<int>[
+        for (int value = 1; value <= 7; value++)
+          if (virtue.check!.flag.holds(value)) value,
+      ], <int>[5, 6, 7]);
+
+      for (final CltItem item in <CltItem>[weakness, virtue]) {
+        expect(item.isCheck, isTrue, reason: item.id);
+        expect(item.reverse, isFalse, reason: item.id);
+        // Они не о сессии: сверять с журналом нечего.
+        expect(item.check!.fact, isNull, reason: item.id);
+        expect(item.check!.contradictions, isEmpty, reason: item.id);
+        expect(item.check!.contradicts(7, 5), isFalse, reason: item.id);
+        // Шкала — та же, что у соседей.
+        expect(item.scale.values, <int>[1, 2, 3, 4, 5, 6, 7]);
+      }
+      // Какой бы ответ ни дали на оба сразу одной кнопкой, отметка
+      // шкалы — ровно одна; середина шкалы — ни одной.
+      for (int value = 1; value <= 7; value++) {
+        final int flags =
+            (weakness.check!.flag.holds(value) ? 1 : 0) +
+            (virtue.check!.flag.holds(value) ? 1 : 0);
+        expect(flags, value == 4 ? 0 : 1, reason: 'ответ $value');
+      }
     });
 
     test('SNO-F-CLT-04: обычный пункт — не маркер', () {
@@ -477,7 +540,7 @@ void main() {
 
       final CltCheck check = parseCltScenario(scenario)
           .partFor(kCltSessionEnd)!
-          .sections[1]
+          .sections[2]
           .items
           .last
           .check!;
@@ -513,6 +576,7 @@ void main() {
       'orient.1',
       'chk.books',
       'orient.2',
+      'lie.late',
       'orient.3',
     ];
 
@@ -568,6 +632,7 @@ void main() {
       // маркер, — посчитаны на Python.
       expect(orderFor('67954332'), <String>[
         ...tlx,
+        'lie.defer',
         'gcl.2',
         'chk.focus',
         'ecl.3',
@@ -580,6 +645,7 @@ void main() {
       ]);
       expect(orderFor('38848228'), <String>[
         ...tlx,
+        'lie.defer',
         'icl.1',
         'ecl.1',
         'gcl.1',
@@ -592,6 +658,7 @@ void main() {
       ]);
       expect(orderFor('00000000'), <String>[
         ...tlx,
+        'lie.defer',
         'icl.1',
         'chk.focus',
         'ecl.2',
@@ -609,18 +676,21 @@ void main() {
       expect(orderFor('61311465'), orderFor('61311465'));
       expect(orderFor('61311465'), isNot(orderFor('12345670')));
       // Каждый пункт показан ровно один раз.
-      expect(orderFor('61311465').toSet(), hasLength(18));
+      expect(orderFor('61311465').toSet(), hasLength(20));
     });
 
     test('SNO-F-CLT-04: маркер перемешан с соседями — у разных участников '
         'он стоит на разных местах', () {
       // Места маркера М1 посчитаны на Python.
-      expect(orderFor('67954332').indexOf('chk.focus'), 7);
-      expect(orderFor('38848228').indexOf('chk.focus'), 9);
-      expect(orderFor('61311465').indexOf('chk.focus'), 13);
-      // Маркер М2 стоит на своём месте у всех.
+      expect(orderFor('67954332').indexOf('chk.focus'), 8);
+      expect(orderFor('38848228').indexOf('chk.focus'), 10);
+      expect(orderFor('61311465').indexOf('chk.focus'), 14);
+      // Маркер М2 и оба пункта шкалы лжи стоят на своих местах у всех:
+      // шкала лжи — седьмым и предпоследним.
       for (final String code in <String>['67954332', '38848228', '61311465']) {
-        expect(orderFor(code).indexOf('chk.books'), 15, reason: code);
+        expect(orderFor(code).indexOf('lie.defer'), 6, reason: code);
+        expect(orderFor(code).indexOf('chk.books'), 16, reason: code);
+        expect(orderFor(code).indexOf('lie.late'), 18, reason: code);
       }
     });
   });

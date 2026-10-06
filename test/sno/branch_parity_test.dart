@@ -255,7 +255,7 @@ void main() {
       expect(find.byType(SessionFinishScreen), findsOneWidget);
       expect(find.byType(ReaderScreen), findsNothing);
 
-      // Тест нагрузки: пароль организатора, вступление, восемнадцать
+      // Тест нагрузки: пароль организатора, вступление, двадцать
       // пунктов.
       await tap(tester, 'sno-finish-test');
       for (final String digit in password.split('')) {
@@ -264,7 +264,7 @@ void main() {
       await tap(tester, 'sno-clt-key-ok');
       expect(find.byType(LoadTestRunScreen), findsOneWidget);
       await tap(tester, 'sno-clt-begin');
-      for (int i = 0; i < 18; i++) {
+      for (int i = 0; i < 20; i++) {
         kit.time.pass(const Duration(seconds: 2));
         if (find.byKey(const Key('sno-clt-strip')).evaluate().isNotEmpty) {
           await tap(tester, 'sno-clt-more');
