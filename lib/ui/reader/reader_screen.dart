@@ -1131,7 +1131,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _flowNow.dispose();
     _lifecycle?.dispose();
     // SNO-F-MAP-01: книгу закрыли — время в ней остановилось.
-    widget.services.bookTimes?.closed(widget.book.id);
+    widget.services.bookTimes?.closed(_book.id);
     unawaited(_promptsWatch?.cancel());
     _textPassTimer?.cancel();
     _texts?.close();

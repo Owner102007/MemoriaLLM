@@ -119,8 +119,8 @@ void main() {
     final GalaxyScene scene = mapOf(tester).scene!;
     final List<GalaxyLabel> labels = scene.labels;
     expect(labels.length, lessThanOrEqualTo(kMaxLabels));
-    final Rect window = Offset.zero &
-        Size(scene.viewport.width, scene.viewport.height);
+    final Rect window =
+        Offset.zero & Size(scene.viewport.width, scene.viewport.height);
     for (int i = 0; i < labels.length; i++) {
       expect(
         window.contains(labels[i].rect.topLeft) &&
@@ -169,10 +169,7 @@ void main() {
       await seedGalaxy(data, kTwoGroups, withMap: false);
       final ShownReading reading = ShownReading(data);
       addTearDown(reading.dispose);
-      await pumpGalaxy(
-        tester,
-        testServices(data: data, shelfReading: reading),
-      );
+      await pumpGalaxy(tester, testServices(data: data, shelfReading: reading));
 
       expect(find.byKey(const Key('galaxy-no-map')), findsOneWidget);
       expect(find.text('Карта ещё не посчитана.'), findsOneWidget);
@@ -207,10 +204,7 @@ void main() {
           booksTotal: 14,
         ),
       );
-      await pumpGalaxy(
-        tester,
-        testServices(data: data, shelfReading: reading),
-      );
+      await pumpGalaxy(tester, testServices(data: data, shelfReading: reading));
 
       expect(find.byKey(const Key('galaxy-preparing')), findsOneWidget);
       expect(find.text('Книги ещё читаются · 9 из 14'), findsOneWidget);
@@ -378,10 +372,7 @@ void main() {
       final Offset after = placeOf(tester, 'a2');
       expect((after - before).distance, lessThan(0.01));
       // Соседняя книга отъехала: карта приблизилась, а не сдвинулась.
-      expect(
-        (placeOf(tester, 'a1') - after).distance,
-        greaterThan(100),
-      );
+      expect((placeOf(tester, 'a1') - after).distance, greaterThan(100));
 
       // Колесо от себя — обратно, и не дальше всей карты.
       await wheel(tester, before, 3000);
@@ -455,10 +446,7 @@ void main() {
       // Вся библиотека: подписаны только группы.
       GalaxyScene scene = mapOf(tester).scene!;
       expect(scene.stars, hasLength(40));
-      expect(
-        scene.labels.where((GalaxyLabel label) => !label.group),
-        isEmpty,
-      );
+      expect(scene.labels.where((GalaxyLabel label) => !label.group), isEmpty);
       expect(
         scene.labels.map((GalaxyLabel label) => label.text).toSet(),
         <String>{'Ангиология', 'Математика'},
@@ -582,8 +570,8 @@ void main() {
           await wheel(tester, placeOf(tester, 'b19'), dy);
         }
         final GalaxyScene scene = map.scene!;
-        final Rect window = Offset.zero &
-            Size(scene.viewport.width, scene.viewport.height);
+        final Rect window =
+            Offset.zero & Size(scene.viewport.width, scene.viewport.height);
         int checked = 0;
         for (int i = 0; i < scene.stars.length; i++) {
           final Offset at = scene.placeOf(i);
@@ -650,7 +638,12 @@ void main() {
 
       final Rect card = tester.getRect(find.byKey(const Key('galaxy-card-a2')));
       final Offset star = placeOf(tester, 'a2');
-      expect(card.width, kGalaxyCardWidth);
+      // Ширина — у самой карточки: у прямоугольника на экране она
+      // собрана из двух углов и расходится в последнем знаке.
+      expect(
+        tester.getSize(find.byKey(const Key('galaxy-card-a2'))).width,
+        kGalaxyCardWidth,
+      );
       expect(card.left, greaterThan(star.dx), reason: 'справа есть место');
       expect(card.left - star.dx, lessThan(40));
       expect(card.contains(star), isFalse, reason: 'точку карточка не закрыла');
@@ -747,10 +740,7 @@ void main() {
       // остались как были.
       final double read = radiusOf(tester, 'a2');
       final double unread = radiusOf(tester, 'a1');
-      expect(
-        (read * read) / (unread * unread),
-        closeTo(kStarAreaGain, 1e-9),
-      );
+      expect((read * read) / (unread * unread), closeTo(kStarAreaGain, 1e-9));
       expect(radiusOf(tester, 'm3'), unread);
       // Расположение от времени чтения не зависит.
       expect(placeOf(tester, 'a2'), place);

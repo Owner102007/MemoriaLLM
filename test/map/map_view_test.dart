@@ -40,12 +40,7 @@ int? bruteNearest(
 /// F-MAP-07, F-MAP-08, ALG-MAP-12, ALG-MAP-13: вид карты на экране —
 /// правила без виджетов.
 void main() {
-  const MapExtent square = MapExtent(
-    cx: 0,
-    cy: 0,
-    halfWidth: 1,
-    halfHeight: 1,
-  );
+  const MapExtent square = MapExtent(cx: 0, cy: 0, halfWidth: 1, halfHeight: 1);
 
   MapViewport phone({MapCamera? camera, MapExtent extent = square}) {
     return MapViewport(
@@ -140,14 +135,8 @@ void main() {
 
     test('ALG-MAP-13: масштаб — от 1 до 64, и не дальше', () {
       final MapViewport view = phone();
-      expect(
-        view.zoomedAt(sx: 180, sy: 320, factor: 0.25).scale,
-        kMapMinScale,
-      );
-      expect(
-        view.zoomedAt(sx: 180, sy: 320, factor: 1000).scale,
-        kMapMaxScale,
-      );
+      expect(view.zoomedAt(sx: 180, sy: 320, factor: 0.25).scale, kMapMinScale);
+      expect(view.zoomedAt(sx: 180, sy: 320, factor: 1000).scale, kMapMaxScale);
       expect(clampMapScale(double.nan), kMapMinScale);
       expect(clampMapScale(double.infinity), kMapMinScale);
       expect(clampMapScale(3), 3);
@@ -386,11 +375,7 @@ void main() {
         for (int i = 0; i < 60; i++)
           box(i, 10 + (i % 6) * 110, 10 + (i ~/ 6) * 30),
       ];
-      final List<LabelBox> placed = pickLabels(
-        wanted,
-        width: 700,
-        height: 400,
-      );
+      final List<LabelBox> placed = pickLabels(wanted, width: 700, height: 400);
       expect(placed, hasLength(kMaxLabels));
       expect(kMaxLabels, 24);
     });

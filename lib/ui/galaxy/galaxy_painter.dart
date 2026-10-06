@@ -274,12 +274,22 @@ class GalaxyScene {
       }
     }
 
+    final List<LabelBox> placed = pickLabels(
+      wanted,
+      width: width,
+      height: height,
+    );
+    // Текст подписи, не вставшей на кадр, больше не нужен: кадры идут
+    // один за другим, и ждать сборщика мусора разложенным абзацам
+    // незачем.
+    final Set<int> kept = <int>{for (final LabelBox box in placed) box.id};
+    for (int i = 0; i < painters.length; i++) {
+      if (!kept.contains(i)) {
+        painters[i].dispose();
+      }
+    }
     return <GalaxyLabel>[
-      for (final LabelBox box in pickLabels(
-        wanted,
-        width: width,
-        height: height,
-      ))
+      for (final LabelBox box in placed)
         GalaxyLabel(
           text: texts[box.id],
           painter: painters[box.id],
@@ -287,6 +297,14 @@ class GalaxyScene {
           group: kinds[box.id],
         ),
     ];
+  }
+
+  /// Отпускает разложенный текст подписей. Зовётся, когда кадр сменён
+  /// следующим: рисовать этот больше некому.
+  void dispose() {
+    for (final GalaxyLabel label in labels) {
+      label.painter.dispose();
+    }
   }
 }
 
@@ -323,9 +341,7 @@ class GalaxyPainter extends CustomPainter {
         continue;
       }
       final Color colour = scene.colours[i];
-      halo.color = colour.withValues(
-        alpha: scene.palette.isDark ? 0.22 : 0.16,
-      );
+      halo.color = colour.withValues(alpha: scene.palette.isDark ? 0.22 : 0.16);
       core.color = colour;
       canvas
         ..drawCircle(at, r * 2.2, halo)

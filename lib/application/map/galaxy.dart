@@ -114,12 +114,7 @@ Future<Galaxy> loadGalaxy({
     return Galaxy(status: GalaxyStatus.noMap, books: books.length);
   }
   stars.sort(
-    (GalaxyStar a, GalaxyStar b) =>
-        a.book.fileHash.compareTo(b.book.fileHash),
+    (GalaxyStar a, GalaxyStar b) => a.book.fileHash.compareTo(b.book.fileHash),
   );
-  return Galaxy(
-    status: GalaxyStatus.ready,
-    books: books.length,
-    stars: stars,
-  );
+  return Galaxy(status: GalaxyStatus.ready, books: books.length, stars: stars);
 }

@@ -33,7 +33,6 @@ import '../sno/recording/recording_guard.dart';
 import '../sno/recording/records.dart';
 import '../sno/recording/session.dart';
 import '../sno/reference_state.dart';
-import '../sno/settings_keys.dart';
 import 'build_info.dart';
 import 'data/app_data.dart';
 import 'library/cover_service.dart';

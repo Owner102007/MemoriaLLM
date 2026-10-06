@@ -16,9 +16,7 @@ void main() {
   setUp(() async => data = await openTestData());
   tearDown(() async => data.close());
 
-  Future<Galaxy> load({
-    Map<String, int> times = const <String, int>{},
-  }) {
+  Future<Galaxy> load({Map<String, int> times = const <String, int>{}}) {
     return loadGalaxy(
       library: data.library,
       categories: data.categories,
@@ -84,11 +82,14 @@ void main() {
       expect(galaxy.status, GalaxyStatus.ready);
       expect(galaxy.books, 6);
       expect(galaxy.missing, 0);
-      expect(
-        galaxy.stars.map((GalaxyStar star) => star.book.id),
-        <String>['a1', 'a2', 'a3', 'm1', 'm2', 'm3'],
-        reason: 'по возрастанию отпечатка файла, а не по полке',
-      );
+      expect(galaxy.stars.map((GalaxyStar star) => star.book.id), <String>[
+        'a1',
+        'a2',
+        'a3',
+        'm1',
+        'm2',
+        'm3',
+      ], reason: 'по возрастанию отпечатка файла, а не по полке');
       final GalaxyStar first = galaxy.stars.first;
       expect(first.x, -0.8);
       expect(first.y, -0.6);
@@ -105,8 +106,7 @@ void main() {
 
       expect(
         <String, String>{
-          for (final GalaxyStar star in galaxy.stars)
-            star.book.id: star.group,
+          for (final GalaxyStar star in galaxy.stars) star.book.id: star.group,
         },
         <String, String>{
           'a1': 'Ангиология',

@@ -103,7 +103,7 @@ void main() {
       expect(counter.times, <String, int>{'a': 3000});
     });
 
-    test('SNO-F-MAP-01: открытая книга снимает прежнее «не видно»', () {
+    test('SNO-F-MAP-01: «не видно» не переживает экран чтения', () {
       final BookTimes counter = times();
       counter.opened('a');
       counter.hidden();
@@ -114,6 +114,38 @@ void main() {
       counter.opened('b');
       now += 4000;
       expect(counter.times, <String, int>{'b': 4000});
+    });
+
+    test('SNO-F-MAP-01: экран чтения, снятый до открытия книги, «не '
+        'видно» за собой не оставляет', () {
+      final BookTimes counter = times();
+      // Книга ещё открывалась, когда приложение свернули, а экран
+      // чтения сняли: книга так и не открылась.
+      counter.hidden();
+      counter.closed('a');
+      now += 50000;
+      counter.opened('b');
+      now += 4000;
+      expect(counter.times, <String, int>{'b': 4000});
+    });
+
+    test('SNO-F-MAP-01: книга открылась, пока приложения не было видно, '
+        '— время идёт с возвращения', () async {
+      final BookTimes counter = times();
+      // Читатель нажал на толстую книгу и ушёл в другое приложение.
+      counter.hidden();
+      now += 3000;
+      counter.opened('a');
+      now += 600000;
+      expect(counter.times, isEmpty, reason: 'приложения не видно');
+
+      counter.shown();
+      now += 5000;
+      counter.closed('a');
+      await counter.settled();
+
+      expect(counter.times, <String, int>{'a': 5000});
+      expect(stored(), <String, Object?>{'a': 5000});
     });
 
     test('SNO-F-MAP-01: чужое закрытие ничего не меняет', () async {

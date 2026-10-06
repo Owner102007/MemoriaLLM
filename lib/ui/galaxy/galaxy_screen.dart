@@ -161,6 +161,11 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
 
   /// Открывает книгу в чтении — тем же экраном, что полка.
   Future<void> _openBook(Book book) async {
+    // BUG-47: сообщение полки («убрана с полки · Вернуть») не ложится
+    // на страницу — как и при открытии книги с самой полки.
+    ScaffoldMessenger.maybeOf(context)
+      ?..clearSnackBars()
+      ..removeCurrentSnackBar();
     widget.onReading?.call(true);
     try {
       await Navigator.of(context).push(
@@ -238,7 +243,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
             'Она складывается из текста книг полки.',
           ],
           action: reading == null ? null : 'Посчитать карту',
-          onAction: reading == null ? null : reading.start,
+          onAction: reading?.start,
         );
       case GalaxyStatus.ready:
         return Column(
@@ -520,6 +525,13 @@ class GalaxyMapState extends State<GalaxyMap> {
     }
   }
 
+  @override
+  void dispose() {
+    _scene?.dispose();
+    _scene = null;
+    super.dispose();
+  }
+
   void _measure() {
     final List<double> xs = <double>[
       for (final GalaxyStar star in widget.stars) star.x,
@@ -658,12 +670,17 @@ class GalaxyMapState extends State<GalaxyMap> {
           // оттенки сходятся в один, а текст остаётся читаемым.
           groupStyle: (theme.textTheme.titleSmall ?? const TextStyle())
               .copyWith(color: ink, fontWeight: FontWeight.w600),
-          titleStyle: (theme.textTheme.bodySmall ?? const TextStyle())
-              .copyWith(color: ink),
+          titleStyle: (theme.textTheme.bodySmall ?? const TextStyle()).copyWith(
+            color: ink,
+          ),
           textScaler: MediaQuery.textScalerOf(context),
           selected: selected,
         );
+        // Прежний кадр сменён: полотно получает нового художника в
+        // этом же построении, и старый текст подписей рисовать некому.
+        final GalaxyScene? previous = _scene;
         _scene = scene;
+        previous?.dispose();
         return ColoredBox(
           color: Color(palette.background),
           child: Stack(
@@ -892,9 +909,11 @@ class _CardCover extends StatelessWidget {
             File(path),
             fit: BoxFit.cover,
             filterQuality: FilterQuality.medium,
-            errorBuilder:
-                (BuildContext context, Object error, StackTrace? stack) =>
-                    placeholder,
+            errorBuilder: (
+              BuildContext context,
+              Object error,
+              StackTrace? stack,
+            ) => placeholder,
           );
         },
       ),

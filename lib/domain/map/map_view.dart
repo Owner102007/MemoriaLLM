@@ -167,7 +167,7 @@ class MapViewport {
   /// Сколько логических пикселей в единице карты при масштабе 1: карта
   /// вписана в окно целиком, с полями [kMapMargin].
   double get base {
-    final double usable = 1 - 2 * kMapMargin;
+    const double usable = 1 - 2 * kMapMargin;
     final double byWidth = width * usable / (2 * extent.halfWidth);
     final double byHeight = height * usable / (2 * extent.halfHeight);
     final double fit = math.min(byWidth, byHeight);
