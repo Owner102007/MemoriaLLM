@@ -66,9 +66,8 @@ void main() {
 
     test('SNO-F-CLT-02: после блока — один вопрос об усилии, девять '
         'делений, без пароля', () {
-      final CltPart part = parseCltScenario(
-        kBuiltinCltScenario,
-      ).partFor(kCltBlockEnd)!;
+      final CltPart part = parseCltScenario(kBuiltinCltScenario)
+          .partFor(kCltBlockEnd)!;
 
       expect(part.id, 'A');
       expect(part.password, isFalse);
@@ -87,9 +86,8 @@ void main() {
 
     test('SNO-F-CLT-02: в конце сессии — шестнадцать пунктов по паролю: '
         'шесть шкал нагрузки, семь о задании, три о полке', () {
-      final CltPart part = parseCltScenario(
-        kBuiltinCltScenario,
-      ).partFor(kCltSessionEnd)!;
+      final CltPart part = parseCltScenario(kBuiltinCltScenario)
+          .partFor(kCltSessionEnd)!;
 
       expect(part.id, 'B');
       expect(part.password, isTrue);
@@ -99,9 +97,7 @@ void main() {
         <String>['tlx', 'types', 'orient'],
       );
       expect(
-        <bool>[
-          for (final CltSection section in part.sections) section.shuffle,
-        ],
+        <bool>[for (final CltSection section in part.sections) section.shuffle],
         <bool>[false, true, false],
       );
       final CltSection tlx = part.sections[0];

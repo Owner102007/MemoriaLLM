@@ -350,9 +350,9 @@ Map<String, Object?> _groups(CltResult result) {
   }
   final Map<String, List<CltAnswer>> answered = <String, List<CltAnswer>>{};
   for (final CltAnswer answer in result.answers) {
-    answered.putIfAbsent(cltGroupOf(answer.item), () => <CltAnswer>[]).add(
-      answer,
-    );
+    answered
+        .putIfAbsent(cltGroupOf(answer.item), () => <CltAnswer>[])
+        .add(answer);
   }
   final Map<String, Object?> groups = <String, Object?>{};
   for (final MapEntry<String, List<CltAnswer>> group in answered.entries) {

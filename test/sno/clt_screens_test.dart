@@ -233,11 +233,16 @@ void main() {
         'одному, мышью, цифрами и стрелками', (WidgetTester tester) async {
       final LoadTestRun run = (await test.begin(kCltSessionEnd, dry: true))!;
       await tester.pumpWidget(
-        MaterialApp(home: LoadTestRunScreen(test: test, run: run)),
+        MaterialApp(
+          home: LoadTestRunScreen(test: test, run: run),
+        ),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Пробный проход: ответы не сохраняются'), findsOneWidget);
+      expect(
+        find.text('Пробный проход: ответы не сохраняются'),
+        findsOneWidget,
+      );
       expect(textOf(tester, 'sno-clt-progress'), '1 из 16');
       expect(
         textOf(tester, 'sno-clt-text'),
@@ -516,7 +521,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    Future<void> pumpTesting(WidgetTester tester, {bool withTest = true}) async {
+    Future<void> pumpTesting(
+      WidgetTester tester, {
+      bool withTest = true,
+    }) async {
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);

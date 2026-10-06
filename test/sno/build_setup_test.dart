@@ -492,7 +492,9 @@ void main() {
       // Пароль получают обе платформы — и только сборка ветви.
       expect(
         RegExp(
-          RegExp.escape(r'clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")'),
+          RegExp.escape(
+            r'clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")',
+          ),
         ).allMatches(ci),
         hasLength(2),
       );
@@ -505,9 +507,8 @@ void main() {
         hasLength(2),
       );
       // Релиз основного приложения о пароле теста не знает.
-      final String release = File(
-        '.github/workflows/release.yml',
-      ).readAsStringSync();
+      final String release = File('.github/workflows/release.yml')
+          .readAsStringSync();
       expect(release, isNot(contains('SNO_CLT_PASSWORD')));
     });
 
@@ -515,9 +516,8 @@ void main() {
       // Условие начинается с константы сборки: в основное приложение
       // код теста не попадает, а сборка ветви без пароля выходит без
       // пункта теста.
-      final String services = File(
-        'lib/application/app_services.dart',
-      ).readAsStringSync();
+      final String services = File('lib/application/app_services.dart')
+          .readAsStringSync();
       expect(
         services,
         matches(

@@ -251,7 +251,7 @@ CltScale _scale(
   }
   final Object? min = pick('min');
   final Object? max = pick('max');
-  final Object? step = pick('step') ?? 1;
+  final Object step = pick('step') ?? 1;
   if (min is! int || max is! int || step is! int) {
     _refuse('$what: края и шаг шкалы — не целые числа');
   }

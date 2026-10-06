@@ -190,10 +190,10 @@ void main() {
       final List<CltResult> results = readCltResults(files);
 
       // По времени начала части: сначала блок, потом итоговая.
-      expect(<String>[for (final CltResult result in results) result.part], [
-        'A',
-        'B',
-      ]);
+      expect(
+        <String>[for (final CltResult result in results) result.part],
+        ['A', 'B'],
+      );
       expect(CltResult.decode('не JSON'), isNull);
       expect(CltResult.decode('[]'), isNull);
     });

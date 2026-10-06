@@ -1978,9 +1978,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (_journal != null) {
       return Future<void>.value();
     }
-    return _reopening ??= _openAgain(
-      state,
-    ).whenComplete(() => _reopening = null);
+    return _reopening ??= _openAgain(state)
+        .whenComplete(() => _reopening = null);
   }
 
   Future<void> _openAgain(SessionState state) async {

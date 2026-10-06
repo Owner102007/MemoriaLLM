@@ -151,9 +151,8 @@ class LoadTest extends ChangeNotifier {
       }
       if (replaced == null) {
         _scenario = builtin;
-        _scenarioText = const JsonEncoder.withIndent(
-          '  ',
-        ).convert(kBuiltinCltScenario);
+        _scenarioText = const JsonEncoder.withIndent('  ')
+            .convert(kBuiltinCltScenario);
       } else {
         final CltScenario parsed = parseCltScenario(jsonDecode(replaced));
         if (parsed.id != builtin.id) {
@@ -560,7 +559,9 @@ class LoadTestRun extends ChangeNotifier {
       return;
     }
     final int moved = value + steps * scale.step;
-    choose(moved < scale.min ? scale.min : (moved > scale.max ? scale.max : moved));
+    choose(
+      moved < scale.min ? scale.min : (moved > scale.max ? scale.max : moved),
+    );
   }
 
   /// Возвращает к предыдущему пункту.

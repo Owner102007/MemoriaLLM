@@ -330,9 +330,8 @@ void main() {
     await store.put(name, 'clt/scores.json', '{"б":"«два»"}');
     await store.put(name, kRecordingFile, '{}');
     // Недописанный файл для записи не существует.
-    await File(
-      p.join(current(name).path, 'clt', 'x.json.part'),
-    ).writeAsString('{"оборва');
+    await File(p.join(current(name).path, 'clt', 'x.json.part'))
+        .writeAsString('{"оборва');
 
     expect(await store.has(name, 'clt/scores.json'), isTrue);
     expect(await store.has(name, 'clt/нет.json'), isFalse);
@@ -346,7 +345,8 @@ void main() {
     await store.put(name, 'clt/scores.json', '{}');
     expect((await store.texts(name, 'clt'))['clt/scores.json'], '{}');
     expect(
-      await File(p.join(current(name).path, 'clt', 'scores.json.part')).exists(),
+      await File(p.join(current(name).path, 'clt', 'scores.json.part'))
+          .exists(),
       isFalse,
     );
 

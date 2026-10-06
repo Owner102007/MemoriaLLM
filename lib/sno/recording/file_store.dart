@@ -127,9 +127,8 @@ class FileRecordingStore implements RecordingStore {
   @override
   Future<bool> has(String folder, String name) async {
     final Directory directory = await _folder(folder);
-    return File(
-      p.joinAll(<String>[directory.path, ...name.split('/')]),
-    ).exists();
+    return File(p.joinAll(<String>[directory.path, ...name.split('/')]))
+        .exists();
   }
 
   @override

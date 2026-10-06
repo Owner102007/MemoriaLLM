@@ -268,10 +268,7 @@ void main() {
         'final_items': 16,
         'files': <String>[answers],
       };
-      final Directory folder = await make(
-        files,
-        about: info()..['clt'] = clt,
-      );
+      final Directory folder = await make(files, about: info()..['clt'] = clt);
 
       final File archive = await packRecording(folder, now: () => packedAt);
 
@@ -301,9 +298,9 @@ void main() {
         expect(other.problem, isNull);
         expect(other.names, containsAll(files.keys));
       }
-      final Map<String, Object?> schema =
-          jsonDecode(await File('tool/sno_manifest.schema.json').readAsString())
-              as Map<String, Object?>;
+      final Map<String, Object?> schema = jsonDecode(
+        await File('tool/sno_manifest.schema.json').readAsString(),
+      ) as Map<String, Object?>;
       expect(schemaProblems(manifest, schema), isEmpty);
     });
 
