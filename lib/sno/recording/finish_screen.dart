@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../clt/load_test.dart';
+import '../clt/results.dart';
+import '../clt/test_screens.dart';
 import '../hold_button.dart';
 import 'journal_check.dart';
 import 'records.dart';
@@ -23,11 +26,13 @@ String describeStop(StopReason? by) {
 /// Экран один: пока он открыт, второй не открывается, а плашка,
 /// ведущая на него, не показывается ([RecordingSession.finishOpen]).
 /// [records] — записи на устройстве: с ними завершённая сессия тут же
-/// упаковывается в архив (SNO-F-REC-05).
+/// упаковывается в архив (SNO-F-REC-05). [test] — тест нагрузки: экран
+/// ведёт к нему до завершения сессии (SNO-F-CLT-01).
 Future<void> openSessionFinish(
   NavigatorState navigator,
   RecordingSession session, {
   DeviceRecords? records,
+  LoadTest? test,
 }) async {
   if (session.finishOpen.value || session.phase != RecordingPhase.stopped) {
     return;
@@ -37,7 +42,11 @@ Future<void> openSessionFinish(
     await navigator.push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) {
-          return SessionFinishScreen(session: session, records: records);
+          return SessionFinishScreen(
+            session: session,
+            records: records,
+            test: test,
+          );
         },
       ),
     );
@@ -50,8 +59,16 @@ Future<void> openSessionFinish(
 ///
 /// Всё, что происходит между остановкой записи и снятым замком полки.
 /// Экран ведёт экспериментатор: код участника стоит крупно — его
-/// сверяют с бланком, — а сессия завершается удержанием кнопки. Тест
-/// нагрузки встанет сюда же вместе со своей функцией.
+/// сверяют с бланком, — а сессия завершается удержанием кнопки.
+///
+/// **Тест нагрузки — здесь же, до завершения** (SNO-F-CLT-01,
+/// SNO-F-CLT-02): экран сам называет следующий шаг. Блок, оставшийся
+/// без оценки усилия, — его закрыла остановка записи — получает свой
+/// вопрос первым и без пароля; за ним «Cognitive load test» под замком:
+/// пароль вводит экспериментатор, участник проходит итоговую часть.
+/// Начатую и не оконченную часть экран предлагает продолжить.
+/// Завершить сессию можно и без теста — запись будет помечена «без
+/// теста нагрузки», о чём сказано под кнопкой.
 ///
 /// **До завершения журнал перечитан с диска** (SNO-F-REC-13): под
 /// числом событий стоит «Запись цела: … пропусков нет» или чего в ней
@@ -73,14 +90,22 @@ class SessionFinishScreen extends StatefulWidget {
   ///
   /// Без [records] сессия завершается, и экран закрывается сам: так
   /// было до архива, и так остаётся там, где записей на устройстве
-  /// нет.
-  const SessionFinishScreen({required this.session, this.records, super.key});
+  /// нет. Без [test] теста нагрузки на экране нет.
+  const SessionFinishScreen({
+    required this.session,
+    this.records,
+    this.test,
+    super.key,
+  });
 
   /// Сессия записи.
   final RecordingSession session;
 
   /// Записи на устройстве; `null` — упаковывать некому.
   final DeviceRecords? records;
+
+  /// Тест нагрузки; `null` — теста в сборке нет.
+  final LoadTest? test;
 
   @override
   State<SessionFinishScreen> createState() => _SessionFinishScreenState();
@@ -129,12 +154,29 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   /// Чем кончилось последнее действие над архивом — словами.
   String? _notice;
 
+  /// Открыт ли экран теста нагрузки: второй, пока открыт первый, не
+  /// открывается.
+  bool _testing = false;
+
   @override
   void initState() {
     super.initState();
     widget.session.addListener(_changed);
     widget.session.checked.addListener(_changed);
+    widget.test?.addListener(_changed);
     _remember();
+    unawaited(_readTest());
+  }
+
+  /// Сценарий и уже данные ответы теста — с диска (SNO-F-CLT-03):
+  /// после перезапуска приложения в памяти их нет.
+  Future<void> _readTest() async {
+    final LoadTest? test = widget.test;
+    if (test == null) {
+      return;
+    }
+    await test.load();
+    await test.refresh();
   }
 
   void _remember() {
@@ -165,7 +207,102 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   void dispose() {
     widget.session.removeListener(_changed);
     widget.session.checked.removeListener(_changed);
+    widget.test?.removeListener(_changed);
     super.dispose();
+  }
+
+  /// Открывает следующий шаг теста нагрузки: вопрос об усилии за блок
+  /// [block] или, без него, итоговую часть.
+  Future<void> _openTest(LoadTest test, {BlockMark? block}) async {
+    if (_testing) {
+      return;
+    }
+    final NavigatorState navigator = Navigator.of(context);
+    setState(() => _testing = true);
+    try {
+      if (block != null) {
+        await openBlockEffort(navigator, test, block);
+      } else {
+        await openFinalTest(navigator, test);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _testing = false);
+      }
+    }
+  }
+
+  /// Пройдена ли итоговая часть теста; `null` — теста на экране нет:
+  /// его нет в сборке, сценарий не принят или итоговой части в нём
+  /// нет.
+  bool? get _testDone {
+    final LoadTest? test = widget.test;
+    if (test == null || test.scenario == null || test.finalItems == 0) {
+      return null;
+    }
+    return test.finalDone;
+  }
+
+  /// Тест нагрузки на экране завершения (SNO-F-CLT-01, SNO-F-CLT-02):
+  /// что уже сделано и какой шаг следующий.
+  List<Widget> _test(ThemeData theme, {required bool open}) {
+    final LoadTest? test = widget.test;
+    if (test == null || !test.loaded) {
+      return const <Widget>[];
+    }
+    final String? problem = test.problem;
+    if (problem != null) {
+      return <Widget>[
+        const SizedBox(height: 20),
+        Text(
+          'Тест нагрузки недоступен: $problem.',
+          key: const Key('sno-finish-test-problem'),
+          style: TextStyle(color: theme.colorScheme.error),
+        ),
+      ];
+    }
+    final List<BlockMark> pending = test.pendingEfforts;
+    final CltResult? begun = test.finalResult;
+    final int items = test.finalItems;
+    final bool busy = !open || _closing || _testing;
+    return <Widget>[
+      const SizedBox(height: 20),
+      Text('Тест нагрузки', style: theme.textTheme.titleSmall),
+      const SizedBox(height: 8),
+      if (pending.isNotEmpty) ...<Widget>[
+        // Блок без оценки усилия — первым и без пароля.
+        FilledButton.tonal(
+          key: const Key('sno-finish-effort'),
+          onPressed: busy
+              ? null
+              : () => unawaited(_openTest(test, block: pending.first)),
+          child: Text('Блок ${pending.first.number}: оценить усилие'),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Блок закрыт без оценки усилия. Сначала она, потом итоговая '
+          'часть.',
+          style: theme.textTheme.bodySmall,
+        ),
+      ] else if (items > 0 && test.finalDone)
+        Text(
+          'Итоговая часть пройдена: $items из $items',
+          key: const Key('sno-finish-test-done'),
+        )
+      else if (items > 0)
+        FilledButton.tonalIcon(
+          key: const Key('sno-finish-test'),
+          onPressed: busy ? null : () => unawaited(_openTest(test)),
+          icon: Icon(
+            test.unlocked ? Icons.lock_open_outlined : Icons.lock_outline,
+          ),
+          label: Text(
+            begun == null
+                ? 'Cognitive load test'
+                : 'Продолжить тест · ${begun.answers.length} из $items',
+          ),
+        ),
+    ];
   }
 
   void _changed() {
@@ -477,13 +614,26 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
             style: TextStyle(color: theme.colorScheme.error),
           ),
         ),
+      ..._test(theme, open: open),
       const SizedBox(height: 28),
       HoldToConfirmButton(
         key: const Key('sno-finish-hold'),
         label: _closing ? 'Завершаю…' : 'Удерживайте, чтобы завершить сессию',
-        onConfirmed: _closing || !open ? null : () => unawaited(_finish()),
+        onConfirmed: _closing || _testing || !open
+            ? null
+            : () => unawaited(_finish()),
       ),
       const SizedBox(height: 8),
+      if (_testDone == false)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Text(
+            'Итоговая часть теста не пройдена: запись будет помечена «без '
+            'теста нагрузки».',
+            key: const Key('sno-finish-test-missing'),
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
       Text(
         widget.records == null
             ? 'После завершения полка открывается, а код участника '

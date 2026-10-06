@@ -55,8 +55,19 @@ abstract interface class RecordingStore {
   /// событий либо поток сырого ввода ([kInputFile], SNO-F-REC-11).
   Future<JournalFile> openJournal(String folder, {String name = kEventsFile});
 
-  /// Кладёт в папку записи файл [name] целиком.
+  /// Кладёт в папку записи файл [name] целиком. Имя может называть
+  /// подпапку через `/` — `clt/scores.json` (SNO-F-CLT-03): подпапка
+  /// заводится сама.
   Future<void> put(String folder, String name, String content);
+
+  /// Файлы подпапки [subfolder] записи [folder] — имя вместе с
+  /// подпапкой (`clt/…json`) и содержимое; пусто — подпапки нет
+  /// (SNO-F-CLT-03).
+  ///
+  /// Недописанные файлы (`.part`) и то, что не читается как текст, в
+  /// ответ не попадают: по этим файлам запись узнаёт, что участник уже
+  /// ответил, и половина ответа хуже его отсутствия.
+  Future<Map<String, String>> texts(String folder, String subfolder);
 
   /// Лежит ли в папке записи файл [name].
   Future<bool> has(String folder, String name);

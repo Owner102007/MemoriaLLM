@@ -251,6 +251,62 @@ void main() {
       );
     });
 
+    test('SNO-F-CLT-03: ответы теста нагрузки лежат в архиве подпапкой, а '
+        'итог теста — в манифесте', () async {
+      const String answers = 'clt/sno-clt-main_B_2400000.json';
+      const String scores = 'clt/scores.json';
+      final Map<String, String> files = <String, String>{
+        ...usual(),
+        answers: '{"schema": "sno2026-clt-result/1", "part": "B"}',
+        scores: '{"schema": "sno2026-clt-scores/1"}',
+        'clt/scenario.json': '{"schema": "sno2026-clt/1"}',
+      };
+      final Map<String, Object?> clt = <String, Object?>{
+        'effort_answers': 2,
+        'final': 'complete',
+        'final_answers': 16,
+        'final_items': 16,
+        'files': <String>[answers],
+      };
+      final Directory folder = await make(
+        files,
+        about: info()..['clt'] = clt,
+      );
+
+      final File archive = await packRecording(folder, now: () => packedAt);
+
+      final Map<String, Uint8List> entries = await entriesOf(archive);
+      final Map<String, Object?> manifest = manifestOf(entries);
+      // Итог теста переходит в манифест как был.
+      expect(manifest['clt'], clt);
+      // Файлы подпапки — в архиве под своими именами и в перечне с
+      // суммами, как остальные.
+      expect(utf8.decode(entries[answers]!), files[answers]);
+      expect(utf8.decode(entries[scores]!), files[scores]);
+      expect(
+        (manifest['files']! as Map<String, Object?>).keys,
+        unorderedEquals(files.keys),
+      );
+      final List<int> bytes = utf8.encode(files[answers]!);
+      expect(fileOf(manifest, answers), <String, Object?>{
+        'bytes': bytes.length,
+        'sha256': '${sha256.convert(bytes)}',
+      });
+      // Архив сходится со своим манифестом и открывается чужой
+      // реализацией.
+      expect((await checkArchive(archive)).intact, isTrue);
+      final OtherZip? other = await readWithPython(archive);
+      // Python нет только на машине разработчика: в CI он есть.
+      if (other != null) {
+        expect(other.problem, isNull);
+        expect(other.names, containsAll(files.keys));
+      }
+      final Map<String, Object?> schema =
+          jsonDecode(await File('tool/sno_manifest.schema.json').readAsString())
+              as Map<String, Object?>;
+      expect(schemaProblems(manifest, schema), isEmpty);
+    });
+
     test('SNO-F-REC-05: потока нет — нет и файла, без заглушек', () async {
       final Directory folder = await make(<String, String>{
         kEventsFile: journal(2),

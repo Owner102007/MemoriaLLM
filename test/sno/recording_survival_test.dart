@@ -363,7 +363,8 @@ void main() {
       kit.session.dispose();
     });
 
-    test('SNO-F-REC-13: итог проверки доживает до завершения сессии', () async {
+    test('SNO-F-REC-13, SNO-F-CLT-03: итог проверки при завершении сессии '
+        'говорит обо всём журнале', () async {
       final SessionKit kit = SessionKit();
       await kit.session.start(code);
       final String folder = kit.folder;
@@ -373,12 +374,14 @@ void main() {
 
       await kit.session.finish();
 
-      // Событие завершения дописано после проверки: в ней его нет.
+      // SNO-F-CLT-03: событие завершения дописано после первой
+      // проверки, и при завершении журнал перечитан ещё раз — итог
+      // говорит обо всём журнале, а не о журнале на миг остановки.
       expect(kit.store.lines(folder).length, lines + 1);
       final Map<String, Object?> recording = recordingOf(kit, folder);
       expect(recording['finished'], isTrue);
       expect(recording['check'], <String, Object?>{
-        'lines': lines,
+        'lines': lines + 1,
         'gaps': 0,
         'torn': false,
       });

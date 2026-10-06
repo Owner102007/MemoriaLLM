@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -21,6 +22,7 @@ import '../infrastructure/files/platform_storage_access.dart';
 import '../infrastructure/pdf/pdfrx_document.dart';
 import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
+import '../sno/clt/load_test.dart';
 import '../sno/flags.dart';
 import '../sno/index/shelf_reading.dart';
 import '../sno/index/shelf_reading_log.dart';
@@ -61,6 +63,7 @@ class AppServices {
     this.archiveSearch = noArchiveSearch,
     this.recording,
     this.records,
+    this.loadTest,
     this.shelfReading,
     this.bookTimes,
     CoverService? covers,
@@ -128,6 +131,12 @@ class AppServices {
       records: Sno.recording && recording != null
           ? _recordsFor(recording)
           : null,
+      // SNO-F-CLT-01: тест нагрузки — только в сборке ветви, которой
+      // при сборке дали пароль теста (SNO-DIV-06): без пароля теста в
+      // приложении нет вовсе.
+      loadTest: Sno.recording && recording != null && _hasLoadTest
+          ? _loadTestFor(recording)
+          : null,
       // SNO-F-IDX-04: текст всех книг и карта заранее — только в ветви
       // II. Условие — константа сборки: в основное приложение и в
       // ветвь I проход по полке не попадает.
@@ -173,6 +182,33 @@ class AppServices {
   }
 
   /// Папка `Записи/` в папке данных приложения.
+  /// Дан ли сборке пароль теста нагрузки (SNO-DIV-06).
+  static bool get _hasLoadTest => Sno.cltPassword.isNotEmpty;
+
+  /// Тест нагрузки сборки ветви СНО2026 (SNO-F-CLT-01, SNO-F-CLT-02):
+  /// сценарий загружается при запуске — встроенный либо файл
+  /// `clt/<id>.json` из папки данных приложения.
+  static LoadTest _loadTestFor(RecordingSession recording) {
+    final LoadTest test = LoadTest(
+      session: recording,
+      password: Sno.cltPassword,
+      override: _scenarioOverride,
+    );
+    unawaited(test.load());
+    return test;
+  }
+
+  /// Файл, подменяющий встроенный сценарий теста [id]; `null` — его
+  /// нет.
+  static Future<String?> _scenarioOverride(String id) async {
+    final Directory root = await appDataDirectory();
+    final File file = File(p.join(root.path, kCltOverrideFolder, '$id.json'));
+    if (!await file.exists()) {
+      return null;
+    }
+    return file.readAsString();
+  }
+
   static Future<Directory> _recordsFolder() async {
     final Directory root = await appDataDirectory();
     return Directory(p.join(root.path, FileRecordingStore.folderName));
@@ -214,6 +250,9 @@ class AppServices {
         'commit': appCommit,
         'flags': Sno.flags.enabledNames,
       },
+      // SNO-F-CLT-03: итог теста нагрузки в сведениях записи — только
+      // там, где тест есть.
+      hasTest: _hasLoadTest,
       status: const PlatformDeviceStatus(),
       // SNO-F-REC-13: служба переднего плана есть только у телефона —
       // свёрнутое окно на ПК никто не выгружает.
@@ -267,6 +306,11 @@ class AppServices {
   /// Записи на устройстве — архивы завершённых сессий (SNO-F-REC-07);
   /// `null` — записей в этой сборке нет.
   final DeviceRecords? records;
+
+  /// Тест нагрузки (SNO-F-CLT-01); `null` — теста в этой сборке нет:
+  /// основное приложение, сборка ветви без пароля теста и тесты,
+  /// которым он не нужен.
+  final LoadTest? loadTest;
 
   /// Подготовка книг полки — текст всех книг и карта (SNO-F-IDX-04);
   /// `null` — в этой сборке её нет: основное приложение, ветвь I и

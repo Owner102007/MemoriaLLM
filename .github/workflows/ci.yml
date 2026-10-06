@@ -290,8 +290,10 @@ jobs:
   # разрешения) и своё значение `SNO_BRANCH` (поведение приложения) —
   # задаются они вместе, здесь.
   #
-  # Сборки ветвей в этом прогоне — проверочные: литературы внутри нет,
-  # пароля теста тоже. Сборки для участников собираются иначе.
+  # Литературы в сборках ветвей нет: она приходит архивом (шаг 13).
+  # Пароль теста нагрузки сборки ветвей получают из секрета
+  # `SNO_CLT_PASSWORD` (шаг 24, SNO-F-CLT-01): без него теста в сборке
+  # нет вовсе. Основная сборка пароля не получает никогда.
   android:
     name: Сборка APK · ${{ matrix.title }}
     needs: analyze
@@ -378,6 +380,7 @@ jobs:
           SNO_KEYSTORE_PASSWORD: ${{ secrets.SNO_KEYSTORE_PASSWORD }}
           SNO_KEY_ALIAS: ${{ secrets.SNO_KEY_ALIAS }}
           SNO_KEY_PASSWORD: ${{ secrets.SNO_KEY_PASSWORD }}
+          SNO_CLT_PASSWORD: ${{ secrets.SNO_CLT_PASSWORD }}
         run: |
           set -eu
           if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_KEYSTORE_BASE64:-}" ]; then
@@ -396,11 +399,22 @@ jobs:
               | tr 'A-F' 'a-f' | tr -d ': \r' > "$RUNNER_TEMP/sno.sha256" || true
           fi
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+          # Пароль теста нагрузки — только сборке ветви и только из
+          # секрета (SNO-F-CLT-01, SNO-DIV-06): в исходниках его нет.
+          # Секрета нет (чужой форк, запрос на слияние со стороны) —
+          # сборка ветви выходит без теста, и об этом сказано.
+          clt=()
+          if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_CLT_PASSWORD:-}" ]; then
+            clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")
+          elif [ -n "${SNO_BRANCH:-}" ]; then
+            echo "::warning title=Тест нагрузки::секрета SNO_CLT_PASSWORD нет — сборка ветви $SNO_BRANCH выходит без теста нагрузки"
+          fi
           flutter build apk --release \
             --flavor "$FLAVOR" \
             --dart-define=SNO_BRANCH="${SNO_BRANCH:-}" \
             --dart-define=APP_VERSION="$version-$SUFFIX" \
-            --dart-define=APP_COMMIT="$GITHUB_SHA"
+            --dart-define=APP_COMMIT="$GITHUB_SHA" \
+            ${clt[@]+"${clt[@]}"}
           rm -f "$RUNNER_TEMP/sno.jks"
           mkdir -p out
           cp "build/app/outputs/flutter-apk/app-$FLAVOR-release.apk" "out/$FILE"
@@ -695,13 +709,25 @@ jobs:
           # Читает CMake раннера: от неё зависит заголовок окна.
           SNO_BRANCH: ${{ matrix.branch }}
           SUFFIX: ${{ matrix.suffix }}
+          SNO_CLT_PASSWORD: ${{ secrets.SNO_CLT_PASSWORD }}
         run: |
           set -eu
           version=$(grep '^version:' pubspec.yaml | cut -d' ' -f2 | cut -d'+' -f1)
+          # Пароль теста нагрузки — только сборке ветви и только из
+          # секрета (SNO-F-CLT-01, SNO-DIV-06): в исходниках его нет.
+          # Секрета нет (чужой форк, запрос на слияние со стороны) —
+          # сборка ветви выходит без теста, и об этом сказано.
+          clt=()
+          if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_CLT_PASSWORD:-}" ]; then
+            clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")
+          elif [ -n "${SNO_BRANCH:-}" ]; then
+            echo "::warning title=Тест нагрузки::секрета SNO_CLT_PASSWORD нет — сборка ветви $SNO_BRANCH выходит без теста нагрузки"
+          fi
           flutter build windows --release \
             --dart-define=SNO_BRANCH="${SNO_BRANCH:-}" \
             --dart-define=APP_VERSION="$version-$SUFFIX" \
-            --dart-define=APP_COMMIT="$GITHUB_SHA"
+            --dart-define=APP_COMMIT="$GITHUB_SHA" \
+            ${clt[@]+"${clt[@]}"}
 
       # Заголовок окна — строка внутри memoria.exe, в UTF-16 и с нулевым
       # знаком в конце. У сборки ветви он свой, у основной — прежний, и

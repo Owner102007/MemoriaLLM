@@ -74,6 +74,7 @@ class DeviceRecord {
     this.stoppedBy,
     this.sharedAt,
     this.copiedAt,
+    this.test,
   });
 
   /// Имя записи — имя архива без `.zip`:
@@ -118,6 +119,16 @@ class DeviceRecord {
   /// выбранную экспериментатором, на телефоне — в «Загрузки»
   /// (SNO-F-REC-13); `null` — копии нет.
   final DateTime? copiedAt;
+
+  /// Пройдена ли итоговая часть теста нагрузки (SNO-F-CLT-03):
+  /// `complete`, `partial`, `none` или `unknown`, как в манифесте;
+  /// `null` — о тесте запись не говорит: сборка без теста или запись
+  /// прежней сборки.
+  final String? test;
+
+  /// Нет ли в записи пройденного теста нагрузки, хотя в сборке он был:
+  /// итоговую часть не начинали или не окончили.
+  bool get withoutTest => test == 'none' || test == 'partial';
 
   /// Имя файла архива.
   String get fileName => '$name.zip';
@@ -313,6 +324,7 @@ String describeRecord(
     if (duration != null) describeRecordingTime(duration),
     describeFileSize(record.bytes),
     if (record.interrupted) 'прервана',
+    if (record.withoutTest) 'без теста нагрузки',
     if (!record.packed) 'не упакована',
     if (record.damaged) 'архив повреждён',
     state,
@@ -470,6 +482,7 @@ DeviceRecord recordFrom({
   final Object? events = field(recording, 'events');
   final Object? stopped = field(recording, 'stopped_by');
   final Object? code = field(participant, 'code');
+  final Object? test = field(info?['clt'], 'final');
   return DeviceRecord(
     name: name,
     bytes: bytes,
@@ -483,5 +496,6 @@ DeviceRecord recordFrom({
     stoppedBy: stopped is String ? stopped : null,
     sharedAt: moment(state['shared_at']),
     copiedAt: moment(state['copied_at']),
+    test: test is String ? test : null,
   );
 }

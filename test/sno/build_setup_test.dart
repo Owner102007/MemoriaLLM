@@ -481,6 +481,56 @@ void main() {
     });
   });
 
+  group('SNO-F-CLT-01: пароль теста нагрузки приходит при сборке', () {
+    test('SNO-F-CLT-01: сборке ветви пароль даёт секрет, в исходниках его '
+        'нет', () {
+      // SNO-DIV-06: в коде — только чтение переменной сборки.
+      final String flags = File('lib/sno/flags.dart').readAsStringSync();
+      expect(flags, contains("String.fromEnvironment('SNO_CLT_PASSWORD')"));
+      final String ci = File('.github/workflows/ci.yml').readAsStringSync();
+      expect(ci, contains('secrets.SNO_CLT_PASSWORD'));
+      // Пароль получают обе платформы — и только сборка ветви.
+      expect(
+        RegExp(
+          RegExp.escape(r'clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")'),
+        ).allMatches(ci),
+        hasLength(2),
+      );
+      expect(
+        RegExp(
+          RegExp.escape(
+            r'if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_CLT_PASSWORD:-}" ]',
+          ),
+        ).allMatches(ci),
+        hasLength(2),
+      );
+      // Релиз основного приложения о пароле теста не знает.
+      final String release = File(
+        '.github/workflows/release.yml',
+      ).readAsStringSync();
+      expect(release, isNot(contains('SNO_CLT_PASSWORD')));
+    });
+
+    test('SNO-F-CLT-01: тест нагрузки заводится только в сборке с паролем', () {
+      // Условие начинается с константы сборки: в основное приложение
+      // код теста не попадает, а сборка ветви без пароля выходит без
+      // пункта теста.
+      final String services = File(
+        'lib/application/app_services.dart',
+      ).readAsStringSync();
+      expect(
+        services,
+        matches(
+          RegExp(
+            r'loadTest:\s*Sno\.recording\s*&&\s*recording != null\s*&&'
+            r'\s*_hasLoadTest',
+          ),
+        ),
+      );
+      expect(services, contains('Sno.cltPassword.isNotEmpty'));
+    });
+  });
+
   group('SNO-F-IDX-04: подготовка книг — только в ветви II', () {
     test('SNO-F-IDX-04: проход по полке заводится под флагом карты', () {
       // Условие — константа сборки: в основном приложении и в ветви I

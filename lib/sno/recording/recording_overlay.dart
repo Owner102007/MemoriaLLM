@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/navigation/sections.dart';
 import '../../ui/claimed_pointers.dart';
+import '../clt/load_test.dart';
 import '../hold_button.dart';
 import 'finish_screen.dart';
 import 'input_layer.dart';
@@ -53,11 +54,16 @@ class RecordingOverlay extends StatefulWidget {
     required this.navigator,
     required this.child,
     this.records,
+    this.test,
     super.key,
   });
 
   /// Сессия записи.
   final RecordingSession session;
+
+  /// Тест нагрузки: экран завершения ведёт к нему (SNO-F-CLT-01);
+  /// `null` — теста в сборке нет.
+  final LoadTest? test;
 
   /// Записи на устройстве: экран завершения упаковывает с ними запись
   /// в архив (SNO-F-REC-05); `null` — упаковывать некому.
@@ -218,7 +224,12 @@ class _RecordingOverlayState extends State<RecordingOverlay>
       return;
     }
     unawaited(
-      openSessionFinish(navigator, widget.session, records: widget.records),
+      openSessionFinish(
+        navigator,
+        widget.session,
+        records: widget.records,
+        test: widget.test,
+      ),
     );
   }
 

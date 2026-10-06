@@ -144,12 +144,35 @@ class MemoryRecordingStore implements RecordingStore {
 
   @override
   Future<void> put(String folder, String name, String content) async {
+    final String? refused = failPutPrefix;
+    if (refused != null && name.startsWith(refused)) {
+      throw StateError('файл не пишется');
+    }
     files.putIfAbsent(folder, () => <String, String>{})[name] = content;
   }
 
   @override
   Future<bool> has(String folder, String name) async {
     return files[folder]?.containsKey(name) ?? false;
+  }
+
+  /// Отказывать ли в записи файлов, чьё имя начинается с этого: «диск
+  /// отказал» на файлах теста нагрузки (SNO-F-CLT-03).
+  String? failPutPrefix;
+
+  /// Отказывать ли в чтении подпапок: «диск не ответил».
+  bool failTexts = false;
+
+  @override
+  Future<Map<String, String>> texts(String folder, String subfolder) async {
+    if (failTexts) {
+      throw StateError('подпапка не читается');
+    }
+    return <String, String>{
+      for (final MapEntry<String, String> file
+          in (files[folder] ?? const <String, String>{}).entries)
+        if (file.key.startsWith('$subfolder/')) file.key: file.value,
+    };
   }
 
   @override
@@ -432,7 +455,8 @@ class SessionKit {
   /// Собирает сессию на памяти и подменённом времени.
   ///
   /// [settings] и [store] передаются, когда «приложение перезапущено»:
-  /// новая сессия поднимается на том, что оставила прежняя.
+  /// новая сессия поднимается на том, что оставила прежняя. [hasTest]
+  /// — есть ли в «сборке» тест нагрузки (SNO-F-CLT-03).
   SessionKit({
     MemorySettings? settings,
     MemoryRecordingStore? store,
@@ -442,6 +466,7 @@ class SessionKit {
     Duration planned = kRecordingLength,
     this.guard,
     this.passport = const <String, Object?>{},
+    bool hasTest = false,
   }) : settings = settings ?? MemorySettings(),
        store = store ?? MemoryRecordingStore(),
        time =
@@ -461,6 +486,7 @@ class SessionKit {
       branch: 'I',
       device: 'a91f3c',
       build: const <String, Object?>{'version': 'test'},
+      hasTest: hasTest,
       status: this.status,
       guard: guard ?? const NoRecordingGuard(),
       passport: () async => passport,
@@ -747,6 +773,7 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
       stoppedBy: record.stoppedBy,
       sharedAt: sharedAt ?? record.sharedAt,
       copiedAt: copiedAt ?? record.copiedAt,
+      test: record.test,
     );
   }
 
@@ -874,6 +901,7 @@ class MemoryDeviceRecords extends ChangeNotifier implements DeviceRecords {
         events: record.events,
         stoppedBy: record.stoppedBy,
         sharedAt: record.sharedAt,
+        test: record.test,
       ),
     );
     notifyListeners();

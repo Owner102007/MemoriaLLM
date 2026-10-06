@@ -85,15 +85,51 @@ class FileRecordingStore implements RecordingStore {
     final Directory directory = await _folder(folder);
     // Через временный файл: оборванная запись не оставит под именем
     // сведений половину JSON.
-    final File part = File(p.join(directory.path, '$name.part'));
+    // Имя может называть подпапку (`clt/…`, SNO-F-CLT-03): она
+    // заводится здесь же.
+    final String path = p.joinAll(<String>[directory.path, ...name.split('/')]);
+    final Directory parent = Directory(p.dirname(path));
+    if (!await parent.exists()) {
+      await parent.create(recursive: true);
+    }
+    final File part = File('$path.part');
     await part.writeAsString(content, flush: true);
-    await part.rename(p.join(directory.path, name));
+    await part.rename(path);
+  }
+
+  @override
+  Future<Map<String, String>> texts(String folder, String subfolder) async {
+    final Directory directory = Directory(
+      p.join((await _folder(folder)).path, subfolder),
+    );
+    if (!await directory.exists()) {
+      return const <String, String>{};
+    }
+    final Map<String, String> found = <String, String>{};
+    await for (final FileSystemEntity entity in directory.list(
+      followLinks: false,
+    )) {
+      if (entity is! File || entity.path.endsWith('.part')) {
+        continue;
+      }
+      try {
+        found['$subfolder/${p.basename(entity.path)}'] = await entity
+            .readAsString();
+      } on FileSystemException {
+        // Файл не прочитался: для записи его нет.
+      } on FormatException {
+        // Не текст: для записи его нет.
+      }
+    }
+    return found;
   }
 
   @override
   Future<bool> has(String folder, String name) async {
     final Directory directory = await _folder(folder);
-    return File(p.join(directory.path, name)).exists();
+    return File(
+      p.joinAll(<String>[directory.path, ...name.split('/')]),
+    ).exists();
   }
 
   @override

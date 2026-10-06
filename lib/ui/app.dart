@@ -85,6 +85,7 @@ class _MemoriaAppState extends State<MemoriaApp> {
       session: session,
       navigator: _navigator,
       records: widget.services.records,
+      test: widget.services.loadTest,
       child: page,
     );
   }

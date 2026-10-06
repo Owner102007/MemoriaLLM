@@ -322,4 +322,40 @@ void main() {
       second.dispose();
     });
   });
+
+  test('SNO-F-CLT-03: файлы теста нагрузки лежат в подпапке записи и '
+      'читаются оттуда', () async {
+    final String name = await store.create('запись');
+    await store.put(name, 'clt/sno-clt-main_A_1000.json', '{"a":1}');
+    await store.put(name, 'clt/scores.json', '{"б":"«два»"}');
+    await store.put(name, kRecordingFile, '{}');
+    // Недописанный файл для записи не существует.
+    await File(
+      p.join(current(name).path, 'clt', 'x.json.part'),
+    ).writeAsString('{"оборва');
+
+    expect(await store.has(name, 'clt/scores.json'), isTrue);
+    expect(await store.has(name, 'clt/нет.json'), isFalse);
+    expect(await store.texts(name, 'clt'), <String, String>{
+      'clt/sno-clt-main_A_1000.json': '{"a":1}',
+      'clt/scores.json': '{"б":"«два»"}',
+    });
+    // Файлы самой папки записи в подпапку не попадают.
+    expect(await store.texts(name, 'нет'), isEmpty);
+    // Файл переписывается целиком, без следа временного.
+    await store.put(name, 'clt/scores.json', '{}');
+    expect((await store.texts(name, 'clt'))['clt/scores.json'], '{}');
+    expect(
+      await File(p.join(current(name).path, 'clt', 'scores.json.part')).exists(),
+      isFalse,
+    );
+
+    // Завершённая запись: подпапка переезжает вместе с ней.
+    await store.finish(name);
+    expect((await store.texts(name, 'clt')).keys, hasLength(2));
+    expect(
+      await File(p.join(records.path, name, 'clt', 'scores.json')).exists(),
+      isTrue,
+    );
+  });
 }

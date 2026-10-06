@@ -13,6 +13,8 @@ import '../domain/library/scan_mark.dart';
 import '../domain/library/shelf_archive.dart';
 import '../domain/library/storage_access.dart';
 import '../domain/reading/reader_document.dart';
+import 'clt/load_test.dart';
+import 'clt/test_screens.dart';
 import 'flags.dart';
 import 'hold_button.dart';
 import 'index/shelf_reading.dart';
@@ -170,10 +172,11 @@ String describeReadiness(Readiness readiness) {
 /// Раздел «Тестирование» сборок ветвей СНО2026 (SNO-F-CFG-03).
 ///
 /// Единственное место инструментов исследования: всё остальное
-/// приложение остаётся читалкой. Пунктов-заглушек здесь нет —
-/// cognitive load test и записи на устройстве появляются вместе со
-/// своими функциями. Сейчас в разделе: код устройства, запись сессии
-/// (SNO-F-REC-01), блок «Для экспериментатора» с архивами литературы
+/// приложение остаётся читалкой. Пунктов-заглушек здесь нет: пункт
+/// появляется вместе со своей функцией. Сейчас в разделе: код
+/// устройства, запись сессии (SNO-F-REC-01), тест нагрузки
+/// (SNO-F-CLT-01), записи на устройстве (SNO-F-REC-07), блок «Для
+/// экспериментатора» с архивами литературы
 /// (SNO-F-LIT-03, SNO-F-LIT-01) и эталонным состоянием (SNO-F-CFG-04),
 /// сведения о ветви (SNO-F-CFG-01).
 ///
@@ -190,6 +193,14 @@ String describeReadiness(Readiness readiness) {
 /// устройстве · 3, не отправлено 1» — она ведёт к списку архивов. Во
 /// время записи и до «Завершить сессию» строки нет: участнику чужие
 /// записи не показываются.
+///
+/// **Тест нагрузки** (SNO-F-CLT-01, SNO-F-CLT-02, `clt/load_test.dart`).
+/// «Закончить» у блока задаёт участнику один вопрос об усилии — без
+/// пароля. Пункт «Cognitive load test» ведёт к итоговой части: пока
+/// запись идёт, он закрыт; после остановки ведёт на экран завершения
+/// сессии, где тест проходят по паролю; без записи — пробный проход
+/// экспериментатора, тоже по паролю, ответы никуда не пишутся. В
+/// сборке без пароля теста пункта нет вовсе.
 ///
 /// **Архив с литературой приложение находит само** (SNO-F-LIT-03).
 /// Когда блок «Для экспериментатора» раскрыт, устройство обходится
@@ -333,6 +344,9 @@ class _TestingScreenState extends State<TestingScreen>
   /// Записи на устройстве; `null` — в этой сборке их нет.
   DeviceRecords? get _records => widget.services.records;
 
+  /// Тест нагрузки; `null` — в этой сборке его нет.
+  LoadTest? get _test => widget.services.loadTest;
+
   /// Начата ли и не завершена ли сессия: пока это так, полку менять
   /// нельзя ничем — ни архивом, ни сбросом.
   bool get _sessionOpen => _session?.locked ?? false;
@@ -343,6 +357,8 @@ class _TestingScreenState extends State<TestingScreen>
     WidgetsBinding.instance.addObserver(this);
     _session?.addListener(_sessionChanged);
     _records?.addListener(_recordsChanged);
+    _test?.addListener(_recordsChanged);
+    unawaited(_test?.load());
     unawaited(_refreshReadiness());
     unawaited(_refreshRecords());
   }
@@ -374,6 +390,7 @@ class _TestingScreenState extends State<TestingScreen>
     WidgetsBinding.instance.removeObserver(this);
     _session?.removeListener(_sessionChanged);
     _records?.removeListener(_recordsChanged);
+    _test?.removeListener(_recordsChanged);
     _searchRun++;
     unawaited(_searching?.cancel());
     super.dispose();
@@ -495,7 +512,48 @@ class _TestingScreenState extends State<TestingScreen>
         Navigator.of(context, rootNavigator: true),
         session,
         records: _records,
+        test: _test,
       ),
+    );
+  }
+
+  /// Пункт «Cognitive load test» (SNO-F-CLT-01, кадр SNO-SCR-01.1).
+  ///
+  /// Что он делает, зависит от записи: пока она идёт — ничего, тест
+  /// проходят после остановки; сессия остановлена — ведёт на экран её
+  /// завершения, где стоит тест; записи нет — пробный проход
+  /// экспериментатора. Пароль спрашивается в любом случае.
+  Widget _testTile(RecordingSession session, LoadTest test) {
+    final String? problem = test.problem;
+    final String about;
+    VoidCallback? onTap;
+    if (problem != null) {
+      about = 'Недоступен: $problem';
+    } else if (session.phase == RecordingPhase.recording) {
+      about = 'После остановки записи';
+    } else if (session.phase == RecordingPhase.stopped) {
+      about = 'На экране завершения сессии';
+      onTap = () => _openFinish(session);
+    } else {
+      about = 'Пробный проход: ответы не сохраняются';
+      onTap = () {
+        unawaited(
+          openFinalTest(
+            Navigator.of(context, rootNavigator: true),
+            test,
+            dry: true,
+          ),
+        );
+      };
+    }
+    final bool busy = _busy || _resetting || _starting || !test.loaded;
+    return ListTile(
+      key: const Key('sno-clt'),
+      leading: const Icon(Icons.lock_outline),
+      title: const Text('Cognitive load test'),
+      subtitle: Text(about, key: const Key('sno-clt-about')),
+      enabled: onTap != null && !busy,
+      onTap: busy ? null : onTap,
     );
   }
 
@@ -534,6 +592,11 @@ class _TestingScreenState extends State<TestingScreen>
     if (!identical(oldWidget.services.records, widget.services.records)) {
       oldWidget.services.records?.removeListener(_recordsChanged);
       _records?.addListener(_recordsChanged);
+    }
+    if (!identical(oldWidget.services.loadTest, widget.services.loadTest)) {
+      oldWidget.services.loadTest?.removeListener(_recordsChanged);
+      _test?.addListener(_recordsChanged);
+      unawaited(_test?.load());
     }
   }
 
@@ -1275,7 +1338,18 @@ class _TestingScreenState extends State<TestingScreen>
         trailing: FilledButton.tonalIcon(
           key: const Key('sno-block-end'),
           onPressed: () {
-            session.endBlock();
+            final LoadTest? test = _test;
+            if (session.endBlock() && test != null) {
+              // SNO-F-CLT-02: за закрытым блоком — вопрос об усилии,
+              // без пароля; блок закрывает экспериментатор.
+              unawaited(
+                openBlockEffort(
+                  Navigator.of(context, rootNavigator: true),
+                  test,
+                  session.blocks.last,
+                ),
+              );
+            }
             // Следующему блоку номер предложит запись.
             setState(() => _blockNumber = null);
           },
@@ -1333,6 +1407,14 @@ class _TestingScreenState extends State<TestingScreen>
     final String device = deviceCodeOf(widget.services.data.clock.nodeId);
     final RecordingSession? session = _session;
     final DeviceRecords? records = _records;
+    final LoadTest? test = _test;
+    // Чего в сборке нет, сказано словами: пустого места на месте
+    // пункта экспериментатор не поймёт.
+    final String? missing = session == null
+        ? 'Запись, тест и записи появятся здесь следующими сборками.'
+        : test == null
+        ? 'Теста нагрузки в этой сборке нет: она собрана без пароля теста.'
+        : null;
     return Scaffold(
       appBar: AppBar(title: const Text('Тестирование')),
       body: Align(
@@ -1348,6 +1430,7 @@ class _TestingScreenState extends State<TestingScreen>
                 subtitle: Text(device),
               ),
               if (session != null) ..._recording(theme, session),
+              if (session != null && test != null) _testTile(session, test),
               // SNO-F-REC-07: записи видны, только пока сессии нет —
               // участнику чужие записи не показываются. Пока идёт
               // старт записи, строки тоже нет: список, открытый в этот
@@ -1369,19 +1452,17 @@ class _TestingScreenState extends State<TestingScreen>
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _openRecords(records),
                 ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: Text(
-                  session == null
-                      ? 'Запись, тест и записи появятся здесь следующими '
-                            'сборками.'
-                      : records == null
-                      ? 'Тест и записи на устройстве появятся здесь '
-                            'следующими сборками.'
-                      : 'Тест появится здесь следующей сборкой.',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ),
+              if (missing != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                  child: Text(
+                    missing,
+                    key: const Key('sno-missing'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                )
+              else
+                const SizedBox(height: 12),
               const Divider(),
               ExpansionTile(
                 key: const Key('sno-experimenter'),

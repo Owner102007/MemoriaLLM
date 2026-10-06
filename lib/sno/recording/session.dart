@@ -24,6 +24,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../../domain/settings/app_settings.dart';
+import '../clt/results.dart';
 import '../participant_code.dart';
 import '../settings_keys.dart';
 import 'action_log.dart';
@@ -536,7 +537,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// сборки. [endSnapshot] — снимок конца записи (SNO-ALG-REC-03): то
   /// же состояние и то, что участник оставил; не назван — берётся
   /// [snapshot]. [guard] держит приложение живым в фоне, [passport]
-  /// называет устройство в сведениях записи (SNO-F-REC-13). [now],
+  /// называет устройство в сведениях записи (SNO-F-REC-13). [hasTest]
+  /// — есть ли в сборке тест нагрузки (SNO-F-CLT-03). [now],
   /// [monotonic], [ticker] и [random] подменяются в тестах.
   RecordingSession({
     required AppSettingsRepository settings,
@@ -547,6 +549,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     this.branch = '',
     this.device = '',
     this.build = const <String, Object?>{},
+    this.hasTest = false,
     DeviceStatus status = const NoDeviceStatus(),
     RecordingGuard guard = const NoRecordingGuard(),
     PassportSource passport = noPassport,
@@ -591,6 +594,12 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Сведения о сборке для записи: версия, коммит, флаги.
   final Map<String, Object?> build;
+
+  /// Есть ли в сборке тест нагрузки (SNO-F-CLT-03): тогда завершение
+  /// сессии считает его показатели и пишет в сведения записи, пройдена
+  /// ли итоговая часть. Сборка без пароля теста о тесте не говорит
+  /// ничего — и запись «без теста нагрузки» не помечается.
+  final bool hasTest;
 
   /// Где участник находится: подставляется в каждое событие.
   final RecordingContext context = RecordingContext();
@@ -1635,7 +1644,14 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Пишет сведения о записи — участник, устройство, сборка, часы,
   /// остановка. Из них соберётся манифест архива (SNO-F-REC-05).
-  Future<void> _putInfo(SessionState state, {required bool finished}) async {
+  ///
+  /// [test] — итог теста нагрузки (SNO-F-CLT-03): он известен только
+  /// при завершении сессии.
+  Future<void> _putInfo(
+    SessionState state, {
+    required bool finished,
+    Map<String, Object?>? test,
+  }) async {
     final int? duration = state.durationMs;
     final bool running = state.phase == RecordingPhase.recording;
     final JournalCheck? check = state.check;
@@ -1687,6 +1703,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
           if (inputCheck != null) 'check': inputCheck.toJson(),
           'blind': kInputBlind,
         },
+      // SNO-F-CLT-03: пройден ли тест нагрузки и где лежат ответы.
+      if (test != null) 'clt': test,
     };
     try {
       await _store.put(state.folder, kRecordingFile, _pretty(info));
@@ -1943,6 +1961,132 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     final String encoded = safe();
     _seq++;
     journal.add(encoded);
+  }
+
+  /// Время `t` по часам записи для ответов теста нагрузки
+  /// (SNO-F-CLT-03): после остановки оно идёт дальше, как у строк
+  /// журнала с пометкой `post`.
+  int get testNow => _tNow();
+
+  /// Идущее открытие журнала остановленной записи: два события подряд
+  /// не открывают его дважды.
+  Future<void>? _reopening;
+
+  /// Открывает журнал записи заново, если он закрыт: сессию подняли
+  /// после перезапуска приложения.
+  Future<void> _reopenJournal(SessionState state) {
+    if (_journal != null) {
+      return Future<void>.value();
+    }
+    return _reopening ??= _openAgain(
+      state,
+    ).whenComplete(() => _reopening = null);
+  }
+
+  Future<void> _openAgain(SessionState state) async {
+    try {
+      _journal = EventJournal(await _store.openJournal(state.folder));
+    } on Object {
+      _journal = null;
+    }
+  }
+
+  /// Событие теста нагрузки (SNO-F-CLT-01, SNO-F-CLT-03).
+  ///
+  /// Пока запись идёт — обычная строка журнала: вопрос об усилии
+  /// задаётся между блоками, посреди записи. После остановки — строка
+  /// с пометкой `post`, и на диск она ложится сразу: секундного счёта,
+  /// который сбросил бы журнал, уже нет. Без сессии и после начала её
+  /// завершения не пишется ничего.
+  Future<void> logTest(
+    SnoEventType type, {
+    Map<String, Object?> data = const <String, Object?>{},
+  }) async {
+    final SessionState? state = _state;
+    if (state == null || _finishRun != null) {
+      return;
+    }
+    if (_logging) {
+      _write(type, data: data);
+      return;
+    }
+    if (state.phase != RecordingPhase.stopped) {
+      return;
+    }
+    await _reopenJournal(state);
+    if (_finishRun != null) {
+      return;
+    }
+    _write(type, data: data, post: true);
+    await _journal?.flush();
+  }
+
+  /// Кладёт файл теста нагрузки [name] в папку записи (SNO-F-CLT-03).
+  /// Отвечает, лёг ли он; отказ диска помнится, как отказ журнала.
+  Future<bool> putTestFile(String name, String content) async {
+    final SessionState? state = _state;
+    if (state == null) {
+      return false;
+    }
+    try {
+      await _store.put(state.folder, name, content);
+      return true;
+    } on Object {
+      _failed = true;
+      _notify();
+      return false;
+    }
+  }
+
+  /// Лежит ли в папке записи файл теста [name].
+  Future<bool> hasTestFile(String name) async {
+    final SessionState? state = _state;
+    if (state == null) {
+      return false;
+    }
+    try {
+      return await _store.has(state.folder, name);
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Файлы теста нагрузки этой записи: имя → текст; пусто — теста не
+  /// начинали, сессии нет или папка не прочиталась.
+  Future<Map<String, String>> testFiles() async {
+    final SessionState? state = _state;
+    if (state == null) {
+      return const <String, String>{};
+    }
+    try {
+      return await _store.texts(state.folder, kCltFolder);
+    } on Object {
+      return const <String, String>{};
+    }
+  }
+
+  /// Подводит итог теста нагрузки при завершении сессии (SNO-F-CLT-03):
+  /// считает показатели по файлам ответов и кладёт их рядом, а в
+  /// сведения записи отдаёт, пройдена ли итоговая часть.
+  ///
+  /// Здесь, а не на экране теста: завершить сессию можно и после
+  /// перезапуска приложения, и итог обязан выйти тем же.
+  Future<Map<String, Object?>> _closeTest(String folder) async {
+    final Map<String, String> files;
+    try {
+      files = await _store.texts(folder, kCltFolder);
+    } on Object {
+      return const <String, Object?>{'final': kCltFinalUnknown};
+    }
+    final List<CltResult> results = readCltResults(files);
+    if (results.isNotEmpty) {
+      try {
+        await _store.put(folder, kCltScoresFile, _pretty(cltScores(results)));
+      } on Object {
+        _failed = true;
+      }
+    }
+    return summarizeClt(results);
   }
 
   /// Вышло ли время записи.
@@ -2358,14 +2502,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (state == null || state.phase != RecordingPhase.stopped) {
       return;
     }
-    if (_journal == null) {
-      // Сессию подняли после перезапуска: журнал открывается заново.
-      try {
-        _journal = EventJournal(await _store.openJournal(state.folder));
-      } on Object {
-        _journal = null;
-      }
-    }
+    // Сессию подняли после перезапуска: журнал открывается заново.
+    await _reopenJournal(state);
     _write(SnoEventType.sessionFinish, post: true);
     final SessionState done = state.stopped(
       by: state.stoppedBy ?? StopReason.crash,
@@ -2382,7 +2520,23 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (journal?.failed ?? false) {
       _failed = true;
     }
-    await _putInfo(done, finished: true);
+    // SNO-F-CLT-03: журнал перечитывается ещё раз — после остановки в
+    // него легли события теста нагрузки и само завершение, и `check`
+    // обязан говорить обо всём журнале, а не о журнале на миг
+    // остановки. Не перечитался — остаётся прежний итог.
+    final JournalCheck? recheck = await _checkJournal(
+      state.folder,
+      expected: _seq,
+      late: state.check?.late ?? (state.stoppedBy == StopReason.crash),
+    );
+    final Map<String, Object?>? test = hasTest
+        ? await _closeTest(state.folder)
+        : null;
+    await _putInfo(
+      recheck == null ? done : done.withCheck(recheck),
+      finished: true,
+      test: test,
+    );
     try {
       await _store.finish(state.folder);
     } on Object {

@@ -13,6 +13,7 @@ import 'package:memoria/domain/reading/full_screen.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/volume_keys.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
+import 'package:memoria/sno/clt/load_test.dart';
 import 'package:memoria/sno/index/shelf_reading.dart';
 import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/session.dart';
@@ -43,6 +44,8 @@ import 'fake_reading.dart';
 /// [recording] — сессия записи (SNO-F-REC-01); без неё записи в
 /// приложении нет, как в основной сборке. [records] — записи на
 /// устройстве (SNO-F-REC-07); без них нет ни списка, ни архива.
+/// [loadTest] — тест нагрузки (SNO-F-CLT-01); без него теста нет, как
+/// в сборке без пароля теста.
 /// [shelfReading] — подготовка книг полки (SNO-F-IDX-04); без неё её
 /// нет, как в основной сборке и в ветви I. [bookTimes] — счёт времени
 /// в книгах (SNO-F-MAP-01); без него время не считается.
@@ -63,6 +66,7 @@ AppServices testServices({
   ArchiveSearch? archiveSearch,
   RecordingSession? recording,
   DeviceRecords? records,
+  LoadTest? loadTest,
   ShelfReading? shelfReading,
   BookTimes? bookTimes,
 }) {
@@ -84,6 +88,7 @@ AppServices testServices({
     archiveSearch: archiveSearch ?? fakeArchiveSearch(archives),
     recording: recording,
     records: records,
+    loadTest: loadTest,
     shelfReading: shelfReading,
     bookTimes: bookTimes,
     covers: CoverService(
