@@ -17,6 +17,7 @@ import 'package:memoria/domain/theme/app_palette.dart';
 import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/participant_code.dart';
 import 'package:memoria/sno/recording/finish_screen.dart';
+import 'package:memoria/sno/recording/recording_overlay.dart';
 import 'package:memoria/sno/recording/session.dart';
 import 'package:memoria/sno/testing_screen.dart';
 import 'package:memoria/ui/app.dart';
@@ -630,10 +631,21 @@ void main() {
     });
   });
 
-  group('SNO-F-CFG-03: «Блок №» в «Тестировании»', () {
+  group('SNO-F-REC-15: «Тестирование» и завершение без блоков', () {
+    /// Раздел под слоем записи, как в приложении: остановленная запись
+    /// сама ставит экран завершения сессии (SNO-F-REC-16).
     Future<void> pumpTesting(WidgetTester tester) async {
+      final GlobalKey<NavigatorState> navigator = GlobalKey<NavigatorState>();
       await tester.pumpWidget(
         MaterialApp(
+          navigatorKey: navigator,
+          builder: (BuildContext context, Widget? page) {
+            return RecordingOverlay(
+              session: kit.session,
+              navigator: navigator,
+              child: page!,
+            );
+          },
           home: TestingScreen(
             services: testServices(data: data, recording: kit.session),
             flags: BranchFlags.of('I'),
@@ -643,96 +655,49 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    Future<void> tap(WidgetTester tester, String key) async {
-      await tester.tap(find.byKey(Key(key)));
-      await tester.pumpAndSettle();
-    }
-
-    testWidgets('SNO-F-CFG-03: блок начат и закончен; длительность и '
-        'отлучка — на экране завершения', (WidgetTester tester) async {
+    testWidgets('SNO-F-REC-15: строки «Блок №» нет ни до записи, ни во '
+        'время; отлучка — на экране завершения', (WidgetTester tester) async {
       await pumpTesting(tester);
-      // Запись не идёт — строки «Блок №» нет.
       expect(find.byKey(const Key('sno-block')), findsNothing);
 
       await kit.session.start(code);
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('sno-block')), findsOneWidget);
-      expect(textOf(tester, 'sno-block-number'), '1');
-      // Номер можно поправить.
-      await tap(tester, 'sno-block-more');
-      expect(textOf(tester, 'sno-block-number'), '2');
-      await tap(tester, 'sno-block-less');
-      expect(textOf(tester, 'sno-block-number'), '1');
-
-      await tap(tester, 'sno-block-start');
+      expect(find.byKey(const Key('sno-recording')), findsOneWidget);
       expect(find.byKey(const Key('sno-block')), findsNothing);
-      expect(find.byKey(const Key('sno-block-running')), findsOneWidget);
+      expect(find.byKey(const Key('sno-block-start')), findsNothing);
+      expect(find.textContaining('Блок'), findsNothing);
       kit.run(65);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-block-passed'), 'Блок 1 идёт · 01:05');
-
-      await tap(tester, 'sno-block-end');
-      // Следующему блоку предложен следующий номер.
-      expect(textOf(tester, 'sno-block-number'), '2');
 
       kit.session.appState('inactive');
       kit.time.pass(const Duration(seconds: 9));
       kit.session.appState('resumed');
       await kit.session.stop(StopReason.experimenter);
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('sno-block')), findsNothing);
 
-      await tap(tester, 'sno-session-finish');
       expect(find.byType(SessionFinishScreen), findsOneWidget);
-      expect(textOf(tester, 'sno-finish-blocks'), 'Блоки: 1 — 1:05');
+      expect(find.byKey(const Key('sno-finish-blocks')), findsNothing);
+      expect(find.textContaining('Блок'), findsNothing);
       expect(
         textOf(tester, 'sno-finish-away'),
         'Уходил из приложения: 1 раз, 0:09',
       );
-      expect(only('block.start'), hasLength(1));
-      expect(dataOf(only('block.end').single), <String, Object?>{
-        'n': 1,
-        'duration_ms': 65000,
-        'by': 'experimenter',
-      });
+      expect(only('block.start'), isEmpty);
+      expect(only('block.end'), isEmpty);
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-CFG-03: номер блока, набранный руками, следующей '
-        'записи не достаётся', (WidgetTester tester) async {
-      await pumpTesting(tester);
-      await kit.session.start(code);
-      await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-more');
-      await tap(tester, 'sno-block-more');
-      expect(textOf(tester, 'sno-block-number'), '3');
-
-      // Запись остановили, сессию завершили — пришёл следующий участник.
-      await kit.session.stop(StopReason.experimenter);
-      await kit.session.finish();
-      await tester.pumpAndSettle();
-      expect(kit.session.phase, RecordingPhase.idle);
-      await kit.session.start(code);
-      await tester.pumpAndSettle();
-
-      expect(textOf(tester, 'sno-block-number'), '1');
-
-      await unmount(tester);
-    });
-
-    testWidgets('SNO-F-CFG-03: блоков не отмечали, участник не уходил — '
-        'лишних строк на экране завершения нет', (WidgetTester tester) async {
+    testWidgets('SNO-F-REC-10: участник не уходил — строки об отлучках на '
+        'экране завершения нет', (WidgetTester tester) async {
       await pumpTesting(tester);
       await kit.session.start(code);
       kit.run(30);
       await kit.session.stop(StopReason.experimenter);
       await tester.pumpAndSettle();
 
-      await tap(tester, 'sno-session-finish');
       expect(find.byType(SessionFinishScreen), findsOneWidget);
       expect(find.byKey(const Key('sno-finish-events')), findsOneWidget);
-      expect(find.byKey(const Key('sno-finish-blocks')), findsNothing);
       expect(find.byKey(const Key('sno-finish-away')), findsNothing);
 
       await unmount(tester);

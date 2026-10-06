@@ -1,10 +1,17 @@
 /// Сценарий теста нагрузки как данные (SNO-F-CLT-02).
 ///
 /// Что спрашивается у участника исследования СНО2026 и в каком порядке,
-/// задаёт не код, а сценарий `sno2026-clt/1`: части (после блока и в
-/// конце сессии), разделы и пункты. Пункт одного вида — шкала с
-/// делениями и подписями краёв; сценарий с другим видом пункта
-/// отвергается целиком, а не показывается наполовину.
+/// задаёт не код, а сценарий `sno2026-clt/1`: части, разделы и пункты.
+/// Пункт одного вида — шкала с делениями и подписями краёв; сценарий с
+/// другим видом пункта отвергается целиком, а не показывается
+/// наполовину.
+///
+/// С шага 25 у формата три необязательные добавки (SNO-F-CLT-04):
+/// `intro` у части — экран перед первым пунктом; `role: "check"` у
+/// пункта — маркер честности, в показатели он не входит; `flag` и
+/// `verify` у маркера — при каком ответе ставится отметка и с каким
+/// числом из записи ответ сверяется. Сценарий без них читается как
+/// раньше.
 ///
 /// Состав теста и формулировки — в описательной структуре, заметка
 /// «Cognitive load test — состав теста». Встроенный сценарий —
@@ -17,6 +24,10 @@ library;
 const String kCltScenarioSchema = 'sno2026-clt/1';
 
 /// Часть показывается, когда экспериментатор закончил блок.
+///
+/// Вид остаётся разбираемым, но такую часть ничто не начинает: с шага
+/// 25 блоков нет, и кнопки, которая её показывала, тоже
+/// (SNO-F-REC-15).
 const String kCltBlockEnd = 'block_end';
 
 /// Часть показывается в конце сессии, после остановки записи.
@@ -27,6 +38,18 @@ const String kCltScaleType = 'likert';
 
 /// Больше делений у шкалы не бывает: 0…100 с шагом 1.
 const int kCltMaxDivisions = 101;
+
+/// Роль пункта-маркера честности (SNO-F-CLT-04).
+const String kCltRoleCheck = 'check';
+
+/// Число из записи: сколько раз участник уходил из приложения.
+const String kCltFactAwayCount = 'away_count';
+
+/// Число из записи: сколько раз участник открывал книги.
+const String kCltFactBookOpens = 'book_opens';
+
+/// Числа из записи, с которыми умеет сверяться маркер.
+const Set<String> kCltFacts = <String>{kCltFactAwayCount, kCltFactBookOpens};
 
 /// Почему сценарий не принят.
 class CltScenarioException implements Exception {
@@ -80,6 +103,84 @@ class CltScale {
   int mirrored(int value) => min + max - value;
 }
 
+/// Границы значения: от [min] до [max], любая из них может не стоять.
+class CltRange {
+  /// Создаёт границы.
+  const CltRange({this.min, this.max});
+
+  /// Нижняя граница, включительно; `null` — её нет.
+  final int? min;
+
+  /// Верхняя граница, включительно; `null` — её нет.
+  final int? max;
+
+  /// Лежит ли [value] в границах.
+  bool holds(int value) {
+    final int? low = min;
+    final int? high = max;
+    return (low == null || value >= low) && (high == null || value <= high);
+  }
+
+  /// Запись для файла показателей.
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      if (min != null) 'min': min,
+      if (max != null) 'max': max,
+    };
+  }
+}
+
+/// Когда ответ маркера расходится с записью: ответ в границах
+/// [answer], а число из записи — в границах [fact].
+class CltContradiction {
+  /// Создаёт правило.
+  const CltContradiction({required this.answer, required this.fact});
+
+  /// Границы ответа.
+  final CltRange answer;
+
+  /// Границы числа из записи.
+  final CltRange fact;
+
+  /// Расходится ли ответ [value] с числом из записи [known].
+  bool holds(int value, int known) => answer.holds(value) && fact.holds(known);
+}
+
+/// Что делает пункт маркером честности (SNO-F-CLT-04).
+///
+/// Маркер на экране ничем не отличается от обычного пункта; в
+/// показатели нагрузки он не входит. Отметка ставится по самому ответу
+/// ([flag]) — и отдельно ответ сверяется с тем, что участник делал на
+/// самом деле: с числом [fact] из записи его действий.
+class CltCheck {
+  /// Создаёт маркер.
+  const CltCheck({
+    required this.flag,
+    this.fact,
+    this.contradictions = const <CltContradiction>[],
+  });
+
+  /// При каком ответе ставится отметка.
+  final CltRange flag;
+
+  /// С каким числом из записи сверяется ответ ([kCltFacts]); `null` —
+  /// маркер с записью не сверяется.
+  final String? fact;
+
+  /// Когда ответ расходится с записью.
+  final List<CltContradiction> contradictions;
+
+  /// Расходится ли ответ [value] с числом из записи [known].
+  bool contradicts(int value, int known) {
+    for (final CltContradiction rule in contradictions) {
+      if (rule.holds(value, known)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
 /// Пункт теста: вопрос или утверждение и шкала к нему.
 class CltItem {
   /// Создаёт пункт.
@@ -88,6 +189,7 @@ class CltItem {
     required this.text,
     required this.scale,
     this.reverse = false,
+    this.check,
   });
 
   /// Идентификатор: `tlx.mental`, `ecl.2`.
@@ -101,6 +203,12 @@ class CltItem {
 
   /// Считается ли пункт наоборот.
   final bool reverse;
+
+  /// Правила маркера честности; `null` — пункт обычный.
+  final CltCheck? check;
+
+  /// Маркер ли это: в показатели нагрузки он не входит.
+  bool get isCheck => check != null;
 
   /// Группа пункта — его идентификатор до последней точки: `tlx`,
   /// `ecl`. Показатели считаются по группам (`results.dart`).
@@ -145,10 +253,16 @@ class CltPart {
     required this.when,
     required this.password,
     required this.sections,
+    this.intro,
   });
 
   /// Идентификатор части: `A`, `B`.
   final String id;
+
+  /// Что написано на экране перед первым пунктом (SNO-F-CLT-04);
+  /// `null` — такого экрана нет. Ответа он не требует и в счёт пунктов
+  /// не входит.
+  final String? intro;
 
   /// Когда часть показывается: [kCltBlockEnd] или [kCltSessionEnd].
   final String when;
@@ -166,6 +280,13 @@ class CltPart {
       count += section.items.length;
     }
     return count;
+  }
+
+  /// Пункты части в порядке сценария.
+  List<CltItem> get items {
+    return <CltItem>[
+      for (final CltSection section in sections) ...section.items,
+    ];
   }
 }
 
@@ -302,6 +423,75 @@ CltScale _scale(
   );
 }
 
+CltRange _range(
+  Map<String, Object?> raw,
+  String what, {
+  String min = 'min',
+  String max = 'max',
+}) {
+  final Object? low = raw[min];
+  final Object? high = raw[max];
+  if ((low != null && low is! int) || (high != null && high is! int)) {
+    _refuse('$what: границы — не целые числа');
+  }
+  if (low == null && high == null) {
+    _refuse('$what: не названа ни одна граница');
+  }
+  if (low is int && high is int && low > high) {
+    _refuse('$what: нижняя граница больше верхней');
+  }
+  return CltRange(min: low is int ? low : null, max: high is int ? high : null);
+}
+
+/// Правила маркера честности пункта [id] (SNO-F-CLT-04); `null` —
+/// пункт обычный.
+CltCheck? _check(Map<String, Object?> item, String id) {
+  final Object? role = item['role'];
+  if (role == null) {
+    if (item['flag'] != null || item['verify'] != null) {
+      _refuse('пункт «$id»: отметка и сверка есть только у маркера');
+    }
+    return null;
+  }
+  if (role != kCltRoleCheck) {
+    _refuse('пункт «$id»: неизвестная роль «$role»');
+  }
+  final CltRange flag = _range(
+    _object(item['flag'], 'пункт «$id»: отметка'),
+    'пункт «$id»: отметка',
+  );
+  final Object? verify = item['verify'];
+  if (verify == null) {
+    return CltCheck(flag: flag);
+  }
+  final Map<String, Object?> told = _object(verify, 'пункт «$id»: сверка');
+  final Object? fact = told['fact'];
+  if (fact is! String || !kCltFacts.contains(fact)) {
+    _refuse('пункт «$id»: неизвестно, с чем сверять («$fact»)');
+  }
+  final Object? listed = told['contradiction'];
+  final List<CltContradiction> rules = <CltContradiction>[];
+  for (final Object? entry
+      in listed is List<Object?> ? listed : <Object?>[listed]) {
+    final String what = 'пункт «$id»: расхождение с записью';
+    final Map<String, Object?> rule = _object(entry, what);
+    rules.add(
+      CltContradiction(
+        answer: _range(rule, what, min: 'answer_min', max: 'answer_max'),
+        fact: _range(rule, what, min: 'fact_min', max: 'fact_max'),
+      ),
+    );
+  }
+  if (rules.isEmpty) {
+    _refuse('пункт «$id»: не сказано, когда ответ расходится с записью');
+  }
+  return CltCheck(
+    flag: flag,
+    fact: fact,
+    contradictions: List<CltContradiction>.unmodifiable(rules),
+  );
+}
+
 List<CltItem> _items(
   Object? raw,
   Map<String, Object?>? shared,
@@ -321,6 +511,7 @@ List<CltItem> _items(
         text: _text(item['text'], 'пункт «$id»: текст'),
         scale: _scale(item, shared, 'пункт «$id»'),
         reverse: _flag(item['reverse'], 'пункт «$id»: обратный счёт'),
+        check: _check(item, id),
       ),
     );
   }
@@ -331,8 +522,9 @@ List<CltItem> _items(
 ///
 /// Сценарий принимается целиком или не принимается вовсе: незнакомая
 /// версия формата, неизвестный вид пункта, шкала, которая не
-/// складывается, повтор идентификатора — [CltScenarioException] с
-/// причиной словами. Тест с таким сценарием не начинается.
+/// складывается, повтор идентификатора, маркер с неизвестной сверкой —
+/// [CltScenarioException] с причиной словами. Тест с таким сценарием
+/// не начинается.
 CltScenario parseCltScenario(Object? raw) {
   final Map<String, Object?> root = _object(raw, 'сценарий');
   final Object? schema = root['schema'];
@@ -409,12 +601,17 @@ CltScenario parseCltScenario(Object? raw) {
         'под паролем',
       );
     }
+    final Object? intro = part['intro'];
+    if (intro != null && (intro is! String || intro.trim().isEmpty)) {
+      _refuse('часть «$partId»: вступление — не строка или строка пуста');
+    }
     parts.add(
       CltPart(
         id: partId,
         when: when == kCltBlockEnd ? kCltBlockEnd : kCltSessionEnd,
         password: password,
         sections: List<CltSection>.unmodifiable(sections),
+        intro: intro is String ? intro : null,
       ),
     );
   }

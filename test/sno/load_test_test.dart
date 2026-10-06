@@ -8,11 +8,14 @@ import 'package:memoria/sno/clt/scenario.dart';
 import 'package:memoria/sno/participant_code.dart';
 import 'package:memoria/sno/recording/session.dart';
 import 'package:memoria/sno/recording/store.dart';
-import 'package:memoria/sno/recording/summary.dart';
 
 import '../support/recording_fakes.dart';
 
-/// SNO-F-CLT-01, SNO-F-CLT-02, SNO-F-CLT-03: тест нагрузки без экрана.
+/// SNO-F-CLT-01 … SNO-F-CLT-05, SNO-F-REC-15: тест нагрузки без экрана.
+///
+/// Вторая версия теста (шаг 25): одна часть после остановки записи —
+/// вступление и восемнадцать пунктов, два из них — маркеры честности;
+/// блоков и вопроса об усилии после блока нет.
 ///
 /// Сессия записи — на памяти и подменённом времени, как в
 /// `recording_session_test.dart`; тест нагрузки получает те же часы.
@@ -43,13 +46,15 @@ void main() {
     'tlx.effort',
     'tlx.frustration',
     'gcl.2',
-    'icl.2',
-    'icl.1',
-    'ecl.1',
+    'chk.focus',
     'ecl.3',
-    'ecl.2',
     'gcl.1',
+    'icl.1',
+    'ecl.2',
+    'ecl.1',
+    'icl.2',
     'orient.1',
+    'chk.books',
     'orient.2',
     'orient.3',
   ];
@@ -72,6 +77,8 @@ void main() {
     'orient.1': 5,
     'orient.2': 6,
     'orient.3': 2,
+    'chk.focus': 3,
+    'chk.books': 1,
   };
 
   /// Тест нагрузки поверх сессии [kit] — на её часах.
@@ -115,15 +122,19 @@ void main() {
     return event['data']! as Map<String, Object?>;
   }
 
-  /// Отвечает на показанный пункт значением из [values]: участник
-  /// думает [think] и ещё полсекунды тянется к «Дальше».
+  /// Отвечает на показанный пункт значением из [values] (или из
+  /// [answered]): участник думает [think] и ещё полсекунды тянется к
+  /// «Дальше». Вступление перед первым пунктом, если оно ещё стоит,
+  /// проходится само.
   Future<void> answerShown(
     SessionKit kit,
     LoadTestRun run, {
     Duration think = const Duration(seconds: 3),
+    Map<String, int> answered = const <String, int>{},
   }) async {
+    run.start();
     kit.time.pass(think);
-    run.choose(values[run.item.id]!);
+    run.choose(answered[run.item.id] ?? values[run.item.id]!);
     kit.time.pass(const Duration(milliseconds: 500));
     await run.next();
   }
@@ -160,18 +171,18 @@ void main() {
       expect(test.passwordLength, password.length);
       expect(test.unlocked, isFalse);
       // Под замком итоговая часть не начинается.
-      expect(await test.begin(kCltSessionEnd), isNull);
+      expect(await test.begin(), isNull);
 
       expect(await test.enter(password), PasswordOutcome.accepted);
 
       expect(test.unlocked, isTrue);
-      final LoadTestRun? run = await test.begin(kCltSessionEnd);
+      final LoadTestRun? run = await test.begin();
       expect(run, isNotNull);
       // Повторный вход пароля не требует — и после того, как экран
       // теста закрыли.
       run!.dispose();
       expect(test.unlocked, isTrue);
-      expect(await test.begin(kCltSessionEnd), isNotNull);
+      expect(await test.begin(), isNotNull);
 
       await kit.session.finish();
 
@@ -275,7 +286,7 @@ void main() {
       expect(test.scenario, isNull);
       expect(test.problem, contains('не набрать'));
       expect(test.finalItems, 0);
-      expect(await test.begin(kCltSessionEnd, dry: true), isNull);
+      expect(await test.begin(dry: true), isNull);
       test.dispose();
       kit.session.dispose();
     });
@@ -293,7 +304,7 @@ void main() {
       await kit.session.start(code);
       expect(await test.enter(password), PasswordOutcome.accepted);
       expect(test.unlocked, isFalse);
-      expect(await test.begin(kCltSessionEnd), isNull);
+      expect(await test.begin(), isNull);
       test.dispose();
       kit.session.dispose();
     });
@@ -327,7 +338,7 @@ void main() {
         expect(test.problem, isNull);
         expect(test.overridden, isFalse);
         expect(test.scenario!.id, 'sno-clt-main');
-        expect(test.finalItems, 16);
+        expect(test.finalItems, 18);
         // Файл ищут по идентификатору сценария — и один раз.
         expect(asked, <String>['sno-clt-main']);
         test.dispose();
@@ -335,34 +346,47 @@ void main() {
       },
     );
 
+    /// Итоговая часть сценария [scenario].
+    Map<String, Object?> finalOf(Map<String, Object?> scenario) {
+      return (scenario['parts']! as List<Object?>).last!
+          as Map<String, Object?>;
+    }
+
+    /// Первый пункт первого раздела итоговой части.
+    Map<String, Object?> firstItemOf(Map<String, Object?> scenario) {
+      final Map<String, Object?> section =
+          (finalOf(scenario)['sections']! as List<Object?>).first!
+              as Map<String, Object?>;
+      return (section['items']! as List<Object?>).first!
+          as Map<String, Object?>;
+    }
+
     test('SNO-F-CLT-02: файл с тем же id подменяет встроенный', () async {
       final SessionKit kit = await stoppedKit();
       final String folder = kit.folder;
-      final Map<String, Object?> changed = builtin()..['version'] = 2;
-      final List<Object?> parts = changed['parts']! as List<Object?>;
-      final List<Object?> items =
-          (parts.first! as Map<String, Object?>)['items']! as List<Object?>;
-      (items.single! as Map<String, Object?>)['text'] =
-          'Насколько было трудно?';
+      final Map<String, Object?> changed = builtin()..['version'] = 3;
+      firstItemOf(changed)['text'] = 'Насколько было трудно?';
       final String text = jsonEncode(changed);
       final LoadTest test = testOn(kit, override: (String id) async => text);
       await test.load();
 
       expect(test.problem, isNull);
       expect(test.overridden, isTrue);
-      expect(test.scenario!.version, 2);
+      expect(test.scenario!.version, 3);
 
       await test.enter(password);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun run = (await test.begin())!;
 
       // Сценарий, каким его видел участник, лежит рядом с ответами, а
       // событие начала говорит, что он подменён.
       expect(kit.store.files[folder]![kCltScenarioFile], text);
-      expect(fileOf(kit, folder, run.fileName)['version'], 2);
+      expect(fileOf(kit, folder, run.fileName)['version'], 3);
       expect(
         dataOf(eventsOf(kit, folder, 'clt.start').single)['override'],
         isTrue,
       );
+      run.start();
+      expect(run.item.text, 'Насколько было трудно?');
       run.dispose();
       test.dispose();
       kit.session.dispose();
@@ -377,10 +401,9 @@ void main() {
         expect(test.loaded, isTrue);
         expect(test.scenario, isNull);
         expect(test.finalItems, 0);
-        expect(test.pendingEfforts, isEmpty);
         await test.enter(password);
-        expect(await test.begin(kCltSessionEnd), isNull);
-        expect(await test.begin(kCltSessionEnd, dry: true), isNull);
+        expect(await test.begin(), isNull);
+        expect(await test.begin(dry: true), isNull);
         // Ни одного файла теста на диск не легло.
         expect(await kit.session.testFiles(), isEmpty);
         final String? problem = test.problem;
@@ -394,10 +417,7 @@ void main() {
         'файл сценария — не JSON',
       );
       final Map<String, Object?> unknown = builtin();
-      final List<Object?> parts = unknown['parts']! as List<Object?>;
-      final List<Object?> items =
-          (parts.first! as Map<String, Object?>)['items']! as List<Object?>;
-      (items.single! as Map<String, Object?>)['type'] = 'choice';
+      firstItemOf(unknown)['type'] = 'choice';
       expect(
         await problemOf((String id) async => jsonEncode(unknown)),
         contains('неизвестный вид пункта «choice»'),
@@ -415,382 +435,130 @@ void main() {
     });
   });
 
-  group('SNO-F-CLT-02: усилие после блока', () {
-    test('SNO-F-CLT-02: блок закрыт — один вопрос без пароля, ответ сразу '
-        'на диске', () async {
+  group('SNO-F-REC-15: блоков нет', () {
+    test('SNO-F-REC-15: пока запись идёт, тест не начинается ничем — и в '
+        'журнале о нём ни строки', () async {
       final SessionKit kit = SessionKit(hasTest: true);
       await kit.session.start(code);
       final String folder = kit.folder;
       final LoadTest test = testOn(kit);
       await test.load();
-      kit.run(60);
-      kit.session.startBlock(1);
       kit.run(120);
-      kit.session.endBlock();
-      final BlockMark block = kit.session.blocks.last;
 
+      // Части «после блока» во встроенном сценарии нет, а итоговая под
+      // замком, который до остановки записи не открывается.
+      expect(test.scenario!.partFor(kCltBlockEnd), isNull);
+      expect(await test.begin(), isNull);
+      await test.enter(password);
       expect(test.unlocked, isFalse);
-      expect(test.pendingEfforts.single.number, 1);
-      final LoadTestRun run = (await test.begin(kCltBlockEnd, block: block))!;
+      expect(await test.begin(), isNull);
 
-      expect(run.dry, isFalse);
-      expect(run.length, 1);
-      expect(run.item.id, 'paas.effort');
-      expect(run.block!.number, 1);
-      // Ответ обязателен: без выбранного значения дальше не пройти.
-      expect(run.canNext, isFalse);
-      expect(run.canBack, isFalse);
-      await run.next();
-      expect(run.finished, isFalse);
-      expect(run.fileName, matches(RegExp(r'^clt/sno-clt-main_A_\d+\.json$')));
-      // Файл части лежит с первого мига — пока без ответов.
-      final Map<String, Object?> begun = fileOf(kit, folder, run.fileName);
-      expect(begun['complete'], isFalse);
-      expect(begun['answers'], isEmpty);
-      expect(begun['t_start'], 180000);
-
-      kit.time.pass(const Duration(milliseconds: 4200));
-      // Значения мимо шкалы не принимаются.
-      run.choose(0);
-      run.choose(10);
-      expect(run.selected, isNull);
-      run.choose(4);
-      run.choose(6);
-      kit.time.pass(const Duration(milliseconds: 800));
-      await run.next();
-
-      expect(run.finished, isTrue);
-      expect(test.pendingEfforts, isEmpty);
-      expect(fileOf(kit, folder, run.fileName), <String, Object?>{
-        'schema': 'sno2026-clt-result/1',
-        'scenario': 'sno-clt-main',
-        'version': 1,
-        'participant': kTestCode,
-        'part': 'A',
-        'block': 1,
-        'block_start_ms': 60000,
-        't_start': 180000,
-        't_end': 185000,
-        'complete': true,
-        'order': <String>['paas.effort'],
-        'answers': <Object?>[
-          <String, Object?>{
-            'item': 'paas.effort',
-            'value': 6,
-            // Время ответа — до выбора значения, а не до «Дальше».
-            'rt_ms': 4200,
-            'order': 1,
-            't': 185000,
-            'min': 1,
-            'max': 9,
-          },
-        ],
-      });
-      // Сценарий, каким его видел участник, — рядом, и он разбирается.
-      expect(
-        parseCltScenario(
-          jsonDecode(kit.store.files[folder]![kCltScenarioFile]!),
-        ).id,
-        'sno-clt-main',
-      );
-
-      // Запись идёт: события теста — обычные строки журнала.
       kit.session.tick();
       await kit.settle();
       final List<String> types = kit.store.types(folder);
-      expect(
-        types.sublist(types.indexOf('block.end')),
-        containsAllInOrder(<String>['block.end', 'clt.start', 'clt.finish']),
-      );
-      final Map<String, Object?> start = eventsOf(
-        kit,
-        folder,
-        'clt.start',
-      ).single;
-      expect(start.containsKey('phase'), isFalse);
-      expect(dataOf(start), <String, Object?>{
-        'part': 'A',
-        'block': 1,
-        'file': run.fileName,
-        'scenario': 'sno-clt-main',
-        'version': 1,
-        'items': 1,
+      expect(types, isNot(contains('block.start')));
+      expect(types, isNot(contains('block.end')));
+      expect(types, isNot(contains('clt.start')));
+      expect(await kit.session.testFiles(), isEmpty);
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-15: сценарий с частью «после блока» принимается, но '
+        'её ничто не показывает', () async {
+      final SessionKit kit = await stoppedKit();
+      final String folder = kit.folder;
+      final Map<String, Object?> old =
+          jsonDecode(jsonEncode(kBuiltinCltScenario)) as Map<String, Object?>;
+      (old['parts']! as List<Object?>).insert(0, <String, Object?>{
+        'id': 'A',
+        'when': kCltBlockEnd,
+        'password': false,
+        'items': <Object?>[
+          <String, Object?>{
+            'id': 'paas.effort',
+            'type': kCltScaleType,
+            'min': 1,
+            'max': 9,
+            'text': 'Сколько умственных усилий вы вложили в это задание?',
+          },
+        ],
       });
-      expect(dataOf(eventsOf(kit, folder, 'clt.finish').single), {
-        'part': 'A',
-        'block': 1,
-        'file': run.fileName,
-        'answers': 1,
-        'duration_ms': 5000,
-      });
-      run.dispose();
-      test.dispose();
-      kit.session.dispose();
-    });
-
-    test('SNO-F-CLT-02: блок, который закрыла остановка записи, ждёт '
-        'оценки на экране завершения', () async {
-      final SessionKit kit = SessionKit(hasTest: true);
-      await kit.session.start(code);
-      final String folder = kit.folder;
-      final LoadTest test = testOn(kit);
-      await test.load();
-      kit.run(30);
-      kit.session.startBlock(1);
-      kit.run(60);
-      kit.session.endBlock();
-      final LoadTestRun first = (await test.begin(
-        kCltBlockEnd,
-        block: kit.session.blocks.last,
-      ))!;
-      first.choose(5);
-      await first.next();
-      kit.session.startBlock(2);
-      kit.run(45);
-
-      await kit.session.stop(StopReason.experimenter);
-
-      // Оценён только первый блок; второй закрыла остановка.
-      final BlockMark open = test.pendingEfforts.single;
-      expect(open.number, 2);
-      expect(open.closedBy, 'stop');
-      final LoadTestRun second = (await test.begin(kCltBlockEnd, block: open))!;
-      second.choose(7);
-      await second.next();
-
-      expect(test.pendingEfforts, isEmpty);
-      final Map<String, Object?> file = fileOf(kit, folder, second.fileName);
-      expect(file['block'], 2);
-      expect(file['block_start_ms'], open.startMs);
-      expect(answersOf(file).single['value'], 7);
-      // После остановки события теста помечены и лежат на диске сразу.
-      final List<Map<String, Object?>> finishes = eventsOf(
+      final LoadTest test = testOn(
         kit,
-        folder,
-        'clt.finish',
+        override: (String id) async => jsonEncode(old),
       );
-      expect(finishes, hasLength(2));
-      expect(finishes.first.containsKey('phase'), isFalse);
-      expect(finishes.last['phase'], 'post');
-      first.dispose();
-      second.dispose();
-      test.dispose();
-      kit.session.dispose();
-    });
-
-    test('SNO-F-CLT-02: за оценённый блок второй раз не спрашивают', () async {
-      final SessionKit kit = SessionKit(hasTest: true);
-      await kit.session.start(code);
-      final LoadTest test = testOn(kit);
-      kit.session.startBlock(1);
-      kit.run(30);
-      await kit.session.stop(StopReason.experimenter);
       await test.load();
-      final BlockMark block = test.pendingEfforts.single;
-      final LoadTestRun run = (await test.begin(kCltBlockEnd, block: block))!;
-      run.choose(4);
-      await run.next();
 
-      // Кнопку могли нажать второй раз, пока экран уходил.
-      expect(test.effortGiven(block), isTrue);
-      expect(await test.begin(kCltBlockEnd, block: block), isNull);
-      run.dispose();
-      test.dispose();
-      kit.session.dispose();
-    });
-
-    test('SNO-F-CLT-03: оценка не легла на диск — блок не оценён, '
-        '«Дальше» пробует ещё раз', () async {
-      final SessionKit kit = SessionKit(hasTest: true);
-      await kit.session.start(code);
-      final String folder = kit.folder;
-      final LoadTest test = testOn(kit);
-      kit.session.startBlock(1);
-      kit.run(30);
-      await kit.session.stop(StopReason.experimenter);
-      await test.load();
-      final BlockMark block = test.pendingEfforts.single;
-      final LoadTestRun run = (await test.begin(kCltBlockEnd, block: block))!;
-      kit.store.failPutPrefix = 'clt/';
-      run.choose(7);
-
-      await run.next();
-
-      // Ответ единственный и последний: пока он не на диске, часть не
-      // окончена, экран не уходит, блок ждёт оценки.
-      expect(run.finished, isFalse);
-      expect(run.saveFailed, isTrue);
-      expect(run.canNext, isTrue);
-      expect(test.pendingEfforts.single.number, 1);
-      expect(eventsOf(kit, folder, 'clt.finish'), isEmpty);
-      expect(fileOf(kit, folder, run.fileName)['complete'], isFalse);
-
-      kit.store.failPutPrefix = null;
-      await run.next();
-
-      expect(run.finished, isTrue);
-      expect(run.saveFailed, isFalse);
-      expect(test.pendingEfforts, isEmpty);
-      final Map<String, Object?> file = fileOf(kit, folder, run.fileName);
-      expect(file['complete'], isTrue);
-      expect(answersOf(file).single['value'], 7);
-      expect(eventsOf(kit, folder, 'clt.finish'), hasLength(1));
-      run.dispose();
-      test.dispose();
-      kit.session.dispose();
-    });
-
-    test('SNO-F-CLT-03: две оценки подряд в один миг ложатся в два '
-        'файла', () async {
-      final SessionKit kit = SessionKit(hasTest: true);
-      await kit.session.start(code);
-      final String folder = kit.folder;
-      final LoadTest test = testOn(kit);
-      // Первый блок закрыт, но вопрос о нём не задан; второй закрыла
-      // остановка.
-      kit.session.startBlock(1);
-      kit.run(30);
-      kit.session.endBlock();
-      kit.session.startBlock(2);
-      kit.run(30);
-      await kit.session.stop(StopReason.experimenter);
-      await test.load();
-      expect(test.pendingEfforts, hasLength(2));
-
-      // Часы между ответами не идут: имя файла различает части по
-      // времени начала, и вторая не должна затереть первую.
-      final LoadTestRun first = (await test.begin(
-        kCltBlockEnd,
-        block: test.pendingEfforts.first,
-      ))!;
-      first.choose(3);
-      await first.next();
-      final LoadTestRun second = (await test.begin(
-        kCltBlockEnd,
-        block: test.pendingEfforts.single,
-      ))!;
-      second.choose(8);
-      await second.next();
-
-      expect(second.fileName, isNot(first.fileName));
-      expect(test.pendingEfforts, isEmpty);
-      expect(answersOf(fileOf(kit, folder, first.fileName)).single['value'], 3);
+      expect(test.problem, isNull);
+      expect(test.scenario!.partFor(kCltBlockEnd), isNotNull);
+      // Пунктов в тесте — только итоговая часть.
+      expect(test.finalItems, 18);
+      await test.enter(password);
+      final LoadTestRun run = (await test.begin())!;
+      expect(run.part.id, 'B');
       expect(
-        answersOf(fileOf(kit, folder, second.fileName)).single['value'],
-        8,
+        <String>[for (final CltItem item in run.items) item.id],
+        isNot(contains('paas.effort')),
       );
-      expect(fileOf(kit, folder, first.fileName)['block'], 1);
-      expect(fileOf(kit, folder, second.fileName)['block'], 2);
-      first.dispose();
-      second.dispose();
-      test.dispose();
-      kit.session.dispose();
-    });
-
-    test('SNO-F-CLT-02: два блока с одним номером — два вопроса', () async {
-      final SessionKit kit = SessionKit(hasTest: true);
-      await kit.session.start(code);
-      final LoadTest test = testOn(kit);
-      await test.load();
-      kit.session.startBlock(1);
-      kit.run(30);
-      kit.session.endBlock();
-      kit.session.startBlock(1);
-      kit.run(30);
-      await kit.session.stop(StopReason.experimenter);
-
-      expect(test.pendingEfforts, hasLength(2));
-      final LoadTestRun run = (await test.begin(
-        kCltBlockEnd,
-        block: test.pendingEfforts.first,
-      ))!;
-      run.choose(3);
-      await run.next();
-
-      // Оценён первый из двух: второй, с тем же номером, ещё ждёт.
-      expect(test.pendingEfforts.single.startMs, 30000);
-      run.dispose();
-      test.dispose();
-      kit.session.dispose();
-    });
-
-    test('SNO-F-CLT-02: вопрос, на который не успели ответить, задаётся '
-        'снова — в том же файле', () async {
-      final SessionKit first = SessionKit(hasTest: true);
-      await first.session.start(code);
-      final String folder = first.folder;
-      final LoadTest before = testOn(first);
-      first.session.startBlock(1);
-      first.run(30);
-      first.session.endBlock();
-      final LoadTestRun asked = (await before.begin(
-        kCltBlockEnd,
-        block: first.session.blocks.last,
-      ))!;
-      first.session.tick();
-      await first.settle();
-      // Приложение закрыли, пока вопрос стоял на экране.
-      asked.dispose();
-      before.dispose();
-      first.session.dispose();
-
-      final SessionKit second = await restarted(first);
-      final LoadTest after = testOn(second);
-      await after.load();
-      await after.refresh();
-
-      final BlockMark open = after.pendingEfforts.single;
-      expect(open.number, 1);
-      final LoadTestRun again = (await after.begin(kCltBlockEnd, block: open))!;
-      expect(again.fileName, asked.fileName);
-      again.choose(8);
-      await again.next();
-
-      expect(after.pendingEfforts, isEmpty);
       expect(
-        second.store.files[folder]!.keys.where(
+        kit.store.files[folder]!.keys.where(
           (String name) => name.contains('_A_'),
         ),
-        hasLength(1),
+        isEmpty,
       );
-      again.dispose();
-      after.dispose();
-      second.session.dispose();
+      run.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-15: в сведениях новой записи блоков нет', () async {
+      final SessionKit kit = await stoppedKit();
+      final String folder = kit.folder;
+
+      expect(kit.session.state!.blocks, isEmpty);
+      final Map<String, Object?> recording =
+          kit.store.json(folder, kRecordingFile)['recording']!
+              as Map<String, Object?>;
+      expect(recording['blocks'], isEmpty);
+      kit.session.dispose();
     });
   });
 
   group('SNO-F-CLT-02, SNO-F-CLT-03: итоговая часть', () {
-    test('SNO-F-CLT-02: шестнадцать пунктов в порядке участника, каждый '
+    test('SNO-F-CLT-02: восемнадцать пунктов в порядке участника, каждый '
         'ответ сразу на диске', () async {
       final SessionKit kit = await stoppedKit();
       final String folder = kit.folder;
       final LoadTest test = testOn(kit);
       await test.enter(password);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun run = (await test.begin())!;
 
-      expect(run.length, 16);
+      expect(run.length, 18);
       expect(<String>[for (final CltItem item in run.items) item.id], order);
-      expect(run.block, isNull);
       expect(test.finalDone, isFalse);
-      for (int i = 0; i < 16; i++) {
-        expect(run.index, i);
-        expect(run.item.id, order[i]);
-        expect(run.selected, isNull);
+      for (int i = 0; i < 18; i++) {
         await answerShown(kit, run, think: Duration(milliseconds: 3000 + i));
         // Ответ лёг в файл сразу, а не в конце части.
         final Map<String, Object?> file = fileOf(kit, folder, run.fileName);
         expect(answersOf(file), hasLength(i + 1));
-        expect(file['complete'], i == 15);
+        expect(file['complete'], i == 17);
         expect(test.finalResult!.answers, hasLength(i + 1));
+        if (i < 17) {
+          expect(run.index, i + 1);
+          expect(run.item.id, order[i + 1]);
+          expect(run.selected, isNull);
+        }
       }
 
       expect(run.finished, isTrue);
-      expect(run.answered, 16);
+      expect(run.answered, 18);
       expect(run.canNext, isFalse);
       expect(run.canBack, isFalse);
       expect(test.finalDone, isTrue);
       final Map<String, Object?> file = fileOf(kit, folder, run.fileName);
       expect(file['part'], 'B');
+      expect(file['version'], 2);
       expect(file['block'], isNull);
       expect(file['order'], order);
       final List<Map<String, Object?>> answers = answersOf(file);
@@ -801,11 +569,11 @@ void main() {
       );
       expect(
         <Object?>[for (final answer in answers) answer['order']],
-        [for (int i = 1; i <= 16; i++) i],
+        [for (int i = 1; i <= 18; i++) i],
       );
       expect(
         <Object?>[for (final answer in answers) answer['rt_ms']],
-        [for (int i = 0; i < 16; i++) 3000 + i],
+        [for (int i = 0; i < 18; i++) 3000 + i],
       );
       expect(answers[6], <String, Object?>{
         'item': 'gcl.2',
@@ -820,7 +588,7 @@ void main() {
       expect(answers.first['max'], 100);
       // Обратный счёт помечен у ответа: файл понимается без сценария.
       expect(answers.last['reverse'], isTrue);
-      expect(answers[14].containsKey('reverse'), isFalse);
+      expect(answers[16].containsKey('reverse'), isFalse);
 
       final Map<String, Object?> start = eventsOf(
         kit,
@@ -828,18 +596,128 @@ void main() {
         'clt.start',
       ).single;
       expect(start['phase'], 'post');
-      expect(dataOf(start)['items'], 16);
-      expect(dataOf(start).containsKey('block'), isFalse);
+      expect(dataOf(start), <String, Object?>{
+        'part': 'B',
+        'file': run.fileName,
+        'scenario': 'sno-clt-main',
+        'version': 2,
+        'items': 18,
+      });
       final Map<String, Object?> finish = eventsOf(
         kit,
         folder,
         'clt.finish',
       ).single;
-      expect(dataOf(finish)['answers'], 16);
+      expect(dataOf(finish)['answers'], 18);
+      expect(dataOf(finish).containsKey('block'), isFalse);
       expect(
         dataOf(finish)['duration_ms'],
         (file['t_end']! as int) - (file['t_start']! as int),
       );
+      // Сценарий, каким его видел участник, — рядом, и он разбирается.
+      expect(
+        parseCltScenario(
+          jsonDecode(kit.store.files[folder]![kCltScenarioFile]!),
+        ).version,
+        2,
+      );
+      run.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-04: перед первым пунктом — вступление: ответа не '
+        'требует, в счёт не входит, время ответа идёт от «Начать»', () async {
+      final SessionKit kit = await stoppedKit();
+      final String folder = kit.folder;
+      final LoadTest test = testOn(kit);
+      await test.enter(password);
+      final LoadTestRun run = (await test.begin())!;
+
+      expect(run.intro, startsWith('Сейчас — короткий опрос'));
+      expect(run.length, 18);
+      expect(run.index, 0);
+      // Пока стоит вступление, пункт не выбирается и не принимается.
+      run.choose(65);
+      run.nudge(1);
+      expect(run.selected, isNull);
+      expect(run.canNext, isFalse);
+      expect(run.canBack, isFalse);
+      await run.next();
+      expect(run.index, 0);
+      expect(answersOf(fileOf(kit, folder, run.fileName)), isEmpty);
+
+      // Участник читает вступление полминуты.
+      kit.time.pass(const Duration(seconds: 30));
+      run.start();
+
+      expect(run.intro, isNull);
+      // Повторное «Начать» ничего не меняет.
+      kit.time.pass(const Duration(milliseconds: 2500));
+      run.start();
+      run.choose(65);
+      await run.next();
+      expect(run.index, 1);
+      // Чтение вступления во время ответа не входит.
+      expect(
+        answersOf(fileOf(kit, folder, run.fileName)).single['rt_ms'],
+        2500,
+      );
+      run.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-04: у продолжаемого теста вступление не повторяется, у '
+        'неначатого — показано снова', () async {
+      final SessionKit kit = await stoppedKit();
+      final LoadTest test = testOn(kit);
+      await test.enter(password);
+
+      // Открыли и закрыли, не ответив ни на один пункт.
+      final LoadTestRun opened = (await test.begin())!;
+      opened.start();
+      opened.dispose();
+      final LoadTestRun again = (await test.begin())!;
+      expect(again.fileName, opened.fileName);
+      expect(again.intro, isNotNull);
+
+      await answerShown(kit, again);
+      again.dispose();
+      final LoadTestRun resumed = (await test.begin())!;
+      expect(resumed.intro, isNull);
+      expect(resumed.index, 1);
+      resumed.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-04: маркер — пункт как пункт; в файле ответов он '
+        'помечен', () async {
+      final SessionKit kit = await stoppedKit();
+      final String folder = kit.folder;
+      final LoadTest test = testOn(kit);
+      await test.enter(password);
+      final LoadTestRun run = (await test.begin())!;
+      for (int i = 0; i < 7; i++) {
+        await answerShown(kit, run);
+      }
+
+      // Восьмой пункт участника — маркер: та же шкала, тот же счёт, то
+      // же «Назад».
+      expect(run.index, 7);
+      expect(run.item.id, 'chk.focus');
+      expect(run.item.scale.values, <int>[1, 2, 3, 4, 5, 6, 7]);
+      expect(run.canBack, isTrue);
+      expect(run.canNext, isFalse);
+      await answerShown(kit, run);
+
+      final Map<String, Object?> file = fileOf(kit, folder, run.fileName);
+      expect(file['checks'], <String>['chk.focus', 'chk.books']);
+      final List<Map<String, Object?>> answers = answersOf(file);
+      expect(answers[7]['item'], 'chk.focus');
+      expect(answers[7]['role'], 'check');
+      expect(answers[6].containsKey('role'), isFalse);
       run.dispose();
       test.dispose();
       kit.session.dispose();
@@ -851,11 +729,17 @@ void main() {
       final String folder = kit.folder;
       final LoadTest test = testOn(kit);
       await test.enter(password);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun run = (await test.begin())!;
+      run.start();
 
       // Без ответа дальше не пройти.
       await run.next();
       expect(run.index, 0);
+      // Значения мимо шкалы не принимаются.
+      run.choose(-5);
+      run.choose(63);
+      run.choose(105);
+      expect(run.selected, isNull);
       run.choose(65);
       await run.next();
       expect(run.index, 1);
@@ -908,7 +792,8 @@ void main() {
       final SessionKit kit = await stoppedKit();
       final LoadTest test = testOn(kit);
       await test.enter(password);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun run = (await test.begin())!;
+      run.start();
 
       // Без выбранного сдвиг ставит на середину шкалы 0…100.
       run.nudge(1);
@@ -932,7 +817,7 @@ void main() {
       final String folder = first.folder;
       final LoadTest before = testOn(first);
       await before.enter(password);
-      final LoadTestRun begun = (await before.begin(kCltSessionEnd))!;
+      final LoadTestRun begun = (await before.begin())!;
       for (int i = 0; i < 5; i++) {
         await answerShown(first, begun);
       }
@@ -953,11 +838,13 @@ void main() {
       expect(after.finalDone, isFalse);
       // Замок после перезапуска закрыт.
       expect(after.unlocked, isFalse);
-      expect(await after.begin(kCltSessionEnd), isNull);
+      expect(await after.begin(), isNull);
       await after.enter(password);
-      final LoadTestRun resumed = (await after.begin(kCltSessionEnd))!;
+      final LoadTestRun resumed = (await after.begin())!;
 
       expect(resumed.fileName, begun.fileName);
+      // Вступление у продолжаемого теста не повторяется.
+      expect(resumed.intro, isNull);
       expect(resumed.index, 5);
       expect(resumed.item.id, 'tlx.frustration');
       expect(resumed.selected, isNull);
@@ -1010,7 +897,7 @@ void main() {
       final String folder = kit.folder;
       final LoadTest test = testOn(kit);
       await test.enter(password);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun run = (await test.begin())!;
       expect(run.saveFailed, isFalse);
       expect(kit.session.writeFailed, isFalse);
 
@@ -1032,13 +919,81 @@ void main() {
       kit.session.dispose();
     });
 
+    test('SNO-F-CLT-05: последний ответ не лёг на диск — тест не пройден, '
+        '«Дальше» пробует ещё раз', () async {
+      final SessionKit kit = await stoppedKit();
+      final String folder = kit.folder;
+      final LoadTest test = testOn(kit);
+      await test.enter(password);
+      final LoadTestRun run = (await test.begin())!;
+      for (int i = 0; i < 17; i++) {
+        await answerShown(kit, run);
+      }
+      kit.store.failPutPrefix = 'clt/';
+
+      await answerShown(kit, run);
+
+      // Пока последний ответ не на диске, часть не окончена: сессию по
+      // такому тесту завершать нельзя.
+      expect(run.finished, isFalse);
+      expect(run.saveFailed, isTrue);
+      expect(run.canNext, isTrue);
+      expect(test.finalDone, isFalse);
+      expect(eventsOf(kit, folder, 'clt.finish'), isEmpty);
+      expect(fileOf(kit, folder, run.fileName)['complete'], isFalse);
+
+      kit.store.failPutPrefix = null;
+      await run.next();
+
+      expect(run.finished, isTrue);
+      expect(run.saveFailed, isFalse);
+      expect(test.finalDone, isTrue);
+      final Map<String, Object?> file = fileOf(kit, folder, run.fileName);
+      expect(file['complete'], isTrue);
+      expect(answersOf(file), hasLength(18));
+      expect(eventsOf(kit, folder, 'clt.finish'), hasLength(1));
+      run.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-03: вторая часть, начатая в тот же миг, ложится в '
+        'свой файл', () async {
+      final SessionKit kit = await stoppedKit();
+      final String folder = kit.folder;
+      final LoadTest test = testOn(kit);
+      await test.enter(password);
+      // Часы между ответами не идут: имя файла различает части по
+      // времени начала, и вторая не должна затереть первую.
+      final LoadTestRun first = (await test.begin())!;
+      first.start();
+      while (!first.finished) {
+        first.nudge(1);
+        await first.next();
+      }
+
+      final LoadTestRun second = (await test.begin())!;
+
+      expect(second.fileName, isNot(first.fileName));
+      expect(fileOf(kit, folder, first.fileName)['complete'], isTrue);
+      expect(answersOf(fileOf(kit, folder, first.fileName)), hasLength(18));
+      expect(fileOf(kit, folder, second.fileName)['complete'], isFalse);
+      first.dispose();
+      second.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
     test('SNO-F-CLT-03: пробный проход ничего не пишет', () async {
       final SessionKit kit = SessionKit(hasTest: true);
       final LoadTest test = testOn(kit);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd, dry: true))!;
+      final LoadTestRun run = (await test.begin(dry: true))!;
 
       expect(run.dry, isTrue);
-      expect(run.length, 16);
+      expect(run.length, 18);
+      // Вступление показано и пробному проходу.
+      expect(run.intro, isNotNull);
+      run.start();
       while (!run.finished) {
         run.nudge(1);
         await run.next();
@@ -1061,6 +1016,17 @@ void main() {
       return kit.store.json(folder, kRecordingFile);
     }
 
+    /// Раздел `checks` показателей папки [folder].
+    Map<String, Object?> checksOf(SessionKit kit, String folder) {
+      return fileOf(kit, folder, kCltScoresFile)['checks']!
+          as Map<String, Object?>;
+    }
+
+    Map<String, Object?> marker(Map<String, Object?> checks, String id) {
+      return (checks['items']! as Map<String, Object?>)[id]!
+          as Map<String, Object?>;
+    }
+
     test('SNO-F-CLT-03: показатели посчитаны, итог — в сведениях записи, '
         'журнал проверен весь', () async {
       final SessionKit kit = SessionKit(hasTest: true);
@@ -1068,74 +1034,94 @@ void main() {
       final String folder = kit.folder;
       final LoadTest test = testOn(kit);
       await test.load();
-      // Два блока: первый закрыл экспериментатор, второй — остановка.
+      // Участник открыл три книги и один раз ушёл из приложения.
       kit.run(60);
-      kit.session.startBlock(1);
-      kit.run(600);
-      kit.session.endBlock();
-      final LoadTestRun first = (await test.begin(
-        kCltBlockEnd,
-        block: kit.session.blocks.last,
-      ))!;
-      first.choose(6);
-      await first.next();
-      kit.session.startBlock(2);
-      kit.run(600);
+      for (final String book in <String>['hash-1', 'hash-2', 'hash-1']) {
+        kit.session.bookOpened(book, via: 'shelf');
+        kit.run(120);
+        kit.session.bookClosed();
+      }
+      kit.session.appLeft('paused');
+      kit.time.pass(const Duration(seconds: 20));
+      kit.session.appReturned();
+      kit.run(60);
       await kit.session.stop(StopReason.experimenter);
-      final LoadTestRun second = (await test.begin(
-        kCltBlockEnd,
-        block: test.pendingEfforts.single,
-      ))!;
-      second.choose(7);
-      await second.next();
       await test.enter(password);
-      final LoadTestRun last = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun last = (await test.begin())!;
+      // «Ни разу не отвлёкся» — совершенно верно: с записью расходится.
       while (!last.finished) {
-        await answerShown(kit, last);
+        await answerShown(
+          kit,
+          last,
+          answered: const <String, int>{'chk.focus': 7},
+        );
       }
 
       await kit.session.finish();
 
       final Map<String, Object?> info = infoOf(kit, folder);
+      // SNO-F-REC-15: об усилии по блокам итог молчит.
       expect(info['clt'], <String, Object?>{
-        'effort_answers': 2,
         'final': 'complete',
-        'final_answers': 16,
-        'final_items': 16,
-        'files': <String>[first.fileName, second.fileName, last.fileName],
+        'final_answers': 18,
+        'final_items': 18,
+        'checks_flags': 1,
+        'files': <String>[last.fileName],
       });
       // Показатели — те же, что считает правило по файлам ответов; сами
       // числа сверены со второй реализацией в `clt_results_test.dart`.
       final Map<String, Object?> scores = fileOf(kit, folder, kCltScoresFile);
+      final Map<String, String> files = await kit.store.texts(folder, 'clt');
+      final List<CltResult> results = readCltResults(files);
       expect(
         scores,
         jsonDecode(
           jsonEncode(
-            cltScores(readCltResults(await kit.store.texts(folder, 'clt'))),
+            cltScores(
+              results,
+              checks: cltChecksFor(
+                results,
+                scenario: files[kCltScenarioFile],
+                facts: const <String, int?>{
+                  kCltFactAwayCount: 1,
+                  kCltFactBookOpens: 3,
+                },
+              ),
+            ),
           ),
         ),
       );
+      expect(scores.containsKey('blocks'), isFalse);
       final Map<String, Object?> groups =
           (scores['final']! as Map<String, Object?>)['scores']!
               as Map<String, Object?>;
       expect((groups['tlx']! as Map<String, Object?>)['mean'], 42.5);
       expect((groups['ecl']! as Map<String, Object?>)['mean'], 3.0);
       expect((groups['orient']! as Map<String, Object?>)['mean'], 5.667);
-      final List<Object?> blocks = scores['blocks']! as List<Object?>;
-      expect(
-        <Object?>[
-          for (final Object? block in blocks)
-            ((((block! as Map<String, Object?>)['scores']!
-                    as Map<String, Object?>)['paas']!)
-                as Map<String, Object?>)['sum'],
-        ],
-        <int>[6, 7],
-      );
+      // SNO-F-CLT-04: маркеры — отдельным разделом, с числами из
+      // журнала этой же записи.
+      expect(groups.containsKey('chk'), isFalse);
+      final Map<String, Object?> checks = checksOf(kit, folder);
+      expect(marker(checks, 'chk.focus'), <String, Object?>{
+        'value': 7,
+        'flag': true,
+        'record': <String, Object?>{'away_count': 1},
+        'contradicts_record': true,
+      });
+      expect(marker(checks, 'chk.books'), <String, Object?>{
+        'value': 1,
+        'flag': false,
+        'record': <String, Object?>{'book_opens': 3},
+        'contradicts_record': false,
+      });
+      expect(checks['flags'], 1);
+      expect(checks['verdict'], 'review');
 
       // Самопроверка повторена при завершении: она покрывает события
       // теста и само завершение.
       final List<String> lines = kit.store.lines(folder);
       expect(lines.last, contains('"session.finish"'));
+      expect(lines.last, isNot(contains('without_test')));
       expect(lines.join(), contains('"clt.finish"'));
       final Map<String, Object?> recording =
           info['recording']! as Map<String, Object?>;
@@ -1145,9 +1131,79 @@ void main() {
         'torn': false,
       });
       expect(recording['events'], lines.length);
-      first.dispose();
-      second.dispose();
       last.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-04: итог выходит тем же после перезапуска '
+        'приложения', () async {
+      final SessionKit first = SessionKit(hasTest: true);
+      await first.session.start(code);
+      final String folder = first.folder;
+      first.run(30);
+      first.session.bookOpened('hash-1', via: 'shelf');
+      first.run(60);
+      first.session.bookClosed();
+      await first.session.stop(StopReason.experimenter);
+      final LoadTest before = testOn(first);
+      await before.enter(password);
+      final LoadTestRun run = (await before.begin())!;
+      while (!run.finished) {
+        await answerShown(
+          first,
+          run,
+          answered: const <String, int>{'chk.books': 6},
+        );
+      }
+      run.dispose();
+      before.dispose();
+      first.session.dispose();
+
+      final SessionKit second = await restarted(first);
+      await second.session.finish();
+
+      final Map<String, Object?> checks = checksOf(second, folder);
+      expect(marker(checks, 'chk.books'), <String, Object?>{
+        'value': 6,
+        'flag': true,
+        'record': <String, Object?>{'book_opens': 1},
+        'contradicts_record': true,
+      });
+      expect(marker(checks, 'chk.focus')['record'], <String, Object?>{
+        'away_count': 0,
+      });
+      final Map<String, Object?> clt =
+          infoOf(second, folder)['clt']! as Map<String, Object?>;
+      expect(clt['checks_flags'], 1);
+      second.session.dispose();
+    });
+
+    test('SNO-F-CLT-04: журнал не прочитался — сверка с записью «не '
+        'знаю»', () async {
+      final SessionKit kit = await stoppedKit();
+      final String folder = kit.folder;
+      final LoadTest test = testOn(kit);
+      await test.enter(password);
+      final LoadTestRun run = (await test.begin())!;
+      while (!run.finished) {
+        await answerShown(kit, run);
+      }
+      kit.store.failTail = true;
+
+      await kit.session.finish();
+
+      final Map<String, Object?> checks = checksOf(kit, folder);
+      for (final String id in <String>['chk.focus', 'chk.books']) {
+        expect(marker(checks, id)['contradicts_record'], isNull, reason: id);
+        final Map<String, Object?> record =
+            marker(checks, id)['record']! as Map<String, Object?>;
+        expect(record.values.single, isNull, reason: id);
+      }
+      // Отметка по самому ответу от журнала не зависит.
+      expect(checks['flags'], 0);
+      expect(checks['verdict'], 'ok');
+      run.dispose();
       test.dispose();
       kit.session.dispose();
     });
@@ -1156,15 +1212,23 @@ void main() {
       final SessionKit kit = await stoppedKit();
       final String folder = kit.folder;
 
-      await kit.session.finish();
+      await kit.session.finish(withoutTest: true);
 
       expect(infoOf(kit, folder)['clt'], <String, Object?>{
-        'effort_answers': 0,
         'final': 'none',
         'files': <String>[],
       });
       // Показателей нет: считать не по чему.
       expect(kit.store.files[folder]!.containsKey(kCltScoresFile), isFalse);
+      // SNO-F-CLT-05: в строке завершения сказано, что сессию завершил
+      // организатор своим выходом.
+      final Map<String, Object?> finish = eventsOf(
+        kit,
+        folder,
+        'session.finish',
+      ).single;
+      expect(finish['phase'], 'post');
+      expect(dataOf(finish), <String, Object?>{'without_test': true});
       kit.session.dispose();
     });
 
@@ -1174,22 +1238,28 @@ void main() {
       final String folder = kit.folder;
       final LoadTest test = testOn(kit);
       await test.enter(password);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun run = (await test.begin())!;
       for (int i = 0; i < 9; i++) {
         await answerShown(kit, run);
       }
 
-      await kit.session.finish();
+      await kit.session.finish(withoutTest: true);
 
       final Map<String, Object?> clt =
           infoOf(kit, folder)['clt']! as Map<String, Object?>;
       expect(clt['final'], 'partial');
       expect(clt['final_answers'], 9);
-      expect(clt['final_items'], 16);
+      expect(clt['final_items'], 18);
+      expect(clt['checks_flags'], 0);
       final Map<String, Object?> last =
           fileOf(kit, folder, kCltScoresFile)['final']! as Map<String, Object?>;
       expect(last['complete'], isFalse);
       expect(last['answers'], 9);
+      // На второй маркер не ответили: ни отметки, ни сверки.
+      final Map<String, Object?> checks = checksOf(kit, folder);
+      expect(marker(checks, 'chk.focus')['value'], 3);
+      expect(marker(checks, 'chk.books')['value'], isNull);
+      expect(marker(checks, 'chk.books')['flag'], isNull);
       run.dispose();
       test.dispose();
       kit.session.dispose();
@@ -1261,11 +1331,11 @@ void main() {
       final String folder = kit.folder;
       final LoadTest test = testOn(kit);
       await test.enter(password);
-      final LoadTestRun run = (await test.begin(kCltSessionEnd))!;
+      final LoadTestRun run = (await test.begin())!;
       await answerShown(kit, run);
       final int lines = kit.store.lines(folder).length;
 
-      await kit.session.finish();
+      await kit.session.finish(withoutTest: true);
       final Map<String, Object?> before = fileOf(kit, folder, run.fileName);
       run.choose(40);
       await run.next();
@@ -1274,7 +1344,9 @@ void main() {
       expect(fileOf(kit, folder, run.fileName), before);
       expect(kit.store.lines(folder).length, lines + 1);
       expect(test.results, isEmpty);
-      expect(await test.begin(kCltSessionEnd), isNull);
+      expect(await test.begin(), isNull);
+      // Часть осталась без сессии: экран обязан отпустить участника.
+      expect(run.orphaned, isTrue);
       run.dispose();
       test.dispose();
       kit.session.dispose();

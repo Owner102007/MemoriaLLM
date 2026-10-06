@@ -6,9 +6,14 @@
 /// сама через сорок минут или экспериментатором, — и завершение сессии.
 ///
 /// У сессии три состояния ([RecordingPhase]). Пока она не завершена,
-/// полка стоит под замком (SNO-F-LIB-02): между остановкой записи и
-/// завершением сессии участник заполняет бланк, и расположение книг
-/// меняться не должно.
+/// полка стоит под замком (SNO-F-LIB-02), а от остановки записи до
+/// завершения сессии литература закрыта вовсе (SNO-F-REC-16): участник
+/// пишет бланк и проходит тест нагрузки, и на экране только завершение
+/// сессии. Открытую книгу остановка закрывает сама — строкой
+/// `book.close` перед `recording.stop`.
+///
+/// Запись идёт в один этап: блоков с шага 25 нет (SNO-F-REC-15). То,
+/// что о блоках осталось в этом файле, читает записи прежних сборок.
 ///
 /// Состояние сессии лежит в настройках и переживает перезапуск
 /// приложения. Запись, которую застал перезапуск, не продолжается:
@@ -25,6 +30,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../domain/settings/app_settings.dart';
 import '../clt/results.dart';
+import '../clt/scenario.dart';
 import '../participant_code.dart';
 import '../settings_keys.dart';
 import 'action_log.dart';
@@ -221,7 +227,8 @@ class SessionState {
   /// запись идёт или оборвалась, и счёт остался в умершем приложении.
   final AwaySummary? away;
 
-  /// Блоки тестирования, отмеченные за запись.
+  /// Блоки тестирования, отмеченные за запись. Только у записи,
+  /// начатой прежней сборкой: с шага 25 блоков нет (SNO-F-REC-15).
   final List<BlockMark> blocks;
 
   /// Остановилась ли запись, пока приложения не было на переднем плане
@@ -538,7 +545,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// же состояние и то, что участник оставил; не назван — берётся
   /// [snapshot]. [guard] держит приложение живым в фоне, [passport]
   /// называет устройство в сведениях записи (SNO-F-REC-13). [hasTest]
-  /// — есть ли в сборке тест нагрузки (SNO-F-CLT-03). [now],
+  /// — есть ли в сборке тест нагрузки (SNO-F-CLT-03). [closingFacts]
+  /// — что счёт времени в книгах знает об открытой книге: с этим её
+  /// закрывает остановка записи (SNO-F-REC-16, SNO-F-REC-17). [now],
   /// [monotonic], [ticker] и [random] подменяются в тестах.
   RecordingSession({
     required AppSettingsRepository settings,
@@ -550,6 +559,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     this.device = '',
     this.build = const <String, Object?>{},
     this.hasTest = false,
+    this.closingFacts,
     DeviceStatus status = const NoDeviceStatus(),
     RecordingGuard guard = const NoRecordingGuard(),
     PassportSource passport = noPassport,
@@ -601,14 +611,24 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// ничего — и запись «без теста нагрузки» не помечается.
   final bool hasTest;
 
+  /// Что счёт времени в книгах знает об открытой сейчас книге: сколько
+  /// её читали на виду за это открытие и всего (`BookTimes`); `null` —
+  /// счёта нет.
+  ///
+  /// Обычно книгу закрывает экран, и эти числа в `book.close` приносит
+  /// он. Книгу, открытую в миг остановки записи, закрывает сама запись
+  /// (SNO-F-REC-16) — и берёт их отсюда, чтобы строка вышла той же.
+  final Map<String, Object?> Function()? closingFacts;
+
   /// Где участник находится: подставляется в каждое событие.
   final RecordingContext context = RecordingContext();
 
   /// Тикает раз в секунду, пока запись идёт.
   final ValueNotifier<int> ticks = ValueNotifier<int>(0);
 
-  /// Открыт ли экран завершения сессии: пока он открыт, плашка,
-  /// ведущая на него, не нужна.
+  /// Открыт ли экран завершения сессии (SNO-F-REC-16): остановленную
+  /// запись слой записи закрывает им сам, и второй, пока открыт
+  /// первый, не ставит.
   final ValueNotifier<bool> finishOpen = ValueNotifier<bool>(false);
 
   /// Перечитан ли журнал остановленной записи с диска (SNO-F-REC-13):
@@ -667,17 +687,6 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// Отлучки за идущую запись.
   AwaySummary _away = const AwaySummary();
 
-  /// Открытый блок тестирования и время его начала; `null` — блока нет.
-  int? _block;
-  int _blockT = 0;
-
-  /// Сколько записи прошло к началу открытого блока — тем же счётом,
-  /// каким считаются сорок минут.
-  int _blockPassed = 0;
-
-  /// Блоки, закрытые за идущую запись.
-  List<BlockMark> _blocks = const <BlockMark>[];
-
   /// Сколько раз за запись открывали каждую книгу.
   final Map<String, int> _visits = <String, int>{};
 
@@ -726,7 +735,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   bool get recording => phase == RecordingPhase.recording;
 
   /// Стоит ли полка под замком: сессия начата и не завершена
-  /// (SNO-F-LIB-02).
+  /// (SNO-F-LIB-02). От остановки записи до завершения сессии полки не
+  /// видно вовсе — приложение закрыто экраном завершения
+  /// (SNO-F-REC-16).
   bool get locked => phase != RecordingPhase.idle;
 
   /// Код участника идущей или остановленной сессии.
@@ -811,30 +822,6 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     journal.add(encoded);
   }
 
-  /// Блоки тестирования, закрытые за запись.
-  List<BlockMark> get blocks {
-    return recording ? _blocks : (_state?.blocks ?? const <BlockMark>[]);
-  }
-
-  /// Номер открытого блока; `null` — блок не идёт.
-  int? get block => recording ? _block : null;
-
-  /// Сколько идёт открытый блок, в миллисекундах.
-  ///
-  /// Счёт тот же, что у сорока минут: сон устройства в блок входит, а
-  /// время после конца записи — нет.
-  int get blockElapsedMs {
-    final SessionState? state = _state;
-    if (state == null || !recording || _block == null) {
-      return 0;
-    }
-    final int passed = _countedMs(state) - _blockPassed;
-    return passed < 0 ? 0 : passed;
-  }
-
-  /// Какой номер предложить следующему блоку: за последним закрытым.
-  int get nextBlock => _blocks.isEmpty ? 1 : _blocks.last.number + 1;
-
   /// Не удалось ли записать что-то на диск.
   bool get writeFailed => _failed || (_journal?.failed ?? false);
 
@@ -873,13 +860,6 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     final int monotonic = clock?.t ?? 0;
     final int passed = wall > monotonic ? wall : monotonic;
     return passed < 0 ? 0 : passed;
-  }
-
-  /// Сколько записи прошло, не больше положенного ей.
-  int _countedMs(SessionState state) {
-    final int limit = _planned.inMilliseconds;
-    final int passed = _passedMs(state);
-    return passed > limit ? limit : passed;
   }
 
   /// Большее из настенного и монотонного счёта от мига [at] (`t` —
@@ -1054,9 +1034,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Закрывает запись, оборванную перезапуском приложения.
   ///
-  /// Журнал [tail] говорит, сколько она длилась, какие блоки в ней
-  /// отмечены и сколько участник отсутствовал: в памяти этого не
-  /// осталось (SNO-F-REC-10, SNO-F-CFG-03). Если в нём уже есть
+  /// Журнал [tail] говорит, сколько она длилась и сколько участник
+  /// отсутствовал: в памяти этого не осталось (SNO-F-REC-10). У записи
+  /// прежней сборки он же называет блоки. Если в нём уже есть
   /// остановка — приложение умерло между остановкой и отметкой о ней,
   /// — запись закрывается ею, а не второй остановкой поверх.
   Future<SessionState> _stoppedByCrash(
@@ -1121,8 +1101,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         final DateTime now = _now();
         int written = 0;
         if (open != null) {
-          // Блок, который некому было закрыть, закрывается здесь — тем
-          // же последним мигом журнала (SNO-F-CFG-03).
+          // Блок записи прежней сборки, который некому было закрыть,
+          // закрывается здесь — тем же последним мигом журнала. Новая
+          // сборка блоков не открывает (SNO-F-REC-15).
           written++;
           journal.add(
             encodeEvent(
@@ -1376,8 +1357,6 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _screenOff = false;
     _resyncSaid = false;
     _away = const AwaySummary();
-    _block = null;
-    _blocks = const <BlockMark>[];
     _visits.clear();
     _bookOpenedT = null;
     _vitalBattery = null;
@@ -1737,6 +1716,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         // записи он собран по журналу.
         'away': running ? null : state.away?.toJson(),
         'in_background': running ? null : state.inBackground,
+        // SNO-F-REC-15: блоков нет — список пуст; непустым он бывает
+        // только у записи, начатой прежней сборкой.
         'blocks': running
             ? null
             : <Object?>[
@@ -1877,65 +1858,6 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       ..mode = mode;
   }
 
-  /// Начинает блок тестирования номер [number] (SNO-F-CFG-03).
-  ///
-  /// Блок один: пока открыт прежний, новый не начинается. Отвечает,
-  /// начат ли блок.
-  bool startBlock(int number) {
-    if (!_logging || _block != null || number < 1) {
-      return false;
-    }
-    final SessionState? state = _state;
-    final int t = _tNow();
-    _block = number;
-    _blockT = t;
-    _blockPassed = state == null ? 0 : _countedMs(state);
-    _write(
-      SnoEventType.blockStart,
-      at: t,
-      data: <String, Object?>{'n': number},
-    );
-    _notify();
-    return true;
-  }
-
-  /// Заканчивает открытый блок. Отвечает, было ли что заканчивать.
-  bool endBlock() {
-    if (!_logging || _block == null) {
-      return false;
-    }
-    _closeBlock(by: 'experimenter', at: _tNow());
-    _notify();
-    return true;
-  }
-
-  /// Закрывает открытый блок событием и отметкой; [by] — чем закрыт.
-  void _closeBlock({required String by, required int at}) {
-    final int? number = _block;
-    if (number == null) {
-      return;
-    }
-    // Длительность — по счёту записи, а не по `t`: блок, в который
-    // попал сон устройства, не выходит короче, а блок, который закрыла
-    // запоздавшая остановка, не длиннее записи.
-    final int duration = blockElapsedMs;
-    _block = null;
-    _blocks = List<BlockMark>.unmodifiable(<BlockMark>[
-      ..._blocks,
-      BlockMark(
-        number: number,
-        startMs: _blockT,
-        durationMs: duration,
-        closedBy: by,
-      ),
-    ]);
-    _write(
-      SnoEventType.blockEnd,
-      at: at,
-      data: <String, Object?>{'n': number, 'duration_ms': duration, 'by': by},
-    );
-  }
-
   /// События, которые запись пишет сама, а не в ответ на действие
   /// участника: на строку ввода они не ссылаются (SNO-F-REC-11).
   static const Set<SnoEventType> _unprompted = <SnoEventType>{
@@ -2044,11 +1966,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Событие теста нагрузки (SNO-F-CLT-01, SNO-F-CLT-03).
   ///
-  /// Пока запись идёт — обычная строка журнала: вопрос об усилии
-  /// задаётся между блоками, посреди записи. После остановки — строка
-  /// с пометкой `post`, и на диск она ложится сразу: секундного счёта,
-  /// который сбросил бы журнал, уже нет. Без сессии и после начала её
-  /// завершения не пишется ничего.
+  /// Тест идёт после остановки записи: строка с пометкой `post`, и на
+  /// диск она ложится сразу — секундного счёта, который сбросил бы
+  /// журнал, уже нет. Пока запись идёт, тест закрыт, и строка сюда
+  /// попасть не должна; попала — пишется обычной. Без сессии и после
+  /// начала её завершения не пишется ничего.
   Future<void> logTest(
     SnoEventType type, {
     Map<String, Object?> data = const <String, Object?>{},
@@ -2120,9 +2042,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// считает показатели по файлам ответов и кладёт их рядом, а в
   /// сведения записи отдаёт, пройдена ли итоговая часть.
   ///
+  /// Вместе с показателями — раздел о маркерах честности
+  /// (SNO-F-CLT-04): ответы на них сверяются с журналом этой же записи.
+  ///
   /// Здесь, а не на экране теста: завершить сессию можно и после
   /// перезапуска приложения, и итог обязан выйти тем же.
-  Future<Map<String, Object?>> _closeTest(String folder) async {
+  Future<Map<String, Object?>> _closeTest(SessionState state) async {
+    final String folder = state.folder;
     final Map<String, String> files;
     try {
       files = await _store.texts(folder, kCltFolder);
@@ -2130,14 +2056,54 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       return const <String, Object?>{'final': kCltFinalUnknown};
     }
     final List<CltResult> results = readCltResults(files);
+    Map<String, Object?>? checks;
     if (results.isNotEmpty) {
+      checks = cltChecksFor(
+        results,
+        scenario: files[kCltScenarioFile],
+        facts: await _testFacts(state),
+      );
       try {
-        await _store.put(folder, kCltScoresFile, _pretty(cltScores(results)));
+        await _store.put(
+          folder,
+          kCltScoresFile,
+          _pretty(cltScores(results, checks: checks)),
+        );
       } on Object {
         _failed = true;
       }
     }
-    return summarizeClt(results);
+    return summarizeClt(results, checks: checks);
+  }
+
+  /// Числа из записи, с которыми сверяются маркеры честности
+  /// (SNO-F-CLT-04): сколько раз участник уходил из приложения и
+  /// сколько раз открывал книги.
+  ///
+  /// Считаются по журналу этой же записи. Журнал не прочитался или в
+  /// нём нет ни строки — оба числа неизвестны (`null`): «расхождений с
+  /// записью нет» о такой записи не говорится.
+  Future<Map<String, int?>> _testFacts(SessionState state) async {
+    final List<EventMarks> events = await _tail(
+      state.folder,
+      count: _wholeJournal,
+    );
+    if (events.isEmpty) {
+      return const <String, int?>{
+        kCltFactAwayCount: null,
+        kCltFactBookOpens: null,
+      };
+    }
+    int opens = 0;
+    for (final EventMarks event in events) {
+      if (event.type == SnoEventType.bookOpen.wire) {
+        opens++;
+      }
+    }
+    return <String, int?>{
+      kCltFactAwayCount: state.away?.count,
+      kCltFactBookOpens: opens,
+    };
   }
 
   /// Вышло ли время записи.
@@ -2380,9 +2346,46 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
 
   /// Останавливает запись (SNO-F-REC-01).
   ///
-  /// Сессия при этом не завершена: полка остаётся под замком, пока
-  /// экспериментатор не завершит сессию ([finish]).
+  /// Сессия при этом не завершена: литература закрыта, пока
+  /// организатор не завершит сессию ([finish]), — на экране остаётся
+  /// только её завершение (SNO-F-REC-16).
   Future<void> stop(StopReason by) => _stopOnce(by);
+
+  /// Закрывает книгу, открытую в миг остановки записи, строкой
+  /// `book.close` со временем [t] (SNO-F-REC-16).
+  ///
+  /// Экран чтения снимают сразу за остановкой, но его слово о закрытии
+  /// пришло бы уже после неё и в журнал не легло бы: книга осталась бы
+  /// «открытой» до конца записи. Поэтому строку пишет сама запись — с
+  /// теми же числами, что принёс бы экран ([closingFacts]), и с
+  /// пометкой, чем книга закрыта.
+  void _closeBookAt(int t) {
+    if (context.book == null) {
+      return;
+    }
+    Map<String, Object?> facts = const <String, Object?>{};
+    try {
+      facts = closingFacts?.call() ?? facts;
+    } on Object {
+      // Счёт времени не ответил: книга закрывается без его чисел.
+    }
+    final int? opened = _bookOpenedT;
+    _write(
+      SnoEventType.bookClose,
+      at: t,
+      data: <String, Object?>{
+        if (opened != null) 'open_ms': t - opened,
+        ...facts,
+        'by': 'stop',
+      },
+    );
+    _bookOpenedT = null;
+    context
+      ..book = null
+      ..page = null
+      ..strip = null
+      ..mode = null;
+  }
 
   /// [endedAway] — время записи вышло, пока участника не было, а узнали
   /// об этом по его возвращении.
@@ -2424,8 +2427,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _input = null;
     _inputJournal = null;
     _readerInput = null;
-    // Открытый блок закрывает остановка — тем же мигом (SNO-F-CFG-03).
-    _closeBlock(by: 'stop', at: t);
+    // SNO-F-REC-16: литература закрыта от остановки до завершения
+    // сессии — открытую книгу закрывает сама остановка, тем же мигом и
+    // раньше своей строки: `book.close`, потом `recording.stop`.
+    _closeBookAt(t);
     // SNO-F-REC-10: запись остановилась, пока участника не было —
     // отлучка входит в итог до этого мига, и об этом сказано.
     // Время после конца записи в отлучку не входит: запись, о конце
@@ -2461,7 +2466,6 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       lastT: t,
       resyncs: clock?.resyncs ?? 0,
       away: _away,
-      blocks: _blocks,
       inBackground: inBackground,
     );
     _state = stopped;
@@ -2533,17 +2537,22 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   ///
   /// Папка записи переезжает к завершённым; в архив её упаковывает
   /// тот, кто завершал, — `DeviceRecords.pack` (SNO-F-REC-05).
-  Future<void> finish() {
+  ///
+  /// Завершать ли сессию, решает экран: в сборке с тестом нагрузки —
+  /// только после пройденного теста (SNO-F-CLT-05). [withoutTest] —
+  /// сессию завершает организатор своим выходом, когда тест пройти
+  /// нельзя: в строке завершения об этом сказано.
+  Future<void> finish({bool withoutTest = false}) {
     final Future<void>? running = _finishRun;
     if (running != null) {
       return running;
     }
-    final Future<void> run = _finish();
+    final Future<void> run = _finish(withoutTest: withoutTest);
     _finishRun = run;
     return run.whenComplete(() => _finishRun = null);
   }
 
-  Future<void> _finish() async {
+  Future<void> _finish({required bool withoutTest}) async {
     // Остановка ещё дописывает своё: завершение идёт после неё.
     final Future<void>? stopping = _stopRun;
     if (stopping != null) {
@@ -2555,7 +2564,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     }
     // Сессию подняли после перезапуска: журнал открывается заново.
     await _reopenJournal(state);
-    _write(SnoEventType.sessionFinish, post: true);
+    _write(
+      SnoEventType.sessionFinish,
+      post: true,
+      data: <String, Object?>{if (withoutTest) 'without_test': true},
+    );
     final SessionState done = state.stopped(
       by: state.stoppedBy ?? StopReason.crash,
       durationMs: state.durationMs ?? 0,
@@ -2581,7 +2594,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       late: state.check?.late ?? (state.stoppedBy == StopReason.crash),
     );
     final Map<String, Object?>? test = hasTest
-        ? await _closeTest(state.folder)
+        ? await _closeTest(state)
         : null;
     await _putInfo(
       recheck == null

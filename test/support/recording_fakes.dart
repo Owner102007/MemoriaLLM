@@ -456,7 +456,9 @@ class SessionKit {
   ///
   /// [settings] и [store] передаются, когда «приложение перезапущено»:
   /// новая сессия поднимается на том, что оставила прежняя. [hasTest]
-  /// — есть ли в «сборке» тест нагрузки (SNO-F-CLT-03).
+  /// — есть ли в «сборке» тест нагрузки (SNO-F-CLT-03). [closingFacts]
+  /// — что счёт времени в книгах знает об открытой книге
+  /// (SNO-F-REC-16); [branch] — ветвь «сборки» (SNO-F-REC-17).
   SessionKit({
     MemorySettings? settings,
     MemoryRecordingStore? store,
@@ -467,6 +469,8 @@ class SessionKit {
     this.guard,
     this.passport = const <String, Object?>{},
     bool hasTest = false,
+    Map<String, Object?> Function()? closingFacts,
+    String branch = 'I',
   }) : settings = settings ?? MemorySettings(),
        store = store ?? MemoryRecordingStore(),
        time =
@@ -483,10 +487,11 @@ class SessionKit {
       store: this.store,
       nodeId: kTestNode,
       snapshot: () async => this.snapshot,
-      branch: 'I',
+      branch: branch,
       device: 'a91f3c',
       build: const <String, Object?>{'version': 'test'},
       hasTest: hasTest,
+      closingFacts: closingFacts,
       status: this.status,
       guard: guard ?? const NoRecordingGuard(),
       passport: () async => passport,

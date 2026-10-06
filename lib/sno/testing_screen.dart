@@ -22,7 +22,6 @@ import 'index/shelf_reading_view.dart';
 import 'literature_archive.dart';
 import 'participant_code.dart';
 import 'recording/code_screen.dart';
-import 'recording/finish_screen.dart';
 import 'recording/records.dart';
 import 'recording/records_screen.dart';
 import 'recording/session.dart';
@@ -400,13 +399,7 @@ class _TestingScreenState extends State<TestingScreen>
     if (!mounted) {
       return;
     }
-    setState(() {
-      // SNO-F-CFG-03: номер блока, набранный руками, живёт одну запись —
-      // следующая начинает счёт блоков заново.
-      if (_session?.phase != RecordingPhase.recording) {
-        _blockNumber = null;
-      }
-    });
+    setState(() {});
     // Сессию завершили: заряд и место под «Старт записи» — уже не те,
     // что были сорок минут назад.
     if (_session?.phase == RecordingPhase.idle) {
@@ -505,24 +498,14 @@ class _TestingScreenState extends State<TestingScreen>
     }
   }
 
-  /// Открывает завершение сессии (SNO-SCR-08).
-  void _openFinish(RecordingSession session) {
-    unawaited(
-      openSessionFinish(
-        Navigator.of(context, rootNavigator: true),
-        session,
-        records: _records,
-        test: _test,
-      ),
-    );
-  }
-
   /// Пункт «Cognitive load test» (SNO-F-CLT-01, кадр SNO-SCR-01.1).
   ///
   /// Что он делает, зависит от записи: пока она идёт — ничего, тест
-  /// проходят после остановки; сессия остановлена — ведёт на экран её
-  /// завершения, где стоит тест; записи нет — пробный проход
-  /// экспериментатора. Пароль спрашивается в любом случае.
+  /// проходят после остановки и письменной части; записи нет — пробный
+  /// проход экспериментатора, пароль спрашивается всегда. При
+  /// остановленной записи раздела не видно вовсе — приложение закрыто
+  /// экраном завершения сессии, и тест стоит там (SNO-F-REC-16,
+  /// SNO-F-CLT-05).
   Widget _testTile(RecordingSession session, LoadTest test) {
     final String? problem = test.problem;
     final String about;
@@ -530,10 +513,9 @@ class _TestingScreenState extends State<TestingScreen>
     if (problem != null) {
       about = 'Недоступен: $problem';
     } else if (session.phase == RecordingPhase.recording) {
-      about = 'После остановки записи';
+      about = 'После записи и письменной части';
     } else if (session.phase == RecordingPhase.stopped) {
       about = 'На экране завершения сессии';
-      onTap = () => _openFinish(session);
     } else {
       about = 'Пробный проход: ответы не сохраняются';
       onTap = () {
@@ -1215,8 +1197,10 @@ class _TestingScreenState extends State<TestingScreen>
   /// Запись сессии: старт, ход, завершение (SNO-F-REC-01).
   ///
   /// Что здесь стоит, зависит от того, что с записью: «Старт записи»,
-  /// пока сессии нет; оставшееся время, пока запись идёт; путь к
-  /// завершению сессии, когда она остановлена.
+  /// пока сессии нет; оставшееся время, пока запись идёт. Строки
+  /// «Блок №» с шага 25 нет: запись идёт в один этап (SNO-F-REC-15).
+  /// Остановленной записи здесь не бывает: приложение закрыто экраном
+  /// завершения сессии (SNO-F-REC-16).
   List<Widget> _recording(ThemeData theme, RecordingSession session) {
     final ParticipantCode? participant = session.participant;
     final Readiness? readiness = _readiness;
@@ -1294,111 +1278,7 @@ class _TestingScreenState extends State<TestingScreen>
           ),
           subtitle: const Text('Остановить: удерживайте точку в углу экрана'),
         ),
-      if (session.phase == RecordingPhase.recording) _blockRow(theme, session),
-      if (session.phase == RecordingPhase.stopped)
-        ListTile(
-          key: const Key('sno-session-finish'),
-          leading: const Icon(Icons.flag_outlined),
-          title: const Text('Завершить сессию'),
-          subtitle: Text(
-            '${describeStop(session.state?.stoppedBy)} · '
-            '${describeRecordingTime(session.elapsedMs)}',
-          ),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _openFinish(session),
-        ),
     ];
-  }
-
-  /// Номер, который экспериментатор выбрал следующему блоку; `null` —
-  /// берётся предложенный записью.
-  int? _blockNumber;
-
-  /// «Блок №»: экспериментатор отмечает начало и конец блока
-  /// тестирования (SNO-F-CFG-03, кадр SNO-SCR-01.1).
-  ///
-  /// Строка есть, только пока запись идёт. Блок один: пока он открыт,
-  /// на его месте — сколько он идёт и «Закончить». Номер предлагается
-  /// следующий по порядку; стрелками его можно поправить.
-  Widget _blockRow(ThemeData theme, RecordingSession session) {
-    final int? running = session.block;
-    if (running != null) {
-      return ListTile(
-        key: const Key('sno-block-running'),
-        title: ValueListenableBuilder<int>(
-          valueListenable: session.ticks,
-          builder: (BuildContext context, int tick, Widget? child) {
-            final String passed = describeRecordingTime(session.blockElapsedMs);
-            return Text(
-              'Блок $running идёт · $passed',
-              key: const Key('sno-block-passed'),
-            );
-          },
-        ),
-        trailing: FilledButton.tonalIcon(
-          key: const Key('sno-block-end'),
-          onPressed: () {
-            final LoadTest? test = _test;
-            if (session.endBlock() && test != null) {
-              // SNO-F-CLT-02: за закрытым блоком — вопрос об усилии,
-              // без пароля; блок закрывает экспериментатор.
-              unawaited(
-                openBlockEffort(
-                  Navigator.of(context, rootNavigator: true),
-                  test,
-                  session.blocks.last,
-                ),
-              );
-            }
-            // Следующему блоку номер предложит запись.
-            setState(() => _blockNumber = null);
-          },
-          icon: const Icon(Icons.stop),
-          label: const Text('Закончить'),
-        ),
-      );
-    }
-    final int number = _blockNumber ?? session.nextBlock;
-    return ListTile(
-      key: const Key('sno-block'),
-      title: Row(
-        children: <Widget>[
-          const Flexible(
-            child: Text(
-              'Блок №',
-              maxLines: 1,
-              softWrap: false,
-              overflow: TextOverflow.fade,
-            ),
-          ),
-          IconButton(
-            key: const Key('sno-block-less'),
-            icon: const Icon(Icons.remove),
-            tooltip: 'Номер меньше',
-            visualDensity: VisualDensity.compact,
-            onPressed: number > 1
-                ? () => setState(() => _blockNumber = number - 1)
-                : null,
-          ),
-          Text('$number', key: const Key('sno-block-number')),
-          IconButton(
-            key: const Key('sno-block-more'),
-            icon: const Icon(Icons.add),
-            tooltip: 'Номер больше',
-            visualDensity: VisualDensity.compact,
-            onPressed: number < 99
-                ? () => setState(() => _blockNumber = number + 1)
-                : null,
-          ),
-        ],
-      ),
-      trailing: FilledButton.tonalIcon(
-        key: const Key('sno-block-start'),
-        onPressed: () => session.startBlock(number),
-        icon: const Icon(Icons.play_arrow),
-        label: const Text('Начать'),
-      ),
-    );
   }
 
   @override

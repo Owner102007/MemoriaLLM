@@ -13,6 +13,14 @@
 /// видел участник, лежит рядом (`clt/scenario.json`) — формулировки
 /// правятся без пересборки, и разбор обязан знать, какие были.
 ///
+/// **Маркеры честности в показатели не входят** (SNO-F-CLT-04): ответ
+/// на маркер помечен в файле ответов (`role: check`), а что из него
+/// следует — отметка, сверка с записью действий, быстрые и одинаковые
+/// ответы — лежит в показателях отдельным разделом `checks`
+/// ([cltChecks]). Участнику отметки не показываются, запись из-за них
+/// не отвергается: что делать с помеченной записью, решает организатор
+/// при разборе.
+///
 /// Чистый Dart: ни виджетов, ни ввода-вывода.
 library;
 
@@ -47,6 +55,24 @@ const String kCltFinalNone = 'none';
 /// Файлы теста не прочитались: пройдена ли итоговая часть, неизвестно.
 const String kCltFinalUnknown = 'unknown';
 
+/// Быстрее этого пункт не прочитать, в миллисекундах (SNO-F-CLT-04).
+const int kCltFastMs = 1000;
+
+/// Столько быстрых ответов — отметка.
+const int kCltFastFlag = 3;
+
+/// Столько одинаковых ответов подряд в перемешанном разделе — отметка.
+const int kCltSameFlag = 6;
+
+/// Отметок нет.
+const String kCltVerdictOk = 'ok';
+
+/// Одна отметка: посмотреть ответы глазами.
+const String kCltVerdictReview = 'review';
+
+/// Две отметки и больше: ответам теста нельзя верить без разбора.
+const String kCltVerdictDoubt = 'doubt';
+
 /// Имя файла ответов части [part] сценария [scenario], начатой в миг
 /// [tStart] по часам записи.
 String cltResultName(String scenario, String part, int tStart) {
@@ -66,6 +92,7 @@ class CltAnswer {
     this.t,
     this.reverse = false,
     this.revised = false,
+    this.check = false,
   });
 
   /// Идентификатор пункта.
@@ -96,6 +123,10 @@ class CltAnswer {
   /// Исправлен ли ответ после возврата к пункту.
   final bool revised;
 
+  /// Ответ ли это на маркер честности (SNO-F-CLT-04): в показатели
+  /// нагрузки он не входит.
+  final bool check;
+
   /// Значение для счёта: у пункта с обратным счётом — перевёрнутое.
   int get scored => reverse ? min + max - value : value;
 
@@ -111,6 +142,7 @@ class CltAnswer {
       'max': max,
       if (reverse) 'reverse': true,
       if (revised) 'revised': true,
+      if (check) 'role': kCltRoleCheck,
     };
   }
 
@@ -143,6 +175,7 @@ class CltAnswer {
       t: t is int ? t : null,
       reverse: raw['reverse'] == true,
       revised: raw['revised'] == true,
+      check: raw['role'] == kCltRoleCheck,
     );
   }
 }
@@ -162,6 +195,7 @@ class CltResult {
     this.tEnd,
     this.answers = const <CltAnswer>[],
     this.complete = false,
+    this.checks = const <String>[],
   });
 
   /// Идентификатор сценария.
@@ -177,6 +211,9 @@ class CltResult {
   final String part;
 
   /// Номер блока, за который отвечали; `null` — часть не о блоке.
+  ///
+  /// Только в файлах прежних сборок: с шага 25 блоков нет
+  /// (SNO-F-REC-15).
   final int? block;
 
   /// Когда этот блок начат, по часам записи: два блока с одним номером
@@ -199,6 +236,11 @@ class CltResult {
   /// Пройдена ли часть до конца.
   final bool complete;
 
+  /// Идентификаторы маркеров честности среди пунктов части
+  /// (SNO-F-CLT-04): в показатели нагрузки они не входят — и тогда,
+  /// когда на маркер ещё не ответили.
+  final List<String> checks;
+
   /// Имя файла в папке записи.
   String get name => cltResultName(scenario, part, tStart);
 
@@ -216,6 +258,7 @@ class CltResult {
       't_end': tEnd,
       'complete': complete,
       'order': order,
+      if (checks.isNotEmpty) 'checks': checks,
       'answers': <Object?>[
         for (final CltAnswer answer in answers) answer.toJson(),
       ],
@@ -242,6 +285,7 @@ class CltResult {
       final Object? tEnd = raw['t_end'];
       final Object? order = raw['order'];
       final Object? answers = raw['answers'];
+      final Object? checks = raw['checks'];
       if (scenario is! String ||
           version is! int ||
           participant is! String ||
@@ -274,6 +318,11 @@ class CltResult {
         ],
         answers: List<CltAnswer>.unmodifiable(read),
         complete: raw['complete'] == true,
+        checks: <String>[
+          if (checks is List<Object?>)
+            for (final Object? id in checks)
+              if (id is String) id,
+        ],
       );
     } on FormatException {
       return null;
@@ -315,24 +364,39 @@ CltResult? finalCltResult(List<CltResult> results) {
   return best;
 }
 
-/// Итог теста для манифеста архива записи (SNO-F-CLT-03): сколько
-/// блоков получили оценку усилия и пройдена ли итоговая часть. По
-/// `final` список записей помечает запись «без теста нагрузки».
-Map<String, Object?> summarizeClt(List<CltResult> results) {
+/// Итог теста для манифеста архива записи (SNO-F-CLT-03): пройдена
+/// ли итоговая часть. По `final` список записей помечает запись «без
+/// теста нагрузки».
+///
+/// [checks] — раздел `checks` показателей ([cltChecks]): из него в итог
+/// идёт одно число — сколько отметок набралось (`checks_flags`,
+/// SNO-F-CLT-04). `effort_answers` стоит только у записи прежней
+/// сборки, где были блоки и вопрос об усилии после каждого
+/// (SNO-F-REC-15).
+Map<String, Object?> summarizeClt(
+  List<CltResult> results, {
+  Map<String, Object?>? checks,
+}) {
   int efforts = 0;
+  bool blocks = false;
   for (final CltResult result in results) {
-    if (result.block != null && result.complete) {
-      efforts++;
+    if (result.block != null) {
+      blocks = true;
+      if (result.complete) {
+        efforts++;
+      }
     }
   }
   final CltResult? last = finalCltResult(results);
+  final Object? flags = checks?['flags'];
   return <String, Object?>{
-    'effort_answers': efforts,
+    if (blocks) 'effort_answers': efforts,
     'final': last == null
         ? kCltFinalNone
         : (last.complete ? kCltFinalComplete : kCltFinalPartial),
     if (last != null) 'final_answers': last.answers.length,
     if (last != null) 'final_items': last.order.length,
+    if (flags is int) 'checks_flags': flags,
     'files': <String>[for (final CltResult result in results) result.name],
   };
 }
@@ -342,14 +406,24 @@ double _mean(int sum, int count) => (sum * 1000 / count).round() / 1000;
 
 /// Показатели по группам пунктов файла [result]: группа — идентификатор
 /// пункта до последней точки.
+///
+/// Маркеры честности пропускаются (SNO-F-CLT-04): и ответы на них, и
+/// сами пункты в счёте «на сколько пунктов группы ответили».
 Map<String, Object?> _groups(CltResult result) {
+  final Set<String> checks = result.checks.toSet();
   final Map<String, int> total = <String, int>{};
   for (final String id in result.order) {
+    if (checks.contains(id)) {
+      continue;
+    }
     final String group = cltGroupOf(id);
     total[group] = (total[group] ?? 0) + 1;
   }
   final Map<String, List<CltAnswer>> answered = <String, List<CltAnswer>>{};
   for (final CltAnswer answer in result.answers) {
+    if (answer.check || checks.contains(answer.item)) {
+      continue;
+    }
     answered
         .putIfAbsent(cltGroupOf(answer.item), () => <CltAnswer>[])
         .add(answer);
@@ -381,15 +455,35 @@ Map<String, Object?> _groups(CltResult result) {
 /// Правило одно: показатель — среднее ответов группы, группа —
 /// идентификатор пункта до последней точки, ответ пункта с обратным
 /// счётом переворачивается (`min + max − value`). Для встроенного
-/// сценария это даёт усилие по блоку (`paas`), Raw TLX (`tlx`),
-/// внутреннюю, внешнюю и полезную нагрузку (`icl`, `ecl`, `gcl`) и
-/// ориентацию (`orient`). Одного общего числа нет — намеренно: шкалы
-/// меряют разное.
+/// сценария это даёт Raw TLX (`tlx`), внутреннюю, внешнюю и полезную
+/// нагрузку (`icl`, `ecl`, `gcl`) и ориентацию (`orient`). Одного общего
+/// числа нет — намеренно: шкалы меряют разное.
+///
+/// Маркеры честности в показатели не входят; [checks] — что о них
+/// известно ([cltChecks]) — ложится рядом отдельным разделом
+/// (SNO-F-CLT-04). Раздел `blocks` стоит только у записи прежней
+/// сборки, где после каждого блока спрашивали об усилии
+/// (SNO-F-REC-15).
 ///
 /// Ответы лежат рядом, в файлах частей: пересчитать можно всегда.
-Map<String, Object?> cltScores(List<CltResult> results) {
+Map<String, Object?> cltScores(
+  List<CltResult> results, {
+  Map<String, Object?>? checks,
+}) {
   final CltResult? last = finalCltResult(results);
   final CltResult? any = results.isEmpty ? null : results.first;
+  final List<Object?> blocks = <Object?>[
+    for (final CltResult result in results)
+      if (result.block != null && result.answers.isNotEmpty)
+        <String, Object?>{
+          'block': result.block,
+          if (result.blockStartMs != null)
+            'block_start_ms': result.blockStartMs,
+          'file': result.name,
+          'complete': result.complete,
+          'scores': _groups(result),
+        },
+  ];
   return <String, Object?>{
     'schema': kCltScoresSchema,
     if (any != null) 'scenario': any.scenario,
@@ -399,19 +493,9 @@ Map<String, Object?> cltScores(List<CltResult> results) {
         'mean — среднее ответов группы с тремя знаками; группа — '
         'идентификатор пункта до последней точки; ответ пункта с '
         'reverse перевёрнут: min + max − value; n из of — на сколько '
-        'пунктов группы ответили',
-    'blocks': <Object?>[
-      for (final CltResult result in results)
-        if (result.block != null && result.answers.isNotEmpty)
-          <String, Object?>{
-            'block': result.block,
-            if (result.blockStartMs != null)
-              'block_start_ms': result.blockStartMs,
-            'file': result.name,
-            'complete': result.complete,
-            'scores': _groups(result),
-          },
-    ],
+        'пунктов группы ответили; маркеры честности (role: check) в '
+        'группы не входят — они в разделе checks',
+    if (blocks.isNotEmpty) 'blocks': blocks,
     'final': last == null
         ? null
         : <String, Object?>{
@@ -421,5 +505,153 @@ Map<String, Object?> cltScores(List<CltResult> results) {
             'items': last.order.length,
             'scores': _groups(last),
           },
+    if (checks != null) 'checks': checks,
   };
+}
+
+/// Самая длинная цепочка одинаковых ответов среди [answers], взятых в
+/// порядке показа.
+int _longestRun(List<CltAnswer> answers) {
+  final List<CltAnswer> shown = List<CltAnswer>.of(answers)
+    ..sort((CltAnswer a, CltAnswer b) => a.order.compareTo(b.order));
+  int longest = 0;
+  int run = 0;
+  int? value;
+  for (final CltAnswer answer in shown) {
+    run = answer.value == value ? run + 1 : 1;
+    value = answer.value;
+    if (run > longest) {
+      longest = run;
+    }
+  }
+  return longest;
+}
+
+/// Маркеры честности и признаки небрежных ответов по файлу ответов
+/// [result] части [part] (SNO-F-CLT-04).
+///
+/// По каждому маркеру — ответ, отметка по самому ответу и сверка с
+/// записью действий: [facts] — числа из журнала этой же записи (сколько
+/// раз участник уходил из приложения, сколько раз открывал книги);
+/// числа нет — запись без журнала, — и сверка помечена «не знаю»
+/// (`null`), а не «расхождений нет». Без вопросов считаются ещё два
+/// признака: сколько ответов дано быстрее [kCltFastMs] и самая длинная
+/// цепочка одинаковых ответов в перемешанном разделе.
+///
+/// `flags` — сколько отметок набралось: по одной за каждый маркер, за
+/// быстрые ответы и за одинаковые подряд. `verdict`: [kCltVerdictOk] —
+/// ни одной, [kCltVerdictReview] — одна, [kCltVerdictDoubt] — две и
+/// больше. Расхождение с записью делает отметку маркера весомее, но
+/// отдельно не считается. Один-два маркера помечают запись на просмотр,
+/// а не доказывают ложь: приложение по ним ничего не решает.
+Map<String, Object?> cltChecks(
+  CltResult result,
+  CltPart part, {
+  Map<String, int?> facts = const <String, int?>{},
+}) {
+  final Map<String, CltAnswer> given = <String, CltAnswer>{
+    for (final CltAnswer answer in result.answers) answer.item: answer,
+  };
+  int flags = 0;
+  final Map<String, Object?> items = <String, Object?>{};
+  for (final CltItem item in part.items) {
+    final CltCheck? check = item.check;
+    if (check == null) {
+      continue;
+    }
+    final int? value = given[item.id]?.value;
+    final bool? flagged = value == null ? null : check.flag.holds(value);
+    if (flagged ?? false) {
+      flags++;
+    }
+    final String? fact = check.fact;
+    final int? known = fact == null ? null : facts[fact];
+    items[item.id] = <String, Object?>{
+      'value': value,
+      'flag': flagged,
+      if (fact != null) 'record': <String, Object?>{fact: known},
+      if (fact != null)
+        'contradicts_record': value == null || known == null
+            ? null
+            : check.contradicts(value, known),
+    };
+  }
+  int fast = 0;
+  for (final CltAnswer answer in result.answers) {
+    if (answer.rtMs < kCltFastMs) {
+      fast++;
+    }
+  }
+  int same = 0;
+  for (final CltSection section in part.sections) {
+    if (!section.shuffle) {
+      continue;
+    }
+    final int run = _longestRun(<CltAnswer>[
+      for (final CltItem item in section.items)
+        if (given[item.id] != null) given[item.id]!,
+    ]);
+    if (run > same) {
+      same = run;
+    }
+  }
+  if (fast >= kCltFastFlag) {
+    flags++;
+  }
+  if (same >= kCltSameFlag) {
+    flags++;
+  }
+  return <String, Object?>{
+    'rule':
+        'flag — отметка по самому ответу на маркер; record — число из '
+        'журнала этой записи; contradicts_record — расходится ли ответ '
+        'с записью, null — не знаю; fast_answers — ответов быстрее '
+        '$kCltFastMs мс, отметка от $kCltFastFlag; longest_same — самая '
+        'длинная цепочка одинаковых ответов в перемешанном разделе, '
+        'отметка от $kCltSameFlag; flags — сколько отметок; verdict: '
+        'ok — ни одной, review — одна, doubt — две и больше',
+    'items': items,
+    'fast_answers': fast,
+    'longest_same': same,
+    'flags': flags,
+    'verdict': flags == 0
+        ? kCltVerdictOk
+        : (flags == 1 ? kCltVerdictReview : kCltVerdictDoubt),
+  };
+}
+
+/// Раздел `checks` показателей для записи с файлами ответов [results]
+/// (SNO-F-CLT-04); `null` — считать не по чему: итоговую часть не
+/// начинали, сценарий [scenario], каким его видел участник, не лежит
+/// рядом или не читается, либо маркеров в части нет.
+///
+/// Правила маркеров берутся из сценария рядом с ответами, а не из
+/// встроенного: показатели обязаны выйти теми же и после обновления
+/// приложения.
+Map<String, Object?>? cltChecksFor(
+  List<CltResult> results, {
+  required String? scenario,
+  Map<String, int?> facts = const <String, int?>{},
+}) {
+  final CltResult? last = finalCltResult(results);
+  if (last == null || scenario == null) {
+    return null;
+  }
+  final CltScenario parsed;
+  try {
+    parsed = parseCltScenario(jsonDecode(scenario));
+  } on CltScenarioException {
+    return null;
+  } on FormatException {
+    return null;
+  }
+  for (final CltPart part in parsed.parts) {
+    if (part.id != last.part) {
+      continue;
+    }
+    return part.items.any((CltItem item) => item.isCheck)
+        ? cltChecks(last, part, facts: facts)
+        : null;
+  }
+  return null;
 }

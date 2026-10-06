@@ -1,11 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/sno/clt/load_test.dart';
-import 'package:memoria/sno/clt/scenario.dart';
 import 'package:memoria/sno/clt/test_screens.dart';
 import 'package:memoria/sno/flags.dart';
+import 'package:memoria/sno/hold_button.dart';
 import 'package:memoria/sno/participant_code.dart';
 import 'package:memoria/sno/recording/finish_screen.dart';
 import 'package:memoria/sno/recording/session.dart';
@@ -15,7 +17,11 @@ import '../data/test_data.dart';
 import '../support/recording_fakes.dart';
 import '../support/test_services.dart';
 
-/// SNO-F-CLT-01, SNO-F-CLT-02, SNO-F-CLT-03: экраны теста нагрузки.
+/// SNO-F-CLT-01 … SNO-F-CLT-05: экраны теста нагрузки.
+///
+/// Вторая версия теста (шаг 25): вступление и восемнадцать пунктов, два
+/// из них — маркеры честности; сессия завершается только после теста,
+/// а когда его пройти нельзя — выходом организатора.
 ///
 /// Сессия записи — на памяти и подменённом времени; тест нагрузки
 /// получает те же часы. Что тест решает без экрана, проверено в
@@ -76,6 +82,19 @@ void main() {
       await tap(tester, 'sno-clt-value-4');
     }
     await tap(tester, 'sno-clt-next');
+  }
+
+  /// Держит палец на виджете с ключом [key] дольше, чем нужно кнопке.
+  Future<void> holdOn(WidgetTester tester, String key) async {
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(Key(key))),
+    );
+    // Нажатие узнаётся не сразу: рядом может быть прокрутка списка.
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    await tester.pump(kResetHold + const Duration(milliseconds: 100));
+    await gesture.up();
+    await tester.pumpAndSettle();
   }
 
   /// Ответы файла [name] папки записи [folder].
@@ -213,6 +232,32 @@ void main() {
       expect(await closed, isTrue);
     });
 
+    testWidgets('SNO-F-CLT-05: тем же экраном открывается выход «без '
+        'теста» — под своим заголовком', (WidgetTester tester) async {
+      await kit.session.start(code);
+      await kit.session.stop(StopReason.experimenter);
+      final GlobalKey<NavigatorState> other = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(navigatorKey: other, home: const SizedBox.shrink()),
+      );
+      final Future<bool?> closed = other.currentState!.push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (BuildContext context) {
+            return LoadTestPasswordScreen(
+              test: test,
+              title: 'Завершить без теста',
+            );
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Завершить без теста'), findsOneWidget);
+      expect(find.text('Cognitive load test'), findsNothing);
+      await typePassword(tester, password);
+      expect(await closed, isTrue);
+    });
+
     testWidgets('SNO-F-CLT-01: «назад» с экрана пароля теста не открывает', (
       WidgetTester tester,
     ) async {
@@ -229,9 +274,11 @@ void main() {
   });
 
   group('SNO-F-CLT-02: пункт теста на экране', () {
-    testWidgets('SNO-F-CLT-02: пробный проход — шестнадцать пунктов по '
-        'одному, мышью, цифрами и стрелками', (WidgetTester tester) async {
-      final LoadTestRun run = (await test.begin(kCltSessionEnd, dry: true))!;
+    testWidgets('SNO-F-CLT-02: пробный проход — вступление и восемнадцать '
+        'пунктов по одному, мышью, цифрами и стрелками', (
+      WidgetTester tester,
+    ) async {
+      final LoadTestRun run = (await test.begin(dry: true))!;
       await tester.pumpWidget(
         MaterialApp(
           home: LoadTestRunScreen(test: test, run: run),
@@ -243,7 +290,25 @@ void main() {
         find.text('Пробный проход: ответы не сохраняются'),
         findsOneWidget,
       );
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 16');
+      // SNO-F-CLT-04: перед первым пунктом — вступление без шкалы.
+      expect(
+        textOf(tester, 'sno-clt-intro'),
+        startsWith('Сейчас — короткий опрос о работе с книгами'),
+      );
+      expect(find.byKey(const Key('sno-clt-progress')), findsNothing);
+      expect(find.byKey(const Key('sno-clt-next')), findsNothing);
+      expect(find.byKey(const Key('sno-clt-strip')), findsNothing);
+      // Цифры и стрелки вступление не слушает.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit5);
+      await tester.pumpAndSettle();
+      expect(run.selected, isNull);
+      expect(find.byKey(const Key('sno-clt-intro')), findsOneWidget);
+
+      await tap(tester, 'sno-clt-begin');
+
+      expect(find.byKey(const Key('sno-clt-intro')), findsNothing);
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
       expect(
         textOf(tester, 'sno-clt-text'),
         'Сколько умственной работы потребовалось — думать, искать, '
@@ -291,24 +356,24 @@ void main() {
       // «Дальше» — клавишей ввода.
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-clt-progress'), '2 из 16');
+      expect(textOf(tester, 'sno-clt-progress'), '2 из 18');
       expect(textOf(tester, 'sno-clt-strip-value'), '—');
       expect(back().onPressed, isNotNull);
 
       // Назад — на один пункт: там прежний ответ, и дальше назад некуда.
       await tap(tester, 'sno-clt-back');
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 16');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
       expect(textOf(tester, 'sno-clt-strip-value'), '90');
       expect(back().onPressed, isNull);
       await tap(tester, 'sno-clt-next');
 
       for (int i = 1; i < 6; i++) {
-        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 16');
+        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 18');
         await answerShown(tester);
       }
 
       // Шкала 1…7 — кнопки; цифра клавиатуры выбирает деление.
-      expect(textOf(tester, 'sno-clt-progress'), '7 из 16');
+      expect(textOf(tester, 'sno-clt-progress'), '7 из 18');
       expect(find.byKey(const Key('sno-clt-strip')), findsNothing);
       for (int value = 1; value <= 7; value++) {
         expect(find.byKey(Key('sno-clt-value-$value')), findsOneWidget);
@@ -319,17 +384,31 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.digit9);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-clt-progress'), '7 из 16');
+      expect(textOf(tester, 'sno-clt-progress'), '7 из 18');
       await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
       await tester.pumpAndSettle();
       expect(run.selected, 3);
       await tester.sendKeyEvent(LogicalKeyboardKey.numpad6);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-clt-progress'), '8 из 16');
+      expect(textOf(tester, 'sno-clt-progress'), '8 из 18');
 
-      for (int i = 7; i < 16; i++) {
-        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 16');
+      // SNO-F-CLT-04: восьмой пункт пробного прохода — маркер: на экране
+      // он ничем не отличается от соседей.
+      expect(run.item.id, 'chk.focus');
+      expect(
+        textOf(tester, 'sno-clt-text'),
+        'За всё время работы я ни разу не отвлёкся — ни на секунду.',
+      );
+      for (int value = 1; value <= 7; value++) {
+        expect(find.byKey(Key('sno-clt-value-$value')), findsOneWidget);
+      }
+      expect(find.text('совершенно неверно'), findsOneWidget);
+      expect(back().onPressed, isNotNull);
+      expect(find.textContaining('провер'), findsNothing);
+
+      for (int i = 7; i < 18; i++) {
+        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 18');
         await answerShown(tester);
       }
 
@@ -338,133 +417,258 @@ void main() {
         textOf(tester, 'sno-clt-thanks'),
         'Пробный проход окончен: ответы не сохранялись',
       );
+      expect(find.byKey(const Key('sno-clt-call')), findsNothing);
       expect(find.byKey(const Key('sno-clt-progress')), findsNothing);
       expect(kit.store.files, isEmpty);
     });
+
+    testWidgets('SNO-F-CLT-04: на ПК вступление проходят клавишей ввода', (
+      WidgetTester tester,
+    ) async {
+      final LoadTestRun run = (await test.begin(dry: true))!;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LoadTestRunScreen(test: test, run: run),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('sno-clt-intro')), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('sno-clt-intro')), findsNothing);
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
+    });
   });
 
-  group('SNO-F-CLT-02: тест на экране завершения сессии', () {
+  group('SNO-F-CLT-05: тест на экране завершения сессии', () {
+    late GlobalKey<NavigatorState> navigator;
+
+    /// Открывает экран завершения так, как его открывает приложение, —
+    /// поверх главного экрана.
     Future<void> pumpFinish(WidgetTester tester) async {
-      // Экран целиком на виду: кнопки теста стоят под итогом записи.
+      // Экран целиком на виду: кнопки теста стоят под кодом участника.
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
+      navigator = GlobalKey<NavigatorState>();
       await tester.pumpWidget(
         MaterialApp(
-          home: SessionFinishScreen(session: kit.session, test: test),
+          navigatorKey: navigator,
+          home: const Scaffold(body: Text('главный экран')),
         ),
+      );
+      unawaited(
+        openSessionFinish(navigator.currentState!, kit.session, test: test),
       );
       await tester.pumpAndSettle();
     }
 
-    testWidgets('SNO-F-CLT-02: блок без оценки усилия идёт первым и без '
-        'пароля, за ним — тест под замком', (WidgetTester tester) async {
+    testWidgets('SNO-F-CLT-05: пока тест не пройден, сессию не завершить; '
+        'пройден — кнопка появилась', (WidgetTester tester) async {
       await kit.session.start(code);
       final String folder = kit.folder;
-      kit.run(60);
-      kit.session.startBlock(1);
-      kit.run(120);
-      // Блок не закрыт: его закрывает остановка записи.
+      kit.run(180);
       await kit.session.stop(StopReason.experimenter);
       await pumpFinish(tester);
 
-      expect(find.text('Тест нагрузки'), findsOneWidget);
-      expect(find.text('Блок 1: оценить усилие'), findsOneWidget);
-      expect(find.byKey(const Key('sno-finish-test')), findsNothing);
-      expect(find.byKey(const Key('sno-finish-test-missing')), findsOneWidget);
-
-      await tap(tester, 'sno-finish-effort');
-
-      // Вопрос об усилии: без пароля, и уйти с него нельзя.
-      expect(find.byType(LoadTestPasswordScreen), findsNothing);
-      expect(find.byType(LoadTestRunScreen), findsOneWidget);
-      expect(textOf(tester, 'sno-clt-progress'), 'Блок 1 закончен');
+      // Сверху — то, что нужно участнику: код и два шага словами.
+      expect(textOf(tester, 'sno-finish-code'), '6795-4332');
+      expect(find.text('Впишите код в бланк'), findsOneWidget);
       expect(
-        textOf(tester, 'sno-clt-text'),
-        'Сколько умственных усилий вы вложили в это задание?',
+        textOf(tester, 'sno-finish-step-1'),
+        '1. Сообщите организатору, что закончили, — получите бланк.',
       );
-      expect(find.text('очень-очень мало'), findsOneWidget);
-      expect(find.text('ни мало, ни много'), findsOneWidget);
-      expect(find.text('очень-очень много'), findsOneWidget);
-      expect(find.byType(BackButton), findsNothing);
-      // Вопрос один — возвращаться некуда.
-      expect(find.byKey(const Key('sno-clt-back')), findsNothing);
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(find.byType(LoadTestRunScreen), findsOneWidget);
-      for (int value = 1; value <= 9; value++) {
-        expect(find.byKey(Key('sno-clt-value-$value')), findsOneWidget);
-      }
-
-      await tap(tester, 'sno-clt-value-7');
-      await tap(tester, 'sno-clt-next');
-
-      // Ответ дан — экран ушёл сам; теперь очередь теста под замком.
-      expect(find.byType(LoadTestRunScreen), findsNothing);
-      expect(find.byKey(const Key('sno-finish-effort')), findsNothing);
+      expect(
+        textOf(tester, 'sno-finish-step-2'),
+        '2. После письменной части позовите организатора снова.',
+      );
       expect(find.text('Cognitive load test'), findsOneWidget);
-      expect(answersOf(folder, fileOf(folder, 'A')).single['value'], 7);
+      expect(find.text('Открывает организатор'), findsOneWidget);
+      // Кнопки завершения нет: на её месте — что осталось.
+      expect(find.byKey(const Key('sno-finish-hold')), findsNothing);
+      expect(
+        textOf(tester, 'sno-finish-waits'),
+        'Сессия завершится после теста нагрузки.',
+      );
+      // SNO-F-REC-15: ни строки о блоках, ни вопроса об усилии.
+      expect(find.textContaining('Блок'), findsNothing);
+      expect(find.byKey(const Key('sno-finish-effort')), findsNothing);
+      expect(kit.session.phase, RecordingPhase.stopped);
 
       await tap(tester, 'sno-finish-test');
 
       expect(find.byType(LoadTestPasswordScreen), findsOneWidget);
       await typePassword(tester, password);
       expect(find.byType(LoadTestRunScreen), findsOneWidget);
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 16');
-      // С итоговой части уйти можно: она продолжится.
+      // SNO-F-CLT-04: первым — вступление; в счёт пунктов оно не входит.
+      expect(
+        textOf(tester, 'sno-clt-intro'),
+        contains('а не письменную работу'),
+      );
+      expect(find.byKey(const Key('sno-clt-progress')), findsNothing);
+      await tap(tester, 'sno-clt-begin');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
+      // С теста уйти можно: он продолжится с того же пункта.
       expect(find.byType(BackButton), findsOneWidget);
-      for (int i = 0; i < 16; i++) {
-        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 16');
+      for (int i = 0; i < 18; i++) {
+        expect(textOf(tester, 'sno-clt-progress'), '${i + 1} из 18');
+        if (i == 7) {
+          // У участника 67954332 восьмым стоит маркер.
+          expect(
+            textOf(tester, 'sno-clt-text'),
+            'За всё время работы я ни разу не отвлёкся — ни на секунду.',
+          );
+        }
         await answerShown(tester);
       }
 
-      // Баллов участник не видит: только «Спасибо».
+      // Баллов участник не видит: только «Спасибо» и что делать дальше.
       expect(textOf(tester, 'sno-clt-thanks'), 'Спасибо, ответы сохранены');
+      expect(textOf(tester, 'sno-clt-call'), 'Позовите организатора');
       expect(find.textContaining('балл'), findsNothing);
       expect(find.textContaining('TLX'), findsNothing);
-      expect(answersOf(folder, fileOf(folder, 'B')), hasLength(16));
+      expect(find.textContaining('отмет'), findsNothing);
+      expect(answersOf(folder, fileOf(folder, 'B')), hasLength(18));
       await tap(tester, 'sno-clt-close');
 
       expect(find.byType(LoadTestRunScreen), findsNothing);
       expect(
         textOf(tester, 'sno-finish-test-done'),
-        'Итоговая часть пройдена: 16 из 16',
+        'Тест пройден: 18 из 18',
       );
       expect(find.byKey(const Key('sno-finish-test')), findsNothing);
-      expect(find.byKey(const Key('sno-finish-test-missing')), findsNothing);
+      expect(find.byKey(const Key('sno-finish-waits')), findsNothing);
+      expect(find.byKey(const Key('sno-finish-skip')), findsNothing);
+      expect(find.byKey(const Key('sno-finish-step-1')), findsNothing);
+      // Теперь — и только теперь — сессию можно завершить.
+      expect(find.byKey(const Key('sno-finish-hold')), findsOneWidget);
+
+      await holdOn(tester, 'sno-finish-hold');
+
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(find.byType(SessionFinishScreen), findsNothing);
+      expect(find.text('главный экран'), findsOneWidget);
+      // Запись и тест — в одной папке: журнал, ответы и показатели.
+      expect(kit.store.finished, contains(folder));
+      final Map<String, Object?> clt =
+          kit.store.json(folder, 'recording.json')['clt']!
+              as Map<String, Object?>;
+      expect(clt['final'], 'complete');
+      expect(kit.store.files[folder]!.keys, contains('clt/scores.json'));
+      expect(kit.store.files[folder]!.keys, contains('clt/scenario.json'));
+      final List<String> types = kit.store.types(folder);
+      expect(types.last, 'session.finish');
+      expect(types, contains('clt.finish'));
     });
 
-    testWidgets('SNO-F-CLT-03: начатую часть экран предлагает продолжить — '
-        'без пароля, с того же пункта', (WidgetTester tester) async {
+    testWidgets('SNO-F-CLT-03: начатый тест экран предлагает продолжить — '
+        'без пароля, без вступления, с того же пункта', (
+      WidgetTester tester,
+    ) async {
       await kit.session.start(code);
       final String folder = kit.folder;
       await kit.session.stop(StopReason.experimenter);
       await pumpFinish(tester);
-      // Блоков не отмечали: вопроса об усилии нет, сразу тест.
-      expect(find.byKey(const Key('sno-finish-effort')), findsNothing);
       await tap(tester, 'sno-finish-test');
       await typePassword(tester, password);
+      await tap(tester, 'sno-clt-begin');
       for (int i = 0; i < 5; i++) {
         await answerShown(tester);
       }
-      expect(textOf(tester, 'sno-clt-progress'), '6 из 16');
+      expect(textOf(tester, 'sno-clt-progress'), '6 из 18');
 
-      // Экспериментатор ушёл с теста посреди него.
+      // Участник ушёл с теста посреди него.
       await tester.pageBack();
       await tester.pumpAndSettle();
 
-      expect(find.text('Продолжить тест · 5 из 16'), findsOneWidget);
-      expect(find.byKey(const Key('sno-finish-test-missing')), findsOneWidget);
+      expect(find.text('Продолжить тест · 5 из 18'), findsOneWidget);
+      // Завершить сессию по-прежнему нельзя.
+      expect(find.byKey(const Key('sno-finish-hold')), findsNothing);
+      expect(
+        textOf(tester, 'sno-finish-waits'),
+        'Тест начат: 5 из 18. Сессия завершится после него.',
+      );
       await tap(tester, 'sno-finish-test');
 
       // Замок открыт до завершения сессии; пункт — шестой.
       expect(find.byType(LoadTestPasswordScreen), findsNothing);
-      expect(textOf(tester, 'sno-clt-progress'), '6 из 16');
+      expect(find.byKey(const Key('sno-clt-intro')), findsNothing);
+      expect(textOf(tester, 'sno-clt-progress'), '6 из 18');
       expect(answersOf(folder, fileOf(folder, 'B')), hasLength(5));
     });
 
-    testWidgets('SNO-F-CLT-02: сценарий не принят — на экране сказано '
-        'почему, сессия завершается как прежде', (WidgetTester tester) async {
+    testWidgets('SNO-F-CLT-05: тест пройти нельзя — выход организатора: '
+        'пароль, удержание, подтверждение', (WidgetTester tester) async {
+      await kit.session.start(code);
+      final String folder = kit.folder;
+      await kit.session.stop(StopReason.experimenter);
+      await pumpFinish(tester);
+      // Участник начал тест и ушёл.
+      await tap(tester, 'sno-finish-test');
+      await typePassword(tester, password);
+      await tap(tester, 'sno-clt-begin');
+      await answerShown(tester);
+      await answerShown(tester);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(test.unlocked, isTrue);
+
+      await tap(tester, 'sno-finish-skip');
+
+      // Пароль спрашивается и тогда, когда тест уже открыт: открытый
+      // замок — не разрешение уйти без теста.
+      expect(find.byType(LoadTestPasswordScreen), findsOneWidget);
+      expect(find.text('Завершить без теста'), findsOneWidget);
+      // Ушли с экрана пароля — ничего не случилось.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(kit.session.phase, RecordingPhase.stopped);
+
+      await tap(tester, 'sno-finish-skip');
+      await typePassword(tester, password);
+
+      expect(find.byType(SkipTestScreen), findsOneWidget);
+      // Короткое нажатие ничего не завершает.
+      await tap(tester, 'sno-skip-hold');
+      expect(find.byKey(const Key('sno-skip-dialog')), findsNothing);
+      await holdOn(tester, 'sno-skip-hold');
+      expect(find.byKey(const Key('sno-skip-dialog')), findsOneWidget);
+      // «Отмена» оставляет всё как было.
+      await tap(tester, 'sno-skip-cancel');
+      expect(find.byType(SkipTestScreen), findsOneWidget);
+      expect(kit.session.phase, RecordingPhase.stopped);
+
+      await holdOn(tester, 'sno-skip-hold');
+      await tap(tester, 'sno-skip-confirm');
+
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(find.byType(SkipTestScreen), findsNothing);
+      expect(find.byType(SessionFinishScreen), findsNothing);
+      expect(find.text('главный экран'), findsOneWidget);
+      // Запись помечена: тест начат и не окончен; в строке завершения
+      // сказано, чьим выходом сессия завершена.
+      final Map<String, Object?> clt =
+          kit.store.json(folder, 'recording.json')['clt']!
+              as Map<String, Object?>;
+      expect(clt['final'], 'partial');
+      expect(clt['final_answers'], 2);
+      final Map<String, Object?> finish = kit.store.events(folder).last;
+      expect(finish['type'], 'session.finish');
+      expect(finish['data'], <String, Object?>{'without_test': true});
+      // Попытки пароля — в журнале, обе.
+      expect(
+        kit.store.types(folder).where((String type) {
+          return type == 'clt.password.attempt';
+        }),
+        hasLength(2),
+      );
+    });
+
+    testWidgets('SNO-F-CLT-05: сценарий не принят — тест недоступен, '
+        'остаётся выход организатора', (WidgetTester tester) async {
       test.dispose();
       test = LoadTest(
         session: kit.session,
@@ -473,6 +677,7 @@ void main() {
         now: kit.time.now,
       );
       await kit.session.start(code);
+      final String folder = kit.folder;
       await kit.session.stop(StopReason.experimenter);
       await pumpFinish(tester);
 
@@ -482,25 +687,72 @@ void main() {
         'нужен «sno2026-clt/1».',
       );
       expect(find.byKey(const Key('sno-finish-test')), findsNothing);
-      expect(find.byKey(const Key('sno-finish-effort')), findsNothing);
-      expect(find.byKey(const Key('sno-finish-test-missing')), findsNothing);
-      expect(find.byKey(const Key('sno-finish-hold')), findsOneWidget);
+      // Сессия без теста обычным путём не завершается.
+      expect(find.byKey(const Key('sno-finish-hold')), findsNothing);
+      expect(find.byKey(const Key('sno-finish-waits')), findsOneWidget);
+
+      await tap(tester, 'sno-finish-skip');
+      await typePassword(tester, password);
+      await holdOn(tester, 'sno-skip-hold');
+      await tap(tester, 'sno-skip-confirm');
+
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(find.byType(SessionFinishScreen), findsNothing);
+      final Map<String, Object?> clt =
+          kit.store.json(folder, 'recording.json')['clt']!
+              as Map<String, Object?>;
+      expect(clt['final'], 'none');
     });
 
-    testWidgets('SNO-F-CLT-01: без теста в сборке экран завершения '
-        'прежний', (WidgetTester tester) async {
+    testWidgets('SNO-F-CLT-05: пароль сборки с экрана не набрать — выход '
+        'организатора пароля не спрашивает', (WidgetTester tester) async {
+      test.dispose();
+      test = LoadTest(session: kit.session, password: '25a0');
       await kit.session.start(code);
       await kit.session.stop(StopReason.experimenter);
-      await tester.pumpWidget(
-        MaterialApp(home: SessionFinishScreen(session: kit.session)),
+      await pumpFinish(tester);
+      expect(
+        textOf(tester, 'sno-finish-test-problem'),
+        contains('не набрать'),
       );
+
+      await tap(tester, 'sno-finish-skip');
+
+      // Иначе выхода не было бы вовсе.
+      expect(find.byType(LoadTestPasswordScreen), findsNothing);
+      expect(find.byType(SkipTestScreen), findsOneWidget);
+      await holdOn(tester, 'sno-skip-hold');
+      await tap(tester, 'sno-skip-confirm');
+      expect(kit.session.phase, RecordingPhase.idle);
+    });
+
+    testWidgets('SNO-F-CLT-05: без теста в сборке сессия завершается '
+        'сразу', (WidgetTester tester) async {
+      await kit.session.start(code);
+      await kit.session.stop(StopReason.experimenter);
+      navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          home: const Scaffold(body: Text('главный экран')),
+        ),
+      );
+      unawaited(openSessionFinish(navigator.currentState!, kit.session));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('sno-finish-code')), findsOneWidget);
-      expect(find.text('Тест нагрузки'), findsNothing);
       expect(find.byKey(const Key('sno-finish-test')), findsNothing);
-      expect(find.byKey(const Key('sno-finish-test-missing')), findsNothing);
+      expect(find.byKey(const Key('sno-finish-waits')), findsNothing);
+      expect(find.byKey(const Key('sno-finish-skip')), findsNothing);
+      expect(
+        textOf(tester, 'sno-finish-step-2'),
+        '2. После письменной части организатор завершит сессию.',
+      );
       expect(find.byKey(const Key('sno-finish-hold')), findsOneWidget);
+
+      await holdOn(tester, 'sno-finish-hold');
+      expect(kit.session.phase, RecordingPhase.idle);
+      expect(find.byType(SessionFinishScreen), findsNothing);
     });
   });
 
@@ -576,20 +828,29 @@ void main() {
       );
       expect(tile(tester).enabled, isTrue);
 
-      // Запись идёт — тест закрыт: его проходят после остановки.
+      // Запись идёт — тест закрыт: его проходят после остановки и
+      // письменной части.
       await kit.session.start(code);
       await tester.pumpAndSettle();
-      expect(textOf(tester, 'sno-clt-about'), 'После остановки записи');
+      expect(
+        textOf(tester, 'sno-clt-about'),
+        'После записи и письменной части',
+      );
       expect(tile(tester).enabled, isFalse);
       expect(tile(tester).onTap, isNull);
+      // SNO-F-REC-15: строки «Блок №» в разделе нет.
+      expect(find.byKey(const Key('sno-block')), findsNothing);
+      expect(find.byKey(const Key('sno-block-start')), findsNothing);
+      expect(find.textContaining('Блок'), findsNothing);
 
-      // Запись остановлена — пункт ведёт на экран завершения сессии.
+      // Запись остановлена: пункт никуда не ведёт — тест стоит на
+      // экране завершения сессии, которым закрыто приложение.
       await kit.session.stop(StopReason.experimenter);
       await tester.pumpAndSettle();
       expect(textOf(tester, 'sno-clt-about'), 'На экране завершения сессии');
-      await tap(tester, 'sno-clt');
-      expect(find.byType(SessionFinishScreen), findsOneWidget);
-      expect(find.byKey(const Key('sno-finish-test')), findsOneWidget);
+      expect(tile(tester).enabled, isFalse);
+      expect(tile(tester).onTap, isNull);
+      expect(find.byKey(const Key('sno-session-finish')), findsNothing);
 
       await unmount(tester);
     });
@@ -604,129 +865,56 @@ void main() {
       await typePassword(tester, password);
       expect(find.byType(LoadTestRunScreen), findsOneWidget);
       expect(find.byKey(const Key('sno-clt-dry')), findsOneWidget);
-      expect(textOf(tester, 'sno-clt-progress'), '1 из 16');
+      // Вступление показано и пробному проходу.
+      expect(find.byKey(const Key('sno-clt-intro')), findsOneWidget);
+      await tap(tester, 'sno-clt-begin');
+      expect(textOf(tester, 'sno-clt-progress'), '1 из 18');
       // Пароль пробного прохода теста не отпирает.
       expect(test.unlocked, isFalse);
       expect(kit.store.files, isEmpty);
 
       await unmount(tester);
     });
+  });
 
-    testWidgets('SNO-F-CLT-03: оценка не легла на диск — экран не уходит и '
-        'говорит об этом', (WidgetTester tester) async {
-      await pumpTesting(tester);
+  group('SNO-F-CLT-03: ответ не лёг на диск', () {
+    testWidgets('SNO-F-CLT-03: экран говорит об этом, а последний ответ не '
+        'даёт «Спасибо», пока не записан', (WidgetTester tester) async {
       await kit.session.start(code);
       final String folder = kit.folder;
+      await kit.session.stop(StopReason.experimenter);
+      await test.enter(password);
+      final LoadTestRun run = (await test.begin())!;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LoadTestRunScreen(test: test, run: run),
+        ),
+      );
       await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-start');
-      kit.run(30);
-      await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-end');
+      await tap(tester, 'sno-clt-begin');
+      // Запись знает, что участник на экране теста.
+      expect(kit.session.context.screen, 'clt');
+      for (int i = 0; i < 17; i++) {
+        await answerShown(tester);
+      }
+      expect(textOf(tester, 'sno-clt-progress'), '18 из 18');
       kit.store.failPutPrefix = 'clt/';
 
-      await tap(tester, 'sno-clt-value-5');
-      await tap(tester, 'sno-clt-next');
+      await answerShown(tester);
 
-      expect(find.byType(LoadTestRunScreen), findsOneWidget);
+      expect(find.byKey(const Key('sno-clt-thanks')), findsNothing);
       expect(
         textOf(tester, 'sno-clt-save-failed'),
         'Ответ не записался на диск: проверьте свободное место.',
       );
+      expect(test.finalDone, isFalse);
       // Диск ответил — «Дальше» доводит дело до конца.
       kit.store.failPutPrefix = null;
       await tap(tester, 'sno-clt-next');
 
-      expect(find.byType(LoadTestRunScreen), findsNothing);
-      expect(answersOf(folder, fileOf(folder, 'A')).single['value'], 5);
-
-      await unmount(tester);
-    });
-
-    testWidgets('SNO-F-CLT-02: сессию завершили — вопрос об усилии без '
-        'ответа участника не держит', (WidgetTester tester) async {
-      await pumpTesting(tester);
-      await kit.session.start(code);
-      await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-start');
-      kit.run(30);
-      await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-end');
-      expect(find.byType(LoadTestRunScreen), findsOneWidget);
-
-      // Запись остановили и сессию завершили, не ответив: отвечать
-      // больше некуда.
-      await kit.session.stop(StopReason.experimenter);
-      await tester.pumpAndSettle();
-      expect(find.byType(LoadTestRunScreen), findsOneWidget);
-      await kit.session.finish();
-      await tester.pumpAndSettle();
-
-      expect(find.byType(LoadTestRunScreen), findsNothing);
-      expect(find.byType(TestingScreen), findsOneWidget);
-      expect(find.byKey(const Key('sno-record-start')), findsOneWidget);
-
-      await unmount(tester);
-    });
-
-    testWidgets('SNO-F-CLT-02: усилие за блок оценили на другом экране — '
-        'этот вопрос закрывается сам', (WidgetTester tester) async {
-      await pumpTesting(tester);
-      await kit.session.start(code);
-      final String folder = kit.folder;
-      await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-start');
-      kit.run(30);
-      await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-end');
-      expect(find.byType(LoadTestRunScreen), findsOneWidget);
-
-      // Тот же вопрос задан ещё раз — с экрана завершения сессии,
-      // который открылся поверх, — и на него ответили там.
-      final LoadTestRun other = (await test.begin(
-        kCltBlockEnd,
-        block: kit.session.blocks.last,
-      ))!;
-      other.choose(5);
-      await other.next();
-      await tester.pumpAndSettle();
-
-      expect(find.byType(LoadTestRunScreen), findsNothing);
-      // Вопрос один, файл один, ответ — тот, что дали.
-      expect(answersOf(folder, fileOf(folder, 'A')).single['value'], 5);
-      other.dispose();
-
-      await unmount(tester);
-    });
-
-    testWidgets('SNO-F-CLT-02: «Закончить» у блока задаёт вопрос об усилии и '
-        'возвращает в раздел', (WidgetTester tester) async {
-      await pumpTesting(tester);
-      await kit.session.start(code);
-      final String folder = kit.folder;
-      await tester.pumpAndSettle();
-      await tap(tester, 'sno-block-start');
-      kit.run(90);
-      await tester.pumpAndSettle();
-
-      await tap(tester, 'sno-block-end');
-
-      expect(find.byType(LoadTestRunScreen), findsOneWidget);
-      expect(textOf(tester, 'sno-clt-progress'), 'Блок 1 закончен');
-      expect(find.byType(BackButton), findsNothing);
-      // Запись знает, что участник на экране теста.
-      expect(kit.session.context.screen, 'clt');
-      await tap(tester, 'sno-clt-value-3');
-      await tap(tester, 'sno-clt-next');
-
-      expect(find.byType(LoadTestRunScreen), findsNothing);
-      expect(find.byType(TestingScreen), findsOneWidget);
-      expect(kit.session.context.screen, isNot('clt'));
-      expect(answersOf(folder, fileOf(folder, 'A')).single['value'], 3);
-      // Запись идёт дальше: следующему блоку предложен второй номер.
-      expect(kit.session.phase, RecordingPhase.recording);
-      expect(textOf(tester, 'sno-block-number'), '2');
-
-      await unmount(tester);
+      expect(textOf(tester, 'sno-clt-thanks'), 'Спасибо, ответы сохранены');
+      expect(test.finalDone, isTrue);
+      expect(answersOf(folder, fileOf(folder, 'B')), hasLength(18));
     });
   });
 }

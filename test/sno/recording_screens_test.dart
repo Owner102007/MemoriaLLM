@@ -26,7 +26,12 @@ import '../support/fake_reading.dart';
 import '../support/recording_fakes.dart';
 import '../support/test_services.dart';
 
-/// SNO-F-REC-01, SNO-F-CFG-05, SNO-F-LIB-02, SNO-F-CFG-03: экраны записи.
+/// SNO-F-REC-01, SNO-F-CFG-05, SNO-F-LIB-02, SNO-F-CFG-03, SNO-F-REC-16:
+/// экраны записи.
+///
+/// С шага 25 остановка записи закрывает приложение экраном завершения
+/// сессии (SNO-F-REC-16): плашки, которая на него вела, больше нет, и
+/// уйти с него нельзя, пока сессия не завершена.
 ///
 /// Сессия — на памяти и подменённом времени: секунды записи идут по
 /// слову теста, таймеров нет. Сама сессия проверяется в
@@ -81,9 +86,27 @@ void main() {
 
     setUp(() => started = 0);
 
-    Future<void> pumpTesting(WidgetTester tester) async {
+    /// Раздел «Тестирование»; [overlay] — под слоем записи, как в
+    /// приложении: тогда остановленная запись сама ставит экран
+    /// завершения сессии.
+    Future<void> pumpTesting(
+      WidgetTester tester, {
+      bool overlay = false,
+    }) async {
+      final GlobalKey<NavigatorState> navigator = GlobalKey<NavigatorState>();
       await tester.pumpWidget(
         MaterialApp(
+          navigatorKey: navigator,
+          builder: (BuildContext context, Widget? page) {
+            if (!overlay) {
+              return page!;
+            }
+            return RecordingOverlay(
+              session: kit.session,
+              navigator: navigator,
+              child: page!,
+            );
+          },
           home: TestingScreen(
             services: testServices(data: data, recording: kit.session),
             flags: BranchFlags.of('I'),
@@ -113,7 +136,6 @@ void main() {
       );
       expect(find.byKey(const Key('sno-participant')), findsNothing);
       expect(find.byKey(const Key('sno-recording')), findsNothing);
-      expect(find.byKey(const Key('sno-session-finish')), findsNothing);
 
       await unmount(tester);
     });
@@ -315,23 +337,20 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-CFG-03: остановленная сессия ведёт на завершение', (
+    testWidgets('SNO-F-REC-16: остановленная запись сама ставит экран '
+        'завершения; завершили — в разделе снова старт', (
       WidgetTester tester,
     ) async {
-      await pumpTesting(tester);
+      await pumpTesting(tester, overlay: true);
       await kit.session.start(code);
       kit.run(23 * 60 + 10);
       await kit.session.stop(StopReason.experimenter);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('sno-recording')), findsNothing);
-      expect(find.byKey(const Key('sno-record-start')), findsNothing);
-      expect(find.text('Завершить сессию'), findsOneWidget);
-      expect(find.text('Запись остановлена · 23:10'), findsOneWidget);
-
-      await tap(tester, 'sno-session-finish');
-
+      // Раздела не видно: приложение закрыто экраном завершения.
       expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.byType(TestingScreen), findsNothing);
+      expect(find.byKey(const Key('sno-session-finish')), findsNothing);
       expect(
         tester.widget<Text>(find.byKey(const Key('sno-finish-title'))).data,
         'Запись остановлена · 23:10',
@@ -344,6 +363,8 @@ void main() {
       // Старт, 139 сердцебиений и остановка.
       expect(find.text('Записано событий: 141'), findsOneWidget);
       expect(find.byKey(const Key('sno-finish-failed')), findsNothing);
+      // SNO-F-REC-15: строки о блоках на экране нет.
+      expect(find.textContaining('Блок'), findsNothing);
       // За сорок минут заряд изменился.
       kit.status.battery = 61;
 
@@ -359,19 +380,12 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
       expect(kit.session.phase, RecordingPhase.idle);
-      expect(
-        tester.widget<Text>(find.byKey(const Key('sno-finish-code'))).data,
-        '6795-4332',
-      );
-      expect(
-        tester.widget<Text>(find.byKey(const Key('sno-finish-title'))).data,
-        'Запись остановлена · 23:10',
-      );
       await tester.pumpAndSettle();
 
       // Сессия завершена: экран закрыт, в разделе снова старт.
       expect(find.byType(SessionFinishScreen), findsNothing);
       expect(kit.session.phase, RecordingPhase.idle);
+      expect(kit.session.finishOpen.value, isFalse);
       expect(find.byKey(const Key('sno-record-start')), findsOneWidget);
       expect(find.byKey(const Key('sno-participant')), findsNothing);
       // Готовность под кнопкой — нынешняя, а не сорокаминутной давности.
@@ -380,14 +394,13 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-CFG-05: сессия завершается только удержанием', (
-      WidgetTester tester,
-    ) async {
-      await pumpTesting(tester);
+    testWidgets('SNO-F-REC-16: с экрана завершения не уйти, сессия '
+        'завершается только удержанием', (WidgetTester tester) async {
+      await pumpTesting(tester, overlay: true);
       await kit.session.start(code);
       await kit.session.stop(StopReason.experimenter);
       await tester.pumpAndSettle();
-      await tap(tester, 'sno-session-finish');
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
 
       // Короткое нажатие ничего не завершает.
       await tap(tester, 'sno-finish-hold');
@@ -395,12 +408,16 @@ void main() {
       expect(find.byType(SessionFinishScreen), findsOneWidget);
       expect(kit.session.phase, RecordingPhase.stopped);
 
-      // «Назад» с экрана завершения сессию не завершает.
-      await tester.pageBack();
+      // Стрелки «назад» на экране нет, системное «назад» и `Esc` не
+      // действуют.
+      expect(find.byType(BackButton), findsNothing);
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      expect(find.byType(SessionFinishScreen), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.byType(TestingScreen), findsNothing);
       expect(kit.session.locked, isTrue);
-      expect(find.byKey(const Key('sno-session-finish')), findsOneWidget);
 
       await unmount(tester);
     });
@@ -442,10 +459,14 @@ void main() {
         findsOneWidget,
       );
 
-      // Остановка записи сессию не завершает: замок остаётся.
+      // Остановка записи сессию не завершает: замок остаётся. Строки,
+      // которая вела бы на завершение, в разделе нет: его ставит слой
+      // записи (SNO-F-REC-16).
       await kit.session.stop(StopReason.experimenter);
       await tester.pumpAndSettle();
       expect(reset().onConfirmed, isNull);
+      expect(find.byKey(const Key('sno-session-finish')), findsNothing);
+      expect(find.text('Завершить сессию'), findsNothing);
 
       await kit.session.finish();
       await tester.pumpAndSettle();
@@ -523,8 +544,17 @@ void main() {
       );
     }
 
-    Future<void> pumpOverlay(WidgetTester tester, {Widget? home}) async {
-      final GlobalKey<NavigatorState> navigator = GlobalKey<NavigatorState>();
+    /// Навигатор приложения под слоем записи.
+    late GlobalKey<NavigatorState> navigator;
+
+    /// Ставит приложение под слоем записи; [settle] — дождаться ли,
+    /// пока экран встанет: без этого на экране первый кадр.
+    Future<void> pumpOverlay(
+      WidgetTester tester, {
+      Widget? home,
+      bool settle = true,
+    }) async {
+      navigator = GlobalKey<NavigatorState>();
       await tester.pumpWidget(
         MaterialApp(
           navigatorKey: navigator,
@@ -538,7 +568,9 @@ void main() {
           home: home ?? withCornerButton(),
         ),
       );
-      await tester.pumpAndSettle();
+      if (settle) {
+        await tester.pumpAndSettle();
+      }
     }
 
     /// Держит палец в точке [at] всего [held].
@@ -585,6 +617,10 @@ void main() {
       await kit.session.stop(StopReason.experimenter);
       await tester.pump();
       expect(find.byKey(const Key('sno-recording-dot')), findsNothing);
+      // SNO-F-REC-16: страницы больше не видно — на её месте завершение
+      // сессии.
+      expect(find.text('страница книги'), findsNothing);
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
 
       await unmount(tester);
     });
@@ -827,11 +863,8 @@ void main() {
 
       expect(find.byKey(const Key('sno-stop-dialog')), findsNothing);
       expect(kit.session.recording, isTrue);
-      // И автостоп после этого снимает только точку, а не экран.
-      kit.run(40 * 60);
-      await tester.pumpAndSettle();
       expect(find.text('страница книги'), findsOneWidget);
-      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
+      expect(find.byType(SessionFinishScreen), findsNothing);
 
       await unmount(tester);
     });
@@ -855,18 +888,19 @@ void main() {
       expect(find.byKey(const Key('sno-stop-dialog')), findsNothing);
       expect(kit.session.phase, RecordingPhase.stopped);
       expect(kit.session.state!.stoppedBy, StopReason.experimenter);
-      // Экспериментатора сразу ведут на завершение сессии.
+      // Приложение закрыто экраном завершения сессии.
       expect(find.byType(SessionFinishScreen), findsOneWidget);
       expect(find.text('Запись остановлена · 01:10'), findsOneWidget);
-      // Пока экран завершения открыт, плашки под ним нет.
+      expect(find.text('страница книги'), findsNothing);
+      // Плашки, которая вела на завершение, больше нет.
       expect(find.byKey(const Key('sno-recording-ended')), findsNothing);
+      expect(find.byKey(const Key('sno-app-closed')), findsNothing);
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-REC-01: автостоп страницу не прерывает', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('SNO-F-REC-16: автостоп закрывает страницу экраном '
+        'завершения — сам и без возврата', (WidgetTester tester) async {
       await pumpOverlay(tester);
       await kit.session.start(code);
       await tester.pump();
@@ -875,36 +909,90 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(kit.session.state!.stoppedBy, StopReason.auto);
-      // Страница на месте, точки нет, внизу плашка.
-      expect(find.text('страница книги'), findsOneWidget);
-      expect(find.byType(SessionFinishScreen), findsNothing);
-      expect(find.byKey(const Key('sno-recording-dot')), findsNothing);
-      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
-      expect(find.text('Запись завершена'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('sno-recording-ended')));
-      await tester.pumpAndSettle();
-
+      // Страницы не видно, точки нет, плашки нет: на экране завершение
+      // сессии — без единого нажатия.
       expect(find.byType(SessionFinishScreen), findsOneWidget);
       expect(find.text('Запись завершена · 40:00'), findsOneWidget);
+      expect(find.text('страница книги'), findsNothing);
+      expect(find.byKey(const Key('sno-recording-dot')), findsNothing);
       expect(find.byKey(const Key('sno-recording-ended')), findsNothing);
+      expect(kit.session.finishOpen.value, isTrue);
 
-      // Ушли с экрана завершения — плашка снова ведёт на него.
-      await tester.pageBack();
+      // Назад к странице дороги нет.
+      expect(find.byType(BackButton), findsNothing);
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.text('страница книги'), findsNothing);
+      // Кнопка под точкой записи осталась под экраном: её не нажать.
+      await tester.tapAt(const Offset(16, 16));
+      await tester.pumpAndSettle();
+      expect(underTaps, 0);
+
+      // Сессия завершена — приложение возвращается к обычному виду.
+      await holdOn(tester, 'sno-finish-hold');
+      expect(kit.session.phase, RecordingPhase.idle);
       expect(find.byType(SessionFinishScreen), findsNothing);
-      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
-
-      // Сессия завершена — плашки нет.
-      await kit.session.finish();
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('sno-recording-ended')), findsNothing);
+      expect(find.text('страница книги'), findsOneWidget);
+      expect(find.byKey(const Key('sno-app-closed')), findsNothing);
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-REC-01: запись кончилась при открытом вопросе — '
-        'вопрос закрыт, страница на месте', (WidgetTester tester) async {
+    testWidgets('SNO-F-REC-16: остановка снимает всё, что открыто поверх '
+        'главного экрана, — и тот, кто открыл, об этом узнаёт', (
+      WidgetTester tester,
+    ) async {
+      await pumpOverlay(tester);
+      await kit.session.start(code);
+      await tester.pump();
+      // Поверх главного экрана — «книга», а над ней окно.
+      bool bookClosed = false;
+      final Future<void> book = navigator.currentState!
+          .push<void>(
+            MaterialPageRoute<void>(
+              builder: (BuildContext context) {
+                return const Scaffold(body: Text('открытая книга'));
+              },
+            ),
+          )
+          .whenComplete(() => bookClosed = true);
+      await tester.pumpAndSettle();
+      final Future<bool?> asked = showDialog<bool>(
+        context: navigator.currentContext!,
+        builder: (BuildContext context) {
+          return const AlertDialog(title: Text('окно над книгой'));
+        },
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('окно над книгой'), findsOneWidget);
+
+      kit.run(40 * 60);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.text('открытая книга'), findsNothing);
+      expect(find.text('окно над книгой'), findsNothing);
+      // Экраны закрыты, а не выброшены: ожидавшие их дождались.
+      await book;
+      expect(bookClosed, isTrue);
+      expect(await asked, isNull);
+
+      // После завершения сессии под экраном — главный экран, а не
+      // книга.
+      await holdOn(tester, 'sno-finish-hold');
+      expect(find.text('страница книги'), findsOneWidget);
+      expect(find.text('открытая книга'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-16: запись кончилась при открытом вопросе — '
+        'вопрос закрыт, на экране завершение сессии', (
+      WidgetTester tester,
+    ) async {
       await pumpOverlay(tester);
       await kit.session.start(code);
       kit.run(5);
@@ -917,10 +1005,57 @@ void main() {
 
       expect(find.byKey(const Key('sno-stop-dialog')), findsNothing);
       expect(kit.session.state!.stoppedBy, StopReason.auto);
-      // Закрылся только вопрос: экран под ним не снят.
-      expect(find.text('страница книги'), findsOneWidget);
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.text('Запись завершена · 40:00'), findsOneWidget);
+      expect(find.text('страница книги'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-16: приложение открыли с остановленной записью — '
+        'главного экрана не видно ни на кадр', (WidgetTester tester) async {
+      await kit.session.start(code);
+      kit.run(30);
+      await kit.session.stop(StopReason.experimenter);
+
+      await pumpOverlay(tester, settle: false);
+
+      // Первый кадр: экран завершения ещё не встал, а приложение уже
+      // под глухим слоем — ни увидеть, ни нажать.
+      expect(find.byKey(const Key('sno-app-closed')), findsOneWidget);
+      expect(find.text('страница книги').hitTestable(), findsNothing);
+      await tester.tapAt(const Offset(16, 16));
+      expect(underTaps, 0);
+
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.text('Запись остановлена · 00:30'), findsOneWidget);
+      expect(find.byKey(const Key('sno-app-closed')), findsNothing);
+      expect(find.text('страница книги'), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-16: сессию завершили мимо экрана — он уходит '
+        'сам', (WidgetTester tester) async {
+      await pumpOverlay(tester);
+      await kit.session.start(code);
+      await kit.session.stop(StopReason.experimenter);
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+
+      await kit.session.finish();
+      await tester.pumpAndSettle();
+
       expect(find.byType(SessionFinishScreen), findsNothing);
-      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
+      expect(find.text('страница книги'), findsOneWidget);
+      expect(kit.session.finishOpen.value, isFalse);
+      // Следующая запись закрывается так же.
+      await kit.session.start(code);
+      await kit.session.stop(StopReason.experimenter);
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
 
       await unmount(tester);
     });
@@ -1004,8 +1139,9 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    /// Полка — и тогда, когда она закрыта экраном завершения сессии.
     LibraryScreen shelf(WidgetTester tester) {
-      return tester.widget(find.byType(LibraryScreen));
+      return tester.widget(find.byType(LibraryScreen, skipOffstage: false));
     }
 
     /// Закрывает ли «назад» приложение с этого экрана.
@@ -1013,9 +1149,10 @@ void main() {
       final PopScope<Object?> scope = tester.widget(
         find
             .ancestor(
-              of: find.byType(LibraryScreen),
+              of: find.byType(LibraryScreen, skipOffstage: false),
               matching: find.byWidgetPredicate(
                 (Widget widget) => widget is PopScope<Object?>,
+                skipOffstage: false,
               ),
             )
             .first,
@@ -1053,17 +1190,21 @@ void main() {
       // Книга под замком открывается: участник читает.
       expect(find.byKey(const Key('library-book-book-1')), findsOneWidget);
 
-      // Запись остановлена — участник заполняет бланк: замок остаётся.
+      // Запись остановлена — участник заполняет бланк: замок остаётся,
+      // а сама полка закрыта экраном завершения (SNO-F-REC-16).
       await kit.session.stop(StopReason.experimenter);
       await settle(tester);
       expect(shelf(tester).locked, isTrue);
       expect(find.byKey(const Key('sno-recording-dot')), findsNothing);
-      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+      expect(find.byType(LibraryScreen), findsNothing);
+      expect(find.byKey(const Key('nav-bottom')), findsNothing);
 
       await kit.session.finish();
       await settle(tester);
+      expect(find.byType(SessionFinishScreen), findsNothing);
+      expect(find.byType(LibraryScreen), findsOneWidget);
       expect(shelf(tester).locked, isFalse);
-      expect(find.byKey(const Key('sno-recording-ended')), findsNothing);
 
       await unmount(tester);
     });
@@ -1090,24 +1231,46 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-CFG-03: приложение открыли с незавершённой сессией '
-        '— замок и плашка с первого кадра', (WidgetTester tester) async {
+    testWidgets('SNO-F-REC-16: приложение открыли с незавершённой сессией '
+        '— сразу экран завершения, полки не видно ни на кадр', (
+      WidgetTester tester,
+    ) async {
       await data.library.save(testBook());
       await kit.session.start(code);
       kit.run(30);
       await kit.session.stop(StopReason.experimenter);
 
-      await pumpApp(tester, testServices(data: data, recording: kit.session));
+      await tester.pumpWidget(
+        MemoriaApp(
+          themeController: ThemeController(),
+          services: testServices(data: data, recording: kit.session),
+        ),
+      );
 
-      expect(shelf(tester).locked, isTrue);
-      expect(find.byKey(const Key('sno-recording-ended')), findsOneWidget);
-      expect(find.text('Запись остановлена'), findsOneWidget);
+      // Первый кадр: приложение под глухим слоем.
+      expect(find.byKey(const Key('sno-app-closed')), findsOneWidget);
+      expect(find.byKey(const Key('nav-library')).hitTestable(), findsNothing);
 
-      // Плашка ведёт на завершение сессии.
-      await tester.tap(find.byKey(const Key('sno-recording-ended')));
       await settle(tester);
+
       expect(find.byType(SessionFinishScreen), findsOneWidget);
       expect(find.text('Запись остановлена · 00:30'), findsOneWidget);
+      expect(find.byType(LibraryScreen), findsNothing);
+      expect(find.byKey(const Key('nav-library')), findsNothing);
+      expect(shelf(tester).locked, isTrue);
+      // Ни один путь не ведёт к полке и разделам.
+      await tester.binding.handlePopRoute();
+      await settle(tester);
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
+
+      // После «Завершить сессию» приложение — обычное: полка открыта,
+      // замок снят, код участника забыт.
+      await holdOn(tester, 'sno-finish-hold');
+      await settle(tester);
+      expect(find.byType(SessionFinishScreen), findsNothing);
+      expect(find.byType(LibraryScreen), findsOneWidget);
+      expect(shelf(tester).locked, isFalse);
+      expect(kit.session.participant, isNull);
 
       await unmount(tester);
     });

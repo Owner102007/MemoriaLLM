@@ -4,7 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/sno/clt/builtin_scenario.dart';
 import 'package:memoria/sno/clt/scenario.dart';
 
-/// SNO-F-CLT-02: сценарий теста нагрузки как данные.
+/// SNO-F-CLT-02, SNO-F-CLT-04: сценарий теста нагрузки как данные.
+///
+/// Вторая версия встроенного сценария (шаг 25): одна часть, вступление,
+/// восемнадцать пунктов — среди них два маркера честности. Части «после
+/// блока» в нём нет (SNO-F-REC-15), но вид такой части формат читает
+/// по-прежнему.
 ///
 /// Чистые правила: разбор и отказ сценария, порядок пунктов по коду
 /// участника. Порядок перемешанного раздела и зёрна сверяются с числами,
@@ -40,6 +45,48 @@ void main() {
     throw StateError('раздела $id нет');
   }
 
+  /// Встроенный сценарий с частью «после блока» впереди — какой она
+  /// была в первой версии: формат её по-прежнему читает.
+  Map<String, Object?> withBlockPart() {
+    final Map<String, Object?> scenario = builtin();
+    (scenario['parts']! as List<Object?>).insert(0, <String, Object?>{
+      'id': 'A',
+      'when': kCltBlockEnd,
+      'password': false,
+      'items': <Object?>[
+        <String, Object?>{
+          'id': 'paas.effort',
+          'type': kCltScaleType,
+          'min': 1,
+          'max': 9,
+          'step': 1,
+          'text': 'Сколько умственных усилий вы вложили в это задание?',
+        },
+      ],
+    });
+    return scenario;
+  }
+
+  /// Пункт [id] итоговой части.
+  Map<String, Object?> itemOf(Map<String, Object?> scenario, String id) {
+    for (final Object? section
+        in partOf(scenario, 'B')['sections']! as List<Object?>) {
+      final Map<String, Object?> one = section! as Map<String, Object?>;
+      for (final Object? item in one['items']! as List<Object?>) {
+        final Map<String, Object?> entry = item! as Map<String, Object?>;
+        if (entry['id'] == id) {
+          return entry;
+        }
+      }
+    }
+    throw StateError('пункта $id нет');
+  }
+
+  /// Сверка маркера [id] с записью.
+  Map<String, Object?> verifyOf(Map<String, Object?> scenario, String id) {
+    return itemOf(scenario, id)['verify']! as Map<String, Object?>;
+  }
+
   /// Причина, по которой сценарий [raw] не принят.
   String refusal(Object? raw) {
     try {
@@ -58,40 +105,42 @@ void main() {
 
       for (final CltScenario scenario in <CltScenario>[direct, decoded]) {
         expect(scenario.id, 'sno-clt-main');
-        expect(scenario.version, 1);
+        expect(scenario.version, 2);
         expect(scenario.lang, 'ru');
-        expect(scenario.parts, hasLength(2));
+        expect(scenario.parts, hasLength(1));
       }
     });
 
-    test('SNO-F-CLT-02: после блока — один вопрос об усилии, девять '
-        'делений, без пароля', () {
-      final CltPart part = parseCltScenario(kBuiltinCltScenario)
-          .partFor(kCltBlockEnd)!;
+    test('SNO-F-REC-15: части «после блока» во встроенном сценарии нет — '
+        'но формат её читает', () {
+      final CltScenario scenario = parseCltScenario(kBuiltinCltScenario);
+      expect(scenario.partFor(kCltBlockEnd), isNull);
+      expect(
+        <String>[
+          for (final CltPart part in scenario.parts)
+            for (final CltItem item in part.items) item.group,
+        ],
+        isNot(contains('paas')),
+      );
 
-      expect(part.id, 'A');
-      expect(part.password, isFalse);
-      expect(part.length, 1);
-      final CltItem item = part.sections.single.items.single;
-      expect(item.id, 'paas.effort');
-      expect(item.text, 'Сколько умственных усилий вы вложили в это задание?');
-      expect(item.scale.values, <int>[1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      expect(item.scale.labels, <int, String>{
-        1: 'очень-очень мало',
-        5: 'ни мало, ни много',
-        9: 'очень-очень много',
-      });
-      expect(item.group, 'paas');
+      final CltScenario old = parseCltScenario(withBlockPart());
+      final CltPart block = old.partFor(kCltBlockEnd)!;
+      expect(block.id, 'A');
+      expect(block.password, isFalse);
+      expect(block.items.single.id, 'paas.effort');
+      expect(old.partFor(kCltSessionEnd)!.length, kBuiltinCltItems);
     });
 
-    test('SNO-F-CLT-02: в конце сессии — шестнадцать пунктов по паролю: '
-        'шесть шкал нагрузки, семь о задании, три о полке', () {
+    test('SNO-F-CLT-02: в конце сессии — восемнадцать пунктов по паролю: '
+        'шесть шкал нагрузки, восемь о задании, четыре о полке', () {
       final CltPart part = parseCltScenario(kBuiltinCltScenario)
           .partFor(kCltSessionEnd)!;
 
       expect(part.id, 'B');
       expect(part.password, isTrue);
-      expect(part.length, 16);
+      expect(part.length, 18);
+      expect(part.length, kBuiltinCltItems);
+      expect(part.items, hasLength(18));
       expect(
         <String>[for (final CltSection section in part.sections) section.id],
         <String>['tlx', 'types', 'orient'],
@@ -116,7 +165,8 @@ void main() {
         0: 'отлично',
         100: 'провал',
       });
-      expect(part.sections[1].items, hasLength(7));
+      expect(part.sections[1].items, hasLength(8));
+      expect(part.sections[2].items, hasLength(4));
       for (final CltItem item in <CltItem>[
         ...part.sections[1].items,
         ...part.sections[2].items,
@@ -130,11 +180,89 @@ void main() {
       // Обратный счёт — у одного пункта.
       expect(
         <String>[
-          for (final CltSection section in part.sections)
-            for (final CltItem item in section.items)
-              if (item.reverse) item.id,
+          for (final CltItem item in part.items)
+            if (item.reverse) item.id,
         ],
         <String>['orient.3'],
+      );
+    });
+
+    test('SNO-F-CLT-04: перед первым пунктом — вступление: что оценивать и '
+        'как отвечать', () {
+      final CltPart part = parseCltScenario(kBuiltinCltScenario)
+          .partFor(kCltSessionEnd)!;
+
+      expect(part.intro, startsWith('Сейчас — короткий опрос'));
+      expect(part.intro, contains('а не письменную работу'));
+      expect(part.intro, endsWith('как было на самом деле.'));
+      // Сценарий без вступления читается как раньше.
+      final Map<String, Object?> bare = builtin();
+      partOf(bare, 'B').remove('intro');
+      expect(parseCltScenario(bare).partFor(kCltSessionEnd)!.intro, isNull);
+    });
+
+    test('SNO-F-CLT-04: два маркера честности — в перемешанном разделе и '
+        'вторым в разделе о полке', () {
+      final CltPart part = parseCltScenario(kBuiltinCltScenario)
+          .partFor(kCltSessionEnd)!;
+
+      expect(
+        <String>[
+          for (final CltItem item in part.items)
+            if (item.isCheck) item.id,
+        ],
+        <String>['chk.focus', 'chk.books'],
+      );
+      expect(part.sections[1].items.last.id, 'chk.focus');
+      expect(part.sections[2].items[1].id, 'chk.books');
+
+      final CltItem focus = part.sections[1].items.last;
+      expect(
+        focus.text,
+        'За всё время работы я ни разу не отвлёкся — ни на секунду.',
+      );
+      final CltCheck first = focus.check!;
+      // Отметка — ответ 7 из 7.
+      expect(first.flag.holds(7), isTrue);
+      expect(first.flag.holds(6), isFalse);
+      // Расхождение с записью — 6–7 при отлучках.
+      expect(first.fact, kCltFactAwayCount);
+      expect(first.contradicts(6, 1), isTrue);
+      expect(first.contradicts(7, 3), isTrue);
+      expect(first.contradicts(5, 3), isFalse);
+      expect(first.contradicts(7, 0), isFalse);
+
+      final CltItem books = part.sections[2].items[1];
+      expect(books.text, 'За время работы я не открыл ни одной книги.');
+      final CltCheck second = books.check!;
+      // Отметка — ответ 4 и больше.
+      expect(second.flag.holds(4), isTrue);
+      expect(second.flag.holds(3), isFalse);
+      // Расхождение — «не открыл» при открытых книгах и «открывал» при
+      // нуле открытых.
+      expect(second.fact, kCltFactBookOpens);
+      expect(second.contradicts(4, 1), isTrue);
+      expect(second.contradicts(7, 14), isTrue);
+      expect(second.contradicts(1, 14), isFalse);
+      expect(second.contradicts(3, 0), isFalse);
+      expect(second.contradicts(2, 0), isTrue);
+      expect(second.contradicts(1, 0), isTrue);
+      expect(second.contradicts(4, 0), isFalse);
+      // Маркер на экране — та же шкала, что у соседей.
+      expect(focus.scale.values, part.sections[1].items.first.scale.values);
+      expect(books.scale.values, part.sections[2].items.first.scale.values);
+    });
+
+    test('SNO-F-CLT-04: обычный пункт — не маркер', () {
+      final CltPart part = parseCltScenario(kBuiltinCltScenario)
+          .partFor(kCltSessionEnd)!;
+
+      expect(
+        <CltItem>[
+          for (final CltItem item in part.items)
+            if (!item.isCheck) item,
+        ],
+        hasLength(16),
       );
     });
 
@@ -170,9 +298,7 @@ void main() {
 
     test('SNO-F-CLT-02: неизвестный вид пункта', () {
       final Map<String, Object?> scenario = builtin();
-      final List<Object?> items =
-          partOf(scenario, 'A')['items']! as List<Object?>;
-      (items.single! as Map<String, Object?>)['type'] = 'choice';
+      itemOf(scenario, 'orient.1')['type'] = 'choice';
 
       expect(refusal(scenario), contains('неизвестный вид пункта «choice»'));
 
@@ -225,7 +351,7 @@ void main() {
       (items.last! as Map<String, Object?>)['id'] = 'tlx.mental';
       expect(refusal(twice), contains('«tlx.mental» встречается дважды'));
 
-      final Map<String, Object?> parts = builtin();
+      final Map<String, Object?> parts = withBlockPart();
       partOf(parts, 'B')['id'] = 'A';
       expect(refusal(parts), contains('часть «A» встречается дважды'));
 
@@ -256,18 +382,18 @@ void main() {
     });
 
     test('SNO-F-CLT-02: вопрос после блока не может быть под паролем', () {
-      final Map<String, Object?> locked = builtin();
+      final Map<String, Object?> locked = withBlockPart();
       partOf(locked, 'A')['password'] = true;
 
       expect(refusal(locked), contains('не может быть под паролем'));
     });
 
     test('SNO-F-CLT-02: две части в один миг и часть без мига', () {
-      final Map<String, Object?> same = builtin();
+      final Map<String, Object?> same = withBlockPart();
       partOf(same, 'A')['when'] = kCltSessionEnd;
       expect(refusal(same), contains('в один миг'));
 
-      final Map<String, Object?> never = builtin();
+      final Map<String, Object?> never = withBlockPart();
       partOf(never, 'A')['when'] = 'иногда';
       expect(refusal(never), contains('«иногда»'));
     });
@@ -283,13 +409,87 @@ void main() {
       expect(refusal(empty), contains('список пуст'));
 
       final Map<String, Object?> wordless = builtin();
-      final List<Object?> items =
-          partOf(wordless, 'A')['items']! as List<Object?>;
-      (items.single! as Map<String, Object?>)['text'] = '  ';
+      itemOf(wordless, 'orient.1')['text'] = '  ';
       expect(refusal(wordless), contains('текст'));
 
       expect(refusal(builtin()..['version'] = 0), contains('версия'));
       expect(refusal(builtin()..['id'] = ''), contains('идентификатор'));
+    });
+
+    test('SNO-F-CLT-04: вступление — не строка или пустое', () {
+      final Map<String, Object?> number = builtin();
+      partOf(number, 'B')['intro'] = 7;
+      expect(refusal(number), contains('вступление'));
+
+      final Map<String, Object?> blank = builtin();
+      partOf(blank, 'B')['intro'] = '   ';
+      expect(refusal(blank), contains('вступление'));
+    });
+
+    test('SNO-F-CLT-04: маркер с неизвестной ролью, без отметки, с '
+        'неизвестной сверкой', () {
+      final Map<String, Object?> role = builtin();
+      itemOf(role, 'chk.focus')['role'] = 'trap';
+      expect(refusal(role), contains('неизвестная роль «trap»'));
+
+      final Map<String, Object?> unflagged = builtin();
+      itemOf(unflagged, 'chk.focus').remove('flag');
+      expect(refusal(unflagged), contains('отметка'));
+
+      final Map<String, Object?> boundless = builtin();
+      itemOf(boundless, 'chk.focus')['flag'] = <String, Object?>{};
+      expect(refusal(boundless), contains('не названа ни одна граница'));
+
+      final Map<String, Object?> words = builtin();
+      itemOf(words, 'chk.focus')['flag'] = <String, Object?>{'min': 'семь'};
+      expect(refusal(words), contains('не целые числа'));
+
+      final Map<String, Object?> upside = builtin();
+      itemOf(upside, 'chk.focus')['flag'] = <String, Object?>{
+        'min': 7,
+        'max': 2,
+      };
+      expect(refusal(upside), contains('нижняя граница больше верхней'));
+
+      // Маркер с неизвестным `verify.fact` — отказ сценария словами.
+      final Map<String, Object?> fact = builtin();
+      verifyOf(fact, 'chk.books')['fact'] = 'pages_read';
+      expect(refusal(fact), contains('«pages_read»'));
+
+      final Map<String, Object?> silent = builtin();
+      verifyOf(silent, 'chk.books')['contradiction'] = <Object?>[];
+      expect(refusal(silent), contains('расходится с записью'));
+
+      final Map<String, Object?> none = builtin();
+      verifyOf(none, 'chk.focus').remove('contradiction');
+      expect(refusal(none), contains('не объект'));
+    });
+
+    test('SNO-F-CLT-04: отметка и сверка — только у маркера', () {
+      final Map<String, Object?> flagged = builtin();
+      itemOf(flagged, 'orient.1')['flag'] = <String, Object?>{'min': 7};
+      expect(refusal(flagged), contains('только у маркера'));
+
+      final Map<String, Object?> verified = builtin();
+      itemOf(verified, 'orient.1')['verify'] = <String, Object?>{
+        'fact': kCltFactBookOpens,
+      };
+      expect(refusal(verified), contains('только у маркера'));
+    });
+
+    test('SNO-F-CLT-04: маркер без сверки с записью принимается', () {
+      final Map<String, Object?> scenario = builtin();
+      itemOf(scenario, 'chk.focus').remove('verify');
+
+      final CltCheck check = parseCltScenario(scenario)
+          .partFor(kCltSessionEnd)!
+          .sections[1]
+          .items
+          .last
+          .check!;
+      expect(check.fact, isNull);
+      expect(check.contradictions, isEmpty);
+      expect(check.contradicts(7, 5), isFalse);
     });
   });
 
@@ -315,7 +515,12 @@ void main() {
       'tlx.effort',
       'tlx.frustration',
     ];
-    const List<String> orient = <String>['orient.1', 'orient.2', 'orient.3'];
+    const List<String> orient = <String>[
+      'orient.1',
+      'chk.books',
+      'orient.2',
+      'orient.3',
+    ];
 
     test('SNO-F-CLT-02: зерно и перестановка сходятся со второй '
         'реализацией', () {
@@ -365,37 +570,41 @@ void main() {
 
     test('SNO-F-CLT-02: раздел без перемешивания стоит как записан, '
         'перемешанный — по коду участника', () {
-      // Порядки раздела «О задании» посчитаны на Python.
+      // Порядки раздела «О задании» — восемь пунктов, семь о нагрузке и
+      // маркер, — посчитаны на Python.
       expect(orderFor('67954332'), <String>[
         ...tlx,
         'gcl.2',
-        'icl.2',
-        'icl.1',
-        'ecl.1',
+        'chk.focus',
         'ecl.3',
-        'ecl.2',
         'gcl.1',
+        'icl.1',
+        'ecl.2',
+        'ecl.1',
+        'icl.2',
         ...orient,
       ]);
       expect(orderFor('38848228'), <String>[
         ...tlx,
-        'icl.2',
+        'icl.1',
         'ecl.1',
+        'gcl.1',
+        'chk.focus',
+        'ecl.2',
         'gcl.2',
         'ecl.3',
-        'ecl.2',
-        'icl.1',
-        'gcl.1',
+        'icl.2',
         ...orient,
       ]);
       expect(orderFor('00000000'), <String>[
         ...tlx,
-        'gcl.1',
-        'ecl.2',
-        'ecl.3',
-        'ecl.1',
         'icl.1',
+        'chk.focus',
+        'ecl.2',
         'gcl.2',
+        'gcl.1',
+        'ecl.1',
+        'ecl.3',
         'icl.2',
         ...orient,
       ]);
@@ -406,20 +615,18 @@ void main() {
       expect(orderFor('61311465'), orderFor('61311465'));
       expect(orderFor('61311465'), isNot(orderFor('12345670')));
       // Каждый пункт показан ровно один раз.
-      expect(orderFor('61311465').toSet(), hasLength(16));
+      expect(orderFor('61311465').toSet(), hasLength(18));
     });
 
-    test('SNO-F-CLT-02: у части после блока порядок один для всех', () {
-      final CltScenario scenario = parseCltScenario(kBuiltinCltScenario);
-      for (final String code in <String>['67954332', '00000000']) {
-        expect(
-          orderedCltItems(
-            scenario.partFor(kCltBlockEnd)!,
-            scenario: scenario.id,
-            participant: code,
-          ).single.id,
-          'paas.effort',
-        );
+    test('SNO-F-CLT-04: маркер перемешан с соседями — у разных участников '
+        'он стоит на разных местах', () {
+      // Места маркера М1 посчитаны на Python.
+      expect(orderFor('67954332').indexOf('chk.focus'), 7);
+      expect(orderFor('38848228').indexOf('chk.focus'), 9);
+      expect(orderFor('61311465').indexOf('chk.focus'), 13);
+      // Маркер М2 стоит на своём месте у всех.
+      for (final String code in <String>['67954332', '38848228', '61311465']) {
+        expect(orderFor(code).indexOf('chk.books'), 15, reason: code);
       }
     });
   });

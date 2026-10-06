@@ -12,7 +12,7 @@ import 'records_screen.dart';
 import 'session.dart';
 import 'summary.dart';
 
-/// Чем кончилась запись — заголовком экрана завершения и плашки.
+/// Чем кончилась запись — заголовком экрана завершения.
 String describeStop(StopReason? by) {
   return switch (by) {
     StopReason.auto => 'Запись завершена',
@@ -21,10 +21,16 @@ String describeStop(StopReason? by) {
   };
 }
 
+/// Имя маршрута экрана завершения сессии в навигаторе приложения.
+const String kSessionFinishRoute = 'sno-session-finish';
+
 /// Открывает экран завершения сессии поверх всего.
 ///
-/// Экран один: пока он открыт, второй не открывается, а плашка,
-/// ведущая на него, не показывается ([RecordingSession.finishOpen]).
+/// Экран один: пока он открыт, второй не открывается
+/// ([RecordingSession.finishOpen]). Открывает его слой записи — сам и
+/// сразу, как только запись остановилась (SNO-F-REC-16): от остановки
+/// до завершения сессии в приложении виден только он. Поэтому маршрут
+/// встаёт без перехода — под уезжающей страницей была бы видна полка.
 /// [records] — записи на устройстве: с ними завершённая сессия тут же
 /// упаковывается в архив (SNO-F-REC-05). [test] — тест нагрузки: экран
 /// ведёт к нему до завершения сессии (SNO-F-CLT-01).
@@ -40,7 +46,7 @@ Future<void> openSessionFinish(
   session.setFinishOpen(true);
   try {
     await navigator.push(
-      MaterialPageRoute<void>(
+      _FinishRoute(
         builder: (BuildContext context) {
           return SessionFinishScreen(
             session: session,
@@ -55,36 +61,56 @@ Future<void> openSessionFinish(
   }
 }
 
+/// Маршрут экрана завершения: встаёт и уходит без перехода.
+class _FinishRoute extends MaterialPageRoute<void> {
+  _FinishRoute({required super.builder})
+    : super(settings: const RouteSettings(name: kSessionFinishRoute));
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => Duration.zero;
+}
+
 /// Завершение сессии (SNO-SCR-08, SNO-F-REC-01, SNO-F-CFG-05).
 ///
 /// Всё, что происходит между остановкой записи и снятым замком полки.
-/// Экран ведёт экспериментатор: код участника стоит крупно — его
-/// сверяют с бланком, — а сессия завершается удержанием кнопки.
 ///
-/// **Тест нагрузки — здесь же, до завершения** (SNO-F-CLT-01,
-/// SNO-F-CLT-02): экран сам называет следующий шаг. Блок, оставшийся
-/// без оценки усилия, — его закрыла остановка записи — получает свой
-/// вопрос первым и без пароля; за ним «Cognitive load test» под замком:
-/// пароль вводит экспериментатор, участник проходит итоговую часть.
-/// Начатую и не оконченную часть экран предлагает продолжить.
-/// Завершить сессию можно и без теста — запись будет помечена «без
-/// теста нагрузки», о чём сказано под кнопкой.
+/// **Литература закрыта** (SNO-F-REC-16, кадр SNO-SCR-08.4): экран
+/// встаёт сам, как только запись остановилась, и уйти с него нельзя —
+/// стрелки «назад» нет, системное «назад» и `Esc` не действуют, а под
+/// ним нет ни открытой книги, ни другого экрана. Сверху — то, что
+/// нужно участнику: код для бланка и два шага словами; итог записи для
+/// организатора — ниже и мельче. Экран не держит устройство
+/// включённым: письменная часть длится дольше, чем живёт экран, и
+/// после разблокировки он тот же.
+///
+/// **Сессия завершается только после теста нагрузки** (SNO-F-CLT-05):
+/// пока итоговая часть не пройдена целиком, кнопки завершения нет — на
+/// её месте сказано, что осталось. Тест открывает организатор паролем
+/// (SNO-F-CLT-01); начатую и не оконченную часть экран предлагает
+/// продолжить. Когда тест пройти нельзя — участник ушёл, сценарий не
+/// принят, — у организатора есть выход «Завершить без теста»: по тому
+/// же паролю, удержанием и с подтверждением (решение АЖ4); запись тогда
+/// помечена «без теста нагрузки». В сборке без пароля теста теста нет
+/// вовсе, и сессия завершается сразу.
 ///
 /// **До завершения журнал перечитан с диска** (SNO-F-REC-13): под
 /// числом событий стоит «Запись цела: … пропусков нет» или чего в ней
-/// не хватает — экспериментатор узнаёт о неполной записи, пока
-/// участник ещё рядом. Завершению это не мешает.
+/// не хватает — организатор узнаёт о неполной записи, пока участник
+/// ещё рядом. Завершению это не мешает.
 ///
 /// **После завершения запись упаковывается в архив** (SNO-F-REC-05,
 /// кадр SNO-SCR-08.3), и экран не закрывается: на нём имя архива,
 /// длительность, число событий и размер — и выход для него
 /// (SNO-F-REC-06): «Поделиться» на телефоне, «Сохранить архив как…» и
 /// «Открыть папку» на ПК. Упаковка идёт именно здесь, а не в миг
-/// остановки записи: между ними позже встанет тест нагрузки, и его
-/// ответы должны попасть в тот же архив. Архив не собрался — запись
-/// цела и лежит папкой; об этом сказано, упаковка повторится при
-/// следующем запуске. На телефоне под архивом сказано, легла ли его
-/// вторая копия в «Загрузки» (SNO-F-REC-13).
+/// остановки записи: между ними стоит тест нагрузки, и его ответы
+/// обязаны попасть в тот же архив. Архив не собрался — запись цела и
+/// лежит папкой; об этом сказано, упаковка повторится при следующем
+/// запуске. На телефоне под архивом сказано, легла ли его вторая копия
+/// в «Загрузки» (SNO-F-REC-13).
 class SessionFinishScreen extends StatefulWidget {
   /// Создаёт экран.
   ///
@@ -123,10 +149,11 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   int _events = 0;
   bool _failed = false;
 
-  /// Строки о блоках и об отлучках; `null` — блоков не отмечали,
-  /// участник не уходил (SNO-F-CFG-03, SNO-F-REC-10).
-  String? _blocks;
+  /// Строка об отлучках; `null` — участник не уходил (SNO-F-REC-10).
   String? _away;
+
+  /// Экран, с которого пришли: запись знает, где участник.
+  late final String _cameFrom;
 
   /// Итог самопроверки журнала словами и цел ли он (SNO-F-REC-13);
   /// `null` — журнал ещё не перечитан.
@@ -158,9 +185,15 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   /// открывается.
   bool _testing = false;
 
+  /// Ушёл ли экран сам — сессию завершили мимо него: второй раз его не
+  /// закрывают.
+  bool _gone = false;
+
   @override
   void initState() {
     super.initState();
+    _cameFrom = widget.session.context.screen;
+    widget.session.screen('finish');
     widget.session.addListener(_changed);
     widget.session.checked.addListener(_changed);
     widget.test?.addListener(_changed);
@@ -191,7 +224,6 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     _code = state.participant.display;
     _events = session.events;
     _failed = session.writeFailed;
-    _blocks = describeBlocks(state.blocks);
     _away = describeAway(state.away);
     if (session.checked.value) {
       final JournalCheck? check = session.check;
@@ -208,23 +240,25 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     widget.session.removeListener(_changed);
     widget.session.checked.removeListener(_changed);
     widget.test?.removeListener(_changed);
+    // Следующая запись начнётся с экрана, на котором стоит приложение,
+    // а не с экрана завершения прошлой.
+    widget.session.screen(_cameFrom);
+    // Экрана нет — он не открыт, каким бы путём его ни сняли: иначе
+    // следующую сессию было бы нечем закрыть.
+    widget.session.setFinishOpen(false);
     super.dispose();
   }
 
-  /// Открывает следующий шаг теста нагрузки: вопрос об усилии за блок
-  /// [block] или, без него, итоговую часть.
-  Future<void> _openTest(LoadTest test, {BlockMark? block}) async {
+  /// Открывает тест нагрузки: пароль организатора, если замок закрыт,
+  /// вступление и пункты.
+  Future<void> _openTest(LoadTest test) async {
     if (_testing) {
       return;
     }
     final NavigatorState navigator = Navigator.of(context);
     setState(() => _testing = true);
     try {
-      if (block != null) {
-        await openBlockEffort(navigator, test, block);
-      } else {
-        await openFinalTest(navigator, test);
-      }
+      await openFinalTest(navigator, test);
     } finally {
       if (mounted) {
         setState(() => _testing = false);
@@ -232,18 +266,47 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     }
   }
 
-  /// Пройдена ли итоговая часть теста; `null` — теста на экране нет:
-  /// его нет в сборке, сценарий не принят или итоговой части в нём
-  /// нет.
-  bool? get _testDone {
-    final LoadTest? test = widget.test;
-    if (test == null || test.scenario == null || test.finalItems == 0) {
-      return null;
+  /// Выход организатора, когда тест пройти нельзя (SNO-F-CLT-05,
+  /// решение АЖ4): пароль, удержание, подтверждение — и сессия
+  /// завершается без теста.
+  Future<void> _skipTest(LoadTest test) async {
+    if (_testing || _closing) {
+      return;
     }
-    return test.finalDone;
+    final NavigatorState navigator = Navigator.of(context);
+    setState(() => _testing = true);
+    bool confirmed = false;
+    try {
+      confirmed = await openTestSkip(navigator, test);
+    } finally {
+      if (mounted) {
+        setState(() => _testing = false);
+      }
+    }
+    if (confirmed && mounted) {
+      await _finish(withoutTest: true);
+    }
   }
 
-  /// Тест нагрузки на экране завершения (SNO-F-CLT-01, SNO-F-CLT-02):
+  /// Ждёт ли завершение сессии теста нагрузки (SNO-F-CLT-05).
+  ///
+  /// Ждёт, пока тест в сборке есть и его итоговая часть не пройдена
+  /// целиком — в том числе пока сценарий не загружен и когда он не
+  /// принят: тогда остаётся только выход организатора. Не ждёт в
+  /// сборке без теста и у сценария без итоговой части: проходить там
+  /// нечего.
+  bool get _waitsTest {
+    final LoadTest? test = widget.test;
+    if (test == null) {
+      return false;
+    }
+    if (!test.loaded || test.problem != null) {
+      return true;
+    }
+    return test.finalItems > 0 && !test.finalDone;
+  }
+
+  /// Тест нагрузки на экране завершения (SNO-F-CLT-01, SNO-F-CLT-05):
   /// что уже сделано и какой шаг следующий.
   List<Widget> _test(ThemeData theme, {required bool open}) {
     final LoadTest? test = widget.test;
@@ -261,57 +324,75 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
         ),
       ];
     }
-    final List<BlockMark> pending = test.pendingEfforts;
     final CltResult? begun = test.finalResult;
     final int items = test.finalItems;
+    if (items <= 0) {
+      return const <Widget>[];
+    }
     final bool busy = !open || _closing || _testing;
+    if (test.finalDone) {
+      return <Widget>[
+        const SizedBox(height: 20),
+        Row(
+          children: <Widget>[
+            Icon(Icons.check, size: 20, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Тест пройден: $items из $items',
+                key: const Key('sno-finish-test-done'),
+              ),
+            ),
+          ],
+        ),
+      ];
+    }
     return <Widget>[
       const SizedBox(height: 20),
-      Text('Тест нагрузки', style: theme.textTheme.titleSmall),
-      const SizedBox(height: 8),
-      if (pending.isNotEmpty) ...<Widget>[
-        // Блок без оценки усилия — первым и без пароля.
-        FilledButton.tonal(
-          key: const Key('sno-finish-effort'),
-          onPressed: busy
-              ? null
-              : () => unawaited(_openTest(test, block: pending.first)),
-          child: Text('Блок ${pending.first.number}: оценить усилие'),
+      FilledButton.tonalIcon(
+        key: const Key('sno-finish-test'),
+        onPressed: busy ? null : () => unawaited(_openTest(test)),
+        icon: Icon(
+          test.unlocked ? Icons.lock_open_outlined : Icons.lock_outline,
         ),
-        const SizedBox(height: 4),
-        Text(
-          'Блок закрыт без оценки усилия. Сначала она, потом итоговая '
-          'часть.',
-          style: theme.textTheme.bodySmall,
+        label: Text(
+          begun == null
+              ? 'Cognitive load test'
+              : 'Продолжить тест · ${begun.answers.length} из $items',
         ),
-      ] else if (items > 0 && test.finalDone)
-        Text(
-          'Итоговая часть пройдена: $items из $items',
-          key: const Key('sno-finish-test-done'),
-        )
-      else if (items > 0)
-        FilledButton.tonalIcon(
-          key: const Key('sno-finish-test'),
-          onPressed: busy ? null : () => unawaited(_openTest(test)),
-          icon: Icon(
-            test.unlocked ? Icons.lock_open_outlined : Icons.lock_outline,
-          ),
-          label: Text(
-            begun == null
-                ? 'Cognitive load test'
-                : 'Продолжить тест · ${begun.answers.length} из $items',
-          ),
-        ),
+      ),
+      const SizedBox(height: 4),
+      Text('Открывает организатор', style: theme.textTheme.bodySmall),
     ];
   }
 
   void _changed() {
-    if (mounted) {
-      setState(_remember);
+    if (!mounted) {
+      return;
+    }
+    setState(_remember);
+    // Сессию завершили мимо этого экрана: держать на нём некого, а уйти
+    // с него иначе нельзя — он уходит сам.
+    if (_gone ||
+        _closing ||
+        _finished ||
+        widget.session.phase != RecordingPhase.idle) {
+      return;
+    }
+    _gone = true;
+    final ModalRoute<Object?>? route = ModalRoute.of(context);
+    // Единственный экран навигатора не снимают: под ним ничего нет.
+    if (route == null || route.isFirst) {
+      return;
+    }
+    if (route.isCurrent) {
+      Navigator.of(context).pop();
+    } else {
+      Navigator.of(context).removeRoute(route);
     }
   }
 
-  Future<void> _finish() async {
+  Future<void> _finish({bool withoutTest = false}) async {
     if (_closing) {
       return;
     }
@@ -322,7 +403,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     final String? folder = session.state?.folder;
     setState(() => _closing = true);
     try {
-      await session.finish();
+      await session.finish(withoutTest: withoutTest);
     } on Object {
       // Завершить не удалось: экран остаётся, кнопка снова доступна.
     }
@@ -542,14 +623,85 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     });
   }
 
-  /// Экран до завершения сессии: итог записи и код для бланка
-  /// (SNO-SCR-08.1).
-  List<Widget> _summary(ThemeData theme) {
-    final bool open = widget.session.phase == RecordingPhase.stopped;
-    final String? blocks = _blocks;
+  /// Что участнику делать дальше — словами (SNO-F-REC-16).
+  List<Widget> _steps({required bool tested}) {
+    final List<String> steps = <String>[
+      'Сообщите организатору, что закончили, — получите бланк.',
+      if (tested)
+        'После письменной части позовите организатора снова.'
+      else
+        'После письменной части организатор завершит сессию.',
+    ];
+    return <Widget>[
+      for (int i = 0; i < steps.length; i++)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            '${i + 1}. ${steps[i]}',
+            key: Key('sno-finish-step-${i + 1}'),
+          ),
+        ),
+    ];
+  }
+
+  /// Итог записи для организатора: мелко и ниже того, что нужно
+  /// участнику.
+  List<Widget> _record(ThemeData theme) {
+    final TextStyle? small = theme.textTheme.bodySmall;
+    final TextStyle? wrong = small?.copyWith(color: theme.colorScheme.error);
     final String? away = _away;
     final String? check = _check;
     final String? inputCheck = _inputCheck;
+    return <Widget>[
+      Text(
+        'Записано событий: $_events',
+        key: const Key('sno-finish-events'),
+        style: small,
+      ),
+      if (check != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            check,
+            key: const Key('sno-finish-check'),
+            style: _intact ? small : wrong,
+          ),
+        ),
+      if (inputCheck != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            inputCheck,
+            key: const Key('sno-finish-input'),
+            style: _inputIntact ? small : wrong,
+          ),
+        ),
+      if (away != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(away, key: const Key('sno-finish-away'), style: small),
+        ),
+      if (_failed)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'Часть журнала не записалась на диск: проверьте '
+            'свободное место.',
+            key: const Key('sno-finish-failed'),
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
+        ),
+    ];
+  }
+
+  /// Экран до завершения сессии: код для бланка, что делать дальше,
+  /// тест нагрузки и завершение (SNO-SCR-08.1, SNO-SCR-08.4).
+  List<Widget> _summary(ThemeData theme) {
+    final bool open = widget.session.phase == RecordingPhase.stopped;
+    final LoadTest? test = widget.test;
+    final bool waits = _waitsTest;
+    final CltResult? begun = test?.finalResult;
+    final int items = test?.finalItems ?? 0;
     return <Widget>[
       Text(
         _title,
@@ -572,91 +724,80 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
       ),
       const SizedBox(height: 4),
       const Text('Впишите код в бланк'),
-      const SizedBox(height: 28),
-      Text('Записано событий: $_events', key: const Key('sno-finish-events')),
-      if (check != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            check,
-            key: const Key('sno-finish-check'),
-            style: _intact ? null : TextStyle(color: theme.colorScheme.error),
-          ),
-        ),
-      if (inputCheck != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            inputCheck,
-            key: const Key('sno-finish-input'),
-            style: _inputIntact
-                ? null
-                : TextStyle(color: theme.colorScheme.error),
-          ),
-        ),
-      if (blocks != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(blocks, key: const Key('sno-finish-blocks')),
-        ),
-      if (away != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(away, key: const Key('sno-finish-away')),
-        ),
-      if (_failed)
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Text(
-            'Часть журнала не записалась на диск: проверьте '
-            'свободное место.',
-            key: const Key('sno-finish-failed'),
-            style: TextStyle(color: theme.colorScheme.error),
-          ),
-        ),
+      if (waits || test == null) ...<Widget>[
+        const SizedBox(height: 16),
+        ..._steps(tested: test != null),
+      ],
       ..._test(theme, open: open),
       const SizedBox(height: 28),
-      HoldToConfirmButton(
-        key: const Key('sno-finish-hold'),
-        label: _closing ? 'Завершаю…' : 'Удерживайте, чтобы завершить сессию',
-        onConfirmed: _closing || _testing || !open
-            ? null
-            : () => unawaited(_finish()),
-      ),
-      const SizedBox(height: 8),
-      if (_testDone == false)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Text(
-            'Итоговая часть теста не пройдена: запись будет помечена «без '
-            'теста нагрузки».',
-            key: const Key('sno-finish-test-missing'),
-            style: theme.textTheme.bodySmall,
+      if (waits)
+        // SNO-F-CLT-05: кнопки завершения нет, пока тест не пройден.
+        Text(
+          begun == null || items <= 0
+              ? 'Сессия завершится после теста нагрузки.'
+              : 'Тест начат: ${begun.answers.length} из $items. Сессия '
+                    'завершится после него.',
+          key: const Key('sno-finish-waits'),
+        )
+      else ...<Widget>[
+        HoldToConfirmButton(
+          key: const Key('sno-finish-hold'),
+          label: _closing ? 'Завершаю…' : 'Удерживайте, чтобы завершить сессию',
+          onConfirmed: _closing || _testing || !open
+              ? null
+              : () => unawaited(_finish()),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          widget.records == null
+              ? 'После завершения полка открывается, а код участника '
+                    'забывается: следующая запись получит новый.'
+              : (test == null
+                    ? 'После завершения полка открывается, код участника '
+                          'забывается, а запись собирается в архив.'
+                    : 'Запись и ответы теста лягут в один архив.'),
+          style: theme.textTheme.bodySmall,
+        ),
+      ],
+      const SizedBox(height: 28),
+      ..._record(theme),
+      if (waits && test != null && test.loaded) ...<Widget>[
+        const SizedBox(height: 20),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            key: const Key('sno-finish-skip'),
+            onPressed: !open || _closing || _testing
+                ? null
+                : () => unawaited(_skipTest(test)),
+            child: Text(_closing ? 'Завершаю…' : 'Тест пройти нельзя'),
           ),
         ),
-      Text(
-        widget.records == null
-            ? 'После завершения полка открывается, а код участника '
-                  'забывается: следующая запись получит новый.'
-            : 'После завершения полка открывается, код участника '
-                  'забывается, а запись собирается в архив.',
-        style: theme.textTheme.bodySmall,
-      ),
+      ],
     ];
   }
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Завершение сессии')),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-            children: _finished ? _archive(theme) : _summary(theme),
+    // SNO-F-REC-16: пока сессия не завершена, с экрана не уйти — ни
+    // стрелкой, ни системным «назад». Архив готов или не собрался —
+    // «Готово» и «назад» возвращают к обычному приложению.
+    return PopScope<Object?>(
+      canPop: _finished && !_packing,
+      child: Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          title: const Text('Завершение сессии'),
+        ),
+        body: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              children: _finished ? _archive(theme) : _summary(theme),
+            ),
           ),
         ),
       ),

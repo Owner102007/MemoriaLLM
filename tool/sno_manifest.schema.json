@@ -120,6 +120,7 @@
         "final": {"enum": ["complete", "partial", "none", "unknown"]},
         "final_answers": {"type": "integer", "minimum": 0},
         "final_items": {"type": "integer", "minimum": 0},
+        "checks_flags": {"type": "integer", "minimum": 0},
         "files": {"type": "array", "items": {"type": "string"}}
       }
     },

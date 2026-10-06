@@ -10,7 +10,12 @@ import 'package:memoria/sno/settings_keys.dart';
 
 import '../support/recording_fakes.dart';
 
-/// Шаг 18: журнал действий участника, его отлучки и блоки тестирования.
+/// Шаг 18: журнал действий участника и его отлучки.
+///
+/// С шага 25 блоков тестирования нет (SNO-F-REC-15): запись идёт в один
+/// этап, и о блоках здесь проверяется только то, что записи прежних
+/// сборок читаются как раньше. Открытую книгу закрывает сама остановка
+/// записи (SNO-F-REC-16).
 ///
 /// Здесь — правила сессии на памяти и подменённом времени: что пишется
 /// в журнал, с какими данными и что ложится в сведения записи. Провода
@@ -168,7 +173,6 @@ void main() {
         kit.session.place(page: 3, strip: 1, mode: 'full');
         kit.session.log(SnoEventType.pageShown);
         kit.session.bookClosed();
-        expect(kit.session.startBlock(1), isFalse);
         await written(kit);
 
         expect(kit.store.journals, isEmpty);
@@ -521,9 +525,7 @@ void main() {
         'в отсутствие участника, отлучка сочтена до её конца', () async {
       final SessionKit kit = SessionKit(planned: const Duration(minutes: 10));
       await kit.session.start(code);
-      kit.run(240);
-      kit.session.startBlock(1);
-      kit.run(60);
+      kit.run(300);
       kit.session.appState('inactive');
       kit.session.appState('paused');
       // Телефон спал четверть часа: счёт секунд стоял, и о конце записи
@@ -553,12 +555,6 @@ void main() {
         'total_ms': 5 * 60 * 1000,
         'hidden_ms': 5 * 60 * 1000,
         'longest_ms': 5 * 60 * 1000,
-      });
-      // Блок, открытый на пятой минуте, кончился вместе с записью.
-      expect(dataOf(eventsOf(kit, 'block.end').single), <String, Object?>{
-        'n': 1,
-        'duration_ms': 6 * 60 * 1000,
-        'by': 'stop',
       });
       kit.session.dispose();
     });
@@ -842,126 +838,257 @@ void main() {
     });
   });
 
-  group('SNO-F-CFG-03: блоки тестирования', () {
-    test(
-      'SNO-F-CFG-03: «начать» и «закончить» — в журнале, блок один',
-      () async {
-        final SessionKit kit = SessionKit();
-        await kit.session.start(code);
-        kit.run(10);
-        expect(kit.session.nextBlock, 1);
-        expect(kit.session.block, isNull);
-
-        expect(kit.session.startBlock(1), isTrue);
-        expect(kit.session.block, 1);
-        // Пока блок открыт, второй не начинается.
-        expect(kit.session.startBlock(2), isFalse);
-        kit.run(100);
-        expect(kit.session.blockElapsedMs, 100000);
-        expect(kit.session.endBlock(), isTrue);
-        expect(kit.session.block, isNull);
-        // Заканчивать больше нечего.
-        expect(kit.session.endBlock(), isFalse);
-        expect(kit.session.nextBlock, 2);
-
-        expect(kit.session.startBlock(2), isTrue);
-        kit.run(50);
-        await kit.session.stop(StopReason.experimenter);
-
-        expect(eventsOf(kit, 'block.start').map(dataOf), <Map<String, Object?>>[
-          <String, Object?>{'n': 1},
-          <String, Object?>{'n': 2},
-        ]);
-        expect(eventsOf(kit, 'block.end').map(dataOf), <Map<String, Object?>>[
-          <String, Object?>{
-            'n': 1,
-            'duration_ms': 100000,
-            'by': 'experimenter',
-          },
-          // Открытый блок закрыла остановка записи.
-          <String, Object?>{'n': 2, 'duration_ms': 50000, 'by': 'stop'},
-        ]);
-        // Конец блока — раньше остановки записи.
-        final List<String> types = kit.store.types(kit.folder);
-        expect(types.sublist(types.length - 2), <String>[
-          'block.end',
-          'recording.stop',
-        ]);
-        expect(recordingInfo(kit, kit.folder)['blocks'], <Object?>[
-          <String, Object?>{
-            'n': 1,
-            'start_ms': 10000,
-            'duration_ms': 100000,
-            'closed_by': 'experimenter',
-          },
-          <String, Object?>{
-            'n': 2,
-            'start_ms': 110000,
-            'duration_ms': 50000,
-            'closed_by': 'stop',
-          },
-        ]);
-        expect(
-          describeBlocks(kit.session.blocks),
-          'Блоки: 1 — 1:40 · 2 — 0:50',
-        );
-        kit.session.dispose();
-      },
-    );
-
-    test('SNO-F-CFG-03: блоков не отмечали — строки нет; после остановки '
-        'блок не начать', () async {
+  group('SNO-F-REC-16: остановка закрывает открытую книгу', () {
+    test('SNO-F-REC-16: книга открыта в миг остановки — `book.close` лежит '
+        'перед `recording.stop`, тем же мигом', () async {
       final SessionKit kit = SessionKit();
       await kit.session.start(code);
-      kit.run(10);
+      kit.run(20);
+      kit.session.screen('reader');
+      kit.session.bookOpened('hash-a', via: 'shelf');
+      kit.session.place(page: 7, strip: 2, mode: 'half');
+      kit.run(95);
+
       await kit.session.stop(StopReason.experimenter);
 
-      expect(describeBlocks(kit.session.blocks), isNull);
-      expect(recordingInfo(kit, kit.folder)['blocks'], isEmpty);
-      expect(kit.session.startBlock(1), isFalse);
-      expect(kit.session.startBlock(0), isFalse);
+      final List<String> types = kit.store.types(kit.folder);
+      expect(types.sublist(types.length - 2), <String>[
+        'book.close',
+        'recording.stop',
+      ]);
+      final Map<String, Object?> close = eventsOf(kit, 'book.close').single;
+      final Map<String, Object?> stop = eventsOf(kit, 'recording.stop').single;
+      expect(close['t'], stop['t']);
+      expect(close['seq'], (stop['seq']! as int) - 1);
+      // Строка закрытия — ещё о книге: её отпечаток и место чтения.
+      expect(close['book'], 'hash-a');
+      expect(close['page'], 7);
+      expect(close['strip'], 2);
+      expect(dataOf(close), <String, Object?>{'open_ms': 95000, 'by': 'stop'});
+      // А остановка — уже без книги.
+      expect(stop.containsKey('book'), isFalse);
+      expect(stop.containsKey('page'), isFalse);
+      expect(kit.session.context.book, isNull);
+
+      // Экран чтения снимают следом; его слово о закрытии второй строки
+      // не даёт.
+      kit.session.bookClosed(
+        data: const <String, Object?>{'read_ms': 1, 'read_total_ms': 2},
+      );
+      await kit.settle();
+      expect(eventsOf(kit, 'book.close'), hasLength(1));
       kit.session.dispose();
     });
 
-    test(
-      'SNO-F-CFG-03: блоки остановленной сессии переживают перезапуск',
-      () async {
-        final SessionKit first = SessionKit();
-        await first.session.start(code);
-        first.session.startBlock(3);
-        first.run(75);
-        first.session.endBlock();
-        await first.session.stop(StopReason.experimenter);
-        first.session.dispose();
+    test('SNO-F-REC-16: то же на сороковой минуте — книгу закрывает '
+        'автостоп', () async {
+      final SessionKit kit = SessionKit(planned: const Duration(minutes: 2));
+      await kit.session.start(code);
+      kit.run(30);
+      kit.session.bookOpened('hash-a', via: 'shelf');
 
-        final SessionKit second = SessionKit(
-          settings: first.settings,
-          store: first.store,
-          time: first.time,
-        );
-        await second.session.restore();
+      kit.run(120);
+      await kit.settle();
 
-        expect(describeBlocks(second.session.blocks), 'Блоки: 3 — 1:15');
-        second.session.dispose();
-      },
-    );
+      expect(kit.session.phase, RecordingPhase.stopped);
+      expect(kit.session.state!.stoppedBy, StopReason.auto);
+      final List<String> types = kit.store.types(kit.folder);
+      expect(types.sublist(types.length - 2), <String>[
+        'book.close',
+        'recording.stop',
+      ]);
+      expect(dataOf(eventsOf(kit, 'book.close').single)['by'], 'stop');
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-17: с книгой закрывается и счёт времени в ней — теми '
+        'же числами, что принёс бы экран', () async {
+      Map<String, Object?> facts = const <String, Object?>{
+        'read_ms': 61000,
+        'read_total_ms': 184000,
+      };
+      final SessionKit kit = SessionKit(closingFacts: () => facts);
+      await kit.session.start(code);
+      kit.session.bookOpened('hash-a', via: 'galaxy');
+      kit.run(70);
+
+      await kit.session.stop(StopReason.experimenter);
+
+      expect(dataOf(eventsOf(kit, 'book.close').single), <String, Object?>{
+        'open_ms': 70000,
+        'read_ms': 61000,
+        'read_total_ms': 184000,
+        'by': 'stop',
+      });
+      // Книгу, закрытую экраном, остановка второй раз не закрывает.
+      await kit.session.finish();
+      await kit.session.start(code);
+      kit.session.bookOpened('hash-b', via: 'shelf');
+      kit.run(5);
+      facts = const <String, Object?>{'read_ms': 5000, 'read_total_ms': 5000};
+      kit.session.bookClosed(data: facts);
+      kit.run(5);
+      await kit.session.stop(StopReason.experimenter);
+      final Map<String, Object?> closed = eventsOf(kit, 'book.close').single;
+      expect(dataOf(closed).containsKey('by'), isFalse);
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-16: счёт времени не ответил — книга всё равно '
+        'закрыта', () async {
+      final SessionKit kit = SessionKit(
+        closingFacts: () => throw StateError('счёт не ответил'),
+      );
+      await kit.session.start(code);
+      kit.session.bookOpened('hash-a', via: 'shelf');
+      kit.run(12);
+
+      await kit.session.stop(StopReason.experimenter);
+
+      expect(dataOf(eventsOf(kit, 'book.close').single), <String, Object?>{
+        'open_ms': 12000,
+        'by': 'stop',
+      });
+      expect(kit.session.phase, RecordingPhase.stopped);
+      kit.session.dispose();
+    });
+
+    test('SNO-F-REC-16: книга не открыта — строки закрытия нет', () async {
+      final SessionKit kit = SessionKit();
+      await kit.session.start(code);
+      kit.session.bookOpened('hash-a', via: 'shelf');
+      kit.run(10);
+      kit.session.bookClosed();
+      kit.run(10);
+
+      await kit.session.stop(StopReason.experimenter);
+
+      expect(eventsOf(kit, 'book.close'), hasLength(1));
+      expect(kit.store.types(kit.folder).last, 'recording.stop');
+      kit.session.dispose();
+    });
   });
 
-  group('SNO-F-CFG-03: блоки оборванной записи', () {
-    test('SNO-F-CFG-03: запись оборвалась — блоки собраны по журналу, '
-        'открытый закрыт последним его мигом', () async {
+  group('SNO-F-REC-15: блоков нет', () {
+    test('SNO-F-REC-15: запись идёт в один этап — событий о блоках сборка '
+        'не пишет, в сведениях записи их нет', () async {
+      final SessionKit kit = SessionKit();
+      await kit.session.start(code);
+      kit.run(300);
+      await kit.session.stop(StopReason.experimenter);
+
+      final List<String> types = kit.store.types(kit.folder);
+      expect(types, isNot(contains('block.start')));
+      expect(types, isNot(contains('block.end')));
+      expect(kit.session.state!.blocks, isEmpty);
+      expect(recordingInfo(kit, kit.folder)['blocks'], isEmpty);
+      await kit.session.finish();
+      expect(recordingInfo(kit, kit.store.finished.single)['blocks'], isEmpty);
+      kit.session.dispose();
+    });
+  });
+
+  group('SNO-F-REC-15: записи прежних сборок с блоками', () {
+    /// Строка журнала, какой её написала бы прежняя сборка: следующая
+    /// по номеру, со временем [t].
+    void append(
+      SessionKit kit,
+      int t,
+      SnoEventType type,
+      Map<String, Object?> data,
+    ) {
+      final StringBuffer journal = kit.store.journals[kit.folder]!;
+      final int seq = kit.store.events(kit.folder).length + 1;
+      journal.writeln(
+        encodeEvent(
+          seq: seq,
+          t: t,
+          wall: kit.time.wall,
+          type: type,
+          context: RecordingContext(),
+          data: data,
+        ),
+      );
+    }
+
+    test('SNO-F-REC-15: остановленная сессия прежней сборки — блоки из её '
+        'отметки целы после обновления приложения', () async {
+      final SessionKit first = SessionKit();
+      await first.session.start(code);
+      first.run(75);
+      await first.session.stop(StopReason.experimenter);
+      final String folder = first.folder;
+      first.session.dispose();
+      // Отметку о сессии оставила сборка, в которой блоки были.
+      final SessionState old = SessionState.decode(
+        first.settings.values[SnoSettingsKeys.session],
+      )!;
+      first.settings.values[SnoSettingsKeys.session] = SessionState(
+        id: old.id,
+        folder: old.folder,
+        participant: old.participant,
+        startedAt: old.startedAt,
+        plannedSeconds: old.plannedSeconds,
+        phase: old.phase,
+        stoppedBy: old.stoppedBy,
+        durationMs: old.durationMs,
+        events: old.events,
+        lastT: old.lastT,
+        resyncs: old.resyncs,
+        failed: old.failed,
+        away: old.away,
+        blocks: const <BlockMark>[
+          BlockMark(
+            number: 3,
+            startMs: 0,
+            durationMs: 75000,
+            closedBy: 'experimenter',
+          ),
+        ],
+        check: old.check,
+      ).encode();
+
+      final SessionKit second = SessionKit(
+        settings: first.settings,
+        store: first.store,
+        time: first.time,
+      );
+      await second.session.restore();
+
+      expect(describeBlocks(second.session.state!.blocks), 'Блоки: 3 — 1:15');
+      // Запись завершается как есть: блоки доезжают до сведений записи.
+      await second.session.finish();
+      expect(recordingInfo(second, folder)['blocks'], <Object?>[
+        <String, Object?>{
+          'n': 3,
+          'start_ms': 0,
+          'duration_ms': 75000,
+          'closed_by': 'experimenter',
+        },
+      ]);
+      second.session.dispose();
+    });
+
+    test('SNO-F-REC-15: запись прежней сборки оборвалась — блоки собраны '
+        'по журналу, открытый закрыт последним его мигом', () async {
       final SessionKit first = SessionKit();
       await first.session.start(code);
       first.run(10);
-      first.session.startBlock(1);
-      first.run(100);
-      first.session.endBlock();
-      first.run(5);
-      first.session.startBlock(2);
-      first.run(35);
       await first.settle();
+      // Дальше журнал — каким его вела прежняя сборка: два блока, и
+      // приложение убито посреди второго.
+      append(first, 10000, SnoEventType.blockStart, <String, Object?>{'n': 1});
+      first.time.pass(const Duration(seconds: 100));
+      append(first, 110000, SnoEventType.blockEnd, <String, Object?>{
+        'n': 1,
+        'duration_ms': 100000,
+        'by': 'experimenter',
+      });
+      first.time.pass(const Duration(seconds: 5));
+      append(first, 115000, SnoEventType.blockStart, <String, Object?>{'n': 2});
+      first.time.pass(const Duration(seconds: 35));
+      append(first, 150000, SnoEventType.heartbeat, <String, Object?>{});
       final String folder = first.folder;
-      // Приложение убито посреди второго блока.
       first.session.dispose();
 
       final SessionKit second = SessionKit(
@@ -1001,7 +1128,7 @@ void main() {
         },
       ]);
       expect(
-        describeBlocks(second.session.blocks),
+        describeBlocks(second.session.state!.blocks),
         'Блоки: 1 — 1:40 · 2 — 0:35',
       );
 
@@ -1014,15 +1141,16 @@ void main() {
       );
       await third.session.restore();
       expect(third.store.events(folder), hasLength(events.length));
-      expect(third.session.blocks, hasLength(2));
+      expect(third.session.state!.blocks, hasLength(2));
       third.session.dispose();
     });
+  });
 
-    test('SNO-F-CFG-03: умерло между остановкой и отметкой о ней — блоки и '
-        'отлучки берутся из журнала', () async {
+  group('SNO-F-REC-10: отлучки оборванной остановки', () {
+    test('SNO-F-REC-10: умерло между остановкой и отметкой о ней — отлучки '
+        'берутся из журнала', () async {
       final SessionKit first = SessionKit();
       await first.session.start(code);
-      first.session.startBlock(4);
       first.run(20);
       first.session.appState('inactive');
       first.time.pass(const Duration(seconds: 3));
@@ -1046,14 +1174,7 @@ void main() {
       // Запись закрыта своей остановкой, второй поверх нет.
       expect(second.store.events(folder), hasLength(lines));
       expect(second.session.state!.stoppedBy, StopReason.experimenter);
-      expect(recordingInfo(second, folder)['blocks'], <Object?>[
-        <String, Object?>{
-          'n': 4,
-          'start_ms': 0,
-          'duration_ms': 33000,
-          'closed_by': 'stop',
-        },
-      ]);
+      expect(recordingInfo(second, folder)['blocks'], isEmpty);
       expect(recordingInfo(second, folder)['away'], <String, Object?>{
         'count': 1,
         'total_ms': 3000,
@@ -1061,25 +1182,6 @@ void main() {
         'longest_ms': 3000,
       });
       second.session.dispose();
-    });
-
-    test('SNO-F-CFG-03: блок, в который попал сон устройства, не выходит '
-        'короче', () async {
-      final SessionKit kit = SessionKit();
-      await kit.session.start(code);
-      kit.run(10);
-      kit.session.startBlock(1);
-      kit.run(20);
-      kit.session.appState('paused');
-      kit.time.sleep(const Duration(minutes: 2));
-      kit.session.appState('resumed');
-      kit.run(10);
-      expect(kit.session.blockElapsedMs, 150000);
-      kit.session.endBlock();
-      await written(kit);
-
-      expect(dataOf(eventsOf(kit, 'block.end').single)['duration_ms'], 150000);
-      kit.session.dispose();
     });
   });
 

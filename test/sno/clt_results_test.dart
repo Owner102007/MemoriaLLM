@@ -1,31 +1,44 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/sno/clt/builtin_scenario.dart';
 import 'package:memoria/sno/clt/results.dart';
+import 'package:memoria/sno/clt/scenario.dart';
 import 'package:memoria/sno/recording/records.dart';
 
-/// SNO-F-CLT-03: файл ответов, итог для манифеста и показатели.
+/// SNO-F-CLT-03, SNO-F-CLT-04: файл ответов, итог для манифеста,
+/// показатели и маркеры честности.
 ///
-/// Чистые правила на придуманных ответах. Показатели сверяются с
-/// числами, посчитанными **другой** реализацией — на Python: суммы и
-/// средние по группам пунктов, с переворотом пункта с обратным счётом.
+/// Чистые правила на придуманных ответах. Показатели и раздел `checks`
+/// сверяются с числами, посчитанными **другой** реализацией — на
+/// Python: суммы и средние по группам пунктов с переворотом пункта с
+/// обратным счётом; отметки маркеров, сверка с записью, быстрые и
+/// одинаковые ответы.
 void main() {
   /// Ответ на пункт [item] шкалы 1…7 (у `tlx.*` — 0…100).
-  CltAnswer answer(String item, int value, int order, {bool reverse = false}) {
+  CltAnswer answer(
+    String item,
+    int value,
+    int order, {
+    bool reverse = false,
+    int? rtMs,
+  }) {
     final bool tlx = item.startsWith('tlx.');
     return CltAnswer(
       item: item,
       value: value,
-      rtMs: 3000 + order,
+      rtMs: rtMs ?? 3000 + order,
       order: order,
       min: tlx ? 0 : 1,
       max: tlx ? 100 : 7,
       t: 2400000 + order * 4000,
       reverse: reverse,
+      check: item.startsWith('chk.'),
     );
   }
 
-  /// Порядок итоговой части у участника 67954332.
+  /// Порядок итоговой части у участника 67954332: раздел «О задании» —
+  /// семь пунктов и маркер — перемешан по его коду.
   const List<String> order = <String>[
     'tlx.mental',
     'tlx.physical',
@@ -34,16 +47,21 @@ void main() {
     'tlx.effort',
     'tlx.frustration',
     'gcl.2',
-    'icl.2',
-    'icl.1',
-    'ecl.1',
+    'chk.focus',
     'ecl.3',
-    'ecl.2',
     'gcl.1',
+    'icl.1',
+    'ecl.2',
+    'ecl.1',
+    'icl.2',
     'orient.1',
+    'chk.books',
     'orient.2',
     'orient.3',
   ];
+
+  /// Маркеры честности среди пунктов части.
+  const List<String> markers = <String>['chk.focus', 'chk.books'];
 
   const Map<String, int> values = <String, int>{
     'tlx.mental': 65,
@@ -62,13 +80,23 @@ void main() {
     'orient.1': 5,
     'orient.2': 6,
     'orient.3': 2,
+    // Маркеры: «не отвлёкся» — скорее нет, «не открыл ни одной книги»
+    // — совершенно неверно.
+    'chk.focus': 3,
+    'chk.books': 1,
   };
 
-  /// Итоговая часть с первыми [count] ответами.
-  CltResult finalPart({int count = 16, int tStart = 2400000}) {
+  /// Итоговая часть с первыми [count] ответами. [answered] подменяет
+  /// ответы отдельных пунктов, [rt] — время ответа на них.
+  CltResult finalPart({
+    int count = 18,
+    int tStart = 2400000,
+    Map<String, int> answered = const <String, int>{},
+    Map<String, int> rt = const <String, int>{},
+  }) {
     return CltResult(
       scenario: 'sno-clt-main',
-      version: 1,
+      version: 2,
       participant: '67954332',
       part: 'B',
       tStart: tStart,
@@ -78,16 +106,20 @@ void main() {
         for (int i = 0; i < count; i++)
           answer(
             order[i],
-            values[order[i]]!,
+            answered[order[i]] ?? values[order[i]]!,
             i + 1,
             reverse: order[i] == 'orient.3',
+            rtMs: rt[order[i]],
           ),
       ],
       complete: count == order.length,
+      checks: markers,
     );
   }
 
-  /// Оценка усилия [value] за блок [block].
+  /// Оценка усилия [value] за блок [block] — файл записи прежней
+  /// сборки: с шага 25 блоков нет (SNO-F-REC-15), но такие файлы
+  /// читаются и считаются как раньше.
   CltResult effort(int block, int value, {bool complete = true}) {
     return CltResult(
       scenario: 'sno-clt-main',
@@ -132,7 +164,28 @@ void main() {
       expect(read.toJson(), written.toJson());
       expect(read.complete, isTrue);
       expect(read.order, order);
-      expect(read.answers, hasLength(16));
+      expect(read.checks, markers);
+      expect(read.answers, hasLength(18));
+      // SNO-F-CLT-04: ответ на маркер помечен в самом файле.
+      expect(
+        <String>[
+          for (final CltAnswer answer in read.answers)
+            if (answer.check) answer.item,
+        ],
+        markers,
+      );
+      final Map<String, Object?> json =
+          jsonDecode(written.encode()) as Map<String, Object?>;
+      expect(json['checks'], markers);
+      final Map<String, Object?> marker =
+          (json['answers']! as List<Object?>)[7]! as Map<String, Object?>;
+      expect(marker['item'], 'chk.focus');
+      expect(marker['role'], 'check');
+      expect(
+        ((json['answers']! as List<Object?>)[6]! as Map<String, Object?>)
+            .containsKey('role'),
+        isFalse,
+      );
       final CltAnswer last = read.answers.last;
       expect(last.item, 'orient.3');
       expect(last.value, 2);
@@ -142,7 +195,8 @@ void main() {
       expect(read.answers.first.scored, 65);
     });
 
-    test('SNO-F-CLT-03: в файле — всё, что названо в формате', () {
+    test('SNO-F-REC-15: файл прежней сборки с оценкой усилия за блок '
+        'читается как записан', () {
       final Map<String, Object?> json =
           jsonDecode(effort(2, 7).encode()) as Map<String, Object?>;
 
@@ -201,14 +255,15 @@ void main() {
 
   group('SNO-F-CLT-03: итог для манифеста', () {
     test('SNO-F-CLT-03: теста не было', () {
+      // SNO-F-REC-15: об усилии по блокам итог новой записи молчит.
       expect(summarizeClt(const <CltResult>[]), <String, Object?>{
-        'effort_answers': 0,
         'final': 'none',
         'files': <String>[],
       });
     });
 
-    test('SNO-F-CLT-03: усилие оценено, итоговая часть не начата', () {
+    test('SNO-F-REC-15: у записи прежней сборки — усилие оценено, '
+        'итоговая часть не начата', () {
       final Map<String, Object?> summary = summarizeClt(<CltResult>[
         effort(1, 6),
         effort(2, 7, complete: false),
@@ -228,17 +283,41 @@ void main() {
 
       expect(summary['final'], 'partial');
       expect(summary['final_answers'], 9);
-      expect(summary['final_items'], 16);
+      expect(summary['final_items'], 18);
     });
 
     test('SNO-F-CLT-03: тест пройден', () {
+      expect(summarizeClt(<CltResult>[finalPart()]), <String, Object?>{
+        'final': 'complete',
+        'final_answers': 18,
+        'final_items': 18,
+        'files': <String>['clt/sno-clt-main_B_2400000.json'],
+      });
+    });
+
+    test('SNO-F-CLT-04: в итог идёт одно число — сколько отметок', () {
+      final Map<String, Object?> summary = summarizeClt(
+        <CltResult>[finalPart()],
+        checks: <String, Object?>{'flags': 2, 'verdict': 'doubt'},
+      );
+
+      expect(summary['checks_flags'], 2);
+      expect(summary['final'], 'complete');
+      // Раздела нет — и числа нет.
+      expect(
+        summarizeClt(<CltResult>[finalPart()]).containsKey('checks_flags'),
+        isFalse,
+      );
+    });
+
+    test('SNO-F-REC-15: у записи прежней сборки с блоками тест пройден', () {
       expect(
         summarizeClt(<CltResult>[effort(1, 6), effort(2, 7), finalPart()]),
         <String, Object?>{
           'effort_answers': 2,
           'final': 'complete',
-          'final_answers': 16,
-          'final_items': 16,
+          'final_answers': 18,
+          'final_items': 18,
           'files': <String>[
             'clt/sno-clt-main_A_1200000.json',
             'clt/sno-clt-main_A_2400000.json',
@@ -315,21 +394,19 @@ void main() {
     test('SNO-F-CLT-03: средние по группам сходятся со второй '
         'реализацией', () {
       // Числа посчитаны на Python.
-      final Map<String, Object?> scores = cltScores(<CltResult>[
-        effort(1, 6),
-        effort(2, 7),
-        finalPart(),
-      ]);
+      final Map<String, Object?> scores = cltScores(<CltResult>[finalPart()]);
 
       expect(scores['schema'], 'sno2026-clt-scores/1');
       expect(scores['scenario'], 'sno-clt-main');
-      expect(scores['version'], 1);
+      expect(scores['version'], 2);
       expect(scores['participant'], '67954332');
+      // SNO-F-REC-15: раздела об усилии по блокам у новой записи нет.
+      expect(scores.containsKey('blocks'), isFalse);
       final Map<String, Object?> last =
           scores['final']! as Map<String, Object?>;
       expect(last['complete'], isTrue);
-      expect(last['answers'], 16);
-      expect(last['items'], 16);
+      expect(last['answers'], 18);
+      expect(last['items'], 18);
       expect(last['file'], 'clt/sno-clt-main_B_2400000.json');
       final Object? groups = last['scores'];
       // Raw TLX — среднее шести шкал.
@@ -374,16 +451,34 @@ void main() {
         'min': 1,
         'max': 7,
       });
-      expect((groups! as Map<String, Object?>).keys, <String>[
-        'tlx',
-        'gcl',
-        'icl',
-        'ecl',
-        'orient',
-      ]);
+      // SNO-F-CLT-04: маркеры в показатели не входят — группы `chk`
+      // нет, а пунктов в показателях прежние шестнадцать.
+      final Map<String, Object?> byGroup = groups! as Map<String, Object?>;
+      expect(byGroup.keys, <String>['tlx', 'gcl', 'ecl', 'icl', 'orient']);
+      int counted = 0;
+      for (final Object? one in byGroup.values) {
+        counted += (one! as Map<String, Object?>)['n']! as int;
+      }
+      expect(counted, 16);
     });
 
-    test('SNO-F-CLT-03: усилие — по блокам, отдельно на каждый', () {
+    test('SNO-F-CLT-04: маркер в показатели не входит, как бы на него ни '
+        'ответили', () {
+      Object? groupsOf(Map<String, int> answered) {
+        final Map<String, Object?> scores = cltScores(<CltResult>[
+          finalPart(answered: answered),
+        ]);
+        return (scores['final']! as Map<String, Object?>)['scores'];
+      }
+
+      expect(
+        groupsOf(const <String, int>{'chk.focus': 7, 'chk.books': 7}),
+        groupsOf(const <String, int>{'chk.focus': 1, 'chk.books': 1}),
+      );
+    });
+
+    test('SNO-F-REC-15: у записи прежней сборки усилие — по блокам, '
+        'отдельно на каждый', () {
       final Map<String, Object?> scores = cltScores(<CltResult>[
         effort(1, 6),
         effort(2, 7),
@@ -413,7 +508,8 @@ void main() {
 
     test('SNO-F-CLT-03: неоконченная часть считается по данным ответам и '
         'говорит, на сколько пунктов ответили', () {
-      // Числа посчитаны на Python: девять первых пунктов участника.
+      // Числа посчитаны на Python: девять первых пунктов участника —
+      // шесть шкал, `gcl.2`, маркер и `ecl.3`.
       final Map<String, Object?> scores = cltScores(<CltResult>[
         finalPart(count: 9),
       ]);
@@ -432,9 +528,18 @@ void main() {
         'min': 1,
         'max': 7,
       });
-      expect(group(groups, 'icl')['n'], 2);
-      expect((groups! as Map<String, Object?>).containsKey('ecl'), isFalse);
-      expect((groups as Map<String, Object?>).containsKey('orient'), isFalse);
+      expect(group(groups, 'ecl'), <String, Object?>{
+        'mean': 4.0,
+        'sum': 4,
+        'n': 1,
+        'of': 3,
+        'min': 1,
+        'max': 7,
+      });
+      final Map<String, Object?> byGroup = groups! as Map<String, Object?>;
+      expect(byGroup.containsKey('icl'), isFalse);
+      expect(byGroup.containsKey('orient'), isFalse);
+      expect(byGroup.containsKey('chk'), isFalse);
     });
 
     test('SNO-F-CLT-03: показатели пишутся в JSON и читаются обратно', () {
@@ -442,6 +547,356 @@ void main() {
 
       expect(jsonDecode(jsonEncode(scores)), scores);
       expect(cltScores(const <CltResult>[])['final'], isNull);
+    });
+  });
+
+  group('SNO-F-CLT-04: маркеры честности', () {
+    final CltPart part = parseCltScenario(
+      kBuiltinCltScenario,
+    ).partFor(kCltSessionEnd)!;
+
+    /// Числа из записи: отлучек [away], открытий книг [opens].
+    Map<String, int?> facts(int? away, int? opens) {
+      return <String, int?>{
+        kCltFactAwayCount: away,
+        kCltFactBookOpens: opens,
+      };
+    }
+
+    Map<String, Object?> marker(Map<String, Object?> checks, String id) {
+      return (checks['items']! as Map<String, Object?>)[id]!
+          as Map<String, Object?>;
+    }
+
+    /// Раздел `checks` без слов о правиле.
+    Map<String, Object?> told(Map<String, Object?> checks) {
+      return <String, Object?>{
+        for (final MapEntry<String, Object?> entry in checks.entries)
+          if (entry.key != 'rule') entry.key: entry.value,
+      };
+    }
+
+    test('SNO-F-CLT-04: честные ответы — ни одной отметки', () {
+      // Эталон посчитан на Python.
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(),
+        part,
+        facts: facts(2, 14),
+      );
+
+      expect(told(checks), <String, Object?>{
+        'items': <String, Object?>{
+          'chk.focus': <String, Object?>{
+            'value': 3,
+            'flag': false,
+            'record': <String, Object?>{'away_count': 2},
+            'contradicts_record': false,
+          },
+          'chk.books': <String, Object?>{
+            'value': 1,
+            'flag': false,
+            'record': <String, Object?>{'book_opens': 14},
+            'contradicts_record': false,
+          },
+        },
+        'fast_answers': 0,
+        'longest_same': 1,
+        'flags': 0,
+        'verdict': 'ok',
+      });
+      expect(checks['rule'], contains('1000 мс'));
+    });
+
+    test('SNO-F-CLT-04: «ни разу не отвлёкся» при отлучках в записи — '
+        'отметка и расхождение с записью', () {
+      // Эталон посчитан на Python.
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(answered: const <String, int>{'chk.focus': 7}),
+        part,
+        facts: facts(2, 14),
+      );
+
+      expect(marker(checks, 'chk.focus'), <String, Object?>{
+        'value': 7,
+        'flag': true,
+        'record': <String, Object?>{'away_count': 2},
+        'contradicts_record': true,
+      });
+      expect(marker(checks, 'chk.books')['flag'], isFalse);
+      expect(checks['flags'], 1);
+      expect(checks['verdict'], 'review');
+      // Соседний пункт тоже получил 7: цепочка из двух.
+      expect(checks['longest_same'], 2);
+    });
+
+    test('SNO-F-CLT-04: ответ 6 — без отметки, но с записью расходится', () {
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(answered: const <String, int>{'chk.focus': 6}),
+        part,
+        facts: facts(1, 3),
+      );
+
+      expect(marker(checks, 'chk.focus'), <String, Object?>{
+        'value': 6,
+        'flag': false,
+        'record': <String, Object?>{'away_count': 1},
+        'contradicts_record': true,
+      });
+      // Расхождение с записью отдельной отметкой не считается.
+      expect(checks['flags'], 0);
+      expect(checks['verdict'], 'ok');
+    });
+
+    test('SNO-F-CLT-04: оба маркера отмечены — ответам нельзя верить без '
+        'разбора', () {
+      // Эталон посчитан на Python.
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(
+          answered: const <String, int>{'chk.focus': 7, 'chk.books': 5},
+        ),
+        part,
+        facts: facts(0, 14),
+      );
+
+      // Отлучек в записи нет: отметка стоит, расхождения нет.
+      expect(marker(checks, 'chk.focus'), <String, Object?>{
+        'value': 7,
+        'flag': true,
+        'record': <String, Object?>{'away_count': 0},
+        'contradicts_record': false,
+      });
+      expect(marker(checks, 'chk.books'), <String, Object?>{
+        'value': 5,
+        'flag': true,
+        'record': <String, Object?>{'book_opens': 14},
+        'contradicts_record': true,
+      });
+      expect(checks['flags'], 2);
+      expect(checks['verdict'], 'doubt');
+    });
+
+    test('SNO-F-CLT-04: «книг не открывал» сверяется с записью в обе '
+        'стороны', () {
+      // Ни одной открытой книги в записи, а участник говорит, что
+      // открывал: отметки нет, расхождение есть.
+      final Map<String, Object?> none = cltChecks(
+        finalPart(answered: const <String, int>{'chk.books': 2}),
+        part,
+        facts: facts(0, 0),
+      );
+      expect(marker(none, 'chk.books'), <String, Object?>{
+        'value': 2,
+        'flag': false,
+        'record': <String, Object?>{'book_opens': 0},
+        'contradicts_record': true,
+      });
+      expect(none['flags'], 0);
+
+      // Ни одной открытой книги, и участник это подтверждает: отметка
+      // по ответу стоит, но с записью он сходится.
+      final Map<String, Object?> agreed = cltChecks(
+        finalPart(answered: const <String, int>{'chk.books': 4}),
+        part,
+        facts: facts(0, 0),
+      );
+      expect(marker(agreed, 'chk.books'), <String, Object?>{
+        'value': 4,
+        'flag': true,
+        'record': <String, Object?>{'book_opens': 0},
+        'contradicts_record': false,
+      });
+      expect(agreed['flags'], 1);
+      expect(agreed['verdict'], 'review');
+    });
+
+    test('SNO-F-CLT-04: быстрые ответы и один ответ подряд — по отметке '
+        'без единого вопроса', () {
+      // Эталон посчитан на Python: весь раздел «О задании» — четвёрки,
+      // три ответа быстрее секунды.
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(
+          answered: const <String, int>{
+            'icl.1': 4,
+            'icl.2': 4,
+            'ecl.1': 4,
+            'ecl.2': 4,
+            'ecl.3': 4,
+            'gcl.1': 4,
+            'gcl.2': 4,
+            'chk.focus': 4,
+          },
+          rt: const <String, int>{
+            'tlx.mental': 400,
+            'tlx.physical': 999,
+            'orient.3': 0,
+          },
+        ),
+        part,
+        facts: facts(0, 2),
+      );
+
+      expect(checks['fast_answers'], 3);
+      expect(checks['longest_same'], 8);
+      expect(marker(checks, 'chk.focus')['flag'], isFalse);
+      expect(checks['flags'], 2);
+      expect(checks['verdict'], 'doubt');
+    });
+
+    test('SNO-F-CLT-04: пороги — ровно секунда не быстрая, пять подряд не '
+        'отметка, шесть — отметка', () {
+      final Map<String, Object?> edge = cltChecks(
+        finalPart(
+          rt: const <String, int>{
+            'tlx.mental': 1000,
+            'tlx.physical': 999,
+            'tlx.temporal': 999,
+          },
+        ),
+        part,
+        facts: facts(0, 2),
+      );
+      expect(edge['fast_answers'], 2);
+      expect(edge['flags'], 0);
+
+      // Эталон посчитан на Python: шесть четвёрок подряд в порядке
+      // показа — `ecl.3`, `gcl.1`, `icl.1`, `ecl.2`, `ecl.1`, `icl.2`.
+      final Map<String, Object?> six = cltChecks(
+        finalPart(
+          answered: const <String, int>{
+            'icl.1': 4,
+            'ecl.2': 4,
+            'ecl.1': 4,
+            'icl.2': 4,
+            'gcl.1': 4,
+          },
+        ),
+        part,
+      );
+      expect(six['longest_same'], 6);
+      expect(six['flags'], 1);
+      expect(six['verdict'], 'review');
+
+      final Map<String, Object?> five = cltChecks(
+        finalPart(
+          answered: const <String, int>{
+            'icl.1': 4,
+            'ecl.2': 4,
+            'ecl.1': 4,
+            'icl.2': 5,
+            'gcl.1': 4,
+          },
+        ),
+        part,
+      );
+      expect(five['longest_same'], 5);
+      expect(five['flags'], 0);
+    });
+
+    test('SNO-F-CLT-04: числа из записи неизвестны — сверка «не знаю», а '
+        'не «расхождений нет»', () {
+      // Эталон посчитан на Python.
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(answered: const <String, int>{'chk.focus': 7}),
+        part,
+        facts: facts(null, null),
+      );
+
+      expect(marker(checks, 'chk.focus'), <String, Object?>{
+        'value': 7,
+        'flag': true,
+        'record': <String, Object?>{'away_count': null},
+        'contradicts_record': null,
+      });
+      expect(marker(checks, 'chk.books'), <String, Object?>{
+        'value': 1,
+        'flag': false,
+        'record': <String, Object?>{'book_opens': null},
+        'contradicts_record': null,
+      });
+      // Отметка по самому ответу от записи не зависит.
+      expect(checks['flags'], 1);
+    });
+
+    test('SNO-F-CLT-04: на маркер ещё не ответили — ни отметки, ни '
+        'сверки', () {
+      // Эталон посчитан на Python: девять первых пунктов.
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(count: 9),
+        part,
+        facts: facts(2, 14),
+      );
+
+      expect(marker(checks, 'chk.focus')['value'], 3);
+      expect(marker(checks, 'chk.books'), <String, Object?>{
+        'value': null,
+        'flag': null,
+        'record': <String, Object?>{'book_opens': 14},
+        'contradicts_record': null,
+      });
+      expect(checks['flags'], 0);
+      expect(checks['verdict'], 'ok');
+    });
+
+    test('SNO-F-CLT-04: раздел ложится в показатели рядом с ними и '
+        'пишется в JSON', () {
+      final Map<String, Object?> checks = cltChecks(
+        finalPart(),
+        part,
+        facts: facts(2, 14),
+      );
+      final Map<String, Object?> scores = cltScores(<CltResult>[
+        finalPart(),
+      ], checks: checks);
+
+      expect(scores['checks'], checks);
+      expect(jsonDecode(jsonEncode(scores)), scores);
+      expect(scores['rule'], contains('role: check'));
+      final Map<String, Object?> bare = cltScores(<CltResult>[finalPart()]);
+      expect(bare.containsKey('checks'), isFalse);
+    });
+
+    test('SNO-F-CLT-04: правила маркеров берутся из сценария, каким его '
+        'видел участник', () {
+      final String scenario = jsonEncode(kBuiltinCltScenario);
+
+      final Map<String, Object?>? checks = cltChecksFor(
+        <CltResult>[finalPart(answered: const <String, int>{'chk.focus': 7})],
+        scenario: scenario,
+        facts: facts(2, 14),
+      );
+      expect(checks!['flags'], 1);
+      expect(marker(checks, 'chk.focus')['contradicts_record'], isTrue);
+
+      // Считать не по чему: теста не начинали, сценария рядом нет, он
+      // не читается или в нём нет маркеров.
+      expect(
+        cltChecksFor(const <CltResult>[], scenario: scenario),
+        isNull,
+      );
+      expect(cltChecksFor(<CltResult>[finalPart()], scenario: null), isNull);
+      expect(
+        cltChecksFor(<CltResult>[finalPart()], scenario: 'не JSON'),
+        isNull,
+      );
+      expect(
+        cltChecksFor(<CltResult>[finalPart()], scenario: '{"schema":"x"}'),
+        isNull,
+      );
+      final Map<String, Object?> plain =
+          jsonDecode(scenario) as Map<String, Object?>;
+      for (final Object? one in plain['parts']! as List<Object?>) {
+        final Map<String, Object?> piece = one! as Map<String, Object?>;
+        for (final Object? section in piece['sections']! as List<Object?>) {
+          final Map<String, Object?> entry = section! as Map<String, Object?>;
+          (entry['items']! as List<Object?>).removeWhere((Object? item) {
+            return (item! as Map<String, Object?>)['role'] == 'check';
+          });
+        }
+      }
+      expect(
+        cltChecksFor(<CltResult>[finalPart()], scenario: jsonEncode(plain)),
+        isNull,
+      );
     });
   });
 }

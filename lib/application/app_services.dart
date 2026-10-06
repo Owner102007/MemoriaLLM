@@ -11,6 +11,7 @@ import '../domain/library/storage_access.dart';
 import '../domain/reading/full_screen.dart';
 import '../domain/reading/reader_document.dart';
 import '../domain/reading/volume_keys.dart';
+import '../domain/settings/app_settings.dart';
 import '../infrastructure/files/android_book_storage.dart';
 import '../infrastructure/files/app_directory.dart';
 import '../infrastructure/files/archive_scanner.dart';
@@ -98,10 +99,11 @@ class AppServices {
         : const LocalBookStorage(
             copyInto: Sno.literature ? applicationBooks : null,
           );
+    final BookTimes? bookTimes = bookTimesFor(data.settings);
     // SNO-F-REC-01: запись сессии — только в сборке ветви. Условие —
     // константа сборки: в основном приложении записи нет вовсе.
     final RecordingSession? recording = Sno.recording
-        ? _recordingFor(data, storage)
+        ? _recordingFor(data, storage, bookTimes)
         : null;
     final DocumentOpener opener = PdfrxDocumentOpener(storage: storage);
     return AppServices(
@@ -143,11 +145,7 @@ class AppServices {
       shelfReading: Sno.galaxy
           ? _shelfReadingFor(data, opener, recording)
           : null,
-      // SNO-F-MAP-01: время в книгах считается там, где есть карта, на
-      // которой оно видно, — в ветви II. Условие — константа сборки.
-      bookTimes: Sno.galaxy
-          ? BookTimes(settings: data.settings, key: SnoSettingsKeys.bookTimes)
-          : null,
+      bookTimes: bookTimes,
     );
   }
 
@@ -181,7 +179,20 @@ class AppServices {
     return reading;
   }
 
-  /// Папка `Записи/` в папке данных приложения.
+  /// Счёт времени в книгах этой сборки (SNO-F-MAP-01, SNO-F-REC-17);
+  /// `null` — в сборке его нет.
+  ///
+  /// Считается в обеих ветвях СНО2026: видно время на карте ветви II,
+  /// а в журнал записи — в `book.close` — оно идёт и там, и там: запись
+  /// в ветвях одинакова. Условие — константа сборки: в основном
+  /// приложении счёта нет вовсе. Отдельным методом — чтобы автотест
+  /// одинаковости ветвей заводил счёт тем же условием, что приложение.
+  static BookTimes? bookTimesFor(AppSettingsRepository settings) {
+    return Sno.bookTimes
+        ? BookTimes(settings: settings, key: SnoSettingsKeys.bookTimes)
+        : null;
+  }
+
   /// Дан ли сборке пароль теста нагрузки (SNO-DIV-06).
   static bool get _hasLoadTest => Sno.cltPassword.isNotEmpty;
 
@@ -231,7 +242,11 @@ class AppServices {
   ///
   /// Записи лежат в папке данных приложения, в `Записи/`; снимок
   /// начала записи строится тем же кодом, что эталон.
-  static RecordingSession _recordingFor(AppData data, BookStorage storage) {
+  static RecordingSession _recordingFor(
+    AppData data,
+    BookStorage storage,
+    BookTimes? bookTimes,
+  ) {
     final String nodeId = data.clock.nodeId;
     final ReferenceKeeper keeper = ReferenceKeeper(
       data: data,
@@ -253,6 +268,9 @@ class AppServices {
       // SNO-F-CLT-03: итог теста нагрузки в сведениях записи — только
       // там, где тест есть.
       hasTest: _hasLoadTest,
+      // SNO-F-REC-16: книгу, открытую в миг остановки записи, закрывает
+      // сама запись — с теми же числами, что принёс бы экран чтения.
+      closingFacts: bookTimes?.openFacts,
       status: const PlatformDeviceStatus(),
       // SNO-F-REC-13: служба переднего плана есть только у телефона —
       // свёрнутое окно на ПК никто не выгружает.

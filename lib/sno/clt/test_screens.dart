@@ -1,10 +1,11 @@
 /// Экраны теста нагрузки (SNO-SCR-04; SNO-F-CLT-01, SNO-F-CLT-02,
-/// SNO-F-CLT-03).
+/// SNO-F-CLT-03, SNO-F-CLT-04).
 ///
-/// Три экрана: пароль экспериментатора (кадр SNO-SCR-04.1), пункт теста
-/// — один на экран, со шкалой (SNO-SCR-04.2 и SNO-SCR-04.4), и «Спасибо,
-/// ответы сохранены» (SNO-SCR-04.3). Что показано и что принято, решает
-/// `load_test.dart`; здесь — только как это выглядит и чем нажимается.
+/// Четыре экрана: пароль организатора (кадр SNO-SCR-04.1), вступление
+/// перед первым пунктом (SNO-SCR-04.5), пункт теста — один на экран, со
+/// шкалой (SNO-SCR-04.2), и «Спасибо, ответы сохранены» (SNO-SCR-04.3).
+/// Что показано и что принято, решает `load_test.dart`; здесь — только
+/// как это выглядит и чем нажимается.
 ///
 /// Баллов на этих экранах нет нигде: показатели считаются при
 /// завершении сессии и ложатся в архив записи, участнику они не
@@ -16,7 +17,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../recording/summary.dart';
+import '../hold_button.dart';
 import 'load_test.dart';
 import 'scenario.dart';
 
@@ -65,34 +66,9 @@ bool _isEnter(LogicalKeyboardKey key) {
       key == LogicalKeyboardKey.numpadEnter;
 }
 
-/// Показывает вопрос об усилии за блок [block] (кадр SNO-SCR-04.4).
-///
-/// Без пароля: блок закрывает экспериментатор. Ответ обязателен — с
-/// экрана не уйти, пока он не дан; после ответа экран закрывается сам.
-Future<void> openBlockEffort(
-  NavigatorState navigator,
-  LoadTest test,
-  BlockMark block,
-) async {
-  final LoadTestRun? run = await test.begin(kCltBlockEnd, block: block);
-  if (run == null) {
-    return;
-  }
-  if (!navigator.mounted) {
-    run.dispose();
-    return;
-  }
-  await navigator.push<void>(
-    MaterialPageRoute<void>(
-      builder: (BuildContext context) {
-        return LoadTestRunScreen(test: test, run: run);
-      },
-    ),
-  );
-}
-
-/// Открывает итоговую часть теста: пароль, если замок закрыт, и пункты
-/// по одному (кадры SNO-SCR-04.1 — SNO-SCR-04.3).
+/// Открывает итоговую часть теста: пароль, если замок закрыт,
+/// вступление и пункты по одному (кадры SNO-SCR-04.1 — SNO-SCR-04.3,
+/// SNO-SCR-04.5).
 ///
 /// [dry] — пробный проход экспериментатора, когда записи нет: пароль
 /// спрашивается всегда, ответы никуда не пишутся.
@@ -117,7 +93,7 @@ Future<void> openFinalTest(
       return;
     }
   }
-  final LoadTestRun? run = await test.begin(kCltSessionEnd, dry: dry);
+  final LoadTestRun? run = await test.begin(dry: dry);
   if (run == null) {
     return;
   }
@@ -134,17 +110,155 @@ Future<void> openFinalTest(
   );
 }
 
+/// Выход организатора «Завершить без теста» (SNO-F-CLT-05, решение
+/// АЖ4): пароль, удержание и подтверждение. Отвечает, подтверждён ли
+/// выход; завершает сессию тот, кто спрашивал.
+///
+/// Нужен, когда тест пройти нельзя: участник ушёл, устройство
+/// отказывает, сценарий не принят. Без него сессия, которая завершается
+/// только после теста, осталась бы запертой — вместе с приложением,
+/// закрытым экраном завершения. Пароль тот же, что открывает тест, и
+/// спрашивается всегда, даже если тест уже открыт: открытый замок —
+/// не разрешение уйти без теста. Пароль, который с экрана не набрать
+/// (в секрет сборки попала не цифра), не спрашивается: иначе выхода не
+/// было бы вовсе.
+Future<bool> openTestSkip(NavigatorState navigator, LoadTest test) async {
+  if (test.canEnter) {
+    final bool? accepted = await navigator.push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (BuildContext context) {
+          return LoadTestPasswordScreen(
+            test: test,
+            title: 'Завершить без теста',
+          );
+        },
+      ),
+    );
+    if (accepted != true || !navigator.mounted) {
+      return false;
+    }
+  }
+  final bool? confirmed = await navigator.push<bool>(
+    MaterialPageRoute<bool>(
+      builder: (BuildContext context) => const SkipTestScreen(),
+    ),
+  );
+  return confirmed ?? false;
+}
+
+/// «Завершить без теста»: удержание и подтверждение (SNO-F-CLT-05).
+///
+/// Экран закрывается с `true`, когда организатор додержал кнопку и
+/// подтвердил в окне.
+class SkipTestScreen extends StatefulWidget {
+  /// Создаёт экран.
+  const SkipTestScreen({super.key});
+
+  @override
+  State<SkipTestScreen> createState() => _SkipTestState();
+}
+
+class _SkipTestState extends State<SkipTestScreen> {
+  /// Открыт ли вопрос о подтверждении: второй не открывается.
+  bool _asking = false;
+
+  Future<void> _confirm() async {
+    if (_asking) {
+      return;
+    }
+    setState(() => _asking = true);
+    final bool? sure = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          key: const Key('sno-skip-dialog'),
+          title: const Text('Завершить без теста нагрузки?'),
+          content: const Text(
+            'Запись будет помечена «без теста нагрузки». Вернуться к '
+            'тесту после этого нельзя.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              key: const Key('sno-skip-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Отмена'),
+            ),
+            TextButton(
+              key: const Key('sno-skip-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Завершить'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() => _asking = false);
+    if (sure == true) {
+      Navigator.of(context).pop(true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Завершить без теста')),
+      body: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              children: <Widget>[
+                Text(
+                  'Для случая, когда тест пройти нельзя: участник ушёл '
+                  'или устройство отказывает.',
+                  style: theme.textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Сессия завершится без теста нагрузки, запись будет '
+                  'помечена. Ответы, которые участник уже дал, останутся '
+                  'в архиве записи.',
+                ),
+                const SizedBox(height: 28),
+                HoldToConfirmButton(
+                  key: const Key('sno-skip-hold'),
+                  label: 'Удерживайте, чтобы завершить без теста',
+                  onConfirmed: _asking ? null : () => unawaited(_confirm()),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Пароль экспериментатора (SNO-F-CLT-01, кадр SNO-SCR-04.1).
 ///
 /// Цифровая клавиатура, ввод скрыт. Три неверные попытки подряд —
 /// минута ожидания с честным счётом секунд. Экран закрывается с `true`,
 /// когда пароль принят.
 class LoadTestPasswordScreen extends StatefulWidget {
-  /// Создаёт экран.
-  const LoadTestPasswordScreen({required this.test, super.key});
+  /// Создаёт экран. [title] — заголовок: тем же экраном организатор
+  /// открывает и выход «Завершить без теста» (SNO-F-CLT-05).
+  const LoadTestPasswordScreen({
+    required this.test,
+    this.title = 'Cognitive load test',
+    super.key,
+  });
 
   /// Тест нагрузки.
   final LoadTest test;
+
+  /// Заголовок экрана.
+  final String title;
 
   @override
   State<LoadTestPasswordScreen> createState() => _LoadTestPasswordState();
@@ -292,7 +406,7 @@ class _LoadTestPasswordState extends State<LoadTestPasswordScreen> {
     final int seconds = widget.test.lockedSeconds;
     final bool busy = _checking || seconds > 0;
     return Scaffold(
-      appBar: AppBar(title: const Text('Cognitive load test')),
+      appBar: AppBar(title: Text(widget.title)),
       body: Focus(
         autofocus: true,
         onKeyEvent: _onKey,
@@ -372,14 +486,16 @@ class _LoadTestPasswordState extends State<LoadTestPasswordScreen> {
   }
 }
 
-/// Часть теста на экране: пункты по одному и «Спасибо» в конце
-/// (SNO-F-CLT-02, SNO-F-CLT-03; кадры SNO-SCR-04.2 — SNO-SCR-04.4).
+/// Часть теста на экране: вступление, пункты по одному и «Спасибо» в
+/// конце (SNO-F-CLT-02, SNO-F-CLT-03, SNO-F-CLT-04; кадры SNO-SCR-04.2,
+/// SNO-SCR-04.3, SNO-SCR-04.5).
 ///
-/// На экране пункта — только его текст, шкала с подписями краёв,
-/// «Назад» и «Дальше». Вопрос об усилии после блока закрыть нельзя,
-/// пока ответ не дан, и после ответа экран уходит сам; с итоговой
-/// части уйти можно — она продолжится с того же пункта. На ПК шкала
-/// выбирается мышью, цифрами и стрелками, «Дальше» — клавишей ввода.
+/// Перед первым пунктом — экран без шкалы: что оценивать и как
+/// отвечать; «Начать» ведёт к пунктам. На экране пункта — только его
+/// текст, шкала с подписями краёв, «Назад» и «Дальше»; маркер честности
+/// выглядит так же, как любой другой пункт. С части уйти можно — она
+/// продолжится с того же пункта. На ПК шкала выбирается мышью, цифрами
+/// и стрелками, «Дальше» и «Начать» — клавишей ввода.
 class LoadTestRunScreen extends StatefulWidget {
   /// Создаёт экран. Прохождение [run] экран забирает себе и снимает,
   /// когда закрывается.
@@ -402,8 +518,6 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
   /// Уходит ли экран сам: второй раз его не закрывают.
   bool _leaving = false;
 
-  bool get _effort => widget.run.part.when == kCltBlockEnd && !widget.run.dry;
-
   @override
   void initState() {
     super.initState();
@@ -422,18 +536,9 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
     super.dispose();
   }
 
-  /// Отвечать ли здесь уже не на что: сессию завершили, или усилие за
-  /// этот блок оценили на другом экране — на экране завершения,
-  /// который открылся поверх, когда запись остановилась.
-  bool get _stale {
-    final LoadTestRun run = widget.run;
-    if (run.finished) {
-      return false;
-    }
-    final BlockMark? block = run.block;
-    return run.orphaned ||
-        (_effort && block != null && widget.test.effortGiven(block));
-  }
+  /// Отвечать ли здесь уже не на что: сессию, в чью папку шли ответы,
+  /// завершили — выходом организатора «без теста».
+  bool get _stale => !widget.run.finished && widget.run.orphaned;
 
   void _changed() {
     if (!mounted) {
@@ -443,13 +548,12 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
     if (_leaving) {
       return;
     }
-    // Вопрос об усилии — один: ответ дан, и участник снова там, откуда
-    // пришёл. Экран, которому отвечать уже не на что, уходит тоже:
-    // держать участника на вопросе без выхода нельзя.
-    if ((_effort && widget.run.finished) || _stale) {
+    // Экран, которому отвечать уже не на что, уходит сам: держать
+    // участника на вопросе без выхода нельзя.
+    if (_stale) {
       _leaving = true;
       // Именно этот экран, а не верхний: поверх него может стоять
-      // экран завершения сессии.
+      // другой.
       final ModalRoute<Object?>? route = ModalRoute.of(context);
       if (route == null) {
         return;
@@ -469,8 +573,15 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
     final LoadTestRun run = widget.run;
     final LogicalKeyboardKey key = event.logicalKey;
     if (run.finished) {
-      if (_isEnter(key) && !_effort) {
+      if (_isEnter(key)) {
         Navigator.of(context).pop();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    if (run.intro != null) {
+      if (_isEnter(key)) {
+        run.start();
         return KeyEventResult.handled;
       }
       return KeyEventResult.ignored;
@@ -498,9 +609,39 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
     return KeyEventResult.ignored;
   }
 
+  /// Экран перед первым пунктом (SNO-F-CLT-04, кадр SNO-SCR-04.5):
+  /// что оценивать и как отвечать. Ответа не требует.
+  List<Widget> _intro(ThemeData theme, String intro) {
+    return <Widget>[
+      if (widget.run.dry)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Text(
+            'Пробный проход: ответы не сохраняются',
+            key: const Key('sno-clt-dry'),
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+      const SizedBox(height: 12),
+      Text(
+        intro,
+        key: const Key('sno-clt-intro'),
+        style: theme.textTheme.titleMedium,
+      ),
+      const SizedBox(height: 28),
+      Align(
+        alignment: Alignment.centerRight,
+        child: FilledButton(
+          key: const Key('sno-clt-begin'),
+          onPressed: widget.run.start,
+          child: const Text('Начать'),
+        ),
+      ),
+    ];
+  }
+
   List<Widget> _item(ThemeData theme) {
     final LoadTestRun run = widget.run;
-    final BlockMark? block = run.block;
     return <Widget>[
       if (run.dry)
         Padding(
@@ -512,9 +653,7 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
           ),
         ),
       Text(
-        block != null
-            ? 'Блок ${block.number} закончен'
-            : '${run.index + 1} из ${run.length}',
+        '${run.index + 1} из ${run.length}',
         key: const Key('sno-clt-progress'),
         style: theme.textTheme.titleSmall,
       ),
@@ -578,6 +717,17 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
         textAlign: TextAlign.center,
         style: theme.textTheme.titleLarge,
       ),
+      if (!run.dry)
+        // SNO-F-CLT-05: завершить сессию может только организатор.
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'Позовите организатора',
+            key: const Key('sno-clt-call'),
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyLarge,
+          ),
+        ),
       if (run.saveFailed)
         Padding(
           padding: const EdgeInsets.only(top: 12),
@@ -604,27 +754,22 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final LoadTestRun run = widget.run;
-    // С вопроса об усилии не уйти, пока ответ не дан.
-    final bool free = !_effort || run.finished;
-    return PopScope<Object?>(
-      canPop: free,
-      child: Scaffold(
-        appBar: AppBar(
-          automaticallyImplyLeading: free,
-          title: Text(_effort ? 'Оценка усилия' : 'Cognitive load test'),
-        ),
-        body: Focus(
-          autofocus: true,
-          onKeyEvent: _onKey,
-          child: SafeArea(
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-                  children: run.finished ? _done(theme) : _item(theme),
-                ),
+    final String? intro = run.intro;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Cognitive load test')),
+      body: Focus(
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                children: run.finished
+                    ? _done(theme)
+                    : (intro != null ? _intro(theme, intro) : _item(theme)),
               ),
             ),
           ),

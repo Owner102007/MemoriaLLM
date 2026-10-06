@@ -537,4 +537,21 @@ void main() {
       expect(Sno.galaxy, Sno.branch == snoBranchTest);
     });
   });
+
+  group('SNO-F-REC-17: запись одинакова в обеих ветвях', () {
+    test('SNO-F-REC-17: счёт времени в книгах заводится под флагом обеих '
+        'ветвей и отдаётся записи', () {
+      // Условие — константа сборки: в основном приложении счёта нет, а
+      // в ветвях I и II он один, и `book.close` несёт время чтения и
+      // там, и там.
+      final String services = File('lib/application/app_services.dart')
+          .readAsStringSync();
+      expect(services, matches(RegExp(r'return Sno\.bookTimes\s*\?')));
+      expect(services, isNot(matches(RegExp(r'bookTimes:\s*Sno\.galaxy'))));
+      // Книгу, открытую в миг остановки, закрывает запись — с числами
+      // того же счёта (SNO-F-REC-16).
+      expect(services, contains('closingFacts: bookTimes?.openFacts'));
+      expect(Sno.bookTimes, Sno.enabled);
+    });
+  });
 }

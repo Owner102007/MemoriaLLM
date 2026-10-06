@@ -8,6 +8,7 @@ import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/hold_button.dart';
 import 'package:memoria/sno/participant_code.dart';
 import 'package:memoria/sno/recording/finish_screen.dart';
+import 'package:memoria/sno/recording/recording_overlay.dart';
 import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/records_screen.dart';
 import 'package:memoria/sno/recording/session.dart';
@@ -855,16 +856,40 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-REC-05: завершение сессии из раздела оставляет архив '
-        'в счёте записей', (WidgetTester tester) async {
-      await pumpTesting(tester);
+    testWidgets('SNO-F-REC-05: завершение сессии оставляет архив в счёте '
+        'записей раздела', (WidgetTester tester) async {
+      // Раздел под слоем записи, как в приложении: остановленная
+      // запись сама ставит экран завершения (SNO-F-REC-16).
+      final GlobalKey<NavigatorState> navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          builder: (BuildContext context, Widget? page) {
+            return RecordingOverlay(
+              session: kit.session,
+              navigator: navigator,
+              records: records,
+              child: page!,
+            );
+          },
+          home: TestingScreen(
+            services: testServices(
+              data: data,
+              recording: kit.session,
+              records: records,
+            ),
+            flags: BranchFlags.of('I'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
       await kit.session.start(code);
       final String folder = kit.folder;
       kit.run(60);
       await kit.session.stop(StopReason.experimenter);
       await tester.pumpAndSettle();
 
-      await tap(tester, 'sno-session-finish');
+      expect(find.byType(SessionFinishScreen), findsOneWidget);
       await holdOn(tester, 'sno-finish-hold');
 
       expect(records.packed, <String>[folder]);

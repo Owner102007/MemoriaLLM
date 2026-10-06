@@ -261,11 +261,12 @@ void main() {
         scores: '{"schema": "sno2026-clt-scores/1"}',
         'clt/scenario.json': '{"schema": "sno2026-clt/1"}',
       };
+      // SNO-F-CLT-04: в итоге теста — и число отметок маркеров.
       final Map<String, Object?> clt = <String, Object?>{
-        'effort_answers': 2,
         'final': 'complete',
-        'final_answers': 16,
-        'final_items': 16,
+        'final_answers': 18,
+        'final_items': 18,
+        'checks_flags': 1,
         'files': <String>[answers],
       };
       final Directory folder = await make(files, about: info()..['clt'] = clt);
@@ -302,6 +303,20 @@ void main() {
         await File('tool/sno_manifest.schema.json').readAsString(),
       ) as Map<String, Object?>;
       expect(schemaProblems(manifest, schema), isEmpty);
+      // SNO-F-REC-15: манифест записи прежней сборки — с оценками
+      // усилия по блокам и без числа отметок — схема принимает
+      // по-прежнему.
+      final Map<String, Object?> old = <String, Object?>{
+        ...manifest,
+        'clt': <String, Object?>{
+          'effort_answers': 2,
+          'final': 'complete',
+          'final_answers': 16,
+          'final_items': 16,
+          'files': <String>[answers],
+        },
+      };
+      expect(schemaProblems(old, schema), isEmpty);
     });
 
     test('SNO-F-REC-05: потока нет — нет и файла, без заглушек', () async {

@@ -40,9 +40,16 @@ const Color kRecordingDotRing = Color(0xFFF5E9E6);
 /// Стоит выше навигатора, поэтому виден на каждом экране — на полке, в
 /// книге, в «Тестировании» — и лежит выше светофильтра: фильтр
 /// накрывает только картинку страницы. Пока запись идёт, в углу горит
-/// точка без цифр; удержание точки спрашивает об остановке. Когда
-/// запись остановилась сама, чтение не прерывается: внизу появляется
-/// плашка, ведущая на завершение сессии.
+/// точка без цифр; удержание точки спрашивает об остановке.
+///
+/// **Остановка закрывает приложение экраном завершения сессии**
+/// (SNO-F-REC-16): запись остановилась — сама на сороковой минуте,
+/// удержанием точки или оборвалась и поднята после перезапуска, — и
+/// слой снимает всё, что открыто поверх главного экрана (книгу, окна,
+/// вопрос об остановке), и ставит экран завершения. Уйти с него нельзя
+/// до «Завершить сессию». Пока экран завершения ещё не встал — первый
+/// кадр после запуска — приложение закрыто глухим слоем: полки под ним
+/// не видно ни на кадр.
 ///
 /// Здесь же запись узнаёт, что приложение ушло с переднего плана и
 /// вернулось, — и здесь же, пока запись идёт, слушается сырой ввод:
@@ -92,12 +99,20 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   /// Размер окна по последнему построению — строкам ввода.
   Size _window = Size.zero;
 
+  /// Назначена ли уже попытка закрыть приложение после кадра: вторая,
+  /// пока ждёт первая, не назначается.
+  bool _closingSoon = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.session.addListener(_changed);
     _syncInput();
+    // Сессию подняли остановленной — приложение закрыли между
+    // остановкой и завершением: навигатора ещё нет, экран завершения
+    // встаёт сразу за первым кадром.
+    _closeAppSoon();
   }
 
   @override
@@ -121,9 +136,57 @@ class _RecordingOverlayState extends State<RecordingOverlay>
 
   void _changed() {
     _syncInput();
+    _closeApp();
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// Нужно ли закрыть приложение экраном завершения: запись
+  /// остановлена, сессия не завершена, а экран ещё не открыт.
+  bool get _mustClose {
+    final RecordingSession session = widget.session;
+    return session.phase == RecordingPhase.stopped && !session.finishOpen.value;
+  }
+
+  /// SNO-F-REC-16: закрывает приложение экраном завершения сессии.
+  ///
+  /// Всё, что открыто поверх главного экрана, снимается: книга, её
+  /// окна, вопрос об остановке. Снимается закрытием, а не удалением:
+  /// тот, кто открыл экран, узнаёт, что его закрыли, — полка снова
+  /// говорит подготовке книг, что читать можно. Сам экран завершения
+  /// встаёт без перехода, поверх уходящих.
+  void _closeApp() {
+    if (!mounted || !_mustClose) {
+      return;
+    }
+    final NavigatorState? navigator = widget.navigator.currentState;
+    if (navigator == null) {
+      _closeAppSoon();
+      return;
+    }
+    navigator.popUntil((Route<Object?> route) => route.isFirst);
+    unawaited(
+      openSessionFinish(
+        navigator,
+        widget.session,
+        records: widget.records,
+        test: widget.test,
+      ),
+    );
+  }
+
+  /// То же после ближайшего кадра: навигатора может ещё не быть, а
+  /// посреди построения открывать экран нельзя.
+  void _closeAppSoon() {
+    if (_closingSoon || !_mustClose) {
+      return;
+    }
+    _closingSoon = true;
+    WidgetsBinding.instance.addPostFrameCallback((Duration stamp) {
+      _closingSoon = false;
+      _closeApp();
+    });
   }
 
   /// SNO-F-REC-11: слушатели ввода заводятся стартом записи и
@@ -211,26 +274,8 @@ class _RecordingOverlayState extends State<RecordingOverlay>
       return;
     }
     // Состояние меняется сразу, диск догоняет: экран завершения
-    // открывается, не дожидаясь его, — иначе под ним успела бы
-    // мелькнуть плашка.
-    final Future<void> stopping = widget.session.stop(StopReason.experimenter);
-    _openFinish();
-    await stopping;
-  }
-
-  void _openFinish() {
-    final NavigatorState? navigator = widget.navigator.currentState;
-    if (navigator == null) {
-      return;
-    }
-    unawaited(
-      openSessionFinish(
-        navigator,
-        widget.session,
-        records: widget.records,
-        test: widget.test,
-      ),
-    );
+    // открывает слушатель сессии ([_closeApp]), не дожидаясь диска.
+    await widget.session.stop(StopReason.experimenter);
   }
 
   @override
@@ -238,8 +283,6 @@ class _RecordingOverlayState extends State<RecordingOverlay>
     final RecordingSession session = widget.session;
     _window = MediaQuery.sizeOf(context);
     final EdgeInsets safe = MediaQuery.paddingOf(context);
-    // Экранная клавиатура плашку не закрывает: та встаёт над ней.
-    final double keyboard = MediaQuery.viewInsetsOf(context).bottom;
     final bool wide =
         navPlacementFor(MediaQuery.sizeOf(context).width) == NavPlacement.top;
     return Stack(
@@ -268,22 +311,10 @@ class _RecordingOverlayState extends State<RecordingOverlay>
               if (open) {
                 return const SizedBox.shrink();
               }
-              return Align(
-                alignment: Alignment.bottomCenter,
-                child: Padding(
-                  // Выше нижней навигации телефона: плашка не должна
-                  // закрывать разделы.
-                  padding: EdgeInsets.only(
-                    bottom: keyboard > 0
-                        ? keyboard + 12
-                        : safe.bottom + (wide ? 24 : 96),
-                  ),
-                  child: _EndedPlaque(
-                    label: describeStop(session.state?.stoppedBy),
-                    onTap: _openFinish,
-                  ),
-                ),
-              );
+              // SNO-F-REC-16: экран завершения ещё не встал — приложение
+              // под глухим слоем, и встать ему назначено за этим кадром.
+              _closeAppSoon();
+              return const _ClosedCover();
             },
           ),
       ],
@@ -291,46 +322,18 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   }
 }
 
-/// Плашка «Запись завершена»: ведёт на завершение сессии.
-class _EndedPlaque extends StatelessWidget {
-  const _EndedPlaque({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
+/// Глухой слой поверх приложения, пока экран завершения сессии не
+/// встал (SNO-F-REC-16): ни полки, ни книги под ним не видно, и
+/// нажатия до них не доходят.
+class _ClosedCover extends StatelessWidget {
+  const _ClosedCover();
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Material(
-      key: const Key('sno-recording-ended'),
-      color: theme.colorScheme.surface,
-      elevation: 6,
-      shape: StadiumBorder(
-        side: BorderSide(color: theme.colorScheme.outlineVariant),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Text(
-                label,
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: theme.colorScheme.onSurface,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: theme.colorScheme.onSurface,
-              ),
-            ],
-          ),
-        ),
+    return AbsorbPointer(
+      child: ColoredBox(
+        key: const Key('sno-app-closed'),
+        color: Theme.of(context).scaffoldBackgroundColor,
       ),
     );
   }

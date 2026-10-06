@@ -1,12 +1,13 @@
 /// Тест нагрузки: сценарий, пароль и прохождение частей
 /// (SNO-F-CLT-01, SNO-F-CLT-02, SNO-F-CLT-03).
 ///
-/// Cognitive load test исследования СНО2026 из двух частей: один вопрос
-/// об усилии после каждого блока и итоговая часть по паролю после
-/// остановки записи. Здесь всё, что о тесте решается без экрана: какой
-/// сценарий загружен, открыт ли замок, за какие блоки усилие ещё не
-/// оценено, пройдена ли итоговая часть — и само прохождение части
-/// ([LoadTestRun]): какой пункт показан, что выбрано, что ушло на диск.
+/// Cognitive load test исследования СНО2026 — одна часть по паролю
+/// организатора: после остановки записи и письменного бланка, до
+/// завершения сессии (SNO-F-CLT-05). Блоков и вопроса об усилии после
+/// блока с шага 25 нет (SNO-F-REC-15). Здесь всё, что о тесте решается
+/// без экрана: какой сценарий загружен, открыт ли замок, пройдена ли
+/// итоговая часть — и само прохождение части ([LoadTestRun]): какой
+/// пункт показан, что выбрано, что ушло на диск.
 ///
 /// **Что уже отвечено, знают файлы записи, а не память.** Ответы лежат
 /// в подпапке `clt/` папки записи (`results.dart`), и состояние теста
@@ -22,7 +23,6 @@ import 'package:flutter/foundation.dart';
 
 import '../recording/event.dart';
 import '../recording/session.dart';
-import '../recording/summary.dart';
 import 'builtin_scenario.dart';
 import 'results.dart';
 import 'scenario.dart';
@@ -141,6 +141,12 @@ class LoadTest extends ChangeNotifier {
   /// Сколько знаков в пароле: столько мест на экране ввода.
   int get passwordLength => _password.length;
 
+  /// Можно ли набрать пароль этой сборки на экране пароля. Нельзя — в
+  /// секрет сборки попала не цифра, — и тест не начнётся никогда:
+  /// выход организатора «Завершить без теста» тогда пароля не
+  /// спрашивает (SNO-F-CLT-05).
+  bool get canEnter => isEnterablePassword(_password);
+
   /// Загружает сценарий (SNO-F-CLT-02): встроенный либо файл с тем же
   /// `id` из папки приложения. Сценарий с ошибкой не принимается —
   /// [problem] называет причину, и тест не начинается.
@@ -249,30 +255,6 @@ class LoadTest extends ChangeNotifier {
     _resultsOf = id;
   }
 
-  bool _effortGiven(BlockMark block) {
-    for (final CltResult result in results) {
-      if (result.complete &&
-          result.block == block.number &&
-          result.blockStartMs == block.startMs) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// Блоки записи, за которые усилие ещё не оценено, по порядку
-  /// (SNO-F-CLT-02): блок, который закрыла остановка записи, и блок,
-  /// после которого приложение закрыли раньше ответа.
-  List<BlockMark> get pendingEfforts {
-    if (_scenario?.partFor(kCltBlockEnd) == null) {
-      return const <BlockMark>[];
-    }
-    return <BlockMark>[
-      for (final BlockMark block in session.blocks)
-        if (!_effortGiven(block)) block,
-    ];
-  }
-
   /// Ответы итоговой части; `null` — её не начинали.
   CltResult? get finalResult => finalCltResult(results);
 
@@ -346,24 +328,18 @@ class LoadTest extends ChangeNotifier {
     return locked ? PasswordOutcome.locked : PasswordOutcome.wrong;
   }
 
-  /// Начинает часть теста, которая показывается в миг [when]
-  /// ([kCltBlockEnd] или [kCltSessionEnd]); `null` — начинать нечего:
-  /// сценарий не принят, такой части в нём нет, сессии нет или замок
-  /// закрыт.
+  /// Начинает итоговую часть теста; `null` — начинать нечего: сценарий
+  /// не принят, такой части в нём нет, сессии нет или замок закрыт.
   ///
-  /// [block] — блок, за который оценивается усилие. [dry] — пробный
-  /// проход экспериментатора без записи: ответы никуда не пишутся.
+  /// [dry] — пробный проход экспериментатора без записи: ответы никуда
+  /// не пишутся.
   ///
   /// Часть, начатую и не оконченную, продолжает с первого
   /// неотвеченного пункта — в том же файле.
-  Future<LoadTestRun?> begin(
-    String when, {
-    BlockMark? block,
-    bool dry = false,
-  }) async {
+  Future<LoadTestRun?> begin({bool dry = false}) async {
     await load();
     final CltScenario? scenario = _scenario;
-    final CltPart? part = scenario?.partFor(when);
+    final CltPart? part = scenario?.partFor(kCltSessionEnd);
     if (scenario == null || part == null) {
       return null;
     }
@@ -401,19 +377,13 @@ class LoadTest extends ChangeNotifier {
     final List<String> order = <String>[
       for (final CltItem item in items) item.id,
     ];
-    // Блок, за который усилие уже оценено, второй раз не спрашивают:
-    // кнопку могли нажать, пока прежний ответ ещё шёл на диск.
-    if (block != null && _effortGiven(block)) {
-      return null;
-    }
     CltResult? open;
     for (final CltResult result in results) {
       if (!result.complete &&
           result.part == part.id &&
           result.scenario == scenario.id &&
           result.version == scenario.version &&
-          result.block == block?.number &&
-          result.blockStartMs == block?.startMs &&
+          result.block == null &&
           listEquals(result.order, order)) {
         open = result;
       }
@@ -424,7 +394,6 @@ class LoadTest extends ChangeNotifier {
       part: part,
       items: items,
       dry: false,
-      block: block,
       participant: state.participant.code,
       recording: state.id,
       tStart: open?.tStart ?? _freeStart(scenario.id, part.id),
@@ -453,10 +422,6 @@ class LoadTest extends ChangeNotifier {
     return start;
   }
 
-  /// Оценено ли усилие за блок [block]: ответ на вопрос о нём лежит на
-  /// диске.
-  bool effortGiven(BlockMark block) => _effortGiven(block);
-
   @override
   void dispose() {
     _disposed = true;
@@ -476,7 +441,6 @@ class LoadTestRun extends ChangeNotifier {
     required this.part,
     required this.items,
     required this.dry,
-    this.block,
     String participant = kCltDryParticipant,
     String? recording,
     int tStart = 0,
@@ -499,6 +463,9 @@ class LoadTestRun extends ChangeNotifier {
     }
     _index = first;
     _furthest = first;
+    // SNO-F-CLT-04: экран перед первым пунктом — у части, на которую
+    // ещё не дано ни одного ответа; у продолжаемой он не повторяется.
+    _introPending = part.intro != null && _answers.isEmpty;
     _show();
   }
 
@@ -522,10 +489,8 @@ class LoadTestRun extends ChangeNotifier {
   /// Пробный ли это проход: ответы никуда не пишутся.
   final bool dry;
 
-  /// Блок, за который оценивается усилие; `null` — часть не о блоке.
-  final BlockMark? block;
-
   final Map<String, CltAnswer> _answers = <String, CltAnswer>{};
+  bool _introPending = false;
   int _index = 0;
   int _furthest = 0;
   int? _selected;
@@ -536,6 +501,21 @@ class LoadTestRun extends ChangeNotifier {
   bool _saving = false;
   bool _saveFailed = false;
   bool _disposed = false;
+
+  /// Что написано на экране перед первым пунктом (SNO-F-CLT-04);
+  /// `null` — такого экрана нет или его уже прошли: на экране пункт.
+  String? get intro => _introPending ? part.intro : null;
+
+  /// «Начать» на экране перед первым пунктом: дальше — пункты. Время
+  /// ответа на первый пункт считается с этого мига.
+  void start() {
+    if (!_introPending) {
+      return;
+    }
+    _introPending = false;
+    _shownAt = _owner._elapsedMs();
+    _notify();
+  }
 
   /// Номер показанного пункта, считая с нуля.
   int get index => _index;
@@ -562,11 +542,17 @@ class LoadTestRun extends ChangeNotifier {
   int get answered => _answers.length;
 
   /// Можно ли идти дальше: значение выбрано.
-  bool get canNext => !_finished && !_saving && _selected != null;
+  bool get canNext {
+    return !_finished && !_saving && !_introPending && _selected != null;
+  }
 
   /// Можно ли вернуться: только на один пункт назад от самого дальнего.
   bool get canBack {
-    return !_finished && !_saving && _index > 0 && _index == _furthest;
+    return !_finished &&
+        !_saving &&
+        !_introPending &&
+        _index > 0 &&
+        _index == _furthest;
   }
 
   /// Имя файла ответов этой части в папке записи.
@@ -587,7 +573,10 @@ class LoadTestRun extends ChangeNotifier {
 
   /// Выбирает значение [value] на шкале показанного пункта.
   void choose(int value) {
-    if (_finished || _saving || !item.scale.holds(value)) {
+    if (_finished ||
+        _saving ||
+        _introPending ||
+        !item.scale.holds(value)) {
       return;
     }
     if (_selected != value) {
@@ -601,6 +590,9 @@ class LoadTestRun extends ChangeNotifier {
   /// Сдвигает выбранное значение на [steps] делений; без выбранного —
   /// встаёт на середину шкалы.
   void nudge(int steps) {
+    if (_introPending) {
+      return;
+    }
     final CltScale scale = item.scale;
     final int? value = _selected;
     if (value == null) {
@@ -627,7 +619,7 @@ class LoadTestRun extends ChangeNotifier {
   /// заканчивает часть.
   Future<void> next() async {
     final int? value = _selected;
-    if (_finished || _saving || value == null) {
+    if (_finished || _saving || _introPending || value == null) {
       return;
     }
     final CltItem current = item;
@@ -644,6 +636,7 @@ class LoadTestRun extends ChangeNotifier {
         t: dry ? null : _owner.session.testNow,
         reverse: current.reverse,
         revised: before != null,
+        check: current.isCheck,
       );
       // Ответ принят: повторное «Дальше» — когда он не лёг на диск —
       // его не переписывает и исправленным не помечает.
@@ -661,8 +654,9 @@ class LoadTestRun extends ChangeNotifier {
     _notify();
     if (last) {
       // Часть окончена, только когда последний ответ лёг на диск: до
-      // того экран не уходит, а «Дальше» пробует ещё раз. Иначе блок
-      // значился бы оценённым, а на диске оценки не было бы.
+      // того экран не уходит, а «Дальше» пробует ещё раз. Иначе тест
+      // значился бы пройденным, а на диске последнего ответа не было бы
+      // — и сессию завершили бы без него (SNO-F-CLT-05).
       final int? ended = dry ? null : _owner.session.testNow;
       if (await _save(complete: true, tEnd: ended)) {
         _finished = true;
@@ -671,7 +665,6 @@ class LoadTestRun extends ChangeNotifier {
             SnoEventType.cltFinish,
             data: <String, Object?>{
               'part': part.id,
-              if (block != null) 'block': block?.number,
               'file': fileName,
               'answers': _answers.length,
               if (ended != null) 'duration_ms': ended - _tStart,
@@ -695,8 +688,6 @@ class LoadTestRun extends ChangeNotifier {
       version: scenario.version,
       participant: _participant,
       part: part.id,
-      block: block?.number,
-      blockStartMs: block?.startMs,
       tStart: _tStart,
       tEnd: tEnd,
       order: <String>[for (final CltItem item in items) item.id],
@@ -705,6 +696,10 @@ class LoadTestRun extends ChangeNotifier {
           if (_answers[item.id] != null) _answers[item.id]!,
       ],
       complete: complete,
+      checks: <String>[
+        for (final CltItem item in items)
+          if (item.isCheck) item.id,
+      ],
     );
   }
 
@@ -747,7 +742,6 @@ class LoadTestRun extends ChangeNotifier {
       SnoEventType.cltStart,
       data: <String, Object?>{
         'part': part.id,
-        if (block != null) 'block': block?.number,
         'file': fileName,
         'scenario': scenario.id,
         'version': scenario.version,
