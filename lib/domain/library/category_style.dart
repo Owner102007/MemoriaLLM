@@ -217,6 +217,22 @@ class CategoryStyle {
     return _mix(backgroundOn(palette), inkOn(palette), coverageOn(palette));
   }
 
+  /// Цвет точки книги этой категории на карте книг (F-MAP-02).
+  ///
+  /// Оттенок тот же, что у участка полки, — категория и её группа на
+  /// карте узнаются друг в друге. Насыщенность и светлота свои: точка —
+  /// малое пятно на фоне темы, и приглушённая подложка полки на ней не
+  /// видна. Числа подобраны так, чтобы точка любого оттенка держала
+  /// против фона любой темы контраст не меньше 3:1 — порог WCAG для
+  /// значимых нетекстовых деталей; это проверяет автотест.
+  int starOn(AppPalette palette) {
+    return _hslToArgb(
+      hue,
+      palette.isDark ? 0.62 : 0.58,
+      palette.isDark ? 0.68 : 0.30,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       other is CategoryStyle &&

@@ -31,6 +31,9 @@ Future<void> main() async {
 /// проход по полке начинается чуть погодя: первые секунды движок PDF
 /// занят обложками.
 Future<void> prepareShelf(AppServices services) async {
+  // SNO-F-MAP-01: время в книгах — одна запись настроек; отказ чтения
+  // запуску не мешает.
+  await services.bookTimes?.restore();
   final ShelfReading? reading = services.shelfReading;
   if (reading == null) {
     return;

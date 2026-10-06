@@ -72,13 +72,50 @@ void main() {
       expect(titles, <String>{
         'Полка',
         'Устройство',
+        'Галактика',
         'Тестирование',
         'Настройки',
       });
     });
 
+    test('F-MAP-06: «Галактика» стоит сразу за книгами, перед остальным', () {
+      // Ветвь II СНО2026 (SNO-F-MAP-01): сканера нет, тестирование есть.
+      expect(
+        sectionsFor(scanner: false, testing: true, galaxy: true),
+        <AppSection>[
+          AppSection.shelf,
+          AppSection.galaxy,
+          AppSection.testing,
+          AppSection.settings,
+        ],
+      );
+      // С разделом «Устройство» — за ним.
+      expect(
+        sectionsFor(scanner: true, testing: false, galaxy: true),
+        <AppSection>[
+          AppSection.shelf,
+          AppSection.device,
+          AppSection.galaxy,
+          AppSection.settings,
+        ],
+      );
+    });
+
+    test('F-MAP-06: без признака «Галактики» нет ни в одной сборке', () {
+      for (final bool scanner in <bool>[true, false]) {
+        for (final bool testing in <bool>[true, false]) {
+          expect(
+            sectionsFor(scanner: scanner, testing: testing),
+            isNot(contains(AppSection.galaxy)),
+            reason: 'сканер: $scanner, тестирование: $testing',
+          );
+        }
+      }
+    });
+
     test('F-APP-02: «назад» ведёт на «Полку», а с неё — из приложения', () {
       expect(sectionBehind(AppSection.device), AppSection.shelf);
+      expect(sectionBehind(AppSection.galaxy), AppSection.shelf);
       expect(sectionBehind(AppSection.testing), AppSection.shelf);
       expect(sectionBehind(AppSection.settings), AppSection.shelf);
       expect(sectionBehind(AppSection.shelf), isNull);

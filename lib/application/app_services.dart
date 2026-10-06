@@ -33,11 +33,13 @@ import '../sno/recording/recording_guard.dart';
 import '../sno/recording/records.dart';
 import '../sno/recording/session.dart';
 import '../sno/reference_state.dart';
+import '../sno/settings_keys.dart';
 import 'build_info.dart';
 import 'data/app_data.dart';
 import 'library/cover_service.dart';
 import 'library/device_library.dart';
 import 'map/map_builder.dart';
+import 'reading/book_times.dart';
 
 /// Всё, чем приложение пользуется извне, собранное в одном месте.
 ///
@@ -60,6 +62,7 @@ class AppServices {
     this.recording,
     this.records,
     this.shelfReading,
+    this.bookTimes,
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -130,6 +133,11 @@ class AppServices {
       // ветвь I проход по полке не попадает.
       shelfReading: Sno.galaxy
           ? _shelfReadingFor(data, opener, recording)
+          : null,
+      // SNO-F-MAP-01: время в книгах считается там, где есть карта, на
+      // которой оно видно, — в ветви II. Условие — константа сборки.
+      bookTimes: Sno.galaxy
+          ? BookTimes(settings: data.settings, key: SnoSettingsKeys.bookTimes)
           : null,
     );
   }
@@ -258,4 +266,8 @@ class AppServices {
   /// `null` — в этой сборке её нет: основное приложение, ветвь I и
   /// тесты, которым она не нужна.
   final ShelfReading? shelfReading;
+
+  /// Время, проведённое в каждой книге (SNO-F-MAP-01): по нему у звезды
+  /// на карте размер; `null` — в этой сборке его не считают.
+  final BookTimes? bookTimes;
 }

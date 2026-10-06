@@ -14,6 +14,7 @@ import '../sno/recording/logged_settings.dart';
 import '../sno/recording/recording_overlay.dart';
 import '../sno/recording/session.dart';
 import '../sno/testing_screen.dart';
+import 'galaxy/galaxy_screen.dart';
 import 'library/device_books_screen.dart';
 import 'library/library_screen.dart';
 import 'settings/settings_screen.dart';
@@ -102,6 +103,8 @@ class _MemoriaAppState extends State<MemoriaApp> {
 /// литературой и просит для этого доступ к файлам (SNO-F-LIT-03).
 /// Какие разделы есть, решают флаги сборки (`sno/flags.dart`): это
 /// константы, и в основном приложении раздела «Тестирование» нет вовсе.
+/// В сборке ветви II между «Полкой» и «Тестированием» стоит «Галактика»
+/// (SNO-F-MAP-01) — книги полки картой.
 ///
 /// Каждый раздел **остаётся там, где его оставили**: все они живут в
 /// одном `IndexedStack`, и переключение раздела не сбрасывает ни место
@@ -135,6 +138,7 @@ class _HomeShellState extends State<HomeShell> {
   final List<AppSection> _visible = sectionsFor(
     scanner: Sno.scanner,
     testing: Sno.recording,
+    galaxy: Sno.galaxy,
   );
 
   AppSection _section = AppSection.shelf;
@@ -305,6 +309,9 @@ class _HomeShellState extends State<HomeShell> {
       ?..clearSnackBars()
       ..removeCurrentSnackBar();
     await widget.themeController.reload();
+    // SNO-F-MAP-01: время в книгах — след читателя, сброс его стёр;
+    // счёт в памяти перечитывается, и звёзды на карте снова одинаковы.
+    await widget.services.bookTimes?.restore();
     if (mounted) {
       setState(() => _resets++);
     }
@@ -437,6 +444,24 @@ class _HomeShellState extends State<HomeShell> {
           onClearCategory: () => setState(() => _targetCategory = null),
           onAdded: _booksAdded,
         );
+      case AppSection.galaxy:
+        // SNO-F-MAP-01. Условие — константа сборки: в основное
+        // приложение и в ветвь I раздел не попадает.
+        if (Sno.galaxy) {
+          return GalaxyScreen(
+            // Новый номер сброса — новый раздел: карта читается заново,
+            // а выбранная книга и приближение прежнего участника уходят.
+            key: ValueKey<String>('galaxy-$_resets'),
+            services: widget.services,
+            visible: _section == AppSection.galaxy && !_reading,
+            onReading: _readingChanged,
+            // BUG-46: в ветви файл книги заново не выбирают.
+            canRelink: Sno.scanner,
+            // SNO-F-READ-01: без модели над выделением нет промптов.
+            models: Sno.models,
+          );
+        }
+        return const SizedBox.shrink();
       case AppSection.testing:
         // SNO-F-CFG-03. Условие — константа сборки: в основном
         // приложении ветка недостижима, и раздел в него не попадает.
@@ -464,6 +489,8 @@ IconData _iconOf(AppSection section, {required bool selected}) {
     AppSection.shelf => selected ? Icons.menu_book : Icons.menu_book_outlined,
     AppSection.device =>
       selected ? Icons.folder_copy : Icons.folder_copy_outlined,
+    AppSection.galaxy =>
+      selected ? Icons.auto_awesome : Icons.auto_awesome_outlined,
     AppSection.testing => selected ? Icons.science : Icons.science_outlined,
     AppSection.settings => selected ? Icons.tune : Icons.tune_outlined,
   };
@@ -475,6 +502,7 @@ Key _keyOf(AppSection section) {
   return switch (section) {
     AppSection.shelf => const Key('nav-library'),
     AppSection.device => const Key('nav-device'),
+    AppSection.galaxy => const Key('nav-galaxy'),
     AppSection.testing => const Key('nav-testing'),
     AppSection.settings => const Key('nav-settings'),
   };

@@ -2,6 +2,7 @@ import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/library/cover_service.dart';
 import 'package:memoria/application/library/device_library.dart';
+import 'package:memoria/application/reading/book_times.dart';
 import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
 import 'package:memoria/domain/library/book_source.dart';
@@ -43,7 +44,8 @@ import 'fake_reading.dart';
 /// приложении нет, как в основной сборке. [records] — записи на
 /// устройстве (SNO-F-REC-07); без них нет ни списка, ни архива.
 /// [shelfReading] — подготовка книг полки (SNO-F-IDX-04); без неё её
-/// нет, как в основной сборке и в ветви I.
+/// нет, как в основной сборке и в ветви I. [bookTimes] — счёт времени
+/// в книгах (SNO-F-MAP-01); без него время не считается.
 AppServices testServices({
   required AppData data,
   ReaderDocument? document,
@@ -62,6 +64,7 @@ AppServices testServices({
   RecordingSession? recording,
   DeviceRecords? records,
   ShelfReading? shelfReading,
+  BookTimes? bookTimes,
 }) {
   final ReaderDocument doc =
       document ?? FakeReaderDocument(pages: <String>['текст']);
@@ -82,6 +85,7 @@ AppServices testServices({
     recording: recording,
     records: records,
     shelfReading: shelfReading,
+    bookTimes: bookTimes,
     covers: CoverService(
       opener: FakeDocumentOpener(
         doc,

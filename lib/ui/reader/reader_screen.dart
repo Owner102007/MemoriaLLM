@@ -625,8 +625,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onDetach: () => unawaited(_controller?.flush()),
       // F-TEXT-04: свёрнутое приложение книгу в фоне не читает — батарея
       // дороже; вернулись — проход продолжается с того, что осталось.
-      onHide: _stopTextPass,
-      onShow: _scheduleTextPass,
+      // SNO-F-MAP-01: и время в книге, пока приложения не видно, стоит.
+      onHide: () {
+        _stopTextPass();
+        widget.services.bookTimes?.hidden();
+      },
+      onShow: () {
+        _scheduleTextPass();
+        widget.services.bookTimes?.shown();
+      },
     );
     unawaited(_restoreDeviceSettings());
     // Набор промптов слушается живьём: правка мастер-набора в настройках
@@ -1123,6 +1130,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _window.dispose();
     _flowNow.dispose();
     _lifecycle?.dispose();
+    // SNO-F-MAP-01: книгу закрыли — время в ней остановилось.
+    widget.services.bookTimes?.closed(widget.book.id);
     unawaited(_promptsWatch?.cancel());
     _textPassTimer?.cancel();
     _texts?.close();
@@ -1154,6 +1163,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       // открытие считалось дважды, а книга, которая не открылась,
       // поднималась в «Сначала недавние».
       await widget.services.data.library.markOpened(_book.id, DateTime.now());
+      // SNO-F-MAP-01: время в книге идёт с того же мига — и только у
+      // книги, которая открылась. Экран, который уже закрыли, счёт не
+      // начинает: остановить его было бы некому.
+      if (mounted) {
+        widget.services.bookTimes?.opened(_book.id);
+      }
       controller.setDisplayArea(_area, canTurn: _canTurn);
       controller.setSheetModes(enabled: _flow == PageFlow.paged);
       // F-READ-02: первый кадр лучше показать уже по рамке — иначе
@@ -1423,6 +1438,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _notePlace(current);
       _noteSettings(current);
     }
+    // SNO-F-MAP-01: время в книге изредка уходит в настройки.
+    widget.services.bookTimes?.tick();
     // Читатель ушёл со страницы — подсветке нечего показывать: текста, к
     // которому она относилась, на экране больше нет.
     final _PageMark? mark = _mark;

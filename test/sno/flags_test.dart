@@ -143,6 +143,26 @@ void main() {
       );
     });
 
+    test('SNO-F-MAP-01: в ветви II за «Полкой» стоит «Галактика»', () {
+      final BranchFlags flags = BranchFlags.of('II');
+      expect(
+        sectionsFor(
+          scanner: flags.scanner,
+          testing: flags.recording,
+          galaxy: flags.galaxy,
+        ),
+        <AppSection>[
+          AppSection.shelf,
+          AppSection.galaxy,
+          AppSection.testing,
+          AppSection.settings,
+        ],
+      );
+      // В ветви I и в основном приложении раздела нет.
+      expect(BranchFlags.of('I').galaxy, isFalse);
+      expect(BranchFlags.of('').galaxy, isFalse);
+    });
+
     test('SNO-F-CFG-02: основное приложение — прежние три раздела', () {
       final BranchFlags flags = BranchFlags.of('');
       expect(

@@ -540,6 +540,8 @@ void main() {
       await data.settings.write(SettingsKeys.theme, 'sepia');
       await data.settings.write(SettingsKeys.shelfSort, 'title');
       await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      // SNO-F-MAP-01: время в книгах — след читателя.
+      await data.settings.write(SnoSettingsKeys.bookTimes, '{"a2":60000}');
       await placeBook(data, 'a3', 'lit', position: 0);
       await placeBook(data, 'a1', 'anat', position: 8);
       await category('own', 'Своя', 2);
@@ -592,6 +594,7 @@ void main() {
       expect(await data.settings.read(SettingsKeys.theme), isNull);
       expect(await data.settings.read(SettingsKeys.shelfSort), isNull);
       expect(await data.settings.read(SettingsKeys.tapZoneHintSeen), isNull);
+      expect(await data.settings.read(SnoSettingsKeys.bookTimes), isNull);
       final Book? opened = await data.library.bookById('a2');
       expect(opened!.openedAt!.isAtSameMomentAs(opened.addedAt), isTrue);
       // Категории — эталонные: своя ушла, переименованная вернулась.
