@@ -72,9 +72,20 @@ void main() {
     );
   });
   tearDown(() async {
+    debugPrint('PARITY T0');
     loadTest.dispose();
     kit.session.dispose();
-    await data.close();
+    debugPrint('PARITY T1');
+    await times?.settled().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => debugPrint('PARITY: счёт времени не дописался'),
+    );
+    debugPrint('PARITY T2');
+    await data.close().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => debugPrint('PARITY: база не закрылась'),
+    );
+    debugPrint('PARITY T3');
   });
 
   Future<void> settle(WidgetTester tester) async {
@@ -246,8 +257,11 @@ void main() {
     // остановка (SNO-F-REC-16).
     await readBook(tester, 'book-2');
     await pass(tester, 6);
+    debugPrint('PARITY a');
     await kit.session.stop(StopReason.experimenter);
+    debugPrint('PARITY b');
     await settle(tester);
+    debugPrint('PARITY c');
     expect(find.byType(SessionFinishScreen), findsOneWidget);
     expect(find.byType(ReaderScreen), findsNothing);
 
@@ -269,9 +283,12 @@ void main() {
       }
       await tap(tester, 'sno-clt-next');
     }
+    debugPrint('PARITY d');
     await tap(tester, 'sno-clt-close');
 
+    debugPrint('PARITY 1');
     await holdOn(tester, 'sno-finish-hold');
+    debugPrint('PARITY 2');
     expect(kit.session.phase, RecordingPhase.idle);
     expect(kit.store.finished, contains(folder));
 
@@ -306,7 +323,9 @@ void main() {
     final List<String> expected = golden();
     // Приложение снимается до сверки: тест, упавший с приложением на
     // экране, ждал бы его часов до своего срока.
+    debugPrint('PARITY 3');
     await unmount(tester);
+    debugPrint('PARITY 4');
     if (!listEquals(actual, expected)) {
       // Что вышло — целиком: эталон правят по этим строкам.
       for (final String line in actual) {
@@ -322,7 +341,8 @@ void main() {
     );
     // Основной прогон сценария не проходит: записи в нём нет, и
     // проверяется он прогонами ветвей (--dart-define=SNO_BRANCH=I, II).
-  }, skip: !Sno.recording);
+    debugPrint('PARITY 5');
+  }, skip: !Sno.recording, timeout: const Timeout(Duration(minutes: 2)));
 
   test('SNO-F-REC-17: только ветвь II пишет события карты и подготовки '
       'книг — и больше никаких', () {
