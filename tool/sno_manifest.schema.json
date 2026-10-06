@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Манифест архива записи сессии СНО2026 (SNO-ALG-REC-03)",
-  "description": "manifest.json — первый файл архива sno2026_<ветвь>_<код>_<устройство>_<дата-время>.zip. Всё, что было в recording.json папки записи, и перечень файлов архива с суммами. С шага 20 (SNO-F-REC-13) у устройства есть паспорт — система, производитель, модель, экран, масштаб шрифта, — а у записи итог самопроверки журнала check; оба добавлены без смены версии: архивы прежних сборок без них проходят эту же схему.",
+  "description": "manifest.json — первый файл архива sno2026_<ветвь>_<код>_<устройство>_<дата-время>.zip. Всё, что было в recording.json папки записи, и перечень файлов архива с суммами. С шага 20 (SNO-F-REC-13) у устройства есть паспорт — система, производитель, модель, экран, масштаб шрифта, — а у записи итог самопроверки журнала check; оба добавлены без смены версии: архивы прежних сборок без них проходят эту же схему. С шага 23 (SNO-F-REC-11) в архиве лежит поток сырого ввода input.jsonl, а в манифесте — input: сколько строк запись посчитала, итог его самопроверки и чего поток не видит (blind); тоже без смены версии.",
   "type": "object",
   "required": ["schema", "eye_tracker", "archive", "files"],
   "properties": {
@@ -91,6 +91,25 @@
             }
           }
         }
+      }
+    },
+    "input": {
+      "type": "object",
+      "required": ["file", "blind"],
+      "properties": {
+        "file": {"const": "input.jsonl"},
+        "lines": {"type": ["integer", "null"], "minimum": 0},
+        "check": {
+          "type": "object",
+          "required": ["lines", "gaps", "torn"],
+          "properties": {
+            "lines": {"type": "integer", "minimum": 0},
+            "gaps": {"type": "integer", "minimum": 0},
+            "torn": {"type": "boolean"},
+            "late": {"const": true}
+          }
+        },
+        "blind": {"type": "array", "items": {"type": "string"}}
       }
     },
     "info_missing": {"const": true},

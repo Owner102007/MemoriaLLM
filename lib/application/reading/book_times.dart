@@ -45,6 +45,9 @@ class BookTimes extends ChangeNotifier {
 
   final Map<String, int> _ms = <String, int>{};
   String? _open;
+
+  /// Сколько времени было у открытой книги, когда её открыли.
+  int _openBase = 0;
   int _since = 0;
   bool _visible = true;
   int _savedAt = 0;
@@ -66,6 +69,30 @@ class BookTimes extends ChangeNotifier {
       }
     }
     return out;
+  }
+
+  /// Сколько времени набежало в открытой книге за это открытие, в
+  /// миллисекундах; ноль — книга не открыта.
+  int get openedMs {
+    final String? open = _open;
+    if (open == null) {
+      return 0;
+    }
+    final int passed = (times[open] ?? 0) - _openBase;
+    return passed < 0 ? 0 : passed;
+  }
+
+  /// Что о закрытии книги [bookId] знает счёт — журналу записи
+  /// (`book.close`): сколько её читали на виду за это открытие и
+  /// всего. Пусто — книга [bookId] сейчас не открыта.
+  Map<String, Object?> closingFacts(String bookId) {
+    if (_open != bookId) {
+      return const <String, Object?>{};
+    }
+    return <String, Object?>{
+      'read_ms': openedMs,
+      'read_total_ms': times[bookId] ?? 0,
+    };
   }
 
   /// Читает записанное время. Зовётся при запуске и после сброса к
@@ -96,6 +123,7 @@ class BookTimes extends ChangeNotifier {
   void opened(String bookId) {
     _settle();
     _open = bookId;
+    _openBase = _ms[bookId] ?? 0;
     _since = _nowMs();
     // Срок до первой записи считается от открытия книги.
     _savedAt = _since;

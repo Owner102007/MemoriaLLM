@@ -18,8 +18,9 @@ import 'dart:convert';
 /// стоят виды, которые пишет сама запись, за ними — действия участника
 /// (SNO-F-REC-02): их пишут экраны через [ActionLog].
 ///
-/// События карты, второго мозга, теста нагрузки и взгляда добавляются
-/// вместе со своими функциями.
+/// События второго мозга, теста нагрузки и взгляда добавляются вместе
+/// со своими функциями; события карты и подготовки книг ветви II стоят
+/// в конце перечня (SNO-F-MAP-01, SNO-F-IDX-04).
 enum SnoEventType {
   /// Запись началась: `t = 0`.
   recordingStart('recording.start'),
@@ -157,7 +158,32 @@ enum SnoEventType {
   settingsChange('settings.change'),
 
   /// Участнику показана ошибка.
-  errorShown('error.shown');
+  errorShown('error.shown'),
+
+  /// Раздел «Галактика» показал карту: сколько на ней точек, какого
+  /// они размера, где карта стоит на экране и куда смотрит
+  /// (SNO-F-MAP-01).
+  galaxyOpen('galaxy.open'),
+
+  /// Карту подвинули или приблизили — чем жест кончился.
+  galaxyView('galaxy.view'),
+
+  /// Нажали на точку карты.
+  galaxyStar('galaxy.star'),
+
+  /// Открылась карточка книги на карте.
+  galaxyCardOpen('galaxy.card.open'),
+
+  /// Карточка книги на карте закрылась.
+  galaxyCardClose('galaxy.card.close'),
+
+  /// Вместо карты в разделе стоят слова: книги читаются, карта не
+  /// посчитана, книг мало, карта не открылась.
+  galaxyEmpty('galaxy.empty'),
+
+  /// Ход подготовки книг ветви II: чтение текста и расчёт карты
+  /// (SNO-F-IDX-04).
+  indexProgress('index.progress');
 
   const SnoEventType(this.wire);
 
@@ -228,6 +254,9 @@ String isoWithOffset(DateTime moment) {
 /// Поля, которых нет, в строку не пишутся: «книга не открыта» — это
 /// отсутствие поля `book`, а не `null`. [post] помечает то, что
 /// случилось после остановки записи: в метрики чтения оно не входит.
+/// [input] — номер строки потока сырого ввода, в ответ на которую
+/// приложение это сделало (SNO-F-REC-11); касание, на которое не
+/// сослалось ни одно событие, — пустое.
 String encodeEvent({
   required int seq,
   required int t,
@@ -236,6 +265,7 @@ String encodeEvent({
   required RecordingContext context,
   Map<String, Object?> data = const <String, Object?>{},
   bool post = false,
+  int? input,
 }) {
   final String? book = context.book;
   final int? page = context.page;
@@ -252,6 +282,7 @@ String encodeEvent({
     if (page != null) 'page': page,
     if (strip != null) 'strip': strip,
     if (mode != null) 'mode': mode,
+    if (input != null) 'input': input,
     if (data.isNotEmpty) 'data': data,
   });
 }

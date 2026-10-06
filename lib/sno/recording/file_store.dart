@@ -70,10 +70,13 @@ class FileRecordingStore implements RecordingStore {
   }
 
   @override
-  Future<JournalFile> openJournal(String folder) async {
+  Future<JournalFile> openJournal(
+    String folder, {
+    String name = kEventsFile,
+  }) async {
     final Directory directory = await _folder(folder);
     final RandomAccessFile file = await File(
-      p.join(directory.path, kEventsFile),
+      p.join(directory.path, name),
     ).open(mode: FileMode.writeOnlyAppend);
     return _DiskJournal(file);
   }
@@ -129,9 +132,12 @@ class FileRecordingStore implements RecordingStore {
   }
 
   @override
-  Future<List<int>?> journalBytes(String folder) async {
+  Future<List<int>?> journalBytes(
+    String folder, {
+    String name = kEventsFile,
+  }) async {
     final Directory directory = await _folder(folder);
-    final File file = File(p.join(directory.path, kEventsFile));
+    final File file = File(p.join(directory.path, name));
     if (!await file.exists()) {
       return null;
     }

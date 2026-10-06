@@ -792,6 +792,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// постраничном чтении — на полосу, в ленте — на страницу; выделение
   /// при этом снимается.
   VolumeKeyOutcome _onVolumeKey(VolumeKeyEvent event) {
+    // SNO-F-REC-11: перехваченную кнопку громкости Flutter клавишей не
+    // видит — в поток сырого ввода её приносит экран чтения.
+    widget.services.recording?.keyInput(
+      event.key,
+      event.key == VolumeKey.up ? 'VolumeUp' : 'VolumeDown',
+      pressed: event.pressed,
+      repeat: event.repeat > 0,
+    );
     _refreshOnTop();
     final VolumeKeyOutcome outcome = _volumeTurner.handle(
       event,

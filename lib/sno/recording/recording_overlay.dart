@@ -9,6 +9,7 @@ import '../../domain/navigation/sections.dart';
 import '../../ui/claimed_pointers.dart';
 import '../hold_button.dart';
 import 'finish_screen.dart';
+import 'input_layer.dart';
 import 'records.dart';
 import 'session.dart';
 
@@ -43,7 +44,8 @@ const Color kRecordingDotRing = Color(0xFFF5E9E6);
 /// плашка, ведущая на завершение сессии.
 ///
 /// Здесь же запись узнаёт, что приложение ушло с переднего плана и
-/// вернулось.
+/// вернулось, — и здесь же, пока запись идёт, слушается сырой ввод:
+/// каждое касание, колесо и клавиша (SNO-F-REC-11, `input_layer.dart`).
 class RecordingOverlay extends StatefulWidget {
   /// Создаёт слой.
   const RecordingOverlay({
@@ -77,11 +79,19 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   /// Открыт ли вопрос об остановке.
   bool _asking = false;
 
+  /// Слушатели сырого ввода (SNO-F-REC-11): есть, только пока запись
+  /// идёт.
+  InputLayer? _input;
+
+  /// Размер окна по последнему построению — строкам ввода.
+  Size _window = Size.zero;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.session.addListener(_changed);
+    _syncInput();
   }
 
   @override
@@ -90,6 +100,8 @@ class _RecordingOverlayState extends State<RecordingOverlay>
     if (!identical(oldWidget.session, widget.session)) {
       oldWidget.session.removeListener(_changed);
       widget.session.addListener(_changed);
+      _dropInput();
+      _syncInput();
     }
   }
 
@@ -97,13 +109,37 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.session.removeListener(_changed);
+    _dropInput();
     super.dispose();
   }
 
   void _changed() {
+    _syncInput();
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// SNO-F-REC-11: слушатели ввода заводятся стартом записи и
+  /// снимаются её остановкой — вне записи их не существует.
+  void _syncInput() {
+    if (!widget.session.recording) {
+      _dropInput();
+      return;
+    }
+    final InputLayer layer = _input ??= InputLayer(
+      session: widget.session,
+      size: () => (width: _window.width, height: _window.height),
+      // Пока открыт вопрос об остановке, экрана касается
+      // экспериментатор.
+      stage: () => _asking ? kInputStopScreen : null,
+    );
+    layer.attach();
+  }
+
+  void _dropInput() {
+    _input?.detach();
+    _input = null;
   }
 
   @override
@@ -189,6 +225,7 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   @override
   Widget build(BuildContext context) {
     final RecordingSession session = widget.session;
+    _window = MediaQuery.sizeOf(context);
     final EdgeInsets safe = MediaQuery.paddingOf(context);
     // Экранная клавиатура плашку не закрывает: та встаёт над ней.
     final double keyboard = MediaQuery.viewInsetsOf(context).bottom;
@@ -208,6 +245,9 @@ class _RecordingOverlayState extends State<RecordingOverlay>
             child: RecordingDot(
               key: const Key('sno-recording-dot'),
               onHeld: () => unawaited(_askStop()),
+              // SNO-F-REC-11: удержание точки — экспериментатор; в
+              // потоке ввода это касание помечено.
+              onClaimed: (int pointer) => _input?.claimedByDot(pointer),
             ),
           ),
         if (session.phase == RecordingPhase.stopped)
@@ -301,10 +341,19 @@ class _EndedPlaque extends StatelessWidget {
 /// считается: прокрутка и протяжка идут как шли.
 class RecordingDot extends StatefulWidget {
   /// Создаёт точку.
-  const RecordingDot({required this.onHeld, this.hold = kStopHold, super.key});
+  const RecordingDot({
+    required this.onHeld,
+    this.hold = kStopHold,
+    this.onClaimed,
+    super.key,
+  });
 
   /// Что сделать, когда точку додержали.
   final VoidCallback onHeld;
+
+  /// Точка забрала себе нажатие указателя: с этого мига оно не экрана
+  /// под ней.
+  final ValueChanged<int>? onClaimed;
 
   /// Сколько её держать.
   final Duration hold;
@@ -360,6 +409,7 @@ class _RecordingDotState extends State<RecordingDot>
     if (pointer != null) {
       ClaimedPointers.claim(pointer);
       _claimed = pointer;
+      widget.onClaimed?.call(pointer);
     }
     _fill.forward(from: 0);
   }

@@ -49,6 +49,34 @@ void main() {
       expect(counter.times, <String, int>{'a': 90000});
     });
 
+    test('SNO-F-MAP-01: закрытию книги счёт говорит, сколько её читали '
+        'за это открытие и всего', () async {
+      final BookTimes counter = times();
+      expect(counter.closingFacts('a'), isEmpty);
+      counter.opened('a');
+      now += 60000;
+      counter.closed('a');
+      counter.opened('a');
+      now += 15000;
+      // Свёрнутое приложение в счёт не идёт.
+      counter.hidden();
+      now += 500000;
+      counter.shown();
+      now += 5000;
+
+      expect(counter.openedMs, 20000);
+      expect(counter.closingFacts('a'), <String, Object?>{
+        'read_ms': 20000,
+        'read_total_ms': 80000,
+      });
+      // Чужая книга — не та, что открыта.
+      expect(counter.closingFacts('b'), isEmpty);
+      counter.closed('a');
+      expect(counter.openedMs, 0);
+      expect(counter.closingFacts('a'), isEmpty);
+      await counter.settled();
+    });
+
     test('SNO-F-MAP-01: время копится по книгам и по заходам', () async {
       final BookTimes counter = times();
       counter.opened('a');

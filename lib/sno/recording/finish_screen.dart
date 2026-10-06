@@ -108,6 +108,11 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   String? _check;
   bool _intact = true;
 
+  /// То же о потоке сырого ввода (SNO-F-REC-11); `null` — потока в
+  /// записи нет или он ещё не перечитан.
+  String? _inputCheck;
+  bool _inputIntact = true;
+
   /// Завершена ли сессия: экран показывает архив, а не код.
   bool _finished = false;
 
@@ -150,6 +155,9 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
       final JournalCheck? check = session.check;
       _check = describeJournalCheck(check);
       _intact = check?.intact ?? false;
+      final JournalCheck? input = session.inputCheck;
+      _inputCheck = describeInputCheck(input);
+      _inputIntact = input?.intact ?? true;
     }
   }
 
@@ -404,6 +412,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     final String? blocks = _blocks;
     final String? away = _away;
     final String? check = _check;
+    final String? inputCheck = _inputCheck;
     return <Widget>[
       Text(
         _title,
@@ -435,6 +444,17 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
             check,
             key: const Key('sno-finish-check'),
             style: _intact ? null : TextStyle(color: theme.colorScheme.error),
+          ),
+        ),
+      if (inputCheck != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            inputCheck,
+            key: const Key('sno-finish-input'),
+            style: _inputIntact
+                ? null
+                : TextStyle(color: theme.colorScheme.error),
           ),
         ),
       if (blocks != null)

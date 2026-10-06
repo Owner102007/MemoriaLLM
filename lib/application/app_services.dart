@@ -23,6 +23,7 @@ import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
 import '../sno/flags.dart';
 import '../sno/index/shelf_reading.dart';
+import '../sno/index/shelf_reading_log.dart';
 import '../sno/participant_code.dart';
 import '../sno/recording/device_passport.dart';
 import '../sno/recording/device_status.dart';
@@ -148,7 +149,7 @@ class AppServices {
     DocumentOpener opener,
     RecordingSession? recording,
   ) {
-    return ShelfReading(
+    final ShelfReading reading = ShelfReading(
       library: data.library,
       opener: opener,
       texts: data.pageTexts,
@@ -163,6 +164,12 @@ class AppServices {
       // Пока идёт запись, экран держит она: подготовка его не трогает.
       screenBusy: () => recording?.recording ?? false,
     );
+    if (recording != null) {
+      // SNO-F-IDX-04: ход подготовки, идущей во время записи, — в её
+      // журнал. Слушатель живёт столько же, сколько сама подготовка.
+      logShelfReading(reading, recording);
+    }
+    return reading;
   }
 
   /// Папка `Записи/` в папке данных приложения.

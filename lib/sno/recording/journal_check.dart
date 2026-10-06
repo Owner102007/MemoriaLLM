@@ -85,7 +85,17 @@ class JournalCheck {
 /// Строка считается целой, если за ней стоит перевод строки; пустые
 /// строки не считаются. Строка, которая не разбирается или не несёт
 /// номера, — мусор: её номер окажется среди пропущенных.
-JournalCheck checkJournal(List<int> bytes, {int? expected, bool late = false}) {
+///
+/// [key] — поле сквозного номера: `seq` у журнала событий, `n` у
+/// потока сырого ввода (`input.jsonl`, SNO-F-REC-11). Порядок строк
+/// значения не имеет: строка касания пишется, когда палец поднят, а
+/// номер получает, когда он опущен.
+JournalCheck checkJournal(
+  List<int> bytes, {
+  int? expected,
+  bool late = false,
+  String key = 'seq',
+}) {
   const int newline = 0x0A;
   final int end = bytes.lastIndexOf(newline);
   final bool torn = bytes.isNotEmpty && end != bytes.length - 1;
@@ -102,7 +112,7 @@ JournalCheck checkJournal(List<int> bytes, {int? expected, bool late = false}) {
         continue;
       }
       lines++;
-      final int? seq = _seqOf(line);
+      final int? seq = _seqOf(line, key);
       if (seq != null && seq > 0) {
         seen.add(seq);
         if (seq > highest) {
@@ -122,11 +132,11 @@ JournalCheck checkJournal(List<int> bytes, {int? expected, bool late = false}) {
   );
 }
 
-int? _seqOf(String line) {
+int? _seqOf(String line, String key) {
   try {
     final Object? raw = jsonDecode(line);
     if (raw is Map<String, Object?>) {
-      final Object? seq = raw['seq'];
+      final Object? seq = raw[key];
       return seq is int ? seq : null;
     }
     return null;
@@ -148,6 +158,27 @@ String describeLineCount(int count) {
     word = 'строк';
   }
   return '$count $word';
+}
+
+/// Итог самопроверки потока сырого ввода словами — вторая строка
+/// экрана завершения (SNO-F-REC-11): «Ввод цел: 312 строк, пропусков
+/// нет» или «Ввод неполон: …». `null` на входе — потока в записи нет
+/// (запись прежней сборки) или он не перечитался: строки нет.
+String? describeInputCheck(JournalCheck? check) {
+  if (check == null) {
+    return null;
+  }
+  final String lines = describeLineCount(check.lines);
+  if (check.intact) {
+    return check.late
+        ? 'Ввод цел до обрыва записи: $lines, пропусков нет'
+        : 'Ввод цел: $lines, пропусков нет';
+  }
+  return <String>[
+    'Ввод неполон: $lines',
+    if (check.gaps > 0) 'пропущено строк ${check.gaps}',
+    if (check.torn) 'последняя оборвана',
+  ].join(', ');
 }
 
 /// Итог самопроверки словами — строка экрана завершения:

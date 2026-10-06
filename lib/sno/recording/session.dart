@@ -31,6 +31,7 @@ import 'clock.dart';
 import 'device_passport.dart';
 import 'device_status.dart';
 import 'event.dart';
+import 'input_tap.dart';
 import 'journal.dart';
 import 'journal_check.dart';
 import 'recording_guard.dart';
@@ -169,6 +170,8 @@ class SessionState {
     this.inBackground = false,
     this.check,
     this.passport = const <String, Object?>{},
+    this.inputs,
+    this.inputCheck,
   });
 
   /// Идентификатор записи.
@@ -235,6 +238,40 @@ class SessionState {
   /// времени может быть другим — и до первого кадра его нет вовсе.
   final Map<String, Object?> passport;
 
+  /// Сколько строк потока сырого ввода запись посчитала (SNO-F-REC-11);
+  /// `null` — запись идёт, потока у неё нет (запись прежней сборки)
+  /// или она оборвалась, и счёт остался в умершем приложении.
+  final int? inputs;
+
+  /// Итог самопроверки потока сырого ввода после остановки; `null` —
+  /// запись идёт, потока нет или он не перечитался.
+  final JournalCheck? inputCheck;
+
+  /// То же состояние с итогом потока сырого ввода (SNO-F-REC-11).
+  SessionState withInput({required int? lines, required JournalCheck? check}) {
+    return SessionState(
+      id: id,
+      folder: folder,
+      participant: participant,
+      startedAt: startedAt,
+      plannedSeconds: plannedSeconds,
+      phase: phase,
+      stoppedBy: stoppedBy,
+      durationMs: durationMs,
+      events: events,
+      lastT: lastT,
+      resyncs: resyncs,
+      failed: failed,
+      away: away,
+      blocks: blocks,
+      inBackground: inBackground,
+      check: this.check,
+      passport: passport,
+      inputs: lines,
+      inputCheck: check,
+    );
+  }
+
   /// То же состояние с итогом самопроверки журнала.
   SessionState withCheck(JournalCheck? check) {
     return SessionState(
@@ -255,6 +292,8 @@ class SessionState {
       inBackground: inBackground,
       check: check,
       passport: passport,
+      inputs: inputs,
+      inputCheck: inputCheck,
     );
   }
 
@@ -278,6 +317,8 @@ class SessionState {
       inBackground: inBackground,
       check: check,
       passport: passport,
+      inputs: inputs,
+      inputCheck: inputCheck,
     );
   }
 
@@ -313,6 +354,8 @@ class SessionState {
       inBackground: inBackground ?? this.inBackground,
       check: check,
       passport: passport,
+      inputs: inputs,
+      inputCheck: inputCheck,
     );
   }
 
@@ -336,6 +379,8 @@ class SessionState {
       'in_background': inBackground,
       'check': check?.toJson(),
       'passport': passport,
+      'inputs': inputs,
+      'input_check': inputCheck?.toJson(),
     });
   }
 
@@ -360,6 +405,7 @@ class SessionState {
       final Object? resyncs = raw['resyncs'];
       final Object? failed = raw['write_failed'];
       final Object? passport = raw['passport'];
+      final Object? inputs = raw['inputs'];
       final ParticipantCode? participant = ParticipantCode.fromJson(
         raw['participant'],
       );
@@ -398,6 +444,8 @@ class SessionState {
         passport: passport is Map<String, Object?>
             ? passport
             : const <String, Object?>{},
+        inputs: inputs is int ? inputs : null,
+        inputCheck: JournalCheck.fromJson(raw['input_check']),
       );
     } on FormatException {
       return null;
@@ -562,6 +610,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   SessionState? _state;
   RecordingClock? _clock;
   EventJournal? _journal;
+
+  /// Поток сырого ввода идущей записи (SNO-F-REC-11): его писатель и
+  /// сборщик строк; `null` — запись не идёт или поток не открылся.
+  EventJournal? _inputJournal;
+  InputTracker? _input;
+
+  /// Строка ввода, которой участник открыл экран чтения: открытие
+  /// книги — ответ на неё, сколько бы книга ни открывалась.
+  int? _readerInput;
   void Function()? _stopTicker;
   int _seq = 0;
   int _beats = 0;
@@ -681,6 +738,69 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// `null` — запись идёт, ещё не проверена ([checked]) или журнал не
   /// перечитался.
   JournalCheck? get check => recording ? null : _state?.check;
+
+  /// Сборщик потока сырого ввода (SNO-F-REC-11); `null` — запись не
+  /// идёт, и ни одна строка ввода не пишется никуда.
+  ///
+  /// Сюда слой записи приносит события указателя, колеса и клавиш
+  /// (`input_layer.dart`); время для них — [inputNow].
+  InputTracker? get input => _logging ? _input : null;
+
+  /// Время `t` по часам записи для строки ввода.
+  int get inputNow => _tNow();
+
+  /// Сколько строк ввода посчитала остановленная запись; `null` —
+  /// запись идёт, потока нет или счёт неизвестен.
+  int? get inputs => recording ? null : _state?.inputs;
+
+  /// Итог самопроверки потока сырого ввода остановленной записи
+  /// (SNO-F-REC-11); `null` — запись идёт, потока нет или он не
+  /// перечитался.
+  JournalCheck? get inputCheck => recording ? null : _state?.inputCheck;
+
+  /// Клавиша, которую Flutter не видит, — кнопка громкости телефона,
+  /// перехваченная для листания (SNO-F-REC-11): [name] — её имя в
+  /// потоке, [id] отличает одну клавишу от другой.
+  void keyInput(
+    Object id,
+    String name, {
+    required bool pressed,
+    bool repeat = false,
+  }) {
+    final InputTracker? tracker = input;
+    if (tracker == null) {
+      return;
+    }
+    final int t = _tNow();
+    if (!pressed) {
+      tracker.keyUp(id, t: t);
+    } else if (repeat) {
+      tracker.keyRepeat(id, t: t);
+    } else {
+      tracker.keyDown(id, t: t, name: name, screen: context.screen);
+    }
+  }
+
+  /// Строка потока сырого ввода — в его файл. Строка, которая не
+  /// пишется в JSON, не роняет экран: пишется без данных, с тем же
+  /// номером.
+  void _writeInput(Map<String, Object?> line) {
+    final EventJournal? journal = _inputJournal;
+    if (journal == null) {
+      return;
+    }
+    String encoded;
+    try {
+      encoded = jsonEncode(line);
+    } on Object {
+      encoded = jsonEncode(<String, Object?>{
+        'n': line['n'],
+        't': line['t'],
+        'unencodable': true,
+      });
+    }
+    journal.add(encoded);
+  }
 
   /// Блоки тестирования, закрытые за запись.
   List<BlockMark> get blocks {
@@ -810,10 +930,18 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     // SNO-F-REC-13: журнал сверяется таким, каким его оставило умершее
     // приложение, — до того, как чтение отрежет оборванный хвост.
     final JournalCheck? check = await _checkJournal(state.folder, late: true);
+    // SNO-F-REC-11: поток ввода сверяется так же — каким он остался.
+    // Сколько строк запись посчитала, спросить не у кого.
+    final JournalCheck? inputCheck = await _checkJournal(
+      state.folder,
+      late: true,
+      name: kInputFile,
+      key: 'n',
+    );
     // Оборванной записи нужен журнал целиком: блоки и отлучки остались
     // только в нём.
     _state = await _stoppedByCrash(
-      state,
+      state.withInput(lines: null, check: inputCheck),
       await _tail(state.folder, count: _wholeJournal),
       check,
     );
@@ -826,18 +954,22 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// собой (SNO-F-REC-13); `null` — журнал не прочитался.
   ///
   /// [expected] — сколько событий запись посчитала; [late] — проверка
-  /// идёт при следующем запуске, а не в миг остановки.
+  /// идёт при следующем запуске, а не в миг остановки. [name] и [key]
+  /// — какой поток строк и поле его сквозного номера: журнал событий
+  /// либо поток сырого ввода (SNO-F-REC-11).
   Future<JournalCheck?> _checkJournal(
     String folder, {
     int? expected,
     bool late = false,
+    String name = kEventsFile,
+    String key = 'seq',
   }) async {
     try {
-      final List<int>? bytes = await _store.journalBytes(folder);
+      final List<int>? bytes = await _store.journalBytes(folder, name: name);
       if (bytes == null) {
         return null;
       }
-      return checkJournal(bytes, expected: expected, late: late);
+      return checkJournal(bytes, expected: expected, late: late, key: key);
     } on Object {
       return null;
     }
@@ -1114,6 +1246,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       await _discard(folder);
       return false;
     }
+    // SNO-F-REC-11: поток сырого ввода — вторым писателем того же вида.
+    // Не открылся — запись идёт без него, и об отказе диска сказано.
+    EventJournal? inputJournal;
+    try {
+      inputJournal = EventJournal(
+        await _store.openJournal(folder, name: kInputFile),
+      );
+    } on Object {
+      inputJournal = null;
+    }
 
     // SNO-F-REC-13: паспорт — до часов записи: вопрос к устройству в
     // её время не входит.
@@ -1149,18 +1291,21 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         '${since + 1}',
       );
     } on Object {
-      await _abandon(journal, folder);
+      await _abandon(journal, inputJournal, folder);
       return false;
     }
     if (_disposed) {
-      await _abandon(journal, folder);
+      await _abandon(journal, inputJournal, folder);
       return false;
     }
     // Отметка о сессии теперь наша: чья папка — известно.
     _known = true;
     _clock = clock;
     _journal = journal;
-    _failed = false;
+    _inputJournal = inputJournal;
+    _input = inputJournal == null ? null : InputTracker(_writeInput);
+    _readerInput = null;
+    _failed = inputJournal == null;
     _seq = 0;
     _beats = 0;
     _leftAt = null;
@@ -1419,8 +1564,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   }
 
   /// Запись не началась: журнал закрыт, отметки и папки не остаётся.
-  Future<void> _abandon(EventJournal journal, String folder) async {
+  Future<void> _abandon(
+    EventJournal journal,
+    EventJournal? inputJournal,
+    String folder,
+  ) async {
     await journal.close();
+    await inputJournal?.close();
     try {
       await _settings.remove(SnoSettingsKeys.session);
     } on Object {
@@ -1489,6 +1639,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     final int? duration = state.durationMs;
     final bool running = state.phase == RecordingPhase.recording;
     final JournalCheck? check = state.check;
+    final int? inputs = state.inputs;
+    final JournalCheck? inputCheck = state.inputCheck;
     final Map<String, Object?> info = <String, Object?>{
       'schema': kRecordingSchema,
       'branch': branch,
@@ -1525,6 +1677,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         // SNO-F-REC-13: итог самопроверки журнала после остановки.
         if (!running && check != null) 'check': check.toJson(),
       },
+      // SNO-F-REC-11: поток сырого ввода — сколько строк запись
+      // посчитала, цел ли он на диске и чего он не видит: разбор не
+      // должен принять отсутствие строк за отсутствие нажатий.
+      if (!running && (inputs != null || inputCheck != null))
+        'input': <String, Object?>{
+          'file': kInputFile,
+          'lines': inputs,
+          if (inputCheck != null) 'check': inputCheck.toJson(),
+          'blind': kInputBlind,
+        },
     };
     try {
       await _store.put(state.folder, kRecordingFile, _pretty(info));
@@ -1583,6 +1745,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       SnoEventType.navScreen,
       data: <String, Object?>{'from': from, 'to': name},
     );
+    // SNO-F-REC-11: нажатие, которым открыли экран чтения, помнится —
+    // книга может открываться дольше окна связи.
+    _readerInput = name == 'reader' ? input?.linkAt(_tNow()) : null;
   }
 
   @override
@@ -1604,11 +1769,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       SnoEventType.bookOpen,
       at: t,
       data: <String, Object?>{'via': via, 'visit': visit, ...data},
+      input: _readerInput,
     );
+    _readerInput = null;
   }
 
   @override
-  void bookClosed() {
+  void bookClosed({Map<String, Object?> data = const <String, Object?>{}}) {
     if (context.book == null) {
       return;
     }
@@ -1618,7 +1785,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       _write(
         SnoEventType.bookClose,
         at: t,
-        data: <String, Object?>{if (opened != null) 'open_ms': t - opened},
+        data: <String, Object?>{
+          if (opened != null) 'open_ms': t - opened,
+          ...data,
+        },
       );
     }
     _bookOpenedT = null;
@@ -1696,13 +1866,33 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     );
   }
 
+  /// События, которые запись пишет сама, а не в ответ на действие
+  /// участника: на строку ввода они не ссылаются (SNO-F-REC-11).
+  static const Set<SnoEventType> _unprompted = <SnoEventType>{
+    SnoEventType.recordingStart,
+    SnoEventType.recordingStop,
+    SnoEventType.appState,
+    SnoEventType.appBackground,
+    SnoEventType.appForeground,
+    SnoEventType.clockResync,
+    SnoEventType.heartbeat,
+    SnoEventType.recordingGuard,
+    SnoEventType.deviceLow,
+    SnoEventType.stateReset,
+    SnoEventType.sessionFinish,
+    SnoEventType.indexProgress,
+  };
+
   /// Строка журнала с номером и временем; без открытого журнала не
   /// делает ничего. [at] — время события, если оно известно заранее.
+  /// [input] — строка ввода, на которую событие ссылается, если окно
+  /// связи её уже не помнит.
   void _write(
     SnoEventType type, {
     Map<String, Object?> data = const <String, Object?>{},
     bool post = false,
     int? at,
+    int? input,
   }) {
     final EventJournal? journal = _journal;
     if (journal == null) {
@@ -1710,6 +1900,20 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     }
     final RecordingClock? clock = _clock;
     final int t = at ?? _tNow();
+    // SNO-F-REC-11: событие, записанное, пока палец на экране или
+    // сразу после, — ответ на это касание.
+    int? prompted;
+    final InputTracker? tracker = _input;
+    if (tracker != null && !post && !_unprompted.contains(type)) {
+      prompted =
+          tracker.linkAt(
+            t,
+            window: type == SnoEventType.searchQuery
+                ? kInputLateLinkMs
+                : kInputLinkMs,
+          ) ??
+          input;
+    }
     // После остановки часы записи больше не сверяются: у таких событий
     // настенное время берётся прямо у устройства.
     final DateTime wall = clock == null || post ? _now() : clock.wallAt(t);
@@ -1722,6 +1926,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         context: context,
         data: payload,
         post: post,
+        input: prompted,
       );
     }
 
@@ -1777,6 +1982,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       unawaited(_readVitals());
     }
     unawaited(_journal?.flush());
+    // SNO-F-REC-11: поток ввода ложится на диск той же секундой;
+    // прокрутка, которая кончилась, и путь мыши уходят строками.
+    _input?.poll(_tNow());
+    unawaited(_inputJournal?.flush());
     ticks.value++;
   }
 
@@ -2012,6 +2221,14 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         ? limit
         : passed;
     final int t = _tNow();
+    // SNO-F-REC-11: касание, которое ещё на экране, пишется сейчас —
+    // с пометкой, что его оборвала остановка; дальше ввод не пишется.
+    final InputTracker? tracker = _input;
+    final EventJournal? inputJournal = _inputJournal;
+    tracker?.finish(t);
+    _input = null;
+    _inputJournal = null;
+    _readerInput = null;
     // Открытый блок закрывает остановка — тем же мигом (SNO-F-CFG-03).
     _closeBlock(by: 'stop', at: t);
     // SNO-F-REC-10: запись остановилась, пока участника не было —
@@ -2070,6 +2287,12 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     // Сначала журнал, потом отметка: приложение, умершее между ними,
     // найдёт в журнале остановку и закроет запись ею.
     await _journal?.flush();
+    // SNO-F-REC-11: поток ввода дописан и закрыт — после остановки в
+    // него не пишет никто.
+    await inputJournal?.close();
+    if (inputJournal?.failed ?? false) {
+      _failed = true;
+    }
     // Снимок конца — сразу за журналом, пока устройство не трогали
     // (SNO-ALG-REC-03); и до отметки: отказ диска на нём попадёт в неё.
     await _putEndSnapshot(state.folder, late: false);
@@ -2079,10 +2302,20 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       state.folder,
       expected: stopped.events,
     );
+    // SNO-F-REC-11: и поток ввода — все ли посчитанные строки на месте.
+    final JournalCheck? inputCheck = tracker == null
+        ? null
+        : await _checkJournal(
+            state.folder,
+            expected: tracker.count,
+            name: kInputFile,
+            key: 'n',
+          );
     // Отказ диска — в отметку сессии: его помнят и после перезапуска.
     final SessionState marked = stopped
         .withFailure(writeFailed)
-        .withCheck(check);
+        .withCheck(check)
+        .withInput(lines: tracker?.count, check: inputCheck);
     _state = marked;
     _setChecked(true);
     try {

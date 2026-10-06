@@ -219,6 +219,53 @@ void main() {
       );
     });
 
+    test('SNO-F-REC-11: поток ввода сверяется тем же правилом — по '
+        'номеру `n`, и порядок строк не важен', () {
+      // Строка касания пишется, когда палец поднят, а номер получает,
+      // когда он опущен: второе касание легло раньше первого.
+      final List<int> input = utf8.encode(
+        '{"n":2,"t":40,"dev":"touch"}\n'
+        '{"n":1,"t":10,"dev":"touch"}\n'
+        '{"n":4,"t":90,"dev":"key"}\n',
+      );
+
+      final JournalCheck check = checkJournal(input, expected: 4, key: 'n');
+
+      expect(check.lines, 3);
+      expect(check.gaps, 1);
+      expect(check.torn, isFalse);
+      // По номеру событий `seq` в этих строках нет ничего.
+      expect(checkJournal(input, expected: 4).gaps, 4);
+    });
+
+    test('SNO-F-REC-11: о потоке ввода экран завершения говорит своей '
+        'строкой', () {
+      expect(
+        describeInputCheck(
+          const JournalCheck(lines: 312, gaps: 0, torn: false),
+        ),
+        'Ввод цел: 312 строк, пропусков нет',
+      );
+      expect(
+        describeInputCheck(const JournalCheck(lines: 0, gaps: 0, torn: false)),
+        'Ввод цел: 0 строк, пропусков нет',
+      );
+      expect(
+        describeInputCheck(
+          const JournalCheck(lines: 310, gaps: 2, torn: true),
+        ),
+        'Ввод неполон: 310 строк, пропущено строк 2, последняя оборвана',
+      );
+      expect(
+        describeInputCheck(
+          const JournalCheck(lines: 41, gaps: 0, torn: false, late: true),
+        ),
+        'Ввод цел до обрыва записи: 41 строка, пропусков нет',
+      );
+      // Потока в записи нет — и строки о нём нет.
+      expect(describeInputCheck(null), isNull);
+    });
+
     test('SNO-F-REC-13: «строка» склоняется по числу', () {
       expect(describeLineCount(1), '1 строка');
       expect(describeLineCount(2), '2 строки');

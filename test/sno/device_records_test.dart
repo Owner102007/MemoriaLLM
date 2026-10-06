@@ -1125,6 +1125,9 @@ void main() {
       expect(texts.keys.toList(), <String>[
         kManifestFile,
         kEventsFile,
+        // SNO-F-REC-11: поток сырого ввода лежит в архиве всегда — и
+        // пустым, когда экрана не касались.
+        kInputFile,
         kSnapshotEndFile,
         kSnapshotStartFile,
       ]);

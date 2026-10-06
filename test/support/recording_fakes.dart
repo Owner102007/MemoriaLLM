@@ -65,6 +65,18 @@ class MemoryRecordingStore implements RecordingStore {
   /// Тексты журналов по папкам.
   final Map<String, StringBuffer> journals = <String, StringBuffer>{};
 
+  /// Тексты потоков сырого ввода по папкам (SNO-F-REC-11).
+  final Map<String, StringBuffer> inputs = <String, StringBuffer>{};
+
+  /// Отказывать ли в открытии потока ввода: «файл не завёлся».
+  bool failInputOpen = false;
+
+  /// Отказывать ли потоку ввода в записи: «диск отказал».
+  bool failInputAppend = false;
+
+  /// Сколько потоков ввода открыто и ещё не закрыто.
+  int openInputs = 0;
+
   /// Файлы папок: имя → содержимое.
   final Map<String, Map<String, String>> files =
       <String, Map<String, String>>{};
@@ -107,7 +119,21 @@ class MemoryRecordingStore implements RecordingStore {
   }
 
   @override
-  Future<JournalFile> openJournal(String folder) async {
+  Future<JournalFile> openJournal(
+    String folder, {
+    String name = kEventsFile,
+  }) async {
+    if (name == kInputFile) {
+      if (failInputOpen) {
+        throw StateError('поток ввода не открывается');
+      }
+      openInputs++;
+      return _MemoryJournal(
+        inputs.putIfAbsent(folder, StringBuffer.new),
+        () => openInputs--,
+        () => failInputAppend,
+      );
+    }
     open++;
     return _MemoryJournal(
       journals.putIfAbsent(folder, StringBuffer.new),
@@ -163,11 +189,16 @@ class MemoryRecordingStore implements RecordingStore {
   bool failBytes = false;
 
   @override
-  Future<List<int>?> journalBytes(String folder) async {
+  Future<List<int>?> journalBytes(
+    String folder, {
+    String name = kEventsFile,
+  }) async {
     if (failBytes) {
       throw StateError('журнал не читается');
     }
-    final StringBuffer? journal = journals[folder];
+    final StringBuffer? journal = name == kInputFile
+        ? inputs[folder]
+        : journals[folder];
     return journal == null ? null : utf8.encode(journal.toString());
   }
 
@@ -176,6 +207,17 @@ class MemoryRecordingStore implements RecordingStore {
     current.remove(folder);
     files.remove(folder);
     journals.remove(folder);
+    inputs.remove(folder);
+  }
+
+  /// Строки потока сырого ввода папки [folder], разобранные из JSON.
+  List<Map<String, Object?>> inputLines(String folder) {
+    return <Map<String, Object?>>[
+      for (final String line in const LineSplitter().convert(
+        inputs[folder]?.toString() ?? '',
+      ))
+        if (line.isNotEmpty) jsonDecode(line) as Map<String, Object?>,
+    ];
   }
 
   /// Придерживает перенос завершённой записи, пока тест не отпустит:
@@ -559,11 +601,11 @@ class ListActionLog implements ActionLog {
   }
 
   @override
-  void bookClosed() {
+  void bookClosed({Map<String, Object?> data = const <String, Object?>{}}) {
     if (context.book == null) {
       return;
     }
-    log(SnoEventType.bookClose);
+    log(SnoEventType.bookClose, data: data);
     context
       ..book = null
       ..page = null

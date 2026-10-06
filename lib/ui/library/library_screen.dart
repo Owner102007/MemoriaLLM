@@ -168,7 +168,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// Сколько запрос обязан простоять без изменений, чтобы журнал счёл
   /// его запросом: иначе каждая буква стала бы отдельным событием.
-  static const Duration _queryRest = Duration(milliseconds: 150);
+  ///
+  /// Решение владельца Щ1 (б) от 06.10.2026: 700 мс. При прежних
+  /// 150 мс «что такое» ложилось шестью запросами — между буквами у
+  /// человека 200–400 мс; запрос должен значить одно обращение к
+  /// поиску. Не достоявший срока запрос по-прежнему пишется перед
+  /// открытием найденного и закрытием поиска.
+  static const Duration _queryRest = Duration(milliseconds: 700);
 
   /// Срок, который набранный запрос обязан простоять.
   Timer? _queryTimer;
@@ -763,7 +769,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
     } finally {
       // SNO-F-REC-02: закрытие книги — раньше перехода на полку.
-      _log?.bookClosed();
+      // SNO-F-MAP-01: с ним — сколько книгу читали на виду.
+      _log?.bookClosed(
+        data:
+            widget.services.bookTimes?.closingFacts(book.id) ??
+            const <String, Object?>{},
+      );
       widget.onReading?.call(false);
     }
   }

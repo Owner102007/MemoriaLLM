@@ -13,6 +13,11 @@ library;
 /// Имя файла журнала в папке записи.
 const String kEventsFile = 'events.jsonl';
 
+/// Имя файла потока сырого ввода в папке записи (SNO-F-REC-11): каждое
+/// касание экрана, колесо, клавиша — одна строка JSON со сквозным
+/// номером `n`.
+const String kInputFile = 'input.jsonl';
+
 /// Имя снимка состояния в начале записи.
 const String kSnapshotStartFile = 'snapshot_start.json';
 
@@ -46,8 +51,9 @@ abstract interface class RecordingStore {
   /// [wanted] — желаемое имя; занятое получает хвост `-2`, `-3`.
   Future<String> create(String wanted);
 
-  /// Открывает журнал записи [folder] на дозапись.
-  Future<JournalFile> openJournal(String folder);
+  /// Открывает поток строк [name] записи [folder] на дозапись: журнал
+  /// событий либо поток сырого ввода ([kInputFile], SNO-F-REC-11).
+  Future<JournalFile> openJournal(String folder, {String name = kEventsFile});
 
   /// Кладёт в папку записи файл [name] целиком.
   Future<void> put(String folder, String name, String content);
@@ -68,8 +74,9 @@ abstract interface class RecordingStore {
   ///
   /// Файла не трогает и оборванного хвоста не отрезает: по этим байтам
   /// журнал сверяют сам с собой (SNO-F-REC-13, `journal_check.dart`).
-  /// Журнал при этом может быть открыт на дозапись.
-  Future<List<int>?> journalBytes(String folder);
+  /// Журнал при этом может быть открыт на дозапись. [name] — какой
+  /// поток строк читать: журнал событий либо поток ввода.
+  Future<List<int>?> journalBytes(String folder, {String name = kEventsFile});
 
   /// Убирает папку незавершённой записи, которая так и не началась.
   Future<void> discard(String folder);

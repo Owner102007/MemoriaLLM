@@ -139,6 +139,48 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-REC-11: рядом сказано, цел ли поток ввода', (
+      WidgetTester tester,
+    ) async {
+      await kit.session.start(code);
+      for (int key = 1; key <= 3; key++) {
+        kit.session.keyInput(key, 'PageDown', pressed: true);
+        kit.session.keyInput(key, 'PageDown', pressed: false);
+      }
+      kit.run(60);
+      await kit.session.stop(StopReason.experimenter);
+
+      await openFinish(tester);
+
+      expect(
+        textOf(tester, 'sno-finish-input'),
+        'Ввод цел: 3 строки, пропусков нет',
+      );
+      // Строка о журнале событий стоит как стояла.
+      expect(textOf(tester, 'sno-finish-check'), startsWith('Запись цела: '));
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-REC-11: строки ввода не легли на диск — сказано, '
+        'что ввод неполон', (WidgetTester tester) async {
+      await kit.session.start(code);
+      kit.store.failInputAppend = true;
+      kit.session.keyInput(1, 'PageDown', pressed: true);
+      kit.session.keyInput(1, 'PageDown', pressed: false);
+      await kit.session.stop(StopReason.experimenter);
+
+      await openFinish(tester);
+
+      expect(
+        textOf(tester, 'sno-finish-input'),
+        'Ввод неполон: 0 строк, пропущено строк 1',
+      );
+      expect(textOf(tester, 'sno-finish-check'), startsWith('Запись цела: '));
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-REC-13: неполная запись названа неполной, а сессия '
         'завершается', (WidgetTester tester) async {
       await kit.session.start(code);

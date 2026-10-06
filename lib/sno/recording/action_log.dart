@@ -17,8 +17,8 @@ abstract interface class ActionLog {
   /// Пишет событие. Вне записи не делает ничего.
   void log(SnoEventType type, {Map<String, Object?> data});
 
-  /// Участник перешёл на экран [name]: `shelf`, `testing`, `settings`,
-  /// `reader`. Экран подставляется в каждое событие; смена экрана
+  /// Участник перешёл на экран [name]: `shelf`, `galaxy`, `testing`,
+  /// `settings`, `reader`. Экран подставляется в каждое событие; смена экрана
   /// пишется событием `nav.screen`.
   void screen(String name);
 
@@ -33,7 +33,9 @@ abstract interface class ActionLog {
   });
 
   /// Книгу закрыли: `book.close` с тем, сколько она была открыта.
-  void bookClosed();
+  /// [data] — что о закрытии знает экран: сколько книгу читали на
+  /// виду за это открытие и всего (SNO-F-MAP-01).
+  void bookClosed({Map<String, Object?> data});
 
   /// Что сейчас на экране чтения: страница и полоса с единицы, режим
   /// показа. Подставляется в каждое событие, пока книга открыта.

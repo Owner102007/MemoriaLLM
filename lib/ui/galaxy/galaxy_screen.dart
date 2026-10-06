@@ -16,6 +16,9 @@ import '../../domain/reading/reading.dart';
 import '../../domain/theme/app_palette.dart';
 import '../../sno/index/shelf_reading.dart';
 import '../../sno/index/shelf_reading_view.dart';
+import '../../sno/recording/action_log.dart';
+import '../../sno/recording/event.dart';
+import '../../sno/recording/thinning.dart';
 import '../reader/reader_screen.dart';
 import '../theme/palette_scope.dart';
 import 'galaxy_painter.dart';
@@ -83,7 +86,19 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
   int _run = 0;
   bool _wasBusy = false;
 
+  /// Раздел открыли, а журнал записи об этом ещё не знает: скажет,
+  /// когда карта прочитается, — размеры точек считаются по ней
+  /// (SNO-F-MAP-01).
+  bool _sayOpen = false;
+
+  /// Сколько раз раздел открывали: по новому номеру полотно карты
+  /// пишет в журнал `galaxy.open`.
+  int _opens = 0;
+
   ShelfReading? get _reading => widget.services.shelfReading;
+
+  /// Журнал действий участника; `null` — в этой сборке записи нет.
+  ActionLog? get _log => widget.services.recording;
 
   @override
   void initState() {
@@ -91,6 +106,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     _reading?.addListener(_readingChanged);
     _wasBusy = _reading?.progress.busy ?? false;
     if (widget.visible) {
+      _sayOpen = true;
       unawaited(_load());
     }
   }
@@ -105,6 +121,9 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
       oldWidget.services.shelfReading?.removeListener(_readingChanged);
       _reading?.addListener(_readingChanged);
       _wasBusy = _reading?.progress.busy ?? false;
+    }
+    if (widget.visible && !oldWidget.visible) {
+      _sayOpen = true;
     }
     if (!identical(oldWidget.services, widget.services) ||
         (widget.visible && !oldWidget.visible)) {
@@ -129,6 +148,9 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     _wasBusy = busy;
     setState(() {});
     if (finished && widget.visible) {
+      // Карта появится на глазах у участника: для журнала это то же,
+      // что открытый раздел.
+      _sayOpen = true;
       unawaited(_load());
     }
   }
@@ -153,10 +175,59 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     if (!mounted || run != _run) {
       return;
     }
+    final bool opening = _sayOpen && widget.visible;
     setState(() {
       _galaxy = galaxy ?? _galaxy;
       _failed = failed && _galaxy == null;
+      if (opening) {
+        _sayOpen = false;
+        _opens++;
+      }
     });
+    if (opening) {
+      _sayEmpty();
+    }
+  }
+
+  /// Какие слова стоят в разделе вместо карты; `null` — карта на
+  /// экране либо раздел ещё читает её.
+  String? _emptyState() {
+    final ShelfReadingProgress? progress = _reading?.progress;
+    if (progress != null && progress.busy) {
+      return 'preparing';
+    }
+    if (_failed) {
+      return 'failed';
+    }
+    return switch (_galaxy?.status) {
+      GalaxyStatus.tooFew => 'too_few',
+      GalaxyStatus.noMap => 'no_map',
+      GalaxyStatus.ready || null => null,
+    };
+  }
+
+  /// SNO-F-MAP-01: раздел открыли, а карты в нём нет — в журнале
+  /// записи сказано, что участник увидел вместо неё. Карту на экране
+  /// называет само полотно (`galaxy.open`).
+  void _sayEmpty() {
+    final ActionLog? log = _log;
+    final String? state = _emptyState();
+    if (log == null || !log.recording || state == null) {
+      return;
+    }
+    final ShelfReadingProgress? progress = _reading?.progress;
+    log.log(
+      SnoEventType.galaxyEmpty,
+      data: <String, Object?>{
+        'state': state,
+        'books': _galaxy?.books,
+        if (state == 'preparing' && progress != null) ...<String, Object?>{
+          'phase': progress.phase.name,
+          'books_done': progress.booksDone,
+          'books_total': progress.booksTotal,
+        },
+      },
+    );
   }
 
   /// Открывает книгу в чтении — тем же экраном, что полка.
@@ -182,7 +253,12 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
       );
     } finally {
       // SNO-F-REC-02: закрытие книги — раньше перехода в раздел.
-      widget.services.recording?.bookClosed();
+      // SNO-F-MAP-01: с ним — сколько книгу читали на виду.
+      widget.services.recording?.bookClosed(
+        data:
+            widget.services.bookTimes?.closingFacts(book.id) ??
+            const <String, Object?>{},
+      );
       widget.onReading?.call(false);
       // Время в книге выросло: размер её точки считается заново. Карта
       // при этом остаётся там, где читатель её оставил.
@@ -254,6 +330,8 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
                 covers: widget.services.covers,
                 reading: widget.services.data.reading,
                 onOpen: (Book book) => unawaited(_openBook(book)),
+                log: _log,
+                opened: _opens,
               ),
             ),
             if (galaxy.missing > 0)
@@ -429,8 +507,18 @@ class GalaxyMap extends StatefulWidget {
     required this.reading,
     required this.onOpen,
     this.nowMs,
+    this.log,
+    this.opened = 0,
     super.key,
   });
+
+  /// Журнал действий участника (SNO-F-MAP-01): что на карте, куда она
+  /// смотрит, на какую точку нажали; `null` — записи в сборке нет.
+  final ActionLog? log;
+
+  /// Сколько раз раздел открывали. Новый номер — карту показали
+  /// участнику заново: полотно пишет в журнал `galaxy.open`.
+  final int opened;
 
   /// Звёзды карты.
   final List<GalaxyStar> stars;
@@ -476,6 +564,20 @@ class GalaxyMapState extends State<GalaxyMap> {
 
   GalaxyScene? _scene;
 
+  /// О каком открытии раздела журнал записи уже знает.
+  int _saidOpen = 0;
+
+  /// Чем был жест, который сейчас двигает карту: щипок или перенос; и
+  /// сдвинул ли он её вообще.
+  bool _pinched = false;
+  bool _dragged = false;
+
+  /// Колесо мыши крутят щелчками, а журналу нужен ход, а не каждый
+  /// щелчок: первое положение и то, на чём остановились.
+  late final Thinned<String> _wheelSaid = Thinned<String>(_sayView);
+
+  bool get _logging => widget.log?.recording ?? false;
+
   int _now() => (widget.nowMs ?? _monotonic)();
 
   static int _monotonic() => _watch.elapsedMilliseconds;
@@ -515,6 +617,10 @@ class GalaxyMapState extends State<GalaxyMap> {
       }
       final String? id = _selectedId;
       if (_selectedIndex() == null) {
+        if (id != null) {
+          // Выбранной книги на новой карте нет: карточка ушла сама.
+          _sayCard(oldWidget.stars, id, open: false, by: 'map_changed');
+        }
         _selectedId = null;
         _progress = null;
       } else if (id != null) {
@@ -527,9 +633,99 @@ class GalaxyMapState extends State<GalaxyMap> {
 
   @override
   void dispose() {
+    _wheelSaid.dispose();
     _scene?.dispose();
     _scene = null;
     super.dispose();
+  }
+
+  /// Где полотно стоит в окне и куда смотрит — числами, по которым
+  /// место нажатия из потока ввода переводится в координаты карты:
+  /// `x = cx + (нажатие.x − left − w / 2) / unit`, по ординате так же
+  /// (SNO-F-MAP-01).
+  Map<String, Object?> _viewFacts() {
+    final MapViewport view = viewport;
+    final RenderObject? box = context.findRenderObject();
+    final Offset? origin = box is RenderBox && box.hasSize
+        ? box.localToGlobal(Offset.zero)
+        : null;
+    return <String, Object?>{
+      if (origin != null) 'left': origin.dx,
+      if (origin != null) 'top': origin.dy,
+      'w': _size.width,
+      'h': _size.height,
+      'scale': view.camera.scale,
+      'cx': view.camera.cx,
+      'cy': view.camera.cy,
+      'unit': view.unit,
+    };
+  }
+
+  /// SNO-F-MAP-01: карту показали участнику — в журнал записи ложится,
+  /// сколько на ней точек, где каждая стоит и какого она размера.
+  void _sayOpened() {
+    final GalaxyScene? scene = _scene;
+    if (!mounted || !_logging || scene == null) {
+      return;
+    }
+    widget.log?.log(
+      SnoEventType.galaxyOpen,
+      data: <String, Object?>{
+        ..._viewFacts(),
+        'stars': widget.stars.length,
+        'points': <Object?>[
+          for (int i = 0; i < widget.stars.length; i++)
+            <String, Object?>{
+              'book': widget.stars[i].book.fileHash,
+              'group': widget.stars[i].group,
+              'x': widget.stars[i].x,
+              'y': widget.stars[i].y,
+              if (i < scene.radii.length) 'r': scene.radii[i],
+              'ms': widget.stars[i].ms,
+            },
+        ],
+      },
+    );
+  }
+
+  /// Карту подвинули или приблизили: чем жест кончился.
+  void _sayView(String cause) {
+    if (!mounted || !_logging) {
+      return;
+    }
+    widget.log?.log(
+      SnoEventType.galaxyView,
+      data: <String, Object?>{'cause': cause, ..._viewFacts()},
+    );
+  }
+
+  /// Карточка книги [id] открылась или закрылась; [by] — чем закрыта.
+  void _sayCard(
+    List<GalaxyStar> stars,
+    String id, {
+    required bool open,
+    String? by,
+  }) {
+    if (!_logging) {
+      return;
+    }
+    widget.log?.log(
+      open ? SnoEventType.galaxyCardOpen : SnoEventType.galaxyCardClose,
+      data: <String, Object?>{
+        'book': _hashOf(stars, id),
+        if (by != null) 'by': by,
+      },
+    );
+  }
+
+  /// Отпечаток книги [id] — им книга названа во всём журнале записи.
+  static String? _hashOf(List<GalaxyStar> stars, String id) {
+    for (final GalaxyStar star in stars) {
+      if (star.book.id == id) {
+        return star.book.fileHash;
+      }
+    }
+    return null;
   }
 
   void _measure() {
@@ -588,18 +784,41 @@ class GalaxyMapState extends State<GalaxyMap> {
           factor: kDoubleTapZoom,
         );
       });
+      _sayView('double_tap');
       return;
     }
     final int? hit = starAt(at);
     final String? id = hit == null ? null : widget.stars[hit].book.id;
-    if (id == _selectedId) {
+    final String? before = _selectedId;
+    if (hit != null && _logging) {
+      // SNO-F-MAP-01: нажатие по точке — и тогда, когда её карточка
+      // уже открыта. Нажатие мимо точек событием не пишется: в потоке
+      // ввода оно остаётся без ссылки.
+      widget.log?.log(
+        SnoEventType.galaxyStar,
+        data: <String, Object?>{
+          'book': widget.stars[hit].book.fileHash,
+          'selected': id == before,
+        },
+      );
+    }
+    if (id == before) {
       return;
     }
     setState(() {
       _selectedId = id;
       _progress = null;
     });
+    if (before != null) {
+      _sayCard(
+        widget.stars,
+        before,
+        open: false,
+        by: id == null ? 'tap_away' : 'other_star',
+      );
+    }
     if (id != null) {
+      _sayCard(widget.stars, id, open: true);
       unawaited(_loadProgress(id));
     }
   }
@@ -623,9 +842,22 @@ class GalaxyMapState extends State<GalaxyMap> {
     _grabX = view.mapX(details.localFocalPoint.dx);
     _grabY = view.mapY(details.localFocalPoint.dy);
     _grabScale = view.camera.scale;
+    _pinched = false;
+    _dragged = false;
+  }
+
+  void _scaleEnd(ScaleEndDetails details) {
+    if (_dragged) {
+      _sayView(_pinched ? 'pinch' : 'drag');
+    }
+    _dragged = false;
   }
 
   void _scaleUpdate(ScaleUpdateDetails details) {
+    _dragged = true;
+    if (details.pointerCount > 1 || details.scale != 1) {
+      _pinched = true;
+    }
     setState(() {
       _camera = viewport.anchored(
         x: _grabX,
@@ -651,12 +883,25 @@ class GalaxyMapState extends State<GalaxyMap> {
         factor: factor,
       );
     });
+    if (_logging) {
+      _wheelSaid.add('wheel');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final AppPalette palette = AppPaletteScope.of(context);
+    if (_saidOpen != widget.opened) {
+      // Раздел открыли: после этого кадра, когда полотно знает своё
+      // место в окне, журнал записи получает карту целиком.
+      _saidOpen = widget.opened;
+      if (_logging) {
+        WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+          _sayOpened();
+        });
+      }
+    }
     final Color ink = Color(palette.text);
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
@@ -695,6 +940,7 @@ class GalaxyMapState extends State<GalaxyMap> {
                         _tap(details.localPosition),
                     onScaleStart: _scaleStart,
                     onScaleUpdate: _scaleUpdate,
+                    onScaleEnd: _scaleEnd,
                     child: Semantics(
                       label: 'Карта книг: ${widget.stars.length}',
                       child: CustomPaint(
@@ -725,10 +971,13 @@ class GalaxyMapState extends State<GalaxyMap> {
       covers: widget.covers,
       progress: _progress,
       onRead: () => widget.onOpen(star.book),
-      onClose: () => setState(() {
-        _selectedId = null;
-        _progress = null;
-      }),
+      onClose: () {
+        _sayCard(widget.stars, star.book.id, open: false, by: 'button');
+        setState(() {
+          _selectedId = null;
+          _progress = null;
+        });
+      },
     );
     if (navPlacementFor(size.width) == NavPlacement.bottom) {
       return Positioned(left: 8, right: 8, bottom: 8, child: card);
