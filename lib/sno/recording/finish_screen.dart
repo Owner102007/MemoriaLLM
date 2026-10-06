@@ -816,9 +816,14 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
-            child: ListView(
+            // Столбик, а не ленивый список: итог записи стоит внизу, и
+            // строиться он обязан, где бы ни кончился экран.
+            child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-              children: _finished ? _archive(theme) : _summary(theme),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: _finished ? _archive(theme) : _summary(theme),
+              ),
             ),
           ),
         ),

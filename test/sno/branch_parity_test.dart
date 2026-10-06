@@ -299,8 +299,14 @@ void main() {
     // Манифест различается только ветвью.
     expect(kit.store.json(folder, kRecordingFile)['branch'], Sno.branch);
 
-    final List<String> actual = told(folder);
+    // Пробел в конце строки эталон не хранит: редакторы его снимают.
+    final List<String> actual = <String>[
+      for (final String line in told(folder)) line.trimRight(),
+    ];
     final List<String> expected = golden();
+    // Приложение снимается до сверки: тест, упавший с приложением на
+    // экране, ждал бы его часов до своего срока.
+    await unmount(tester);
     if (!listEquals(actual, expected)) {
       // Что вышло — целиком: эталон правят по этим строкам.
       for (final String line in actual) {
@@ -314,8 +320,6 @@ void main() {
           'запись или тест разошлись с эталоном $goldenPath; что вышло '
           'в ветви ${Sno.branch} — в строках «ЭТАЛОН» выше',
     );
-
-    await unmount(tester);
     // Основной прогон сценария не проходит: записи в нём нет, и
     // проверяется он прогонами ветвей (--dart-define=SNO_BRANCH=I, II).
   }, skip: !Sno.recording);

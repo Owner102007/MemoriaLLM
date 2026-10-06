@@ -14,4 +14,23 @@
 #
 # Правится осознанно, вместе с кодом: тест при расхождении печатает
 # то, что вышло, строками «ЭТАЛОН».
-эталон ещё не снят
+book.close | book,input,mode,page,screen,seq,strip,t,type,wall | by,open_ms,read_ms,read_total_ms
+book.open | book,input,screen,seq,t,type,wall | page,pages,title,via,visit
+clt.finish | phase,screen,seq,t,type,wall | answers,duration_ms,file,part
+clt.password.attempt | phase,screen,seq,t,type,wall | n,ok
+clt.start | phase,screen,seq,t,type,wall | file,items,part,scenario,version
+nav.screen | input,screen,seq,t,type,wall | from,to
+page.shown | book,input,mode,page,screen,seq,strip,t,type,wall | cause,from,of,strips
+recording.start | screen,seq,t,type,wall | clock_anchor,code_generated,matches_reference,participant,planned_s,recording,shelf_sort,shelf_sort_forced
+recording.stop | screen,seq,t,type,wall | duration_ms,stopped_by
+session.finish | phase,screen,seq,t,type,wall |
+session.heartbeat | book,mode,page,screen,seq,strip,t,type,wall | battery,free_mb
+shelf.shown | input,screen,seq,t,type,wall | books,categories,locked,offset,sort
+файлы записи | clt/scenario.json,clt/scores.json,clt/sno-clt-main_B_<t>.json,events.jsonl,input.jsonl,recording.json,snapshot_end.json,snapshot_start.json |
+recording.json | app,branch,clt,device,input,participant,recording,schema |
+recording.json: recording | away,blocks,check,clock_anchor,duration_ms,duration_s,events,finished,id,in_background,planned_s,resyncs,stopped_by,write_failed |
+recording.json: device | code,node_id |
+recording.json: input | blind,check,file,lines |
+recording.json: clt | checks_flags,files,final,final_answers,final_items |
+clt/scores.json | checks,final,participant,rule,scenario,schema,version |
+clt/scores.json: checks | fast_answers,flags,items,longest_same,rule,verdict |
