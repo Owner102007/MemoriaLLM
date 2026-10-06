@@ -277,10 +277,13 @@ void main() {
         'сделать сразу.',
       );
       // Отметка — несогласие: 1–3.
-      expect(<int>[
-        for (int value = 1; value <= 7; value++)
-          if (weakness.check!.flag.holds(value)) value,
-      ], <int>[1, 2, 3]);
+      expect(
+        <int>[
+          for (int value = 1; value <= 7; value++)
+            if (weakness.check!.flag.holds(value)) value,
+        ],
+        <int>[1, 2, 3],
+      );
 
       // Второй — достоинство, которого нет ни у кого: предпоследним в
       // разделе о полке.
@@ -288,10 +291,13 @@ void main() {
       expect(virtue.id, 'lie.late');
       expect(virtue.text, 'Я ни разу в жизни никуда не опоздал.');
       // Отметка — согласие: 5–7.
-      expect(<int>[
-        for (int value = 1; value <= 7; value++)
-          if (virtue.check!.flag.holds(value)) value,
-      ], <int>[5, 6, 7]);
+      expect(
+        <int>[
+          for (int value = 1; value <= 7; value++)
+            if (virtue.check!.flag.holds(value)) value,
+        ],
+        <int>[5, 6, 7],
+      );
 
       for (final CltItem item in <CltItem>[weakness, virtue]) {
         expect(item.isCheck, isTrue, reason: item.id);

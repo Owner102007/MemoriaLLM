@@ -523,10 +523,7 @@ void main() {
       await typePassword(tester, password);
       expect(find.byType(LoadTestRunScreen), findsOneWidget);
       // SNO-F-CLT-04: первым — вступление; в счёт пунктов оно не входит.
-      expect(
-        textOf(tester, 'sno-clt-intro'),
-        contains('и письменную часть'),
-      );
+      expect(textOf(tester, 'sno-clt-intro'), contains('и письменную часть'));
       expect(find.byKey(const Key('sno-clt-progress')), findsNothing);
       await tap(tester, 'sno-clt-begin');
       expect(textOf(tester, 'sno-clt-progress'), '1 из 20');

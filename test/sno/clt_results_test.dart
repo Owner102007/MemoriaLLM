@@ -1007,10 +1007,7 @@ void main() {
         });
       }
       // Сценарий без маркеров читается — просто сверять в нём нечего.
-      expect(
-        parseCltScenario(plain).partFor(kCltSessionEnd)!.length,
-        16,
-      );
+      expect(parseCltScenario(plain).partFor(kCltSessionEnd)!.length, 16);
       expect(
         cltChecksFor(<CltResult>[finalPart()], scenario: jsonEncode(plain)),
         isNull,
