@@ -1807,6 +1807,14 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     required String via,
     Map<String, Object?> data = const <String, Object?>{},
   }) {
+    if (phase == RecordingPhase.stopped) {
+      // SNO-F-REC-16: книга, которая открывалась, когда запись
+      // остановили, досчиталась уже под экраном завершения. Её экран
+      // снят, закрытия не будет — и строкам после остановки она не
+      // книга.
+      _bookOpenedT = null;
+      return;
+    }
     context.book = book;
     if (!_logging) {
       _bookOpenedT = null;
@@ -2058,11 +2066,18 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     final List<CltResult> results = readCltResults(files);
     Map<String, Object?>? checks;
     if (results.isNotEmpty) {
-      checks = cltChecksFor(
-        results,
-        scenario: files[kCltScenarioFile],
-        facts: await _testFacts(state),
-      );
+      try {
+        checks = cltChecksFor(
+          results,
+          scenario: files[kCltScenarioFile],
+          facts: await _testFacts(state),
+        );
+      } on Object {
+        // Сверка не посчиталась: показатели лягут без неё, а сессия
+        // завершится — иначе устройство осталось бы на экране
+        // завершения навсегда.
+        checks = null;
+      }
       try {
         await _store.put(
           folder,
@@ -2593,9 +2608,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       expected: _seq,
       late: state.check?.late ?? (state.stoppedBy == StopReason.crash),
     );
-    final Map<String, Object?>? test = hasTest
-        ? await _closeTest(state)
-        : null;
+    final Map<String, Object?>? test = hasTest ? await _closeTest(state) : null;
     await _putInfo(
       recheck == null
           ? done

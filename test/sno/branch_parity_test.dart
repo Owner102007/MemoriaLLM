@@ -43,10 +43,6 @@ import '../support/test_services.dart';
 /// книгах заводится тем же условием, что в приложении
 /// ([AppServices.bookTimesFor]).
 void main() {
-  const String branchOnly =
-      'основной прогон: проверяется прогонами ветвей '
-      '(--dart-define=SNO_BRANCH=I и II)';
-
   /// Пароль теста в этой проверке.
   const String password = '2580';
 
@@ -54,7 +50,7 @@ void main() {
 
   late AppData data;
   late SessionKit kit;
-  late LoadTest test;
+  late LoadTest loadTest;
   BookTimes? times;
 
   setUp(() async {
@@ -68,7 +64,7 @@ void main() {
       closingFacts: times?.openFacts,
       branch: Sno.branch,
     );
-    test = LoadTest(
+    loadTest = LoadTest(
       session: kit.session,
       password: password,
       now: kit.time.now,
@@ -76,7 +72,7 @@ void main() {
     );
   });
   tearDown(() async {
-    test.dispose();
+    loadTest.dispose();
     kit.session.dispose();
     await data.close();
   });
@@ -218,7 +214,7 @@ void main() {
         services: testServices(
           data: data,
           recording: kit.session,
-          loadTest: test,
+          loadTest: loadTest,
           bookTimes: times,
           document: FakeReaderDocument(
             pages: <String>['один', 'два', 'три', 'четыре'],
@@ -320,14 +316,15 @@ void main() {
     );
 
     await unmount(tester);
-  }, skip: Sno.recording ? false : branchOnly);
+    // Основной прогон сценария не проходит: записи в нём нет, и
+    // проверяется он прогонами ветвей (--dart-define=SNO_BRANCH=I, II).
+  }, skip: !Sno.recording);
 
   test('SNO-F-REC-17: только ветвь II пишет события карты и подготовки '
       'книг — и больше никаких', () {
-    expect(
-      <String>[for (final SnoEventType type in kSecondBranchEvents) type.wire],
-      everyElement(anyOf(startsWith('galaxy.'), equals('index.progress'))),
-    );
+    expect(<String>[
+      for (final SnoEventType type in kSecondBranchEvents) type.wire,
+    ], everyElement(anyOf(startsWith('galaxy.'), equals('index.progress'))));
     // Всё, что названо событием карты или подготовки, в списке есть.
     for (final SnoEventType type in SnoEventType.values) {
       final bool screenOfSecond =

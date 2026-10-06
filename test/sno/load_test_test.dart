@@ -497,10 +497,9 @@ void main() {
       await test.enter(password);
       final LoadTestRun run = (await test.begin())!;
       expect(run.part.id, 'B');
-      expect(
-        <String>[for (final CltItem item in run.items) item.id],
-        isNot(contains('paas.effort')),
-      );
+      expect(<String>[
+        for (final CltItem item in run.items) item.id,
+      ], isNot(contains('paas.effort')));
       expect(
         kit.store.files[folder]!.keys.where(
           (String name) => name.contains('_A_'),

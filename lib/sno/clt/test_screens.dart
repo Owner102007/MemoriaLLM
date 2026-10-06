@@ -130,6 +130,7 @@ Future<bool> openTestSkip(NavigatorState navigator, LoadTest test) async {
           return LoadTestPasswordScreen(
             test: test,
             title: 'Завершить без теста',
+            unlock: false,
           );
         },
       ),
@@ -251,6 +252,7 @@ class LoadTestPasswordScreen extends StatefulWidget {
   const LoadTestPasswordScreen({
     required this.test,
     this.title = 'Cognitive load test',
+    this.unlock = true,
     super.key,
   });
 
@@ -259,6 +261,9 @@ class LoadTestPasswordScreen extends StatefulWidget {
 
   /// Заголовок экрана.
   final String title;
+
+  /// Открывает ли верный пароль тест до завершения сессии.
+  final bool unlock;
 
   @override
   State<LoadTestPasswordScreen> createState() => _LoadTestPasswordState();
@@ -324,7 +329,10 @@ class _LoadTestPasswordState extends State<LoadTestPasswordScreen> {
     }
     final String input = _entered;
     setState(() => _checking = true);
-    final PasswordOutcome outcome = await widget.test.enter(input);
+    final PasswordOutcome outcome = await widget.test.enter(
+      input,
+      unlock: widget.unlock,
+    );
     if (!mounted) {
       return;
     }

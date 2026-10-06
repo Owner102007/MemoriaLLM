@@ -167,13 +167,10 @@ void main() {
       expect(read.checks, markers);
       expect(read.answers, hasLength(18));
       // SNO-F-CLT-04: ответ на маркер помечен в самом файле.
-      expect(
-        <String>[
-          for (final CltAnswer answer in read.answers)
-            if (answer.check) answer.item,
-        ],
-        markers,
-      );
+      expect(<String>[
+        for (final CltAnswer answer in read.answers)
+          if (answer.check) answer.item,
+      ], markers);
       final Map<String, Object?> json =
           jsonDecode(written.encode()) as Map<String, Object?>;
       expect(json['checks'], markers);
@@ -551,16 +548,12 @@ void main() {
   });
 
   group('SNO-F-CLT-04: маркеры честности', () {
-    final CltPart part = parseCltScenario(
-      kBuiltinCltScenario,
-    ).partFor(kCltSessionEnd)!;
+    final CltPart part = parseCltScenario(kBuiltinCltScenario)
+        .partFor(kCltSessionEnd)!;
 
     /// Числа из записи: отлучек [away], открытий книг [opens].
     Map<String, int?> facts(int? away, int? opens) {
-      return <String, int?>{
-        kCltFactAwayCount: away,
-        kCltFactBookOpens: opens,
-      };
+      return <String, int?>{kCltFactAwayCount: away, kCltFactBookOpens: opens};
     }
 
     Map<String, Object?> marker(Map<String, Object?> checks, String id) {
@@ -860,7 +853,9 @@ void main() {
       final String scenario = jsonEncode(kBuiltinCltScenario);
 
       final Map<String, Object?>? checks = cltChecksFor(
-        <CltResult>[finalPart(answered: const <String, int>{'chk.focus': 7})],
+        <CltResult>[
+          finalPart(answered: const <String, int>{'chk.focus': 7}),
+        ],
         scenario: scenario,
         facts: facts(2, 14),
       );
@@ -869,10 +864,7 @@ void main() {
 
       // Считать не по чему: теста не начинали, сценария рядом нет, он
       // не читается или в нём нет маркеров.
-      expect(
-        cltChecksFor(const <CltResult>[], scenario: scenario),
-        isNull,
-      );
+      expect(cltChecksFor(const <CltResult>[], scenario: scenario), isNull);
       expect(cltChecksFor(<CltResult>[finalPart()], scenario: null), isNull);
       expect(
         cltChecksFor(<CltResult>[finalPart()], scenario: 'не JSON'),

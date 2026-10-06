@@ -534,10 +534,7 @@ void main() {
       await tap(tester, 'sno-clt-close');
 
       expect(find.byType(LoadTestRunScreen), findsNothing);
-      expect(
-        textOf(tester, 'sno-finish-test-done'),
-        'Тест пройден: 18 из 18',
-      );
+      expect(textOf(tester, 'sno-finish-test-done'), 'Тест пройден: 18 из 18');
       expect(find.byKey(const Key('sno-finish-test')), findsNothing);
       expect(find.byKey(const Key('sno-finish-waits')), findsNothing);
       expect(find.byKey(const Key('sno-finish-skip')), findsNothing);
@@ -711,10 +708,7 @@ void main() {
       await kit.session.start(code);
       await kit.session.stop(StopReason.experimenter);
       await pumpFinish(tester);
-      expect(
-        textOf(tester, 'sno-finish-test-problem'),
-        contains('не набрать'),
-      );
+      expect(textOf(tester, 'sno-finish-test-problem'), contains('не набрать'));
 
       await tap(tester, 'sno-finish-skip');
 

@@ -115,13 +115,10 @@ void main() {
         'но формат её читает', () {
       final CltScenario scenario = parseCltScenario(kBuiltinCltScenario);
       expect(scenario.partFor(kCltBlockEnd), isNull);
-      expect(
-        <String>[
-          for (final CltPart part in scenario.parts)
-            for (final CltItem item in part.items) item.group,
-        ],
-        isNot(contains('paas')),
-      );
+      expect(<String>[
+        for (final CltPart part in scenario.parts)
+          for (final CltItem item in part.items) item.group,
+      ], isNot(contains('paas')));
 
       final CltScenario old = parseCltScenario(withBlockPart());
       final CltPart block = old.partFor(kCltBlockEnd)!;
@@ -257,13 +254,10 @@ void main() {
       final CltPart part = parseCltScenario(kBuiltinCltScenario)
           .partFor(kCltSessionEnd)!;
 
-      expect(
-        <CltItem>[
-          for (final CltItem item in part.items)
-            if (!item.isCheck) item,
-        ],
-        hasLength(16),
-      );
+      expect(<CltItem>[
+        for (final CltItem item in part.items)
+          if (!item.isCheck) item,
+      ], hasLength(16));
     });
 
     test('SNO-F-CLT-02: группа пункта — идентификатор до последней точки', () {

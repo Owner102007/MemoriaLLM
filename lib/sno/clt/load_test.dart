@@ -291,7 +291,12 @@ class LoadTest extends ChangeNotifier {
   /// Три неверные попытки подряд закрывают ввод на
   /// [kCltPasswordPause]. Попытка пишется в журнал записи — удалась
   /// или нет, без самого ввода.
-  Future<PasswordOutcome> enter(String input) async {
+  ///
+  /// [unlock] — открывает ли верный пароль тест до завершения сессии.
+  /// Пароль, набранный ради выхода без теста (SNO-F-CLT-05), теста не
+  /// открывает: организатор, передумавший уходить, оставил бы тест
+  /// без замка.
+  Future<PasswordOutcome> enter(String input, {bool unlock = true}) async {
     if (lockedSeconds > 0) {
       return PasswordOutcome.locked;
     }
@@ -299,7 +304,9 @@ class LoadTest extends ChangeNotifier {
     final bool accepted = input == _password;
     _attempts++;
     bool locked = false;
-    if (accepted) {
+    if (accepted && !unlock) {
+      _wrong = 0;
+    } else if (accepted) {
       _wrong = 0;
       final SessionState? state = session.state;
       _unlockedFor = state != null && state.phase == RecordingPhase.stopped
@@ -573,10 +580,7 @@ class LoadTestRun extends ChangeNotifier {
 
   /// Выбирает значение [value] на шкале показанного пункта.
   void choose(int value) {
-    if (_finished ||
-        _saving ||
-        _introPending ||
-        !item.scale.holds(value)) {
+    if (_finished || _saving || _introPending || !item.scale.holds(value)) {
       return;
     }
     if (_selected != value) {

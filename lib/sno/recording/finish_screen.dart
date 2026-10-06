@@ -44,9 +44,20 @@ Future<void> openSessionFinish(
     return;
   }
   session.setFinishOpen(true);
+  // Отметку снимает только тот экран, который её поставил: снятый
+  // экран, чей уход досчитался позже, не вправе объявить закрытым
+  // экран, вставший после него.
+  final int mine = ++_finishOpens;
+  void gone() {
+    if (_finishOpens == mine) {
+      session.setFinishOpen(false);
+    }
+  }
+
   try {
     await navigator.push(
       _FinishRoute(
+        onGone: gone,
         builder: (BuildContext context) {
           return SessionFinishScreen(
             session: session,
@@ -57,14 +68,28 @@ Future<void> openSessionFinish(
       ),
     );
   } finally {
-    session.setFinishOpen(false);
+    gone();
   }
 }
 
+/// Сколько раз экран завершения открывали: номер открытия — его право
+/// снять отметку «экран открыт».
+int _finishOpens = 0;
+
 /// Маршрут экрана завершения: встаёт и уходит без перехода.
 class _FinishRoute extends MaterialPageRoute<void> {
-  _FinishRoute({required super.builder})
+  _FinishRoute({required super.builder, required this.onGone})
     : super(settings: const RouteSettings(name: kSessionFinishRoute));
+
+  /// Маршрута больше нет, каким бы путём его ни сняли: снятый не
+  /// `pop`, а `removeRoute` своего ожидающего не завершает.
+  final void Function() onGone;
+
+  @override
+  void dispose() {
+    onGone();
+    super.dispose();
+  }
 
   @override
   Duration get transitionDuration => Duration.zero;
@@ -243,9 +268,6 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     // Следующая запись начнётся с экрана, на котором стоит приложение,
     // а не с экрана завершения прошлой.
     widget.session.screen(_cameFrom);
-    // Экрана нет — он не открыт, каким бы путём его ни сняли: иначе
-    // следующую сессию было бы нечем закрыть.
-    widget.session.setFinishOpen(false);
     super.dispose();
   }
 
@@ -646,7 +668,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
 
   /// Итог записи для организатора: мелко и ниже того, что нужно
   /// участнику.
-  List<Widget> _record(ThemeData theme) {
+  List<Widget> _recordLines(ThemeData theme) {
     final TextStyle? small = theme.textTheme.bodySmall;
     final TextStyle? wrong = small?.copyWith(color: theme.colorScheme.error);
     final String? away = _away;
@@ -760,7 +782,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
         ),
       ],
       const SizedBox(height: 28),
-      ..._record(theme),
+      ..._recordLines(theme),
       if (waits && test != null && test.loaded) ...<Widget>[
         const SizedBox(height: 20),
         Align(
