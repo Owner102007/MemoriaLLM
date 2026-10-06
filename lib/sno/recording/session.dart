@@ -918,13 +918,20 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       // перечитывала: он сверяется сейчас, пока его не открыли.
       // У записи, закрытой после сбоя, «цела» не говорится и теперь:
       // потерянного за последней строкой проверка не видит.
-      final JournalCheck? check =
+      final JournalCheck? known =
           state.check ??
           await _checkJournal(
             state.folder,
             expected: state.events,
             late: state.stoppedBy == StopReason.crash,
           );
+      // SNO-F-CLT-03: после остановки в журнал пишет тест нагрузки, и
+      // приложение могло умереть посреди такой строки. Оборванный хвост
+      // виден только сейчас — чтение ниже его отрежет, — и итог
+      // проверки обязан о нём помнить.
+      final JournalCheck? check = state.check == null
+          ? known
+          : _withTail(known, await _tornTail(state.folder));
       final List<EventMarks> tail = await _tail(state.folder);
       _state = state.withCheck(check);
       _setChecked(true);
@@ -957,6 +964,51 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _setChecked(true);
     _known = true;
     _notify();
+  }
+
+  /// Оборван ли хвост журнала записи [folder]: за последней строкой
+  /// нет перевода строки. Не прочитался — «нет».
+  Future<bool> _tornTail(String folder) async {
+    try {
+      final List<int>? bytes = await _store.journalBytes(folder);
+      return bytes != null && bytes.isNotEmpty && bytes.last != 0x0A;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Итог проверки [check] с пометкой об оборванном хвосте [torn],
+  /// найденном позже.
+  static JournalCheck? _withTail(JournalCheck? check, bool torn) {
+    if (check == null || !torn || check.torn) {
+      return check;
+    }
+    return JournalCheck(
+      lines: check.lines,
+      gaps: check.gaps,
+      torn: true,
+      late: check.late,
+    );
+  }
+
+  /// Итог повторной проверки журнала [after] вместе с тем, что нашла
+  /// прежняя [before] (SNO-F-CLT-03).
+  ///
+  /// Оборванный хвост к повторной проверке уже отрезан чтением журнала,
+  /// а номер потерянной строки занят следующей: по одному файлу потери
+  /// не видно. Найденное раньше остаётся в итоге — запись, о которой
+  /// экспериментатору сказали «неполная», не становится целой оттого,
+  /// что сессию завершили.
+  static JournalCheck _wholeCheck(JournalCheck? before, JournalCheck after) {
+    if (before == null) {
+      return after;
+    }
+    return JournalCheck(
+      lines: after.lines,
+      gaps: after.gaps > before.gaps ? after.gaps : before.gaps,
+      torn: after.torn || before.torn,
+      late: after.late || before.late,
+    );
   }
 
   /// Перечитывает журнал записи [folder] с диска и сверяет его сам с
@@ -2532,7 +2584,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         ? await _closeTest(state.folder)
         : null;
     await _putInfo(
-      recheck == null ? done : done.withCheck(recheck),
+      recheck == null
+          ? done
+          : done.withCheck(_wholeCheck(state.check, recheck)),
       finished: true,
       test: test,
     );

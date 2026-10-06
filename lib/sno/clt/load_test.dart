@@ -61,6 +61,12 @@ enum PasswordOutcome {
   locked,
 }
 
+/// Можно ли набрать пароль [password] на экране пароля: только цифры,
+/// не больше [kCltPasswordLimit].
+bool isEnterablePassword(String password) {
+  return RegExp('^[0-9]{1,$kCltPasswordLimit}\$').hasMatch(password);
+}
+
 int Function() _stopwatch() {
   final Stopwatch stopwatch = Stopwatch()..start();
   return () => stopwatch.elapsedMilliseconds;
@@ -142,6 +148,15 @@ class LoadTest extends ChangeNotifier {
 
   Future<void> _load() async {
     try {
+      // Пароль набирают цифрами экрана: пароль, который так не
+      // набрать (в секрет сборки попали буква, пробел или перевод
+      // строки), запер бы тест навсегда — и молча.
+      if (!isEnterablePassword(_password)) {
+        throw const CltScenarioException(
+          'пароль теста в этой сборке не набрать: он не из цифр или '
+          'длиннее $kCltPasswordLimit знаков',
+        );
+      }
       final CltScenario builtin = parseCltScenario(kBuiltinCltScenario);
       String? replaced;
       try {
@@ -386,6 +401,11 @@ class LoadTest extends ChangeNotifier {
     final List<String> order = <String>[
       for (final CltItem item in items) item.id,
     ];
+    // Блок, за который усилие уже оценено, второй раз не спрашивают:
+    // кнопку могли нажать, пока прежний ответ ещё шёл на диск.
+    if (block != null && _effortGiven(block)) {
+      return null;
+    }
     CltResult? open;
     for (final CltResult result in results) {
       if (!result.complete &&
@@ -406,12 +426,36 @@ class LoadTest extends ChangeNotifier {
       dry: false,
       block: block,
       participant: state.participant.code,
-      tStart: open?.tStart ?? session.testNow,
+      recording: state.id,
+      tStart: open?.tStart ?? _freeStart(scenario.id, part.id),
       answers: open?.answers ?? const <CltAnswer>[],
     );
     await run._start(resumed: open != null);
     return run;
   }
+
+  /// Время начала новой части, при котором имя её файла не занято.
+  ///
+  /// Имя файла различает части по времени начала. После перезапуска
+  /// приложения часы записи считаются от настенных и, если те перевели
+  /// назад, стоят на месте: две части подряд получили бы одно имя, и
+  /// вторая затёрла бы ответы первой.
+  int _freeStart(String scenario, String part) {
+    int start = session.testNow;
+    bool taken() {
+      final String name = cltResultName(scenario, part, start);
+      return results.any((CltResult result) => result.name == name);
+    }
+
+    while (taken()) {
+      start++;
+    }
+    return start;
+  }
+
+  /// Оценено ли усилие за блок [block]: ответ на вопрос о нём лежит на
+  /// диске.
+  bool effortGiven(BlockMark block) => _effortGiven(block);
 
   @override
   void dispose() {
@@ -434,10 +478,12 @@ class LoadTestRun extends ChangeNotifier {
     required this.dry,
     this.block,
     String participant = kCltDryParticipant,
+    String? recording,
     int tStart = 0,
     List<CltAnswer> answers = const <CltAnswer>[],
   }) : _owner = owner,
        _participant = participant,
+       _recording = recording,
        _tStart = tStart {
     final Set<String> known = <String>{
       for (final CltItem item in items) item.id,
@@ -458,6 +504,10 @@ class LoadTestRun extends ChangeNotifier {
 
   final LoadTest _owner;
   final String _participant;
+
+  /// Идентификатор записи, в чью папку часть пишет; `null` — пробный
+  /// проход.
+  final String? _recording;
   final int _tStart;
 
   /// Сценарий, по которому идёт часть.
@@ -596,11 +646,12 @@ class LoadTestRun extends ChangeNotifier {
         reverse: current.reverse,
         revised: before != null,
       );
+      // Ответ принят: повторное «Дальше» — когда он не лёг на диск —
+      // его не переписывает и исправленным не помечает.
+      _changed = false;
     }
-    if (_index >= items.length - 1) {
-      _finished = true;
-      _tEnd = dry ? null : _owner.session.testNow;
-    } else {
+    final bool last = _index >= items.length - 1;
+    if (!last) {
       _index++;
       if (_index > _furthest) {
         _furthest = _index;
@@ -609,19 +660,29 @@ class LoadTestRun extends ChangeNotifier {
     }
     _saving = true;
     _notify();
-    await _save();
-    if (_finished && !dry) {
-      final int? ended = _tEnd;
-      await _owner.session.logTest(
-        SnoEventType.cltFinish,
-        data: <String, Object?>{
-          'part': part.id,
-          if (block != null) 'block': block?.number,
-          'file': fileName,
-          'answers': _answers.length,
-          if (ended != null) 'duration_ms': ended - _tStart,
-        },
-      );
+    if (last) {
+      // Часть окончена, только когда последний ответ лёг на диск: до
+      // того экран не уходит, а «Дальше» пробует ещё раз. Иначе блок
+      // значился бы оценённым, а на диске оценки не было бы.
+      final int? ended = dry ? null : _owner.session.testNow;
+      if (await _save(complete: true, tEnd: ended)) {
+        _tEnd = ended;
+        _finished = true;
+        if (!dry) {
+          await _owner.session.logTest(
+            SnoEventType.cltFinish,
+            data: <String, Object?>{
+              'part': part.id,
+              if (block != null) 'block': block?.number,
+              'file': fileName,
+              'answers': _answers.length,
+              if (ended != null) 'duration_ms': ended - _tStart,
+            },
+          );
+        }
+      }
+    } else {
+      await _save();
     }
     _saving = false;
     _notify();
@@ -630,7 +691,7 @@ class LoadTestRun extends ChangeNotifier {
     }
   }
 
-  CltResult _result() {
+  CltResult _result({bool complete = false, int? tEnd}) {
     return CltResult(
       scenario: scenario.id,
       version: scenario.version,
@@ -639,28 +700,42 @@ class LoadTestRun extends ChangeNotifier {
       block: block?.number,
       blockStartMs: block?.startMs,
       tStart: _tStart,
-      tEnd: _tEnd,
+      tEnd: tEnd,
       order: <String>[for (final CltItem item in items) item.id],
       answers: <CltAnswer>[
         for (final CltItem item in items)
           if (_answers[item.id] != null) _answers[item.id]!,
       ],
-      complete: _finished,
+      complete: complete,
     );
   }
 
   /// Кладёт файл части на диск: каждый ответ — сразу (SNO-F-CLT-03).
-  Future<void> _save() async {
+  /// Отвечает, лёг ли он. [complete] и [tEnd] — часть этим ответом
+  /// окончена.
+  ///
+  /// Оконченной часть помнится, только когда файл лёг: по памяти экран
+  /// завершения говорит, что уже отвечено.
+  Future<bool> _save({bool complete = false, int? tEnd}) async {
     if (dry) {
-      return;
+      return true;
     }
-    final CltResult result = _result();
-    _saveFailed = !await _owner.session.putTestFile(
+    final CltResult result = _result(complete: complete, tEnd: tEnd);
+    final bool saved = await _owner.session.putTestFile(
       result.name,
       result.encode(),
     );
-    _owner._remember(result);
+    _saveFailed = !saved;
+    if (saved || !complete) {
+      _owner._remember(result);
+    }
+    return saved;
   }
+
+  /// Осталась ли часть без сессии: сессию, в чью папку она писала,
+  /// завершили. Отвечать больше некуда, и экран части обязан отпустить
+  /// участника.
+  bool get orphaned => !dry && _owner.session.state?.id != _recording;
 
   Future<void> _start({required bool resumed}) async {
     final RecordingSession session = _owner.session;

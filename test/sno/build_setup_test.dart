@@ -490,22 +490,15 @@ void main() {
       final String ci = File('.github/workflows/ci.yml').readAsStringSync();
       expect(ci, contains('secrets.SNO_CLT_PASSWORD'));
       // Пароль получают обе платформы — и только сборка ветви.
+      int times(String text) => text.allMatches(ci).length;
       expect(
-        RegExp(
-          RegExp.escape(
-            r'clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")',
-          ),
-        ).allMatches(ci),
-        hasLength(2),
+        times(r'if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_CLT_PASSWORD:-}" ]'),
+        2,
       );
-      expect(
-        RegExp(
-          RegExp.escape(
-            r'if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_CLT_PASSWORD:-}" ]',
-          ),
-        ).allMatches(ci),
-        hasLength(2),
-      );
+      expect(times(r'clt=(--dart-define=SNO_CLT_PASSWORD="$password")'), 2);
+      // Пароль набирают цифрами экрана: секрет, который так не набрать,
+      // валит сборку, а не запирает тест молча.
+      expect(times(r"grep -Eq '^[0-9]{1,12}$'"), 2);
       // Релиз основного приложения о пароле теста не знает.
       final String release = File('.github/workflows/release.yml')
           .readAsStringSync();

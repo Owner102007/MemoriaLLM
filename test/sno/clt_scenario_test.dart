@@ -234,6 +234,34 @@ void main() {
       expect(refusal(sections), contains('раздел «tlx» встречается дважды'));
     });
 
+    test('SNO-F-CLT-02: идентификатор, который не годится в имя файла', () {
+      // По идентификаторам сценария и части называется файл ответов.
+      expect(
+        refusal(builtin()..['id'] = 'мой сценарий'),
+        contains('идентификатор сценария «мой сценарий»'),
+      );
+      final Map<String, Object?> nested = builtin();
+      partOf(nested, 'B')['id'] = 'B/2';
+      expect(refusal(nested), contains('идентификатор части «B/2»'));
+      final Map<String, Object?> hidden = builtin();
+      partOf(hidden, 'B')['id'] = '.B';
+      expect(refusal(hidden), contains('идентификатор части «.B»'));
+      final Map<String, Object?> windows = builtin();
+      partOf(windows, 'B')['id'] = r'B\2';
+      expect(refusal(windows), contains('идентификатор части'));
+      // Обычные имена проходят.
+      final Map<String, Object?> fine = builtin();
+      partOf(fine, 'B')['id'] = 'final_2.b-1';
+      expect(parseCltScenario(fine).partFor(kCltSessionEnd)!.id, 'final_2.b-1');
+    });
+
+    test('SNO-F-CLT-02: вопрос после блока не может быть под паролем', () {
+      final Map<String, Object?> locked = builtin();
+      partOf(locked, 'A')['password'] = true;
+
+      expect(refusal(locked), contains('не может быть под паролем'));
+    });
+
     test('SNO-F-CLT-02: две части в один миг и часть без мига', () {
       final Map<String, Object?> same = builtin();
       partOf(same, 'A')['when'] = kCltSessionEnd;

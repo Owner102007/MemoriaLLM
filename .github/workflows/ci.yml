@@ -405,7 +405,15 @@ jobs:
           # сборка ветви выходит без теста, и об этом сказано.
           clt=()
           if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_CLT_PASSWORD:-}" ]; then
-            clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")
+            # Секрет могли вставить с пробелом или переводом строки.
+            password=$(printf '%s' "$SNO_CLT_PASSWORD" | tr -d '\r\n ')
+            # Пароль набирают цифрами на экране: пароль с буквой или
+            # длиннее двенадцати знаков запер бы тест навсегда — и молча.
+            if ! printf '%s' "$password" | grep -Eq '^[0-9]{1,12}$'; then
+              echo "::error title=Тест нагрузки::секрет SNO_CLT_PASSWORD — не от одной до двенадцати цифр: такой пароль на экране не набрать"
+              exit 1
+            fi
+            clt=(--dart-define=SNO_CLT_PASSWORD="$password")
           elif [ -n "${SNO_BRANCH:-}" ]; then
             echo "::warning title=Тест нагрузки::секрета SNO_CLT_PASSWORD нет — сборка ветви $SNO_BRANCH выходит без теста нагрузки"
           fi
@@ -719,7 +727,15 @@ jobs:
           # сборка ветви выходит без теста, и об этом сказано.
           clt=()
           if [ -n "${SNO_BRANCH:-}" ] && [ -n "${SNO_CLT_PASSWORD:-}" ]; then
-            clt=(--dart-define=SNO_CLT_PASSWORD="$SNO_CLT_PASSWORD")
+            # Секрет могли вставить с пробелом или переводом строки.
+            password=$(printf '%s' "$SNO_CLT_PASSWORD" | tr -d '\r\n ')
+            # Пароль набирают цифрами на экране: пароль с буквой или
+            # длиннее двенадцати знаков запер бы тест навсегда — и молча.
+            if ! printf '%s' "$password" | grep -Eq '^[0-9]{1,12}$'; then
+              echo "::error title=Тест нагрузки::секрет SNO_CLT_PASSWORD — не от одной до двенадцати цифр: такой пароль на экране не набрать"
+              exit 1
+            fi
+            clt=(--dart-define=SNO_CLT_PASSWORD="$password")
           elif [ -n "${SNO_BRANCH:-}" ]; then
             echo "::warning title=Тест нагрузки::секрета SNO_CLT_PASSWORD нет — сборка ветви $SNO_BRANCH выходит без теста нагрузки"
           fi

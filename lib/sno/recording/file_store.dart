@@ -89,7 +89,13 @@ class FileRecordingStore implements RecordingStore {
     // заводится здесь же.
     final String path = p.joinAll(<String>[directory.path, ...name.split('/')]);
     final Directory parent = Directory(p.dirname(path));
-    if (!await parent.exists()) {
+    if (name.contains('/') && !await parent.exists()) {
+      // Заводится только подпапка и только в записи, которая есть:
+      // папку самой записи файл завести не вправе — запись уже могли
+      // упаковать и убрать.
+      if (!await directory.exists()) {
+        throw FileSystemException('папки записи нет', directory.path);
+      }
       await parent.create(recursive: true);
     }
     final File part = File('$path.part');

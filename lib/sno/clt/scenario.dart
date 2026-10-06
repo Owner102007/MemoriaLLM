@@ -218,6 +218,20 @@ List<Object?> _list(Object? raw, String what) {
   return _refuse('$what — не список или список пуст');
 }
 
+/// Идентификатор, который годится в имя файла: по идентификаторам
+/// сценария и части называется файл ответов (`results.dart`), а знак
+/// пути в имени увёл бы его мимо подпапки теста.
+final RegExp _fileSafe = RegExp(r'^[A-Za-z0-9._-]+$');
+
+String _name(Object? raw, String what) {
+  final String name = _text(raw, what);
+  if (!_fileSafe.hasMatch(name) || name.startsWith('.')) {
+    _refuse('$what «$name» — не из латинских букв, цифр, точки, '
+        'дефиса и подчёркивания');
+  }
+  return name;
+}
+
 String _text(Object? raw, String what) {
   if (raw is String && raw.trim().isNotEmpty) {
     return raw;
@@ -323,7 +337,7 @@ CltScenario parseCltScenario(Object? raw) {
   if (schema != kCltScenarioSchema) {
     _refuse('формат сценария «$schema», а нужен «$kCltScenarioSchema»');
   }
-  final String id = _text(root['id'], 'идентификатор сценария');
+  final String id = _name(root['id'], 'идентификатор сценария');
   final Object? version = root['version'];
   if (version is! int || version < 1) {
     _refuse('версия сценария — не целое число от единицы');
@@ -334,7 +348,7 @@ CltScenario parseCltScenario(Object? raw) {
   final List<CltPart> parts = <CltPart>[];
   for (final Object? entry in _list(root['parts'], 'части сценария')) {
     final Map<String, Object?> part = _object(entry, 'часть сценария');
-    final String partId = _text(part['id'], 'идентификатор части');
+    final String partId = _name(part['id'], 'идентификатор части');
     if (!partIds.add(partId)) {
       _refuse('часть «$partId» встречается дважды');
     }
@@ -383,11 +397,19 @@ CltScenario parseCltScenario(Object? raw) {
         ),
       );
     }
+    final bool password = _flag(part['password'], 'часть «$partId»: пароль');
+    if (password && when == kCltBlockEnd) {
+      // Блок закрывает экспериментатор посреди записи, а замок теста
+      // открывается только после её остановки: вопрос под паролем не
+      // показался бы никогда.
+      _refuse('часть «$partId» показывается после блока и не может быть '
+          'под паролем');
+    }
     parts.add(
       CltPart(
         id: partId,
         when: when == kCltBlockEnd ? kCltBlockEnd : kCltSessionEnd,
-        password: _flag(part['password'], 'часть «$partId»: пароль'),
+        password: password,
         sections: List<CltSection>.unmodifiable(sections),
       ),
     );

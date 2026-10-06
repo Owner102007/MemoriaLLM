@@ -215,7 +215,11 @@ class _LoadTestPasswordState extends State<LoadTestPasswordScreen> {
       return;
     }
     if (outcome == PasswordOutcome.accepted) {
-      Navigator.of(context).pop(true);
+      // Экран могли закрыть, пока пароль проверялся: тогда закрывать
+      // уже нечего, а `pop` снял бы экран под ним.
+      if (ModalRoute.of(context)?.isCurrent ?? false) {
+        Navigator.of(context).pop(true);
+      }
       return;
     }
     setState(() {
@@ -406,14 +410,29 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
     _cameFrom = widget.test.session.context.screen;
     widget.test.session.screen('clt');
     widget.run.addListener(_changed);
+    widget.test.addListener(_changed);
   }
 
   @override
   void dispose() {
     widget.run.removeListener(_changed);
+    widget.test.removeListener(_changed);
     widget.test.session.screen(_cameFrom);
     widget.run.dispose();
     super.dispose();
+  }
+
+  /// Отвечать ли здесь уже не на что: сессию завершили, или усилие за
+  /// этот блок оценили на другом экране — на экране завершения,
+  /// который открылся поверх, когда запись остановилась.
+  bool get _stale {
+    final LoadTestRun run = widget.run;
+    if (run.finished) {
+      return false;
+    }
+    final BlockMark? block = run.block;
+    return run.orphaned ||
+        (_effort && block != null && widget.test.effortGiven(block));
   }
 
   void _changed() {
@@ -421,11 +440,25 @@ class _LoadTestRunState extends State<LoadTestRunScreen> {
       return;
     }
     setState(() {});
+    if (_leaving) {
+      return;
+    }
     // Вопрос об усилии — один: ответ дан, и участник снова там, откуда
-    // пришёл.
-    if (_effort && widget.run.finished && !_leaving) {
+    // пришёл. Экран, которому отвечать уже не на что, уходит тоже:
+    // держать участника на вопросе без выхода нельзя.
+    if ((_effort && widget.run.finished) || _stale) {
       _leaving = true;
-      Navigator.of(context).pop();
+      // Именно этот экран, а не верхний: поверх него может стоять
+      // экран завершения сессии.
+      final ModalRoute<Object?>? route = ModalRoute.of(context);
+      if (route == null) {
+        return;
+      }
+      if (route.isCurrent) {
+        Navigator.of(context).pop();
+      } else {
+        Navigator.of(context).removeRoute(route);
+      }
     }
   }
 

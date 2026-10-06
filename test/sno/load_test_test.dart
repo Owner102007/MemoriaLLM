@@ -21,9 +21,10 @@ import '../support/recording_fakes.dart';
 /// продолжение после перезапуска, итог и показатели при завершении
 /// сессии. Экраны — в `clt_screens_test.dart`.
 void main() {
-  /// Пароль теста в этих проверках: не цифры — чтобы его след в
-  /// журнале нельзя было спутать с числом.
-  const String password = 'сезам-17';
+  /// Пароль теста в этих проверках: двенадцать цифр — столько в
+  /// журнале подряд случайно не встретится, и след пароля в нём не
+  /// спутать с числом.
+  const String password = '904172650318';
 
   /// Код участника, с которым начинают запись.
   final ParticipantCode code = ParticipantCode(
@@ -254,6 +255,31 @@ void main() {
       kit.session.dispose();
     });
 
+    test('SNO-F-CLT-01: пароль, который на экране не набрать, — теста '
+        'нет, и причина названа', () async {
+      expect(isEnterablePassword('2580'), isTrue);
+      expect(isEnterablePassword('0'), isTrue);
+      expect(isEnterablePassword('123456789012'), isTrue);
+      expect(isEnterablePassword('1234567890123'), isFalse);
+      expect(isEnterablePassword(''), isFalse);
+      expect(isEnterablePassword('25a0'), isFalse);
+      expect(isEnterablePassword('2580\n'), isFalse);
+      expect(isEnterablePassword(' 2580'), isFalse);
+
+      // В секрет сборки попала буква: такой пароль запер бы тест
+      // навсегда — и молча.
+      final SessionKit kit = await stoppedKit();
+      final LoadTest test = LoadTest(session: kit.session, password: '25a0');
+      await test.load();
+
+      expect(test.scenario, isNull);
+      expect(test.problem, contains('не набрать'));
+      expect(test.finalItems, 0);
+      expect(await test.begin(kCltSessionEnd, dry: true), isNull);
+      test.dispose();
+      kit.session.dispose();
+    });
+
     test('SNO-F-CLT-01: без остановленной сессии пароль теста не '
         'отпирает', () async {
       final SessionKit kit = SessionKit(hasTest: true);
@@ -378,9 +404,9 @@ void main() {
       );
       expect(
         await problemOf(
-          (String id) async => jsonEncode(builtin()..['id'] = 'другой'),
+          (String id) async => jsonEncode(builtin()..['id'] = 'other-test'),
         ),
-        'в файле сценарий «другой», а нужен «sno-clt-main»',
+        'в файле сценарий «other-test», а нужен «sno-clt-main»',
       );
       expect(
         await problemOf((String id) => throw StateError('диск')),
@@ -546,6 +572,115 @@ void main() {
       expect(finishes, hasLength(2));
       expect(finishes.first.containsKey('phase'), isFalse);
       expect(finishes.last['phase'], 'post');
+      first.dispose();
+      second.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-02: за оценённый блок второй раз не спрашивают', () async {
+      final SessionKit kit = SessionKit(hasTest: true);
+      await kit.session.start(code);
+      final LoadTest test = testOn(kit);
+      kit.session.startBlock(1);
+      kit.run(30);
+      await kit.session.stop(StopReason.experimenter);
+      await test.load();
+      final BlockMark block = test.pendingEfforts.single;
+      final LoadTestRun run = (await test.begin(kCltBlockEnd, block: block))!;
+      run.choose(4);
+      await run.next();
+
+      // Кнопку могли нажать второй раз, пока экран уходил.
+      expect(test.effortGiven(block), isTrue);
+      expect(await test.begin(kCltBlockEnd, block: block), isNull);
+      run.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-03: оценка не легла на диск — блок не оценён, '
+        '«Дальше» пробует ещё раз', () async {
+      final SessionKit kit = SessionKit(hasTest: true);
+      await kit.session.start(code);
+      final String folder = kit.folder;
+      final LoadTest test = testOn(kit);
+      kit.session.startBlock(1);
+      kit.run(30);
+      await kit.session.stop(StopReason.experimenter);
+      await test.load();
+      final BlockMark block = test.pendingEfforts.single;
+      final LoadTestRun run = (await test.begin(kCltBlockEnd, block: block))!;
+      kit.store.failPutPrefix = 'clt/';
+      run.choose(7);
+
+      await run.next();
+
+      // Ответ единственный и последний: пока он не на диске, часть не
+      // окончена, экран не уходит, блок ждёт оценки.
+      expect(run.finished, isFalse);
+      expect(run.saveFailed, isTrue);
+      expect(run.canNext, isTrue);
+      expect(test.pendingEfforts.single.number, 1);
+      expect(eventsOf(kit, folder, 'clt.finish'), isEmpty);
+      expect(fileOf(kit, folder, run.fileName)['complete'], isFalse);
+
+      kit.store.failPutPrefix = null;
+      await run.next();
+
+      expect(run.finished, isTrue);
+      expect(run.saveFailed, isFalse);
+      expect(test.pendingEfforts, isEmpty);
+      final Map<String, Object?> file = fileOf(kit, folder, run.fileName);
+      expect(file['complete'], isTrue);
+      expect(answersOf(file).single['value'], 7);
+      expect(eventsOf(kit, folder, 'clt.finish'), hasLength(1));
+      run.dispose();
+      test.dispose();
+      kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-03: две оценки подряд в один миг ложатся в два '
+        'файла', () async {
+      final SessionKit kit = SessionKit(hasTest: true);
+      await kit.session.start(code);
+      final String folder = kit.folder;
+      final LoadTest test = testOn(kit);
+      // Первый блок закрыт, но вопрос о нём не задан; второй закрыла
+      // остановка.
+      kit.session.startBlock(1);
+      kit.run(30);
+      kit.session.endBlock();
+      kit.session.startBlock(2);
+      kit.run(30);
+      await kit.session.stop(StopReason.experimenter);
+      await test.load();
+      expect(test.pendingEfforts, hasLength(2));
+
+      // Часы между ответами не идут: имя файла различает части по
+      // времени начала, и вторая не должна затереть первую.
+      final LoadTestRun first = (await test.begin(
+        kCltBlockEnd,
+        block: test.pendingEfforts.first,
+      ))!;
+      first.choose(3);
+      await first.next();
+      final LoadTestRun second = (await test.begin(
+        kCltBlockEnd,
+        block: test.pendingEfforts.single,
+      ))!;
+      second.choose(8);
+      await second.next();
+
+      expect(second.fileName, isNot(first.fileName));
+      expect(test.pendingEfforts, isEmpty);
+      expect(answersOf(fileOf(kit, folder, first.fileName)).single['value'], 3);
+      expect(
+        answersOf(fileOf(kit, folder, second.fileName)).single['value'],
+        8,
+      );
+      expect(fileOf(kit, folder, first.fileName)['block'], 1);
+      expect(fileOf(kit, folder, second.fileName)['block'], 2);
       first.dispose();
       second.dispose();
       test.dispose();
@@ -1087,6 +1222,37 @@ void main() {
       expect(kit.session.phase, RecordingPhase.idle);
       expect(infoOf(kit, folder)['clt'], <String, Object?>{'final': 'unknown'});
       kit.session.dispose();
+    });
+
+    test('SNO-F-CLT-03: строка теста, оборванная закрытием приложения, не '
+        'делает запись целой', () async {
+      final SessionKit first = await stoppedKit();
+      final String folder = first.folder;
+      expect(first.session.check!.intact, isTrue);
+      final LoadTest before = testOn(first);
+      await before.enter(password);
+      // Приложение умерло посреди строки события теста.
+      first.store.journals[folder]!.write('{"seq":999,"t":6000');
+      before.dispose();
+      first.session.dispose();
+
+      final SessionKit second = await restarted(first);
+
+      // Оборванный хвост виден при запуске — до того, как чтение
+      // журнала его отрежет.
+      expect(second.session.check!.torn, isTrue);
+      expect(second.session.check!.intact, isFalse);
+      await second.session.finish();
+
+      // К повторной проверке хвост уже отрезан, но итог о нём помнит.
+      final Map<String, Object?> check =
+          (infoOf(second, folder)['recording']!
+                  as Map<String, Object?>)['check']!
+              as Map<String, Object?>;
+      expect(check['torn'], isTrue);
+      expect(check['lines'], second.store.lines(folder).length);
+      expect(second.store.lines(folder).join(), isNot(contains('"seq":999')));
+      second.session.dispose();
     });
 
     test('SNO-F-CLT-03: после завершения сессии тест в её папку не '

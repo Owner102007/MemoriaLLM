@@ -612,6 +612,92 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-CLT-03: оценка не легла на диск — экран не уходит и '
+        'говорит об этом', (WidgetTester tester) async {
+      await pumpTesting(tester);
+      await kit.session.start(code);
+      final String folder = kit.folder;
+      await tester.pumpAndSettle();
+      await tap(tester, 'sno-block-start');
+      kit.run(30);
+      await tester.pumpAndSettle();
+      await tap(tester, 'sno-block-end');
+      kit.store.failPutPrefix = 'clt/';
+
+      await tap(tester, 'sno-clt-value-5');
+      await tap(tester, 'sno-clt-next');
+
+      expect(find.byType(LoadTestRunScreen), findsOneWidget);
+      expect(
+        textOf(tester, 'sno-clt-save-failed'),
+        'Ответ не записался на диск: проверьте свободное место.',
+      );
+      // Диск ответил — «Дальше» доводит дело до конца.
+      kit.store.failPutPrefix = null;
+      await tap(tester, 'sno-clt-next');
+
+      expect(find.byType(LoadTestRunScreen), findsNothing);
+      expect(answersOf(folder, fileOf(folder, 'A')).single['value'], 5);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CLT-02: сессию завершили — вопрос об усилии без '
+        'ответа участника не держит', (WidgetTester tester) async {
+      await pumpTesting(tester);
+      await kit.session.start(code);
+      await tester.pumpAndSettle();
+      await tap(tester, 'sno-block-start');
+      kit.run(30);
+      await tester.pumpAndSettle();
+      await tap(tester, 'sno-block-end');
+      expect(find.byType(LoadTestRunScreen), findsOneWidget);
+
+      // Запись остановили и сессию завершили, не ответив: отвечать
+      // больше некуда.
+      await kit.session.stop(StopReason.experimenter);
+      await tester.pumpAndSettle();
+      expect(find.byType(LoadTestRunScreen), findsOneWidget);
+      await kit.session.finish();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoadTestRunScreen), findsNothing);
+      expect(find.byType(TestingScreen), findsOneWidget);
+      expect(find.byKey(const Key('sno-record-start')), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-CLT-02: усилие за блок оценили на другом экране — '
+        'этот вопрос закрывается сам', (WidgetTester tester) async {
+      await pumpTesting(tester);
+      await kit.session.start(code);
+      final String folder = kit.folder;
+      await tester.pumpAndSettle();
+      await tap(tester, 'sno-block-start');
+      kit.run(30);
+      await tester.pumpAndSettle();
+      await tap(tester, 'sno-block-end');
+      expect(find.byType(LoadTestRunScreen), findsOneWidget);
+
+      // Тот же вопрос задан ещё раз — с экрана завершения сессии,
+      // который открылся поверх, — и на него ответили там.
+      final LoadTestRun other = (await test.begin(
+        kCltBlockEnd,
+        block: kit.session.blocks.last,
+      ))!;
+      other.choose(5);
+      await other.next();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(LoadTestRunScreen), findsNothing);
+      // Вопрос один, файл один, ответ — тот, что дали.
+      expect(answersOf(folder, fileOf(folder, 'A')).single['value'], 5);
+      other.dispose();
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-CLT-02: «Закончить» у блока задаёт вопрос об усилии и '
         'возвращает в раздел', (WidgetTester tester) async {
       await pumpTesting(tester);
