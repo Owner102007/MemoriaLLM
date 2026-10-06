@@ -226,8 +226,10 @@ final RegExp _fileSafe = RegExp(r'^[A-Za-z0-9._-]+$');
 String _name(Object? raw, String what) {
   final String name = _text(raw, what);
   if (!_fileSafe.hasMatch(name) || name.startsWith('.')) {
-    _refuse('$what «$name» — не из латинских букв, цифр, точки, '
-        'дефиса и подчёркивания');
+    _refuse(
+      '$what «$name» — не из латинских букв, цифр, точки, '
+      'дефиса и подчёркивания',
+    );
   }
   return name;
 }
@@ -402,8 +404,10 @@ CltScenario parseCltScenario(Object? raw) {
       // Блок закрывает экспериментатор посреди записи, а замок теста
       // открывается только после её остановки: вопрос под паролем не
       // показался бы никогда.
-      _refuse('часть «$partId» показывается после блока и не может быть '
-          'под паролем');
+      _refuse(
+        'часть «$partId» показывается после блока и не может быть '
+        'под паролем',
+      );
     }
     parts.add(
       CltPart(

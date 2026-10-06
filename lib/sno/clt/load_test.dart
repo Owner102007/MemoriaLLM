@@ -535,7 +535,6 @@ class LoadTestRun extends ChangeNotifier {
   bool _finished = false;
   bool _saving = false;
   bool _saveFailed = false;
-  int? _tEnd;
   bool _disposed = false;
 
   /// Номер показанного пункта, считая с нуля.
@@ -666,7 +665,6 @@ class LoadTestRun extends ChangeNotifier {
       // значился бы оценённым, а на диске оценки не было бы.
       final int? ended = dry ? null : _owner.session.testNow;
       if (await _save(complete: true, tEnd: ended)) {
-        _tEnd = ended;
         _finished = true;
         if (!dry) {
           await _owner.session.logTest(
