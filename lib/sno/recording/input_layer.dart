@@ -147,11 +147,7 @@ class InputLayer {
   /// [size] отвечает размером окна в логических пикселях; [stage] —
   /// особым именем экрана для касаний, которые начинаются сейчас
   /// (вопрос об остановке), либо `null`.
-  InputLayer({
-    required this.session,
-    required this.size,
-    this.stage,
-  });
+  InputLayer({required this.session, required this.size, this.stage});
 
   /// Запись, в поток которой уходит ввод.
   final RecordingSession session;

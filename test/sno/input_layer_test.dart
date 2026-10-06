@@ -318,9 +318,7 @@ void main() {
       await kit.session.stop(StopReason.experimenter);
       await tester.pump();
 
-      final List<Map<String, Object?>> lines = kit.store.inputLines(
-        kit.folder,
-      );
+      final List<Map<String, Object?>> lines = kit.store.inputLines(kit.folder);
       final Map<String, Object?> click = lines.singleWhere(
         (Map<String, Object?> line) => line['dev'] == 'mouse',
       );
@@ -396,10 +394,7 @@ void main() {
       expect(inputKeyName(LogicalKeyboardKey.f4, alt: true), 'Alt+F4');
       // Сама клавиша-модификатор.
       expect(inputKeyName(LogicalKeyboardKey.shiftLeft, shift: true), 'Shift');
-      expect(
-        inputKeyName(LogicalKeyboardKey.controlRight, ctrl: true),
-        'Ctrl',
-      );
+      expect(inputKeyName(LogicalKeyboardKey.controlRight, ctrl: true), 'Ctrl');
     });
 
     test('SNO-ALG-REC-07: указатель и кнопка мыши словами', () {
@@ -447,10 +442,11 @@ void main() {
       await tester.pump();
 
       final List<Map<String, Object?>> lines = await inputLines(tester);
-      expect(
-        lines.map((Map<String, Object?> line) => line['screen']),
-        <String>[kInputDotScreen, kInputStopScreen, 'shelf'],
-      );
+      expect(lines.map((Map<String, Object?> line) => line['screen']), <String>[
+        kInputDotScreen,
+        kInputStopScreen,
+        'shelf',
+      ]);
 
       await unmount(tester);
     });

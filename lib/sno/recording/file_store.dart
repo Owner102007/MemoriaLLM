@@ -75,9 +75,8 @@ class FileRecordingStore implements RecordingStore {
     String name = kEventsFile,
   }) async {
     final Directory directory = await _folder(folder);
-    final RandomAccessFile file = await File(
-      p.join(directory.path, name),
-    ).open(mode: FileMode.writeOnlyAppend);
+    final RandomAccessFile file = await File(p.join(directory.path, name))
+        .open(mode: FileMode.writeOnlyAppend);
     return _DiskJournal(file);
   }
 

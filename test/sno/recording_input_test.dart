@@ -141,9 +141,7 @@ void main() {
       kit.time.pass(const Duration(seconds: 3));
       await kit.session.stop(StopReason.experimenter);
 
-      final Map<String, Object?> line = kit.store
-          .inputLines(kit.folder)
-          .single;
+      final Map<String, Object?> line = kit.store.inputLines(kit.folder).single;
       expect(line['kind'], 'cut');
       expect(line['dt'], 3000);
       kit.session.dispose();
@@ -160,9 +158,7 @@ void main() {
       kit.session.keyInput('down', 'VolumeDown', pressed: false);
       await written(kit);
 
-      final Map<String, Object?> line = kit.store
-          .inputLines(kit.folder)
-          .single;
+      final Map<String, Object?> line = kit.store.inputLines(kit.folder).single;
       expect(line['dev'], 'key');
       expect(line['key'], 'VolumeDown');
       expect(line['repeat'], 1);
@@ -205,8 +201,9 @@ void main() {
           if (event.containsKey('input')) event['input'],
       };
       final List<Object?> empty = <Object?>[
-        for (final Map<String, Object?> line
-            in kit.store.inputLines(kit.folder))
+        for (final Map<String, Object?> line in kit.store.inputLines(
+          kit.folder,
+        ))
           if (!referenced.contains(line['n'])) line['n'],
       ];
       expect(empty, <int>[2]);
@@ -289,37 +286,40 @@ void main() {
       kit.session.dispose();
     });
 
-    test('SNO-F-REC-11: то, что запись пишет сама, на ввод не ссылается', () async {
-      final SessionKit kit = SessionKit();
-      await kit.session.start(code);
-      final InputTracker input = kit.session.input!;
-      // Палец лежит на экране десять секунд: сердцебиение и смена
-      // состояния приложения пишутся при опущенном пальце.
-      input.down(
-        pointer: 1,
-        t: kit.session.inputNow,
-        x: 1,
-        y: 1,
-        dev: 'touch',
-        vw: 411,
-        vh: 914,
-        screen: 'shelf',
-      );
-      kit.run(kHeartbeatTicks);
-      kit.session.appState('inactive');
-      kit.session.appState('resumed');
-      await kit.session.stop(StopReason.experimenter);
-
-      for (final Map<String, Object?> event in kit.store.events(kit.folder)) {
-        expect(
-          event.containsKey('input'),
-          isFalse,
-          reason: 'событие ${event['type']}',
+    test(
+      'SNO-F-REC-11: то, что запись пишет сама, на ввод не ссылается',
+      () async {
+        final SessionKit kit = SessionKit();
+        await kit.session.start(code);
+        final InputTracker input = kit.session.input!;
+        // Палец лежит на экране десять секунд: сердцебиение и смена
+        // состояния приложения пишутся при опущенном пальце.
+        input.down(
+          pointer: 1,
+          t: kit.session.inputNow,
+          x: 1,
+          y: 1,
+          dev: 'touch',
+          vw: 411,
+          vh: 914,
+          screen: 'shelf',
         );
-      }
-      expect(eventsOf(kit, 'session.heartbeat'), isNotEmpty);
-      kit.session.dispose();
-    });
+        kit.run(kHeartbeatTicks);
+        kit.session.appState('inactive');
+        kit.session.appState('resumed');
+        await kit.session.stop(StopReason.experimenter);
+
+        for (final Map<String, Object?> event in kit.store.events(kit.folder)) {
+          expect(
+            event.containsKey('input'),
+            isFalse,
+            reason: 'событие ${event['type']}',
+          );
+        }
+        expect(eventsOf(kit, 'session.heartbeat'), isNotEmpty);
+        kit.session.dispose();
+      },
+    );
   });
 
   group('SNO-F-REC-11: поток в сведениях записи', () {
@@ -377,8 +377,11 @@ void main() {
       expect(check.gaps, 2);
       expect(check.intact, isFalse);
       expect(kit.session.writeFailed, isTrue);
-      expect(describeInputCheck(check), 'Ввод неполон: 1 строка, '
-          'пропущено строк 2');
+      expect(
+        describeInputCheck(check),
+        'Ввод неполон: 1 строка, '
+        'пропущено строк 2',
+      );
       kit.session.dispose();
     });
 

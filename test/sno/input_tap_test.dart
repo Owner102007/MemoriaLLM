@@ -74,9 +74,9 @@ void main() {
     test('SNO-ALG-REC-07: ушло дальше порога — drag, и порог у мыши '
         'меньше, чем у пальца', () {
       down(1, 0, 100, 100);
-      tracker.up(pointer: 1, t: 80, x: 100 + kTouchSlop - 1, y: 100);
+      tracker.up(pointer: 1, t: 80, x: 100 + kInputSlop - 1, y: 100);
       down(2, 200, 100, 100);
-      tracker.up(pointer: 2, t: 280, x: 100 + kTouchSlop + 1, y: 100);
+      tracker.up(pointer: 2, t: 280, x: 100 + kInputSlop + 1, y: 100);
       down(3, 400, 100, 100, dev: 'mouse', button: 'primary');
       tracker.up(pointer: 3, t: 480, x: 100 + kMouseSlop + 1, y: 100);
 
@@ -197,7 +197,7 @@ void main() {
       for (int i = 1; i <= kTrailLimit + 50; i++) {
         tracker.move(pointer: 1, t: i * kTrailGapMs, x: i.toDouble(), y: 0);
       }
-      final int end = (kTrailLimit + 50) * kTrailGapMs + 7;
+      const int end = (kTrailLimit + 50) * kTrailGapMs + 7;
       tracker.up(pointer: 1, t: end, x: 9999, y: 1);
 
       final List<Object?> trail = lines.single['trail']! as List<Object?>;
@@ -329,7 +329,7 @@ void main() {
       for (int t = 0; t <= 5000; t += 16) {
         tracker.hover(
           t: t,
-          x: 500 + (t % 32 == 0 ? 1 : 0),
+          x: t % 32 == 0 ? 501.0 : 500.0,
           y: 300,
           vw: 1280,
           vh: 800,
@@ -447,8 +447,10 @@ void main() {
         bytes += utf8.encode(jsonEncode(line)).length + 1;
       }
       // ignore: avoid_print
-      print('ЗАМЕР: поток ввода за 40 минут — ${bytes ~/ 1024} КБ, '
-          'строк ${lines.length}, касаний $pointer');
+      print(
+        'ЗАМЕР: поток ввода за 40 минут — ${bytes ~/ 1024} КБ, '
+        'строк ${lines.length}, касаний $pointer',
+      );
       expect(pointer, 3000);
       expect(bytes, lessThan(3 * 1024 * 1024));
     });

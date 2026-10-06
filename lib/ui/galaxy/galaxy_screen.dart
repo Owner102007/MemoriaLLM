@@ -146,7 +146,14 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     final bool busy = _reading?.progress.busy ?? false;
     final bool finished = _wasBusy && !busy;
     _wasBusy = busy;
-    setState(() {});
+    setState(() {
+      if (finished && widget.visible) {
+        // Прежняя карта посчитана до этой подготовки: на тот кадр,
+        // пока читается новая, её на экране нет — и в журнал записи
+        // она не попадает.
+        _galaxy = null;
+      }
+    });
     if (finished && widget.visible) {
       // Карта появится на глазах у участника: для журнала это то же,
       // что открытый раздел.

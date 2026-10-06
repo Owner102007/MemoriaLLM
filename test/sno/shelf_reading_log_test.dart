@@ -127,19 +127,17 @@ void main() {
         ),
       );
 
-    expect(
-      said().map((Map<String, Object?> line) => line['phase']),
-      <String>['reading', 'mapping', 'done'],
-    );
+    expect(said().map((Map<String, Object?> line) => line['phase']), <String>[
+      'reading',
+      'mapping',
+      'done',
+    ]);
     expect(said()[1]['map_total'], 3);
     final Map<String, Object?> done = said().last;
     expect(done['pages'], 640);
     expect(done['scans'], 1);
     expect(done['unread'], 0);
-    expect(
-      (done['map']! as Map<String, Object?>)['fingerprint'],
-      '6be411b9',
-    );
+    expect((done['map']! as Map<String, Object?>)['fingerprint'], '6be411b9');
   });
 
   test('SNO-F-IDX-04: подготовке нечего было делать — журнал молчит', () {

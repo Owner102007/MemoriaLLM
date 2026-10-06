@@ -322,6 +322,38 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('SNO-F-REC-02: запрос, набранный по буквам с паузами в '
+        'треть секунды, — одно событие', (WidgetTester tester) async {
+      // Решение владельца Щ1 (б): при сроке в 150 мс «что такое»
+      // ложилось в журнал шестью запросами — между буквами у человека
+      // 200–400 мс. Запрос — то, на чём участник остановился.
+      final AppServices services = await twoBooks();
+      await kit.session.start(code);
+      await pumpShelf(tester, services, visible: true);
+
+      await tester.tap(find.byKey(const Key('library-search')));
+      await tester.pumpAndSettle();
+      for (final String typed in <String>['а', 'ан', 'ана', 'анат']) {
+        await tester.enterText(
+          find.byKey(const Key('shelf-search-field')),
+          typed,
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      await written(tester);
+      expect(only('search.query'), isEmpty, reason: 'срок ещё не вышел');
+      await tester.pump(const Duration(milliseconds: 500));
+      await written(tester);
+
+      expect(dataOf(only('search.query').single), <String, Object?>{
+        'scope': 'shelf',
+        'text': 'анат',
+        'hits': 1,
+      });
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-REC-02: открыл найденное, не дав запросу простоять, — '
         'запрос в журнале есть и стоит раньше', (WidgetTester tester) async {
       final AppServices services = await twoBooks();

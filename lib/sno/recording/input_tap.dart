@@ -17,7 +17,7 @@ library;
 import 'dart:math' as math;
 
 /// Дальше скольких логических пикселей от места касания палец «повёл».
-const double kTouchSlop = 18;
+const double kInputSlop = 18;
 
 /// То же для мыши: рука с мышью стоит на месте точнее пальца.
 const double kMouseSlop = 4;
@@ -112,7 +112,7 @@ String contactKind({
 }
 
 /// Порог места для указателя [dev].
-double slopOf(String dev) => dev == 'mouse' ? kMouseSlop : kTouchSlop;
+double slopOf(String dev) => dev == 'mouse' ? kMouseSlop : kInputSlop;
 
 class _Contact {
   _Contact({

@@ -251,9 +251,7 @@ void main() {
         'Ввод цел: 0 строк, пропусков нет',
       );
       expect(
-        describeInputCheck(
-          const JournalCheck(lines: 310, gaps: 2, torn: true),
-        ),
+        describeInputCheck(const JournalCheck(lines: 310, gaps: 2, torn: true)),
         'Ввод неполон: 310 строк, пропущено строк 2, последняя оборвана',
       );
       expect(

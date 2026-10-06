@@ -224,11 +224,11 @@ void main() {
       await tester.tap(find.byKey(const Key('galaxy-card-close')));
       await tester.pumpAndSettle();
 
-      final List<Map<String, Object?>> events = (await logged(
-        tester,
-      )).where((Map<String, Object?> event) {
-        return event['type'] != 'galaxy.open';
-      }).toList();
+      final List<Map<String, Object?>> events = (await logged(tester))
+          .where((Map<String, Object?> event) {
+            return event['type'] != 'galaxy.open';
+          })
+          .toList();
       expect(typesOf(events), <String>[
         'galaxy.star',
         'galaxy.card.open',
@@ -291,11 +291,11 @@ void main() {
       await tester.dragFrom(centre, const Offset(-80, 0));
       await tester.pumpAndSettle();
 
-      final List<Map<String, Object?>> views = (await logged(
-        tester,
-      )).where((Map<String, Object?> event) {
-        return event['type'] == 'galaxy.view';
-      }).toList();
+      final List<Map<String, Object?>> views = (await logged(tester))
+          .where((Map<String, Object?> event) {
+            return event['type'] == 'galaxy.view';
+          })
+          .toList();
       expect(views, hasLength(3));
       expect(dataOf(views[0])['cause'], 'wheel');
       expect(dataOf(views[1])['cause'], 'wheel');
@@ -328,11 +328,10 @@ void main() {
       await tester.tapAt(corner);
       await tester.pump();
 
-      final Map<String, Object?> view = (await logged(
-        tester,
-      )).singleWhere((Map<String, Object?> event) {
-        return event['type'] == 'galaxy.view';
-      });
+      final Map<String, Object?> view = (await logged(tester))
+          .singleWhere((Map<String, Object?> event) {
+            return event['type'] == 'galaxy.view';
+          });
       expect(dataOf(view)['cause'], 'double_tap');
       expect(number(dataOf(view)['scale']), 2.0);
 
@@ -387,11 +386,7 @@ void main() {
       await kit.session.start(code);
       await pumpGalaxy(
         tester,
-        testServices(
-          data: data,
-          recording: kit.session,
-          shelfReading: reading,
-        ),
+        testServices(data: data, recording: kit.session, shelfReading: reading),
       );
 
       final Map<String, Object?> waiting = (await logged(tester)).single;
