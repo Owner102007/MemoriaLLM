@@ -14,6 +14,7 @@ import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/reading/volume_keys.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
 import 'package:memoria/sno/clt/load_test.dart';
+import 'package:memoria/sno/eye/eye_tracker.dart';
 import 'package:memoria/sno/index/shelf_reading.dart';
 import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/session.dart';
@@ -69,6 +70,7 @@ AppServices testServices({
   LoadTest? loadTest,
   ShelfReading? shelfReading,
   BookTimes? bookTimes,
+  EyeTracker? eye,
 }) {
   final ReaderDocument doc =
       document ?? FakeReaderDocument(pages: <String>['текст']);
@@ -91,6 +93,7 @@ AppServices testServices({
     loadTest: loadTest,
     shelfReading: shelfReading,
     bookTimes: bookTimes,
+    eye: eye,
     covers: CoverService(
       opener: FakeDocumentOpener(
         doc,

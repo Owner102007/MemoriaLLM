@@ -769,6 +769,22 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// Время `t` по часам записи для строки ввода.
   int get inputNow => _tNow();
 
+  /// Время `t` по часам записи для пары часов взгляда «QPC — `t`»
+  /// (SNO-ALG-EYE-03, шаг 5).
+  int get eyeNow => _tNow();
+
+  /// Части сведений записи, которые знают службы рядом с ней: ключ
+  /// `recording.json` → его значение в миг записи сведений.
+  final Map<String, Object? Function()> _infoParts =
+      <String, Object? Function()>{};
+
+  /// Добавляет в сведения записи часть [key], которую знает служба рядом
+  /// с записью — айтрекер (SNO-F-EYE-04): значение берётся у [part]
+  /// каждый раз, когда сведения пишутся; `null` — части нет.
+  void addInfoPart(String key, Object? Function() part) {
+    _infoParts[key] = part;
+  }
+
   /// Сколько строк ввода посчитала остановленная запись; `null` —
   /// запись идёт, потока нет или счёт неизвестен.
   int? get inputs => recording ? null : _state?.inputs;
@@ -1738,11 +1754,25 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         },
       // SNO-F-CLT-03: пройден ли тест нагрузки и где лежат ответы.
       if (test != null) 'clt': test,
+      // SNO-F-EYE-04: что знают службы рядом с записью — айтрекер.
+      for (final MapEntry<String, Object? Function()> part
+          in _infoParts.entries)
+        if (_infoPart(part.value) case final Object value) part.key: value,
     };
     try {
       await _store.put(state.folder, kRecordingFile, _pretty(info));
     } on Object {
       _failed = true;
+    }
+  }
+
+  /// Часть сведений от службы; служба упала — части нет: сведения
+  /// записи из-за неё не теряются.
+  static Object? _infoPart(Object? Function() part) {
+    try {
+      return part();
+    } on Object {
+      return null;
     }
   }
 
@@ -1881,6 +1911,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     SnoEventType.stateReset,
     SnoEventType.sessionFinish,
     SnoEventType.indexProgress,
+    // SNO-F-EYE-04: спутник взгляда живёт сам по себе — его события не
+    // ответ на касание.
+    SnoEventType.eyeUnavailable,
+    SnoEventType.eyeReady,
+    SnoEventType.eyeClock,
+    SnoEventType.eyeSync,
+    SnoEventType.eyeLost,
+    SnoEventType.eyeRestart,
+    SnoEventType.eyeGaveUp,
+    SnoEventType.eyeWindow,
   };
 
   /// Строка журнала с номером и временем; без открытого журнала не

@@ -152,8 +152,10 @@ Map<String, Object?> buildManifest({
       for (final MapEntry<String, Object?> field in info.entries)
         if (field.key != 'schema') field.key: field.value,
     if (info == null) 'info_missing': true,
-    // Взгляда в записи нет: айтрекер придёт со своей функцией.
-    'eye_tracker': const <String, Object?>{'present': false},
+    // SNO-F-EYE-04: что знает о записи айтрекер — из сведений записи;
+    // у записи без айтрекера (телефон, прежние сборки) — только то, что
+    // взгляда нет.
+    'eye_tracker': _eyeTrackerOf(info),
     'archive': <String, Object?>{
       'name': archiveName,
       'packer': kArchivePacker,
@@ -163,6 +165,16 @@ Map<String, Object?> buildManifest({
       for (final PackedFile file in files) file.name: file.toJson(),
     },
   };
+}
+
+/// Блок `eye_tracker` манифеста из сведений записи [info]: что о записи
+/// знает айтрекер, а если он ничего не знает — `present: false`.
+Map<String, Object?> _eyeTrackerOf(Map<String, Object?>? info) {
+  final Object? eye = info?['eye_tracker'];
+  if (eye is Map<String, Object?> && eye['present'] is bool) {
+    return eye;
+  }
+  return const <String, Object?>{'present': false};
 }
 
 /// Один файл папки записи.

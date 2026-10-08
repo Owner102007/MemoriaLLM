@@ -563,6 +563,8 @@ void main() {
       // Итог подготовки книг и карта — тоже выведенное из книг
       // (SNO-F-IDX-04): в снимок они не идут, и сброс их не трогает.
       await data.settings.write(SnoSettingsKeys.shelfIndex, 'итог');
+      // Место записи айтрекера — настройка устройства (SNO-F-EYE-05).
+      await data.settings.write(SnoSettingsKeys.eyePlace, 'место');
       await data.bookMap.replace(
         const StoredBookMap(
           layoutKey: 'набор',
@@ -617,6 +619,8 @@ void main() {
       expect(await data.reading.bookFrame('a1'), isNotNull);
       expect((await data.library.bookById('a1'))!.coverPath, '/covers/a1.png');
       expect(await data.settings.read(SnoSettingsKeys.shelfIndex), 'итог');
+      // SNO-F-EYE-05: место записи айтрекера сброс не трогает.
+      expect(await data.settings.read(SnoSettingsKeys.eyePlace), 'место');
       expect((await data.bookMap.load())!.points.keys.toSet(), <String>{
         'a1',
         'l1',

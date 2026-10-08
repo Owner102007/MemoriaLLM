@@ -126,9 +126,19 @@
     },
     "info_missing": {"const": true},
     "eye_tracker": {
+      "description": "Айтрекер (SNO-F-EYE-04). present — есть ли в записи файлы взгляда (с ET-06). С шага 27 сборка ветви для ПК пишет ещё: настроено ли место записи (configured), место (place), почему взгляда нет (unavailable), спутник (satellite), окно под замком (window), сколько раз спутник поднимали заново (restarts) и сдались ли (gave_up).",
       "type": "object",
       "required": ["present"],
-      "properties": {"present": {"type": "boolean"}}
+      "properties": {
+        "present": {"type": "boolean"},
+        "configured": {"type": "boolean"},
+        "unavailable": {"type": "string"},
+        "place": {"type": "object"},
+        "satellite": {"type": "object"},
+        "window": {"type": "object"},
+        "restarts": {"type": "integer", "minimum": 0},
+        "gave_up": {"type": "boolean"}
+      }
     },
     "archive": {
       "type": "object",

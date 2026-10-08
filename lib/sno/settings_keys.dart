@@ -54,4 +54,11 @@ abstract final class SnoSettingsKeys {
   /// Сброс к эталону стирает ключ: это след читателя, и у следующего
   /// участника счёт начинается с нуля.
   static const String bookTimes = 'sno.book_times';
+
+  /// Место записи айтрекера — JSON (`EyePlace.encode`): камера, монитор,
+  /// размер экрана, расстояние и итог самопроверки (SNO-F-EYE-05).
+  ///
+  /// Это настройка устройства, а не след участника: сброс к эталону её
+  /// не трогает.
+  static const String eyePlace = 'sno.eye_place';
 }

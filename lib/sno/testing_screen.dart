@@ -15,6 +15,8 @@ import '../domain/library/storage_access.dart';
 import '../domain/reading/reader_document.dart';
 import 'clt/load_test.dart';
 import 'clt/test_screens.dart';
+import 'eye/eye_tracker.dart';
+import 'eye/place_screen.dart';
 import 'flags.dart';
 import 'hold_button.dart';
 import 'index/shelf_reading.dart';
@@ -346,6 +348,10 @@ class _TestingScreenState extends State<TestingScreen>
   /// Тест нагрузки; `null` — в этой сборке его нет.
   LoadTest? get _test => widget.services.loadTest;
 
+  /// Айтрекер; `null` — в этой сборке его нет (телефон, основное
+  /// приложение).
+  EyeTracker? get _eye => widget.services.eye;
+
   /// Начата ли и не завершена ли сессия: пока это так, полку менять
   /// нельзя ничем — ни архивом, ни сбросом.
   bool get _sessionOpen => _session?.locked ?? false;
@@ -357,6 +363,7 @@ class _TestingScreenState extends State<TestingScreen>
     _session?.addListener(_sessionChanged);
     _records?.addListener(_recordsChanged);
     _test?.addListener(_recordsChanged);
+    _eye?.addListener(_recordsChanged);
     unawaited(_test?.load());
     unawaited(_refreshReadiness());
     unawaited(_refreshRecords());
@@ -390,6 +397,7 @@ class _TestingScreenState extends State<TestingScreen>
     _session?.removeListener(_sessionChanged);
     _records?.removeListener(_recordsChanged);
     _test?.removeListener(_recordsChanged);
+    _eye?.removeListener(_recordsChanged);
     _searchRun++;
     unawaited(_searching?.cancel());
     super.dispose();
@@ -457,6 +465,13 @@ class _TestingScreenState extends State<TestingScreen>
         await _matchesReference(),
       );
       final bool? notifications = await session.prepareGuard();
+      // SNO-F-EYE-05: без места записи айтрекера запись на ПК идёт без
+      // взгляда — сказать об этом надо до старта.
+      final EyeTracker? eye = _eye;
+      final List<String> eyeWarnings = <String>[
+        if (eye != null && await eye.loadPlace() == null)
+          'Айтрекер не настроен — запись пойдёт без взгляда.',
+      ];
       final ParticipantCode proposed = await session.proposeCode();
       if (!mounted) {
         return;
@@ -474,6 +489,7 @@ class _TestingScreenState extends State<TestingScreen>
                   readiness: readiness,
                   parse: session.enteredCode,
                   minutes: session.planned.inMinutes,
+                  extraWarnings: eyeWarnings,
                 );
               },
             ),
@@ -948,11 +964,37 @@ class _TestingScreenState extends State<TestingScreen>
     );
   }
 
+  /// Строка «Место записи (айтрекер)» (SNO-F-EYE-05, кадр
+  /// SNO-SCR-01.1): что задано или «не задано»; нажатие открывает экран
+  /// места записи. Пока сессия открыта, строки нет: место не меняют
+  /// посреди записи.
+  Widget? _eyePlaceTile() {
+    final EyeTracker? eye = _eye;
+    if (eye == null || _sessionOpen || _starting) {
+      return null;
+    }
+    final String subtitle = !eye.placeLoaded
+        ? '…'
+        : eye.place?.summary ?? 'не задано';
+    return ListTile(
+      key: const Key('sno-eye-place'),
+      leading: const Icon(Icons.visibility_outlined),
+      title: const Text('Место записи (айтрекер)'),
+      subtitle: Text(subtitle, key: const Key('sno-eye-place-summary')),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => unawaited(
+        openEyePlace(Navigator.of(context, rootNavigator: true), eye),
+      ),
+    );
+  }
+
   /// Блок «Для экспериментатора»: архивы с книгами (SNO-F-LIT-03).
   List<Widget> _experimenter(ThemeData theme) {
     final bool needsAccess = _phase == ArchiveSearchPhase.needsAccess;
     final String? failure = _searchFailure;
+    final Widget? eyePlace = _eyePlaceTile();
     return <Widget>[
+      ?eyePlace,
       if (_busy)
         ListTile(
           key: const Key('sno-archive-busy'),

@@ -43,6 +43,7 @@ class ParticipantCodeScreen extends StatefulWidget {
     required this.readiness,
     required this.parse,
     required this.minutes,
+    this.extraWarnings = const <String>[],
     super.key,
   });
 
@@ -57,6 +58,10 @@ class ParticipantCodeScreen extends StatefulWidget {
 
   /// Сколько минут продлится запись.
   final int minutes;
+
+  /// Что ещё сказать перед стартом: айтрекер не настроен
+  /// (SNO-F-EYE-05).
+  final List<String> extraWarnings;
 
   @override
   State<ParticipantCodeScreen> createState() => _ParticipantCodeScreenState();
@@ -172,7 +177,10 @@ class _ParticipantCodeScreenState extends State<ParticipantCodeScreen> {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final List<String> warnings = describeReadinessWarnings(widget.readiness);
+    final List<String> warnings = <String>[
+      ...describeReadinessWarnings(widget.readiness),
+      ...widget.extraWarnings,
+    ];
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(

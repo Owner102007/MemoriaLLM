@@ -762,6 +762,26 @@ jobs:
             exit 1
           }
 
+      # BUG-56: та же папка, распакованная в путь с кириллицей. Кодовая
+      # страница системы на раннере — 1252, и такой путь в ней не
+      # выражается вовсе: модель, открытая по пути, здесь не открылась бы.
+      - name: Пробный запуск из папки с кириллицей
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'Рабочий стол\Тест айтрекера'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item -Recurse -Path build/eye -Destination (Join-Path $dir 'eye')
+          $eye = Join-Path $dir 'eye'
+          Push-Location $eye
+          & (Join-Path $eye 'python.exe') -I -m sno_eye --selftest 2>&1 |
+            Tee-Object -FilePath (Join-Path $env:GITHUB_WORKSPACE 'eye-logs/eye-selftest-cyrillic.txt')
+          $code = $LASTEXITCODE
+          Pop-Location
+          if ($code -ne 0) {
+            Write-Output "::error title=BUG-56::пробный запуск из папки с кириллицей вернул $code"
+            exit 1
+          }
+
       - name: Выложить папку eye/
         uses: actions/upload-artifact@v7
         with:
@@ -959,6 +979,29 @@ jobs:
             ${{ matrix.zip }}
             build/windows/x64/runner/Release/*.msix
           if-no-files-found: error
+
+      # SNO-ALG-EYE-03: связь приложения с настоящим спутником — тем же
+      # кодом Dart, что в приложении, на настоящем Windows: запуск
+      # python.exe без окна консоли, разбор настоящих ответов, общие часы
+      # QPC у двух процессов, выход за две секунды. Последним шагом: ZIP
+      # уже собран, и спутник ничего в него не допишет.
+      - name: Связь с настоящим спутником
+        if: steps.probe.outputs.ready == 'true' && matrix.branch == 'I'
+        shell: pwsh
+        run: |
+          $env:SNO_EYE_DIR = (Resolve-Path 'build/windows/x64/runner/Release/eye').Path
+          flutter test test/eye/eye_satellite_test.dart --reporter expanded 2>&1 | Tee-Object -FilePath eye-link.txt
+          $code = $LASTEXITCODE
+          Select-String -Path eye-link.txt -Pattern 'ЗАМЕР' | ForEach-Object {
+            Write-Output "::notice title=Связь со спутником::$($_.Line)"
+          }
+          if ($code -ne 0) {
+            Select-String -Path eye-link.txt -Pattern 'Expected|Actual|Error|Exception|Skip|\[E\]' |
+              Select-Object -First 25 | ForEach-Object {
+                Write-Output "::error title=Связь со спутником::$($_.Line)"
+              }
+            exit 1
+          }
 
   report:
     name: Отчёт для сессии разработки

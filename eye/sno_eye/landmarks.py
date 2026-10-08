@@ -39,18 +39,41 @@ def expected_model() -> dict[str, str]:
     return paths.read_kv(paths.model_version_path())
 
 
-def verify_model(path: Path | None = None) -> str:
-    """Сумма модели, если она совпала с замком; иначе `ModelError`."""
-    path = path or paths.model_path()
+def _check_sum(got: str) -> str:
     want = expected_model().get("sha256", "")
-    if not path.exists():
-        raise ModelError(f"нет файла модели {path.name}")
-    got = file_sha256(path)
     if not want or want == PLACEHOLDER:
         raise ModelError(f"сумма модели не закреплена (у файла {got})")
     if got != want:
         raise ModelError(f"модель не та: сумма {got}, ожидалась {want}")
     return got
+
+
+def verify_model(path: Path | None = None) -> str:
+    """Сумма модели, если она совпала с замком; иначе `ModelError`."""
+    path = path or paths.model_path()
+    if not path.exists():
+        raise ModelError(f"нет файла модели {path.name}")
+    return _check_sum(file_sha256(path))
+
+
+def load_model(path: Path | None = None) -> tuple[bytes, str]:
+    """Байты модели и их сумма, сверенная с замком (BUG-56).
+
+    Модель читается здесь, в Python, а MediaPipe получает буфер, а не
+    путь: свою библиотеку C++ он кормит путём в UTF-8, а на Windows она
+    открывает файл узкой строкой в кодовой странице системы — и путь
+    с кириллицей («Рабочий стол», имя пользователя) не открывался.
+    Сумма считается по тем же байтам, которые уйдут в распознавание:
+    между сверкой и загрузкой файл подменить нельзя.
+    """
+    path = path or paths.model_path()
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        raise ModelError(f"нет файла модели {path.name}") from None
+    except OSError as e:
+        raise ModelError(f"файл модели не читается: {e}") from None
+    return data, _check_sum(hashlib.sha256(data).hexdigest())
 
 
 @dataclass
@@ -66,11 +89,11 @@ class MediaPipeLandmarker:
         from mediapipe.tasks.python import vision
         from mediapipe.tasks.python.core import base_options
 
-        self.model_sha256 = verify_model(model)
+        # BUG-56: буфер, а не путь — см. load_model.
+        data, self.model_sha256 = load_model(model)
         self._mp = mp
         options = vision.FaceLandmarkerOptions(
-            base_options=base_options.BaseOptions(
-                model_asset_path=str(model or paths.model_path())),
+            base_options=base_options.BaseOptions(model_asset_buffer=data),
             running_mode=vision.RunningMode.VIDEO,
             num_faces=2,
             output_face_blendshapes=True,

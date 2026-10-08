@@ -7,10 +7,16 @@
 
 Строки «окно» (окно приложения на весь выбранный монитор) здесь нет:
 окно — забота приложения (ET-02).
+
+Для экрана «Место записи» замер умеет отдавать маленький кадр камеры
+(`preview`, шаг 27): JPEG шириной 320 точек не чаще пяти раз в секунду и
+рамку лица в долях кадра. Рамку рисует приложение — кадр уходит как
+есть.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import time
@@ -251,6 +257,59 @@ class Measures:
         }
 
 
+PREVIEW_WIDTH = 320
+PREVIEW_PERIOD_S = 0.2
+PREVIEW_QUALITY = 70
+
+
+def preview_message(frame) -> dict | None:
+    """Кадр после распознавания → `{jpeg, w, h, face}` для приложения.
+
+    `jpeg` — base64 кадра, уменьшенного до 320 точек в ширину; `face` —
+    рамка лица `[x0, y0, x1, y1]` в долях кадра или `None`. Кадр не
+    отдаётся (`None`), если его не удалось сжать: живая картинка — не
+    повод для ошибки.
+    """
+    import cv2
+
+    img = frame.grabbed.frame
+    h, w = img.shape[:2]
+    if w <= 0 or h <= 0:
+        return None
+    pw = min(PREVIEW_WIDTH, w)
+    ph = max(1, round(h * pw / w))
+    small = cv2.resize(img, (pw, ph), interpolation=cv2.INTER_AREA) if pw != w else img
+    ok, buf = cv2.imencode(".jpg", small, [int(cv2.IMWRITE_JPEG_QUALITY), PREVIEW_QUALITY])
+    if not ok:
+        return None
+    face = None
+    if frame.px is not None:
+        x0, y0, x1, y1 = features.face_box(frame.px, frame.width, frame.height)
+        face = [round(x0 / frame.width, 4), round(y0 / frame.height, 4),
+                round(x1 / frame.width, 4), round(y1 / frame.height, 4)]
+    return {"jpeg": base64.b64encode(buf.tobytes()).decode("ascii"),
+            "w": pw, "h": ph, "face": face}
+
+
+class _Preview:
+    """Не чаще одного кадра за `PREVIEW_PERIOD_S`."""
+
+    def __init__(self, send):
+        self._send = send
+        self._last = -1e9
+
+    def offer(self, frame) -> None:
+        if self._send is None:
+            return
+        now = time.perf_counter()
+        if now - self._last < PREVIEW_PERIOD_S:
+            return
+        self._last = now
+        msg = preview_message(frame)
+        if msg is not None:
+            self._send(msg)
+
+
 def disk_free(folder: Path) -> int:
     folder = Path(folder)
     while not folder.exists() and folder != folder.parent:
@@ -259,7 +318,8 @@ def disk_free(folder: Path) -> int:
 
 
 def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
-            folder: Path, progress=None, mode=None, abort=None) -> dict:
+            folder: Path, progress=None, mode=None, abort=None,
+            preview=None) -> dict:
     """Замер на камере: прогрев, затем `measure_s` секунд распознавания.
 
     `processor_factory()` → `Processor` (модель грузится до камеры:
@@ -267,11 +327,13 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
     `open_source(mode)` → запущенный `Capture` (или `CameraError`);
     `cpu_meter` — `start()`/`stop()` → процент процессора. Если 1080p не
     держит 25 к/с с распознаванием, замер повторяется в 720p (решение
-    Т24). Камера закрывается при любом исходе.
+    Т24). Камера закрывается при любом исходе. `preview(msg)` — если
+    назван, получает маленький кадр камеры (`preview_message`).
     """
     from .capture import MODES, CameraError
 
     stopped = abort or (lambda: False)
+    shots = _Preview(preview)
     m: dict[str, Any] = {"satellite": True, "disk_free_bytes": disk_free(folder)}
     modes = [mode] if mode else list(MODES)
     chosen = None
@@ -284,7 +346,8 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
             return {**evaluate(m, thresholds), "measures": m}
         m["camera"] = "ok"
         try:
-            res, lost = _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped)
+            res, lost = _measure_mode(cap, proc, cpu_meter, thresholds, progress,
+                                      stopped, shots)
         finally:
             cap.stop()
         if stopped():
@@ -303,14 +366,15 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
     return {**evaluate(m, thresholds), "measures": m}
 
 
-def _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped):
+def _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped, shots=None):
+    shots = shots or _Preview(None)
     if progress:
         progress({"stage": "warmup", "mode": [cap.source.width, cap.source.height]})
     warm_until = time.perf_counter() + thresholds["warmup_s"]
     while time.perf_counter() < warm_until and not stopped():
         g = cap.get(0.5)
         if g is not None:
-            proc.process(g)
+            shots.offer(proc.process(g))
         elif cap.stats.lost:
             return None, True
     if progress:
@@ -326,7 +390,9 @@ def _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped):
                 cpu_meter.stop()
                 return None, True
             continue
-        meas.add(proc.process(g))
+        frame = proc.process(g)
+        meas.add(frame)
+        shots.offer(frame)
     seconds = time.perf_counter() - t0
     cpu = cpu_meter.stop()
     res = meas.result(seconds)

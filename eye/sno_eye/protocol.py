@@ -15,6 +15,11 @@
 `open` необязательный `mode` — режим камеры; не назван — берётся тот,
 что выбрала последняя самопроверка, без неё — 1080p.
 
+У `selfcheck` необязательный `preview: true` (шаг 27): пока идёт замер,
+спутник шлёт `{progress: "preview", jpeg, w, h, face}` — маленький кадр
+камеры для экрана «Место записи». Эти строки выбрасываются первыми,
+если приложение не успевает читать, как строки живой точки.
+
 В этой версии (ET-01) команды калибровки — `target`, `fit`, `validate`,
 `live` — отвечают `bad_command`: они придут с ET-03. Камера, пропавшая
 во время записи, — ошибка `camera_lost` без ответа на команду; поиск
@@ -312,6 +317,9 @@ class Server:
             lambda: Processor(self.rt.landmarker()), CpuMeter(), t, folder,
             progress=lambda p: self.out.send({"progress": "selfcheck", **p}),
             abort=self.abort.is_set,
+            preview=(lambda p: self.out.send({"progress": "preview", **p},
+                                             droppable=True))
+            if cmd.get("preview") is True else None,
         )
         if self.abort.is_set():
             return

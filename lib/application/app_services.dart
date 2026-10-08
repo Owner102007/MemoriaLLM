@@ -24,6 +24,10 @@ import '../infrastructure/pdf/pdfrx_document.dart';
 import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
 import '../sno/clt/load_test.dart';
+import '../sno/eye/eye_process.dart';
+import '../sno/eye/eye_tracker.dart';
+import '../sno/eye/eye_window.dart';
+import '../sno/eye/qpc_clock.dart';
 import '../sno/flags.dart';
 import '../sno/index/shelf_reading.dart';
 import '../sno/index/shelf_reading_log.dart';
@@ -67,6 +71,7 @@ class AppServices {
     this.loadTest,
     this.shelfReading,
     this.bookTimes,
+    this.eye,
     CoverService? covers,
     DeviceLibrary? deviceLibrary,
   }) : covers =
@@ -106,6 +111,17 @@ class AppServices {
         ? _recordingFor(data, storage, bookTimes)
         : null;
     final DocumentOpener opener = PdfrxDocumentOpener(storage: storage);
+    // Окно есть только у ПК; на телефоне страница и так во весь экран.
+    final FullScreenWindow window = Platform.isWindows
+        ? WindowsFullScreen()
+        : const NoFullScreenWindow();
+    // SNO-F-EYE-07: окно сборки ветви на ПК умеет вставать на монитор
+    // айтрекера под замок. Условие начинается с константы сборки: в
+    // основное приложение айтрекер не попадает.
+    final LockableWindow? lockable =
+        Sno.recording && Platform.isWindows && recording != null
+        ? LockableWindow(window)
+        : null;
     return AppServices(
       data: data,
       storage: storage,
@@ -118,10 +134,7 @@ class AppServices {
       volumeKeys: Platform.isAndroid
           ? AndroidVolumeKeys()
           : const NoVolumeKeys(),
-      // Окно есть только у ПК; на телефоне страница и так во весь экран.
-      window: Platform.isWindows
-          ? WindowsFullScreen()
-          : const NoFullScreenWindow(),
+      window: lockable ?? window,
       // SNO-F-LIT-03: архивы с литературой ищет только сборка ветви.
       // Условие — константа сборки: в основное приложение обход
       // архивов не попадает.
@@ -146,7 +159,38 @@ class AppServices {
           ? _shelfReadingFor(data, opener, recording)
           : null,
       bookTimes: bookTimes,
+      // SNO-F-EYE-04: айтрекер — только сборка ветви на ПК.
+      eye: lockable != null && recording != null
+          ? _eyeFor(data, recording, lockable)
+          : null,
     );
+  }
+
+  /// Айтрекер сборки ветви на ПК (SNO-F-EYE-04, SNO-F-EYE-05,
+  /// SNO-F-EYE-07): спутник из папки `eye/` рядом с приложением, его
+  /// журнал — в папке данных приложения, часы — QPC.
+  static EyeTracker _eyeFor(
+    AppData data,
+    RecordingSession recording,
+    LockableWindow window,
+  ) {
+    final EyeTracker eye = EyeTracker(
+      settings: data.settings,
+      launch: satelliteLauncher(
+        eyeFolderNextToApp(),
+        log: () async {
+          final Directory root = await appDataDirectory();
+          return File(p.join(root.path, 'eye', 'log.txt'));
+        },
+      ),
+      qpc: WindowsQpcClock.open() ?? StopwatchQpcClock(),
+      window: window,
+      recordsFolder: () async => (await _recordsFolder()).path,
+      build: '$appVersion ${appCommit.length > 7 ? appCommit.substring(0, 7) : appCommit}',
+      branch: Sno.branch,
+    )..attach(recording);
+    unawaited(eye.loadPlace());
+    return eye;
   }
 
   /// Подготовка книг полки сборки ветви II (SNO-F-IDX-04): текст всех
@@ -338,4 +382,9 @@ class AppServices {
   /// Время, проведённое в каждой книге (SNO-F-MAP-01): по нему у звезды
   /// на карте размер; `null` — в этой сборке его не считают.
   final BookTimes? bookTimes;
+
+  /// Айтрекер (SNO-F-EYE-04): место записи и спутник взгляда во время
+  /// записи; `null` — в этой сборке его нет: основное приложение,
+  /// телефон и тесты, которым он не нужен.
+  final EyeTracker? eye;
 }
