@@ -554,4 +554,39 @@ void main() {
       expect(Sno.bookTimes, Sno.enabled);
     });
   });
+
+  group('SNO-F-EYE-04: спутник взгляда в сборке ветви', () {
+    test('SNO-F-EYE-04: папка eye/ — только в ZIP ветвей и строго по '
+        'замкам', () {
+      final String ci = File('.github/workflows/ci.yml').readAsStringSync();
+      // Папку собирает одна работа, ветви её забирают, основное — нет.
+      expect(ci, contains('python eye/tool/build_windows.py build/eye'));
+      expect(
+        ci,
+        contains(
+          "if: steps.probe.outputs.ready == 'true' && matrix.branch != ''",
+        ),
+      );
+      expect(ci, contains('в основном приложении есть папка eye/'));
+      // Колёса — только по суммам; пробный запуск на раннере.
+      expect(ci, contains('--require-hashes'));
+      expect(ci, contains("'--selftest'"));
+      final String build = File('eye/tool/build_windows.py')
+          .readAsStringSync();
+      expect(build, contains('"--require-hashes"'));
+      expect(build, contains('Python Software Foundation'));
+      // Релиз основного приложения о спутнике не знает.
+      final String release = File('.github/workflows/release.yml')
+          .readAsStringSync();
+      expect(release, isNot(contains('eye')));
+      for (final String name in <String>[
+        'eye/requirements.lock',
+        'eye/python_version.txt',
+        'eye/model_version.txt',
+        'eye/thresholds.json',
+      ]) {
+        expect(File(name).existsSync(), isTrue, reason: name);
+      }
+    });
+  });
 }

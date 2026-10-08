@@ -1,0 +1,16 @@
+{
+  "_": "Пороги самопроверки места (SNO-ALG-EYE-04). Предварительные: пересматриваются на воротах Г1 и Г2. good — «годится», warn — «с оговоркой», остальное — «не годится».",
+  "mode": {"good_h": 1080, "warn_h": 720},
+  "fps": {"good": 27, "warn": 25},
+  "face_share": {"good": 0.95, "warn": 0.80},
+  "iris_px": {"good": 18, "warn": 14},
+  "light": {"good_min": 70, "good_max": 200, "warn_min": 50, "fail_max": 230},
+  "backlight": {"good": 0.7, "warn": 0.5},
+  "glare": {"good": 0.005, "warn": 0.02},
+  "position": {"good": 0.15, "warn": 0.25},
+  "disk_gb": {"good": 2.0, "warn": 1.0},
+  "cpu_percent": {"good": 35, "warn": 50},
+  "mode_switch_fps": 25,
+  "warmup_s": 2,
+  "measure_s": 5
+}

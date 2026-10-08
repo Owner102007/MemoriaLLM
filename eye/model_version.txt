@@ -1,0 +1,4 @@
+# Модель лица MediaPipe Face Landmarker (Apache-2.0), float16, версия 1.
+# Сумма закрепляется осознанно: сборка и тесты сверяют файл с ней.
+url=https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+sha256=не-закреплена

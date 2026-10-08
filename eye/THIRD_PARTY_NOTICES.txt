@@ -1,0 +1,33 @@
+Спутник взгляда Memoria SNO2026 — сторонние компоненты
+=====================================================
+
+Сам спутник (папка sno_eye) — часть Memoria LLM HB, лицензия GPL-3.0.
+
+В папке eye/ сборки лежат:
+
+* Python (встраиваемый пакет) — Python Software Foundation License.
+  https://www.python.org/
+* MediaPipe и модель Face Landmarker (face_landmarker.task) — Apache-2.0,
+  Google. https://github.com/google-ai-edge/mediapipe
+  MediaPipe может отправлять в Google обезличенные сведения о своей
+  работе (версию системы, какие функции вызывались и как быстро);
+  изображения с камеры и данные исследования не передаются.
+* OpenCV (opencv-contrib-python) — Apache-2.0. https://opencv.org/
+* PyAV — BSD-3-Clause; входящий в колесо FFmpeg собран с libx264
+  (GPL-2.0-or-later). https://github.com/PyAV-Org/PyAV
+* NumPy — BSD-3-Clause; psutil — BSD-3-Clause;
+  cv2-enumerate-cameras — MIT; matplotlib — PSF-совместимая лицензия
+  matplotlib; Pillow — MIT-CMU; fontTools — MIT; contourpy, kiwisolver,
+  cycler — BSD; pyparsing, six — MIT; python-dateutil — Apache-2.0/BSD;
+  packaging — Apache-2.0/BSD; absl-py — Apache-2.0; flatbuffers —
+  Apache-2.0; certifi — MPL-2.0; sounddevice — MIT; cffi, pycparser —
+  MIT/BSD. Тексты лицензий лежат в site/*.dist-info.
+
+Устройство признаков ступени 0 (положение радужек относительно уголков
+глаз в системе головы, открытость век, поза и место лица) сделано по
+образцу проекта EyeTrax (MIT License, https://github.com/ck-zhang/eyetrax).
+Код EyeTrax не копировался.
+
+Нормировка полосы глаз повторяет описание BlazeGaze из проекта
+WebEyeTrack (MIT License,
+  https://github.com/RedForestAi/WebEyeTrack). Веса сети в сборку не входят.

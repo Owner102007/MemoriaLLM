@@ -1,0 +1,9 @@
+# Прямые зависимости спутника взгляда (SNO-F-EYE-04). Замок с суммами —
+# requirements.lock, собирается `python3 tool/make_lock.py` (осознанно!):
+# подъём версий — отдельный шаг, как у Flutter и PDFium.
+mediapipe==1.1.0
+opencv-contrib-python==5.0.0.93
+av==19.0.1
+numpy
+psutil
+cv2-enumerate-cameras

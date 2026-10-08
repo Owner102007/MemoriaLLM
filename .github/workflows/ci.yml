@@ -650,13 +650,135 @@ jobs:
           path: out/${{ matrix.file }}
           if-no-files-found: error
 
+  # Спутник взгляда (SNO-F-EYE-04, шаг 26): программа на Python рядом
+  # с приложением ветви для Windows. Тесты — на Linux, по тому же замку
+  # колёс, что уезжает в сборку; модель лица — по своему замку.
+  eye-tests:
+    name: Спутник взгляда · тесты
+    runs-on: ubuntu-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v7
+
+      - name: Поставить Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      # Строго по замку: версии и суммы колёс — eye/requirements.lock
+      # (собирает eye/tool/make_lock.py), тестовые — requirements-dev.lock.
+      - name: Колёса по замку
+        run: |
+          python -m pip install --disable-pip-version-check --require-hashes \
+            --only-binary :all: --no-deps \
+            -r eye/requirements.lock -r eye/requirements-dev.lock
+
+      - name: Модель лица по замку
+        run: python eye/tool/fetch_model.py
+
+      - name: pytest
+        if: always()
+        env:
+          SNO_EYE_REQUIRE_MODEL: '1'
+          MPLBACKEND: Agg
+        run: |
+          mkdir -p /tmp/eye-logs
+          cd eye
+          set -o pipefail
+          python -m pytest -q -rs 2>&1 | tee /tmp/eye-logs/eye-tests.txt
+
+      - name: Выложить вывод
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eye-logs-linux
+          path: /tmp/eye-logs
+          if-no-files-found: ignore
+
+  # Папка eye/ для ZIP ветвей: встраиваемый Python с подписью PSF,
+  # колёса по замку, модель по замку; пробный запуск на раннере и
+  # сетевые соединения спутника за пробу — в отчёт (решение Т9).
+  eye-windows:
+    name: Спутник взгляда · сборка Windows
+    runs-on: windows-latest
+    steps:
+      - name: Забрать репозиторий
+        uses: actions/checkout@v7
+
+      - name: Поставить Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Собрать папку eye/
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          New-Item -ItemType Directory -Force -Path eye-logs | Out-Null
+          python eye/tool/build_windows.py build/eye 2>&1 | Tee-Object -FilePath eye-logs/eye-windows.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Камеры на раннере нет: пробный запуск обязан сказать это словами.
+      # Пока он идёт, снимаются соединения процесса — что отправляет
+      # MediaPipe, видно здесь, а не на ПК участника.
+      - name: Пробный запуск и сетевые соединения
+        shell: pwsh
+        run: |
+          $dnsBefore = @{}
+          Get-DnsClientCache -ErrorAction SilentlyContinue | ForEach-Object { $dnsBefore[$_.Entry] = 1 }
+          $p = Start-Process -FilePath build/eye/python.exe `
+            -ArgumentList '-I','-m','sno_eye','--selftest','--linger','12' `
+            -WorkingDirectory build/eye -NoNewWindow -PassThru `
+            -RedirectStandardOutput selftest-out.txt -RedirectStandardError selftest-err.txt
+          $null = $p.Handle
+          $seen = [ordered]@{}
+          while (-not $p.HasExited) {
+            Get-NetTCPConnection -OwningProcess $p.Id -ErrorAction SilentlyContinue |
+              ForEach-Object { $seen["tcp $($_.RemoteAddress):$($_.RemotePort)"] = 1 }
+            Get-NetUDPEndpoint -OwningProcess $p.Id -ErrorAction SilentlyContinue |
+              ForEach-Object { $seen["udp local $($_.LocalAddress):$($_.LocalPort)"] = 1 }
+            Start-Sleep -Milliseconds 200
+          }
+          $p.WaitForExit()
+          $code = $p.ExitCode
+          $dnsNew = Get-DnsClientCache -ErrorAction SilentlyContinue |
+            Where-Object { -not $dnsBefore.ContainsKey($_.Entry) } |
+            ForEach-Object { "dns $($_.Entry)" } | Sort-Object -Unique
+          $lines = @('# Пробный запуск', '', '```') + (Get-Content selftest-out.txt) + @('```', '', '## stderr', '```') +
+            (Get-Content selftest-err.txt | Select-Object -Last 40) + @('```', '', '## Сеть за пробу') +
+            @($seen.Keys) + @($dnsNew)
+          if ($seen.Count -eq 0 -and -not $dnsNew) { $lines += 'соединений не было' }
+          $lines += @('', '## Размер'); $lines += (Get-Content build/eye-build.json)
+          $lines | Out-File -Encoding utf8 eye-logs/eye-selftest.txt
+          Get-Content eye-logs/eye-selftest.txt
+          if ($code -ne 0) {
+            Write-Output "::error title=Спутник взгляда::пробный запуск вернул $code"
+            exit 1
+          }
+
+      - name: Выложить папку eye/
+        uses: actions/upload-artifact@v7
+        with:
+          name: eye-windows
+          path: build/eye
+          if-no-files-found: error
+
+      - name: Выложить вывод
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eye-logs-windows
+          path: eye-logs
+          if-no-files-found: ignore
+
   # Те же три приложения для Windows. Флейворов там нет: ветвь называют
   # переменная окружения `SNO_BRANCH` (заголовок окна, см.
   # `windows/runner`) и то же значение в `--dart-define` (поведение и
   # своя папка данных). MSIX — только у основного: ветви в Store не идут.
   windows:
     name: Сборка Windows · ${{ matrix.title }}
-    needs: analyze
+    needs: [analyze, eye-windows]
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -782,6 +904,34 @@ jobs:
           sys.exit(1 if problems else 0)
           PY
 
+      # Спутник взгляда — только в ZIP ветвей (SNO-F-EYE-04): в основном
+      # приложении и в MSIX айтрекера нет.
+      - name: Спутник взгляда в сборку ветви
+        if: steps.probe.outputs.ready == 'true' && matrix.branch != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: eye-windows
+          path: build/windows/x64/runner/Release/eye
+
+      - name: Спутник взгляда на месте
+        if: steps.probe.outputs.ready == 'true'
+        shell: pwsh
+        env:
+          SNO_BRANCH: ${{ matrix.branch }}
+        run: |
+          $eye = 'build/windows/x64/runner/Release/eye'
+          if ($env:SNO_BRANCH) {
+            foreach ($f in @('python.exe', 'sno_eye/__main__.py', 'models/face_landmarker.task', 'Проверка камеры.cmd')) {
+              if (-not (Test-Path (Join-Path $eye $f))) {
+                Write-Output "::error title=Спутник взгляда::в сборке ветви нет eye/$f"
+                exit 1
+              }
+            }
+          } elseif (Test-Path $eye) {
+            Write-Output '::error title=Спутник взгляда::в основном приложении есть папка eye/'
+            exit 1
+          }
+
       - name: Портативный ZIP
         if: steps.probe.outputs.ready == 'true'
         shell: pwsh
@@ -807,7 +957,7 @@ jobs:
 
   report:
     name: Отчёт для сессии разработки
-    needs: [analyze, android, windows]
+    needs: [analyze, android, windows, eye-tests, eye-windows]
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -820,6 +970,14 @@ jobs:
           path: logs
         continue-on-error: true
 
+      - name: Забрать вывод спутника взгляда
+        uses: actions/download-artifact@v8
+        with:
+          pattern: eye-logs-*
+          path: logs
+          merge-multiple: true
+        continue-on-error: true
+
       # Ветка `ci-report` — сиротская и переписывается каждым прогоном:
       # это не история, а последнее состояние. Сессия разработки читает
       # её обычным `git fetch`, потому что логи прогона закрыты для
@@ -830,6 +988,8 @@ jobs:
           ANALYZE: ${{ needs.analyze.result }}
           ANDROID: ${{ needs.android.result }}
           WINDOWS: ${{ needs.windows.result }}
+          EYE_TESTS: ${{ needs.eye-tests.result }}
+          EYE_WINDOWS: ${{ needs.eye-windows.result }}
         run: |
           set -eu
           mkdir -p out
@@ -841,10 +1001,12 @@ jobs:
             echo "- анализ и тесты: **$ANALYZE**"
             echo "- сборка APK: **$ANDROID**"
             echo "- сборка Windows: **$WINDOWS**"
+            echo "- спутник взгляда: тесты **$EYE_TESTS**, сборка **$EYE_WINDOWS**"
             echo "- страница прогона:"
             echo "  $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > out/report.md
-          for name in failures analyze format codegen measures tests sno sessions; do
+          for name in failures analyze format codegen measures tests sno sessions \
+              eye-tests eye-windows eye-selftest; do
             file="logs/$name.txt"
             [ -s "$file" ] || continue
             {
@@ -867,7 +1029,7 @@ jobs:
 
   latest:
     name: Свежая сборка из main
-    needs: [android, windows]
+    needs: [android, windows, eye-tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
