@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Ярлыки Windows — с CRLF в любом клоне: cmd.exe с LF ломается на метках
+# и переводах строк (спутник взгляда, SNO-F-EYE-04).
+*.cmd text eol=crlf
