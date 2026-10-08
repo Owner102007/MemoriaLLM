@@ -126,6 +126,10 @@ def main() -> None:
     for p in site.glob("numpy/*/tests"):
         shutil.rmtree(p, ignore_errors=True)
     shutil.rmtree(site / "matplotlib" / "mpl-data" / "sample_data", ignore_errors=True)
+    # Видеоввод OpenCV через FFmpeg (≈ 30 МБ) спутнику не нужен: камера
+    # читается через DirectShow, а полоса глаз пишется PyAV.
+    for p in site.glob("cv2/opencv_videoio_ffmpeg*.dll"):
+        p.unlink()
     for p in site.glob("*.dist-info"):
         # Лицензии остаются; RECORD и прочее — нет: pip в папке не живёт.
         for f in p.iterdir():
@@ -147,6 +151,11 @@ def main() -> None:
     # младшей версии, байт-код совместим.
     subprocess.run([sys.executable, "-m", "compileall", "-q", "-j", "0",
                     str(site), str(out / "sno_eye")], check=False)
+    # fontTools и mpl_toolkits при работе спутника не загружаются — их
+    # байт-код только занимал бы место.
+    for name in ("fontTools", "mpl_toolkits"):
+        for p in sorted((site / name).rglob("__pycache__"), reverse=True):
+            shutil.rmtree(p, ignore_errors=True)
 
     mv = read_kv(EYE / "model_version.txt")
     (out / "models").mkdir()
