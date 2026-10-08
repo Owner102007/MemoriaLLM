@@ -192,7 +192,9 @@ def test_sno_alg_eye_02_quick_calibration_live_and_file(follower, tmp_path):
     data = json.loads((folder / "calibration.json").read_text(encoding="utf-8"))
     assert data["schema"] == "sno2026-eyecal/1"
     assert data["attempts"][0]["validation"]["accuracy_deg"] == v["accuracy_deg"]
-    assert data["model"]["kind"] == "ridge"
+    # С шага 29 (BUG-60) модель — глаза при голове на опоре и геометрия.
+    assert data["model"]["kind"] == "head"
+    assert data["model"]["eye"]["kind"] == "ridge"
     assert (folder / "features.bin").exists()
 
 

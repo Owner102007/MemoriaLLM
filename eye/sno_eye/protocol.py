@@ -44,8 +44,20 @@
   его QPC. Эти строки выбрасываются первыми, если приложение не успевает
   читать.
 
+Поправка на голову (шаг 29, BUG-60): у `target` фаза `head` — точка в
+середине, человек водит головой, глядя на неё (её кадры учат остаток
+поправки); `samples {phase: head}` — сколько кадров и доля лица. Проверка
+точности без новой калибровки:
+
+* `check {n}` → `{reply: check, n}` — начата проверка `n`; точки — `target`
+  с фазой `check`;
+* `checked` → `{reply: checked, n, accuracy_deg, …, variants, head,
+  start_deg}` — точность каждого способа поправки и где была голова против
+  калибровки.
+
 У сессии с файлами итог калибровки ложится в `calibration.json` её папки
-после `fit`, `validate` и `close`. Камера, пропавшая во время записи, —
+после `fit`, `validate`, `checked` и `close`, итоги проверок — ещё и в
+`checks.json`. Камера, пропавшая во время записи, —
 ошибка `camera_lost` без ответа на команду; поиск вернувшейся камеры
 придёт с ET-06.
 """
@@ -350,6 +362,10 @@ class Server:
             self._validate()
         elif name == "live":
             self._live(cmd)
+        elif name == "check":
+            self._check(cmd)
+        elif name == "checked":
+            self._checked()
         else:
             raise CommandError("bad_command", f"неизвестная команда «{name}»")
 
@@ -403,6 +419,9 @@ class Server:
             self.rt.observe_screen(screen)
             self.session = Session(self.rt, cmd, self._on_session_fail,
                                    on_frame=self._on_frame)
+            # Геометрии головы нужен размер кадра камеры (BUG-60).
+            src = self.session.capture.source
+            self.calib.frame = (int(src.width), int(src.height))
             if self.session.dir is not None:
                 handler = logging.FileHandler(self.session.dir / "log.txt",
                                               encoding="utf-8")
@@ -507,8 +526,9 @@ class Server:
     def _samples(self, cmd: dict) -> None:
         cal = self._calibration()
         phase = cmd.get("phase", "calib")
-        if phase not in ("calib", "validate"):
-            raise CommandError("bad_command", "«phase» — calib или validate")
+        if phase not in ("calib", "validate", "head", "check"):
+            raise CommandError("bad_command",
+                               "«phase» — calib, validate, head или check")
         try:
             res = cal.samples(phase)
         except calib.CalibrationError as e:
@@ -534,6 +554,24 @@ class Server:
         self._write_calibration(self.session, cal)
         self.out.send({"reply": "validate", "attempt": cal.attempt.n, **res})
 
+    def _check(self, cmd: dict) -> None:
+        cal = self._calibration()
+        n = _int(cmd, "n", len(cal.checks) + 1)
+        try:
+            cal.begin_check(n, clock.qpc_us())
+        except calib.CalibrationError as e:
+            raise CommandError(e.code, e.text) from None
+        self.out.send({"reply": "check", "n": n})
+
+    def _checked(self) -> None:
+        cal = self._calibration()
+        try:
+            res = cal.check_result()
+        except calib.CalibrationError as e:
+            raise CommandError(e.code, e.text) from None
+        self._write_calibration(self.session, cal)
+        self.out.send({"reply": "checked", **res})
+
     def _live(self, cmd: dict) -> None:
         on = cmd.get("on")
         if not isinstance(on, bool):
@@ -552,6 +590,10 @@ class Server:
         try:
             (s.dir / "calibration.json").write_text(
                 json.dumps(cal.to_json(), ensure_ascii=False), encoding="utf-8")
+            if cal.checks:
+                (s.dir / "checks.json").write_text(json.dumps(
+                    [c.result for c in cal.checks if c.result is not None],
+                    ensure_ascii=False, indent=1), encoding="utf-8")
         except OSError as e:
             log.info("calibration.json: %s", e)
 

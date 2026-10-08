@@ -39,11 +39,42 @@ def test_sno_alg_eye_01_features_monotonic_in_gaze(axis, idx):
 
 
 def test_sno_alg_eye_01_angles_from_matrix():
+    # Матрица синтетической головы — как у MediaPipe (BUG-60): система
+    # OpenGL, y вверх и z к человеку, поэтому yaw и roll в ней обратны
+    # повороту шаблона, а pitch тот же. Сверено на кадрах владельца.
     f = feat(yaw=17, pitch=-9, roll=4)
     names = fp.FEATURE_NAMES
-    assert f[names.index("yaw")] == pytest.approx(17, abs=1e-4)
+    assert f[names.index("yaw")] == pytest.approx(-17, abs=1e-4)
     assert f[names.index("pitch")] == pytest.approx(-9, abs=1e-4)
-    assert f[names.index("roll")] == pytest.approx(4, abs=1e-4)
+    assert f[names.index("roll")] == pytest.approx(-4, abs=1e-4)
+
+
+def test_bug_60_pose_signs_follow_the_landmarks_like_mediapipe():
+    # BUG-60: знаки позы — как у настоящей модели на кадрах владельца:
+    # yaw растёт — кончик носа уходит вправо по снимку; pitch растёт —
+    # вниз; roll растёт — линия уголков глаз поворачивается против часовой
+    # стрелки на снимке (левый на снимке уголок поднимается).
+    from sno_eye import synthetic
+
+    def nose_and_line(**head):
+        f = synthetic.render(synthetic.Head(**head), 1920, 1080)
+        px = features.to_pixels(f.landmarks, 1920, 1080)
+        mid = (px[fp.R_OUTER] + px[fp.L_OUTER]) / 2
+        v = features.compute(f.landmarks, f.matrix, 1920, 1080)
+        line = np.degrees(np.arctan2(px[fp.L_OUTER, 1] - px[fp.R_OUTER, 1],
+                                     px[fp.L_OUTER, 0] - px[fp.R_OUTER, 0]))
+        return v, px[fp.NOSE_TIP] - mid, line
+
+    names = fp.FEATURE_NAMES
+    a, nose_a, _ = nose_and_line(yaw=-6)
+    b, nose_b, _ = nose_and_line(yaw=6)
+    assert (b[names.index("yaw")] - a[names.index("yaw")]) * (nose_b[0] - nose_a[0]) > 0
+    a, nose_a, _ = nose_and_line(pitch=-6)
+    b, nose_b, _ = nose_and_line(pitch=6)
+    assert (b[names.index("pitch")] - a[names.index("pitch")]) * (nose_b[1] - nose_a[1]) > 0
+    a, _, line_a = nose_and_line(roll=-6)
+    b, _, line_b = nose_and_line(roll=6)
+    assert (b[names.index("roll")] - a[names.index("roll")]) * (line_b - line_a) < 0
 
 
 def test_sno_alg_eye_01_face_place_scale_and_iris():

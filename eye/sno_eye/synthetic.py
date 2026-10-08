@@ -7,6 +7,13 @@
 
 Система шаблона — как у снимка: x вправо по снимку, y вниз, z от камеры.
 Правый глаз человека лежит слева на снимке (x < 0).
+
+Матрица позы — как у MediaPipe (BUG-60): система OpenGL (x вправо по
+снимку, y вверх, z к человеку), поэтому её yaw и roll по знаку обратны
+повороту шаблона, а pitch тот же. Сверено на кадрах владельца: у
+настоящей модели положительный yaw уводит кончик носа вправо по снимку,
+положительный pitch — вниз, положительный roll поднимает левый на
+снимке уголок глаза.
 """
 
 from __future__ import annotations
@@ -24,6 +31,20 @@ N_LANDMARKS = 478
 IRIS_R = 5.8
 GAZE_X_MM = 6.0
 GAZE_Y_MM = 3.5
+
+# Камера синтетического участника (BUG-60): фокус — доля ширины кадра
+# (на 1080p — 1200 пикс., на 60 см лицо в масштабе 2 пикс./мм), камера —
+# над серединой экрана, на столько выше его верхнего края. Так же
+# считает спутник (`calib.HeadSetup`).
+CAMERA_F_SHARE = 0.625
+CAMERA_ABOVE_MM = 8.0
+
+# Из системы снимка (x вправо, y вниз, z от камеры) в систему MediaPipe
+# (x вправо, y вверх, z к человеку): поворот на 180° вокруг x.
+_TO_MP = np.diag([1.0, -1.0, -1.0])
+# Из системы снимка в систему человека (x — его право, то есть влево по
+# снимку; y вниз; z от него к экрану): поворот на 180° вокруг y.
+_TO_PERSON = np.diag([-1.0, 1.0, -1.0])
 
 
 def _template() -> dict[int, tuple[float, float, float]]:
@@ -91,6 +112,17 @@ class Head:
     gaze_y: float = 0.0       # −1 … 1: вверх … вниз
     lid: float = 1.0          # открытость век: 1 — обычная, 0 — закрыты
     blink_score: float = 0.0  # блендшейп eyeBlink, который «вернула модель»
+    # Где глаза, если задано (BUG-60): (x, y, z) в мм — x вправо и y вниз
+    # от середины экрана, z — от глаз до экрана. Тогда место и масштаб
+    # лица в кадре считаются камерой участника, а `cx`, `cy`, `px_per_mm`
+    # не читаются. Ещё — высота экрана, над которым стоит камера.
+    eye_mm: tuple[float, float, float] | None = None
+    screen_h_mm: float = 296.0
+    # Погрешности распознавания (BUG-60): ориентиры лица целиком съезжают
+    # на столько пикселей (у настоящей модели уголки глаз чуть идут за
+    # взглядом), поза в матрице — во столько раз меньше настоящей.
+    shift_px: tuple[float, float] = (0.0, 0.0)
+    pose_gain: float = 1.0
 
 
 @dataclass
@@ -131,16 +163,34 @@ def render(head: Head, width: int, height: int) -> Face:
             a = math.pi / 2 * k
             tmpl[idx] = (ix + IRIS_R * math.cos(a), iy + IRIS_R * math.sin(a), -1.0)
     rot = rotation(head.yaw, head.pitch, head.roll)
-    origin = np.array([head.cx * width, head.cy * height, 0.0])
-    q = tmpl @ rot.T * head.px_per_mm + origin
+    cx, cy, scale = place_in_frame(head, width, height)
+    origin = np.array([cx * width + head.shift_px[0],
+                       cy * height + head.shift_px[1], 0.0])
+    q = tmpl @ rot.T * scale + origin
     pts = q / np.array([width, height, width], dtype=np.float64)
+    g = head.pose_gain
+    pose = rot if g == 1.0 else rotation(head.yaw * g, head.pitch * g, head.roll * g)
     m = np.eye(4)
-    m[:3, :3] = rot
+    m[:3, :3] = _TO_MP @ pose @ _TO_MP
     m[:3, 3] = (0.0, 0.0, -60.0)
     shapes = {name: 0.0 for name in fp.EYE_BLENDSHAPES}
     shapes["eyeBlinkLeft"] = head.blink_score
     shapes["eyeBlinkRight"] = head.blink_score
     return Face(landmarks=pts, matrix=m, blendshapes=shapes)
+
+
+def place_in_frame(head: Head, width: int, height: int) -> tuple[float, float, float]:
+    """Где середина глаз в кадре (доли ширины и высоты) и масштаб лица
+    (пикс./мм): из `eye_mm` камерой участника или как задано."""
+    if head.eye_mm is None:
+        return head.cx, head.cy, head.px_per_mm
+    ex, ey, z = head.eye_mm
+    f = CAMERA_F_SHARE * width
+    cam_y = -head.screen_h_mm / 2 - CAMERA_ABOVE_MM
+    # Камера смотрит на человека: его право — влево по снимку.
+    u = width / 2 + f * (-ex) / z
+    v = height / 2 + f * (ey - cam_y) / z
+    return u / width, v / height, f / z
 
 
 # --- синтетический участник калибровки (SNO-ALG-EYE-02) -----------------
@@ -162,6 +212,42 @@ def look_at(x_mm: float, y_mm: float, distance_mm: float, *, yaw: float = 0.0,
     return Head(yaw=yaw, pitch=pitch,
                 gaze_x=(ax - yaw) / EYE_RANGE_X_DEG,
                 gaze_y=(ay - pitch) / EYE_RANGE_Y_DEG, **head)
+
+
+def look_from(x_mm: float, y_mm: float, eye: tuple[float, float, float], *,
+              screen_h_mm: float, yaw: float = 0.0, pitch: float = 0.0,
+              roll: float = 0.0, noise: tuple[float, float] = (0.0, 0.0),
+              **head) -> Head:
+    """Голова, глаза которой смотрят в точку экрана (`x_mm`, `y_mm` от его
+    середины, y вниз) из места `eye` (мм: x, y от середины экрана, z — до
+    экрана), — точно, без малых углов (BUG-60). Голова повёрнута на `yaw`,
+    `pitch`, `roll` (как у `Head`); глаз в голове смотрит туда, куда
+    остаётся. `noise` — ошибка взгляда в градусах по осям."""
+    ex, ey, z = eye
+    g = np.array([x_mm - ex, y_mm - ey, z], dtype=np.float64)
+    r_person = _TO_PERSON @ rotation(yaw, pitch, roll) @ _TO_PERSON
+    e = r_person.T @ g
+    ax = math.degrees(math.atan2(e[0], e[2])) + noise[0]
+    ay = math.degrees(math.atan2(e[1], e[2])) + noise[1]
+    return Head(yaw=yaw, pitch=pitch, roll=roll,
+                gaze_x=ax / EYE_RANGE_X_DEG, gaze_y=ay / EYE_RANGE_Y_DEG,
+                eye_mm=(ex, ey, z), screen_h_mm=screen_h_mm, **head)
+
+
+# Голова во время фазы движения (BUG-60): первые 6 с — влево-вправо,
+# следующие 6 с — вверх-вниз, по периоду в 3 с.
+HEAD_SWEEP_YAW = 9.0
+HEAD_SWEEP_PITCH = 7.0
+HEAD_SWEEP_PERIOD_S = 3.0
+
+
+def head_sweep(seconds: float) -> tuple[float, float]:
+    """Поворот головы (yaw, pitch) через `seconds` после начала фазы
+    движения головы."""
+    w = 2 * math.pi * seconds / HEAD_SWEEP_PERIOD_S
+    if seconds < 6.0:
+        return HEAD_SWEEP_YAW * math.sin(w), 0.0
+    return 0.0, HEAD_SWEEP_PITCH * math.sin(w)
 
 
 class Participant:
@@ -216,6 +302,18 @@ class Participant:
             return path_at(current.path, (qpc_us - current.qpc_us) / 1e6)
         return current.x, current.y
 
+    def sweep(self, qpc_us: int) -> tuple[float, float]:
+        """Поворот головы сверх покачивания: в фазе движения головы
+        участник честно водит головой, глядя на точку (BUG-60)."""
+        with self._lock:
+            current = None
+            for t in self.targets:
+                if t.qpc_us <= qpc_us:
+                    current = t
+        if current is None or current.phase != "head":
+            return 0.0, 0.0
+        return head_sweep((qpc_us - current.qpc_us) / 1e6)
+
     def head(self, sec: float) -> Head:
         from . import clock
 
@@ -225,10 +323,13 @@ class Participant:
         pitch = 1.0 * math.sin(sec * 0.23)
         if screen is None:
             return Head(yaw=yaw, pitch=pitch)
+        sy, sp = self.sweep(seen)
         point = self.where(seen)
         x_mm, y_mm = screen.mm(*point) if point else (0.0, 0.0)
         noise = tuple(self._rng.normal(0.0, self.noise_deg, 2)) if self.noise_deg else (0.0, 0.0)
-        return look_at(x_mm, y_mm, screen.distance_mm, yaw=yaw, pitch=pitch, noise=noise)
+        return look_from(x_mm, y_mm, (0.0, -60.0, screen.distance_mm),
+                         screen_h_mm=screen.h_mm, yaw=yaw + sy, pitch=pitch + sp,
+                         noise=noise)
 
 
 PARTICIPANT = Participant()
