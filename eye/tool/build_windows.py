@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -91,12 +92,15 @@ def main() -> None:
 
     exe = out / "python.exe"
     sig = subprocess.run(
-        ["powershell", "-NoProfile", "-Command",
-         f"$s = Get-AuthenticodeSignature -FilePath '{exe}'; "
-         "Write-Output $s.Status; Write-Output $s.SignerCertificate.Subject"],
-        capture_output=True, text=True)
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command",
+         "$s = Get-AuthenticodeSignature -LiteralPath $env:SNO_EYE_EXE; "
+         "Write-Output ([string]$s.Status); "
+         "Write-Output ([string]$s.SignerCertificate.Subject)"],
+        capture_output=True, text=True, env={**os.environ, "SNO_EYE_EXE": str(exe)})
     status, _, subject = sig.stdout.strip().partition("\n")
     print(f"подпись python.exe: {status.strip()}; {subject.strip()}")
+    if sig.returncode != 0 or sig.stderr.strip():
+        print(sig.stderr)
     if status.strip() != "Valid" or "Python Software Foundation" not in subject:
         fail("python.exe не подписан Python Software Foundation")
 
@@ -136,6 +140,13 @@ def main() -> None:
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         else:
             shutil.copy2(src, out / name)
+
+    # Байт-код — заранее: иначе первый запуск у участника компилировал бы
+    # numpy, matplotlib и MediaPipe и долго не отвечал на `hello`, а в
+    # папке без права записи — каждый запуск. Python раннера той же
+    # младшей версии, байт-код совместим.
+    subprocess.run([sys.executable, "-m", "compileall", "-q", "-j", "0",
+                    str(site), str(out / "sno_eye")], check=False)
 
     mv = read_kv(EYE / "model_version.txt")
     (out / "models").mkdir()

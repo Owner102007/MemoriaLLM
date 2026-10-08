@@ -11,7 +11,6 @@ from pathlib import Path
 
 from .capture import (Capture, CameraError, CvSource, SyntheticSource,
                       list_cameras, find_camera, CameraInfo)
-from .synthetic import Head
 
 ERROR_ALREADY_EXISTS = 183
 
@@ -20,7 +19,8 @@ class Runtime:
     """Источник: `camera` — настоящая камера, `synthetic[:вариант]` —
     синтетика для тестов. Варианты: `denied`, `busy`, `none` (камера не
     открывается по своей причине), `dark` (мало света), `noface`, `slow`
-    (1080p даёт 20 к/с, 720p — 30), `twofaces`."""
+    (1080p даёт 20 к/с, 720p — 30), `twofaces`, `lost` (камера пропадает
+    через 60 кадров)."""
 
     def __init__(self, source: str = "camera"):
         self.source = source
@@ -28,6 +28,10 @@ class Runtime:
         self.synthetic = kind == "synthetic"
         self.variant = variant
         self._landmarker = None
+        # Режим, который выбрала последняя самопроверка (1080p или 720p,
+        # решение Т24): по нему `open` открывает камеру, если приложение
+        # режима не назвало.
+        self.mode: tuple[int, int] | None = None
 
     # камеры
     def cameras(self) -> list[CameraInfo]:
@@ -64,7 +68,8 @@ class Runtime:
             fps = 20.0
         scenario = (lambda sec: None) if v == "noface" else None
         return SyntheticSource(fps=fps, scenario=scenario, light=light, fail=fail,
-                               faces=2 if v == "twofaces" else 1)
+                               faces=2 if v == "twofaces" else 1,
+                               lose_after=60 if v == "lost" else None)
 
     # распознавание
     def landmarker(self):
@@ -125,12 +130,17 @@ class SingleInstance:
     def acquire(self) -> bool:
         if sys.platform == "win32":
             import ctypes
+            from ctypes import wintypes
 
-            k32 = ctypes.windll.kernel32
-            k32.CreateMutexW.restype = ctypes.c_void_p
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.CreateMutexW.restype = wintypes.HANDLE
+            k32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
             handle = k32.CreateMutexW(None, False, "Local\\" + self.name)
-            if k32.GetLastError() == ERROR_ALREADY_EXISTS:
-                k32.CloseHandle(ctypes.c_void_p(handle))
+            err = ctypes.get_last_error()
+            if not handle:
+                return False
+            if err == ERROR_ALREADY_EXISTS:
+                k32.CloseHandle(handle)
                 return False
             self._handle = handle
             return True
@@ -153,9 +163,6 @@ class SingleInstance:
         if self._handle is not None:
             import ctypes
 
-            ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(self._handle))
+            ctypes.WinDLL("kernel32").CloseHandle(self._handle)
             self._handle = None
 
-
-def default_head() -> Head:
-    return Head()

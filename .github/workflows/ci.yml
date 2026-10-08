@@ -673,6 +673,11 @@ jobs:
             --only-binary :all: --no-deps \
             -r eye/requirements.lock -r eye/requirements-dev.lock
 
+      # MediaPipe грузит libEGL и libGLESv2 даже для работы на процессоре;
+      # на раннере их нет.
+      - name: Библиотеки EGL для MediaPipe
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgles2
+
       - name: Модель лица по замку
         run: python eye/tool/fetch_model.py
 
@@ -1035,9 +1040,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Только сборки приложения: папка eye/ уже лежит в ZIP ветвей,
+      # а отдельно — сотни мегабайт, которые здесь не нужны.
       - name: Забрать артефакты
         uses: actions/download-artifact@v8
         with:
+          pattern: memoria*
           path: dist
 
       # Имена файлов постоянные — иначе ссылка «скачать последнее» будет

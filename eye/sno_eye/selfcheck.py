@@ -262,64 +262,74 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
             folder: Path, progress=None, mode=None, abort=None) -> dict:
     """Замер на камере: прогрев, затем `measure_s` секунд распознавания.
 
+    `processor_factory()` → `Processor` (модель грузится до камеры:
+    модель не загрузилась — камера не открыта и не занята);
     `open_source(mode)` → запущенный `Capture` (или `CameraError`);
-    `processor_factory()` → `Processor`; `cpu_meter` — `start()`/`stop()`
-    → процент процессора. Если 1080p не держит 25 к/с с распознаванием,
-    замер повторяется в 720p (решение Т24).
+    `cpu_meter` — `start()`/`stop()` → процент процессора. Если 1080p не
+    держит 25 к/с с распознаванием, замер повторяется в 720p (решение
+    Т24). Камера закрывается при любом исходе.
     """
     from .capture import MODES, CameraError
 
     stopped = abort or (lambda: False)
-
     m: dict[str, Any] = {"satellite": True, "disk_free_bytes": disk_free(folder)}
     modes = [mode] if mode else list(MODES)
     chosen = None
     for k, md in enumerate(modes):
+        proc = processor_factory()
         try:
             cap = open_source(md)
         except CameraError as e:
             m["camera"] = e.code
             return {**evaluate(m, thresholds), "measures": m}
         m["camera"] = "ok"
-        proc = processor_factory()
-        if progress:
-            progress({"stage": "warmup", "mode": [cap.source.width, cap.source.height]})
-        warm_until = time.perf_counter() + thresholds["warmup_s"]
-        while time.perf_counter() < warm_until and not stopped():
-            g = cap.get(0.5)
-            if g is not None:
-                proc.process(g)
-        if progress:
-            progress({"stage": "measure"})
-        meas = Measures()
-        cpu_meter.start()
-        t0 = time.perf_counter()
-        end = t0 + thresholds["measure_s"]
-        lost = False
-        while time.perf_counter() < end and not stopped():
-            g = cap.get(0.5)
-            if g is None:
-                if cap.stats.lost:
-                    lost = True
-                    break
-                continue
-            meas.add(proc.process(g))
-        seconds = time.perf_counter() - t0
-        cpu = cpu_meter.stop()
-        w, h = cap.source.width, cap.source.height
-        cap.stop()
+        try:
+            res, lost = _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped)
+        finally:
+            cap.stop()
         if stopped():
             return {"verdict": FAIL, "words": WORDS[FAIL], "checks": [],
                     "measures": m, "aborted": True}
         if lost:
             m["camera"] = "camera_lost"
             return {**evaluate(m, thresholds), "measures": m}
-        res = meas.result(seconds)
-        chosen = {**res, "width": w, "height": h, "cpu_percent": cpu,
-                  "dropped": cap.stats.dropped}
+        chosen = res
         if res["fps"] >= thresholds["mode_switch_fps"] or k == len(modes) - 1:
             break
         if progress:
-            progress({"stage": "switch", "from": [w, h], "fps": round(res["fps"], 1)})
+            progress({"stage": "switch", "from": [res["width"], res["height"]],
+                      "fps": round(res["fps"], 1)})
     m.update(chosen or {})
     return {**evaluate(m, thresholds), "measures": m}
+
+
+def _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped):
+    if progress:
+        progress({"stage": "warmup", "mode": [cap.source.width, cap.source.height]})
+    warm_until = time.perf_counter() + thresholds["warmup_s"]
+    while time.perf_counter() < warm_until and not stopped():
+        g = cap.get(0.5)
+        if g is not None:
+            proc.process(g)
+        elif cap.stats.lost:
+            return None, True
+    if progress:
+        progress({"stage": "measure"})
+    meas = Measures()
+    cpu_meter.start()
+    t0 = time.perf_counter()
+    end = t0 + thresholds["measure_s"]
+    while time.perf_counter() < end and not stopped():
+        g = cap.get(0.5)
+        if g is None:
+            if cap.stats.lost:
+                cpu_meter.stop()
+                return None, True
+            continue
+        meas.add(proc.process(g))
+    seconds = time.perf_counter() - t0
+    cpu = cpu_meter.stop()
+    res = meas.result(seconds)
+    res.update({"width": cap.source.width, "height": cap.source.height,
+                "cpu_percent": cpu, "dropped": cap.stats.dropped})
+    return res, False

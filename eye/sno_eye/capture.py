@@ -10,10 +10,10 @@ OpenCV через DirectShow; Media Foundation — только запасным
 
 from __future__ import annotations
 
-import queue
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -78,8 +78,11 @@ class CvSource(Source):
         if privacy.denied_here():
             raise CameraError("camera_denied",
                               "Камера запрещена в параметрах Windows")
-        backends = ([cv2.CAP_DSHOW, cv2.CAP_MSMF] if sys.platform == "win32"
-                    else [cv2.CAP_ANY])
+        # Номер камеры из перечня DirectShow годится только DirectShow:
+        # у Media Foundation свой перечень (виртуальных камер в нём нет), и
+        # тот же номер открыл бы другую камеру. Запасной путь — когда
+        # перечня DirectShow нет вовсе (номер найден пробой, CAP_ANY).
+        backends = [cv2.CAP_DSHOW] if self.info.backend == "dshow" else [cv2.CAP_ANY]
         for backend in backends:
             cap = cv2.VideoCapture(self.info.index, backend)
             if not cap.isOpened():
@@ -121,13 +124,15 @@ class SyntheticSource(Source):
 
     def __init__(self, fps: float = 30.0, scenario=None, light: int = 120,
                  fail: str | None = None, max_mode: tuple[int, int] = (1920, 1080),
-                 faces: int = 1):
+                 faces: int = 1, lose_after: int | None = None):
         self.fps = fps
         self.scenario = scenario or default_scenario
         self.light = light
         self.fail = fail
         self.max_mode = max_mode
         self.faces = faces
+        self.lose_after = lose_after
+        self._count = 0
         self._t0 = 0.0
         self._next = 0.0
         self._base: np.ndarray | None = None
@@ -147,6 +152,10 @@ class SyntheticSource(Source):
         self._next = self._t0
 
     def read(self):
+        self._count += 1
+        if self.lose_after is not None and self._count > self.lose_after:
+            time.sleep(0.005)
+            return False, None, {}
         self._next += 1.0 / self.fps
         delay = self._next - time.perf_counter()
         if delay > 0:
@@ -231,7 +240,36 @@ class CaptureStats:
     dropped: int = 0
     failures: int = 0
     lost: bool = False
-    times: list = field(default_factory=list)
+
+
+class FrameQueue:
+    """Очередь на два кадра. Полная — выбрасывается самый старый, а
+    разрыв помечается у кадра, который теперь стоит первым: это перед ним
+    пропали кадры."""
+
+    def __init__(self, size: int = 2):
+        self._items: deque[Grabbed] = deque()
+        self._size = size
+        self._cv = threading.Condition()
+        self.dropped = 0
+
+    def put(self, item: Grabbed) -> None:
+        with self._cv:
+            if len(self._items) >= self._size:
+                gone = self._items.popleft()
+                self.dropped += 1
+                head = self._items[0] if self._items else item
+                # Разрыв переходит к следующему кадру вместе с теми, что
+                # уже были выброшены перед выброшенным.
+                head.dropped_before += gone.dropped_before + 1
+            self._items.append(item)
+            self._cv.notify()
+
+    def get(self, timeout: float) -> Grabbed | None:
+        with self._cv:
+            if not self._items:
+                self._cv.wait(timeout)
+            return self._items.popleft() if self._items else None
 
 
 class Capture:
@@ -239,11 +277,10 @@ class Capture:
 
     def __init__(self, source: Source):
         self.source = source
-        self.q: queue.Queue[Grabbed] = queue.Queue(maxsize=2)
+        self.q = FrameQueue(2)
         self.stats = CaptureStats()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._pending_drop = 0
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="eye-capture", daemon=True)
@@ -265,34 +302,27 @@ class Capture:
                 time.sleep(0.01)
                 continue
             fails = 0
-            item = Grabbed(frame, meta, stamp, seq, self._pending_drop)
+            self.q.put(Grabbed(frame, meta, stamp, seq))
             seq += 1
             self.stats.grabbed += 1
-            try:
-                self.q.put_nowait(item)
-                self._pending_drop = 0
-            except queue.Full:
-                try:
-                    self.q.get_nowait()
-                    self.stats.dropped += 1
-                    self._pending_drop += 1
-                    item.dropped_before = self._pending_drop
-                except queue.Empty:
-                    pass
-                try:
-                    self.q.put_nowait(item)
-                    self._pending_drop = 0
-                except queue.Full:
-                    self.stats.dropped += 1
+            self.stats.dropped = self.q.dropped
 
     def get(self, timeout: float = 0.5) -> Grabbed | None:
-        try:
-            return self.q.get(timeout=timeout)
-        except queue.Empty:
-            return None
+        return self.q.get(timeout)
 
-    def stop(self) -> None:
+    @property
+    def alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def stop(self, timeout: float = 1.0) -> bool:
+        """Остановить поток и освободить камеру. Камера освобождается
+        только после выхода потока захвата: `VideoCapture` из двух потоков
+        разом не трогают. Не вышел за `timeout` — False, камеру освободит
+        выход процесса."""
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=1.5)
+            self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                return False
         self.source.close()
+        return True

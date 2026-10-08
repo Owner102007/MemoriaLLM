@@ -39,15 +39,15 @@ class Processor:
         self.landmarker = landmarker
         self.dtype = writer_dtype or featfile.record_dtype()
         self.n = 0
-        self._t0_us: int | None = None
         self._stored = list(fp.STORED)
         self._shapes = list(fp.EYE_BLENDSHAPES)
 
     def process(self, g: Grabbed) -> Frame:
         h, w = g.frame.shape[:2]
-        if self._t0_us is None:
-            self._t0_us = g.qpc_us
-        t_ms = (g.qpc_us - self._t0_us) // 1000
+        # Метка для режима VIDEO — от общих часов процесса, а не от начала
+        # этой обработки: распознавание одно на процесс, и у второй сессии
+        # отсчёт с нуля шёл бы шагом в 1 мс после первой.
+        t_ms = g.qpc_us // 1000
         det = self.landmarker.detect(g.frame, t_ms, g.meta)
         rec = np.zeros((), dtype=self.dtype)
         rec["n"] = self.n
@@ -111,6 +111,15 @@ class Recorder:
         self.folder = Path(folder)
         self.folder.mkdir(parents=True, exist_ok=True)
         suffix = "" if seg == 0 else f".{seg}"
+        targets = [self.folder / f"features{suffix}.bin"]
+        if strip:
+            targets.append(self.folder / f"eyes{suffix}.mp4")
+            targets += [self.folder / f"eyes_{size}{suffix}.mp4" for size in extra_sizes]
+        for t in targets:
+            if t.exists():
+                # Тот же сегмент второй раз — ошибка приложения; прежний
+                # файл записи дороже нового.
+                raise FileExistsError(f"сегмент {seg} уже записан: {t.name}")
         info = {"seg": seg, "n0": n0}
         info.update(header or {})
         self.feat = featfile.FeatWriter(self.folder / f"features{suffix}.bin", info)

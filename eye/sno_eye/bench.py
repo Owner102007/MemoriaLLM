@@ -32,7 +32,8 @@ EXTRA_STRIP_SECONDS = 120.0
 WINDOW = "Memoria SNO - camera check (Esc - stop)"
 
 # Ворота Г1 («Айтрекер — схема системы», раздел «Ворота»).
-GATE = {"fps": 25.0, "drops_share": 0.02, "cpu_percent": 35.0, "memory_growth_mb": 50.0}
+GATE = {"fps": 25.0, "drops_share": 0.02, "cpu_percent": 35.0, "memory_growth_mb": 50.0,
+        "face_share": 0.8}
 
 
 def choose_camera(rt: Runtime, index: int | None, interactive: bool) -> dict | None:
@@ -60,6 +61,9 @@ def gate_of(result: dict, minutes: float) -> dict:
         "fps_ok": result["fps"]["mean"] >= GATE["fps"],
         "drops_ok": result["drops"]["share"] <= GATE["drops_share"],
         "cpu_ok": result["cpu"]["mean_percent"] <= GATE["cpu_percent"],
+        # Без лица в кадре распознавание почти ничего не стоит: такой
+        # замер нагрузку не меряет и ворота не открывает.
+        "face_ok": result["face_share"] >= GATE["face_share"],
     }
     # Рост памяти — мера долгого прогона; за две минуты он ни о чём.
     if minutes >= 30:
@@ -298,7 +302,8 @@ def _print_result(r: dict, path: Path) -> None:
     print(f"Процессор: {r['cpu']['mean_percent']} % (нужно ≤ 35 %) — {yes[g['cpu_ok']]}")
     if "memory_ok" in g:
         print(f"Рост памяти: {r['memory']['growth_mb']} МБ (нужно ≤ 50) — {yes[g['memory_ok']]}")
-    print(f"Лицо в кадре: {100 * r['face_share']:.0f} %")
+    print(f"Лицо в кадре: {100 * r['face_share']:.0f} % (нужно ≥ 80 %, иначе замер "
+          f"не меряет распознавание) — {yes[g['face_ok']]}")
     print()
     print("Ворота Г1: " + ("пройдены" if g["pass"] else "НЕ пройдены"))
     print(f"Итог записан: {path}")

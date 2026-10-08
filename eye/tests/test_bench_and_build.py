@@ -54,13 +54,16 @@ def test_sno_f_eye_04_bench_without_camera_says_so(instance_name, tmp_path):
 
 def test_sno_f_eye_04_gate_g1():
     base = {"fps": {"mean": 29.0}, "drops": {"share": 0.01},
-            "cpu": {"mean_percent": 20.0}, "memory": {"growth_mb": 10.0}}
+            "cpu": {"mean_percent": 20.0}, "memory": {"growth_mb": 10.0},
+            "face_share": 0.97}
     assert gate_of(base, 2)["pass"] and "memory_ok" not in gate_of(base, 2)
     assert gate_of(base, 40)["memory_ok"]
     assert not gate_of({**base, "fps": {"mean": 24.9}}, 2)["pass"]
     assert not gate_of({**base, "drops": {"share": 0.021}}, 2)["pass"]
     assert not gate_of({**base, "cpu": {"mean_percent": 35.1}}, 2)["pass"]
     assert not gate_of({**base, "memory": {"growth_mb": 51}}, 40)["pass"]
+    # Без лица в кадре замер нагрузку не меряет — ворота закрыты.
+    assert not gate_of({**base, "face_share": 0.79}, 2)["pass"]
 
 
 def test_sno_f_eye_04_selftest(instance_name):
@@ -128,6 +131,8 @@ def test_sno_f_eye_04_cmd_shortcuts():
         raw = (EYE / name).read_bytes()
         raw.decode("ascii")  # содержимое — латиницей: кодовая страница cmd
         text = raw.decode("ascii")
-        assert "python.exe -I -m sno_eye bench" in text
+        # Путь к python.exe — от папки ярлыка: при
+        # NoDefaultCurrentDirectoryInExePath cmd не ищет в текущей папке.
+        assert '"%~dp0python.exe" -I -m sno_eye bench' in text
         assert "\r\n" in text
     assert "--minutes 40" in (EYE / "Проверка камеры (40 минут).cmd").read_text()

@@ -571,8 +571,7 @@ void main() {
       // Колёса — только по суммам; пробный запуск на раннере.
       expect(ci, contains('--require-hashes'));
       expect(ci, contains("'--selftest'"));
-      final String build = File('eye/tool/build_windows.py')
-          .readAsStringSync();
+      final String build = File('eye/tool/build_windows.py').readAsStringSync();
       expect(build, contains('"--require-hashes"'));
       expect(build, contains('Python Software Foundation'));
       // Релиз основного приложения о спутнике не знает.
