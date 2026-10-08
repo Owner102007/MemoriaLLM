@@ -281,23 +281,60 @@ def test_sno_alg_eye_02_target_order_is_checked():
 
 
 def test_sno_alg_eye_02_smoother_follows_and_jumps():
-    s = calib.Smoother()
+    s = calib.Smoother((30.0, 30.0))
     t = 0
     for _ in range(60):
         x, y = s.push(t, 500.0, 300.0)
         t += STEP_US
     assert (x, y) == pytest.approx((500.0, 300.0), abs=1.0)
-    # Саккада — сразу на новом месте, без хвоста.
-    assert s.push(t, 1500.0, 900.0) == (1500.0, 900.0)
-    # Дрожь гасится: разброс сглаженного меньше разброса входа.
-    rng = np.random.default_rng(1)
-    raw, smooth = [], []
-    for _ in range(90):
+    # Одиночный выброс точку не двигает.
+    assert s.push(t, 1500.0, 900.0) == pytest.approx((500.0, 300.0))
+    t += STEP_US
+    assert s.push(t, 500.0, 300.0) == pytest.approx((500.0, 300.0))
+    # Саккада: три кадра кучно на новом месте — точка там, без хвоста.
+    for _ in range(3):
         t += STEP_US
-        gx, gy = 1500 + rng.normal(0, 30), 900 + rng.normal(0, 30)
-        raw.append(gx)
-        smooth.append(s.push(t, gx, gy)[0])
-    assert np.std(smooth[30:]) < 0.6 * np.std(raw[30:])
+        x, y = s.push(t, 1500.0, 900.0)
+    assert (x, y) == pytest.approx((1500.0, 900.0))
+    # Перерыв дольше полусекунды — стоянка заново.
+    t += 600_000
+    assert s.push(t, 100.0, 100.0) == pytest.approx((100.0, 100.0))
+    assert s.held == pytest.approx((100.0, 100.0))
+
+
+def _fixation(sim, fx, fy, frames, noise):
+    """Оценки взгляда участника, который смотрит в одну точку."""
+    xm, ym = sim.screen.mm(fx * W, fy * H)
+    out = []
+    for i in range(frames):
+        n = tuple(sim.rng.normal(0, noise, 2))
+        head = synthetic.look_at(xm, ym, sim.screen.distance_mm, noise=n)
+        face = synthetic.render(head, W, H)
+        vec = features.compute(face.landmarks, face.matrix, W, H)
+        out.append((T0 + i * STEP_US, sim.cal.predict(vec)))
+    return out
+
+
+@pytest.mark.parametrize("noise", [0.5, 1.5])
+def test_bug_59_live_dot_shakes_much_less_than_the_estimate(noise):
+    # BUG-59: на ПК владельца живая точка дрожала на 3–5 см. Фильтр Калмана
+    # был настроен на шум в 40 пикселей (≈ 1°), а шум оценки там втрое
+    # больше; разбор того же синтетического участника показал дрожь
+    # сглаженной точки — половину дрожи оценки. Теперь шум меряется на
+    # точках калибровки, и точка стоит на среднем стоянки.
+    sim = Sim(noise=noise, latency_ms=70, seed=5)
+    fit = sim.calibrate(kind="quick", points=CALIB[:9])
+    assert fit["noise_deg"] == pytest.approx(noise, rel=0.3)
+    s = calib.Smoother(sim.cal.noise_px)
+    est = _fixation(sim, 0.3, 0.6, 90, noise)
+    raw = np.array([g for _, g in est])
+    shown = np.array([s.push(t, *g) for t, g in est])[15:]
+    assert shown.std(axis=0).max() < 0.35 * raw[15:].std(axis=0).min()
+    # Прыжок взгляда на другую сторону экрана точка проходит за пять кадров.
+    jump = _fixation(sim, 0.8, 0.3, 10, noise)
+    after = [s.push(t + 90 * STEP_US, *g) for t, g in jump]
+    target = np.median([g for _, g in jump], axis=0)
+    assert math.hypot(*(np.array(after[4]) - target)) < 1.5 * px_for_deg(noise)
 
 
 def test_sno_alg_eye_02_kernel_intercept_is_not_shrunk():

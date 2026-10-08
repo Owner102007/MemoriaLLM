@@ -547,44 +547,89 @@ def precision_deg(points: list[np.ndarray], screen: Screen) -> float | None:
 # --- живая точка -----------------------------------------------------------
 
 class Smoother:
-    """Сглаживание живой точки для глаза: фильтр Калмана с постоянной
-    скоростью по каждой оси. Скачок дальше `jump_px` — саккада: фильтр
-    встаёт на новое место сразу, без хвоста. В запись сглаженное не идёт."""
+    """Сглаживание живой точки для глаза — по фиксациям (SNO-F-EYE-03,
+    BUG-59). В запись сглаженное не идёт.
 
-    def __init__(self, r_px: float = 40.0, accel: float = 3000.0, jump_px: float = 250.0):
-        self.r = r_px * r_px
-        self.q = accel * accel
-        self.jump = jump_px
-        self.x: np.ndarray | None = None   # [px, vx, py, vy]
-        self.p: np.ndarray | None = None
+    Взгляд — это стоянки (фиксации) и прыжки между ними (саккады), а шум
+    веб-камеры — градус-два на каждом кадре. Пока новая оценка лежит в
+    круге шума вокруг середины стоянки, точка стоит на среднем оценок
+    стоянки за последние `window_s`: шум делится на корень из числа
+    кадров. Оценка вне круга копится; когда `confirm` таких легли кучно —
+    началась новая стоянка, и точка переходит сразу на их среднее.
+    Одиночный выброс (сбой ориентиров) точку не двигает. Круг — `k` шумов
+    по каждой оси (`noise_px` — разброс оценки на точках калибровки той же
+    моделью); прошло больше `gap_s` без годных кадров — стоянка заново.
+    Прыжок меньше круга ловит второе правило: среднее последних `tail`
+    оценок ушло от среднего остальной стоянки дальше `k_tail` шумов
+    разности средних, — новая стоянка с них. Порог у него выше, чем у
+    круга: проверка идёт на каждом кадре, и ложная тревога сдёргивала бы
+    точку.
+
+    Прежний фильтр Калмана был настроен на шум в 40 пикселей; на ПК
+    владельца шум втрое больше, и точка дрожала на 3–5 см.
+    """
+
+    def __init__(self, noise_px=(40.0, 40.0), window_s: float = 0.6,
+                 k: float = 3.0, confirm: int = 3, gap_s: float = 0.5,
+                 tail: int = 6, k_tail: float = 4.0):
+        nx, ny = (noise_px, noise_px) if isinstance(noise_px, (int, float)) else noise_px
+        self.noise = (max(1.0, float(nx)), max(1.0, float(ny)))
+        self.window = int(window_s * 1e6)
+        self.k = k
+        self.confirm = confirm
+        self.gap = int(gap_s * 1e6)
+        self.tail = tail
+        self.k_tail = k_tail
+        self.fix: deque[tuple[int, float, float]] = deque()
+        self.cand: list[tuple[int, float, float]] = []
         self.t: int | None = None
 
-    def push(self, qpc_us: int, gx: float, gy: float) -> tuple[float, float]:
-        if self.x is None or self.t is None:
-            return self._reset(qpc_us, gx, gy)
-        dt = max(1e-3, (qpc_us - self.t) / 1e6)
-        if dt > 0.5 or math.hypot(gx - self.x[0], gy - self.x[2]) > self.jump:
-            return self._reset(qpc_us, gx, gy)
-        self.t = qpc_us
-        f = np.array([[1, dt], [0, 1]])
-        qm = self.q * np.array([[dt ** 4 / 4, dt ** 3 / 2], [dt ** 3 / 2, dt ** 2]])
-        for k, z in ((0, gx), (2, gy)):
-            s = self.x[k:k + 2]
-            pk = self.p[k:k + 2, k:k + 2]
-            s = f @ s
-            pk = f @ pk @ f.T + qm
-            gain = pk[:, 0] / (pk[0, 0] + self.r)
-            s = s + gain * (z - s[0])
-            pk = pk - np.outer(gain, pk[0, :])
-            self.x[k:k + 2] = s
-            self.p[k:k + 2, k:k + 2] = pk
-        return float(self.x[0]), float(self.x[2])
+    @staticmethod
+    def _mean(pts) -> tuple[float, float]:
+        n = len(pts)
+        return (sum(p[1] for p in pts) / n, sum(p[2] for p in pts) / n)
 
-    def _reset(self, qpc_us, gx, gy):
-        self.x = np.array([gx, 0.0, gy, 0.0])
-        self.p = np.diag([self.r, 1e6, self.r, 1e6])
+    def _inside(self, a: tuple[float, float], x: float, y: float,
+                n: float = 1, k: float | None = None) -> bool:
+        dx = (x - a[0]) / self.noise[0]
+        dy = (y - a[1]) / self.noise[1]
+        k = self.k if k is None else k
+        return (dx * dx + dy * dy) * n <= k * k
+
+    def push(self, qpc_us: int, gx: float, gy: float) -> tuple[float, float]:
+        if self.t is None or qpc_us - self.t > self.gap or not self.fix:
+            self.fix = deque([(qpc_us, gx, gy)])
+            self.cand = []
+        elif self._inside(self._mean(self.fix), gx, gy):
+            self.fix.append((qpc_us, gx, gy))
+            self.cand = []
+            n = self.tail
+            if len(self.fix) >= 2 * n:
+                pts = list(self.fix)
+                head, last = pts[:-n], pts[-n:]
+                lx, ly = self._mean(last)
+                # Шум разности двух средних — из шума обоих.
+                m = len(head) * n / (len(head) + n)
+                if not self._inside(self._mean(head), lx, ly, m, self.k_tail):
+                    self.fix = deque(last)
+        else:
+            self.cand.append((qpc_us, gx, gy))
+            if len(self.cand) >= self.confirm:
+                c = self._mean(self.cand)
+                if all(self._inside(c, x, y) for _, x, y in self.cand):
+                    self.fix = deque(self.cand)
+                    self.cand = []
+                else:
+                    self.cand.pop(0)
         self.t = qpc_us
-        return gx, gy
+        while len(self.fix) > 1 and qpc_us - self.fix[0][0] > self.window:
+            self.fix.popleft()
+        return self._mean(self.fix)
+
+    @property
+    def held(self) -> tuple[float, float] | None:
+        """Где точка стоит сейчас (для кадров без взгляда)."""
+        return self._mean(self.fix) if self.fix else None
 
 
 # --- калибровка целиком -------------------------------------------------------
@@ -613,6 +658,7 @@ class Calibration:
         self._frames: deque[Sample] = deque(maxlen=BUFFER_FRAMES)
         self.attempts: list[Attempt] = []
         self.model = None
+        self.noise_px: tuple[float, float] = (40.0, 40.0)
         self.model_info: dict | None = None
         self.scale_ref: float | None = None
 
@@ -762,6 +808,7 @@ class Calibration:
         model, info = select_model(ts, screen, kinds=kinds)
         self.model = model
         self.model_info = info
+        self.noise_px = self._noise(model, used)
         cv = info["cv_deg"][info["kind"]]
         a.fit = {
             "model": info["kind"], "cv_deg": cv, "cv_by_model": info["cv_deg"],
@@ -770,8 +817,32 @@ class Calibration:
             "samples": int(len(fix.x)), "pursuit": pursuit_n,
             "counts": {tid: p["used"] for tid, p in pts.items()},
             "face": round(face, 3) if face is not None else None,
+            "noise_px": [round(v, 1) for v in self.noise_px],
+            "noise_deg": round(self._noise_deg(self.noise_px), 3),
         }
         return dict(a.fit)
+
+    @staticmethod
+    def _noise(model, used: dict) -> tuple[float, float]:
+        """Шум оценки по каждой оси, пиксели: разброс оценки внутри точки
+        калибровки (человек смотрит в одно место), среднеквадратично по
+        точкам. По нему живая точка решает, что дрожь, а что прыжок взгляда
+        (BUG-59)."""
+        var = []
+        for p in used.values():
+            if len(p["feats"]) >= 3:
+                var.append(model.predict(p["feats"][:, USED_IDX]).var(axis=0))
+        if not var:
+            return (40.0, 40.0)
+        v = np.sqrt(np.mean(var, axis=0))
+        return (float(v[0]), float(v[1]))
+
+    def _noise_deg(self, noise_px: tuple[float, float]) -> float:
+        """Шум в градусах у середины экрана: средний по осям."""
+        sc = self.screen
+        c = (sc.w / 2, sc.h / 2)
+        n = math.sqrt((noise_px[0] ** 2 + noise_px[1] ** 2) / 2)
+        return sc.angle_deg(c, (c[0] + n, c[1]))
 
     def _latency(self, fix: TrainSet, pur: list[tuple[Sample, Target]]) -> float:
         """Задержка камеры: сдвиг 0–200 мс, при котором оценка взгляда на

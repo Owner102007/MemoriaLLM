@@ -270,20 +270,17 @@ class EyeTrial extends ChangeNotifier {
         }
       }),
     );
-    String? folder;
-    if (kind == EyeCalibrationKind.full) {
-      folder = await tracker.standFolder(_now());
-      standFolder = folder;
-      if (folder != null) {
-        await tracker.files.writeText(
-          p.join(folder, 'place.json'),
-          const JsonEncoder.withIndent(' ').convert(place.toJson()),
-        );
-      }
+    // Папка стенда — у обоих видов (BUG-59): по признакам кадров видно,
+    // откуда дрожит точка. У быстрой в ней нет полосы глаз — только
+    // признаки, место, самопроверка и калибровка.
+    final String? folder = await tracker.standFolder(_now());
+    standFolder = folder;
+    if (folder != null) {
+      await tracker.files.writeText(
+        p.join(folder, 'place.json'),
+        const JsonEncoder.withIndent(' ').convert(place.toJson()),
+      );
     }
-    // У быстрой проверки файлов нет: её самопроверка не ложится поверх
-    // самопроверки места записи в `eye/` (место на диске меряется у
-    // самого спутника).
     stage = 'Самопроверка…';
     notifyListeners();
     final EyeCheck checked = await link.selfcheck(
@@ -308,8 +305,9 @@ class EyeTrial extends ChangeNotifier {
       screen: screen,
       distanceMm: place.distanceMm,
       camera: place.camera,
-      dir: kind == EyeCalibrationKind.full ? folder : null,
-      write: kind == EyeCalibrationKind.full && folder != null,
+      dir: folder,
+      write: folder != null,
+      strip: kind == EyeCalibrationKind.full,
     );
     if (_phase == EyeTrialPhase.closed) {
       return;
@@ -523,8 +521,7 @@ class EyeTrial extends ChangeNotifier {
       if (link == null || _phase == EyeTrialPhase.closed) {
         return;
       }
-      final bool write =
-          _kind == EyeCalibrationKind.full && standFolder != null;
+      final bool write = standFolder != null;
       try {
         await link.closeCamera();
         // Размер окна — уже новый: пока закрывалась камера, кадр с новым
@@ -537,6 +534,7 @@ class EyeTrial extends ChangeNotifier {
           camera: place.camera,
           dir: write ? standFolder : null,
           write: write,
+          strip: _kind == EyeCalibrationKind.full,
           seg: write ? ++_segment : null,
         );
       } on EyeError catch (e) {

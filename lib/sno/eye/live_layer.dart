@@ -127,10 +127,14 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
   Widget _dot(BuildContext context, EyeTrial trial) {
     final EyeGaze? gaze = trial.gaze;
     final (double, double)? at = gaze?.smooth;
-    if (gaze == null || !gaze.ok || at == null) {
+    if (gaze == null || at == null) {
       return const SizedBox.shrink();
     }
-    final Color color = Theme.of(context).colorScheme.primary;
+    // Кадр без взгляда (моргание): спутник держит точку на месте до
+    // полусекунды, и она не мигает, а бледнеет (BUG-59).
+    final Color color = Theme.of(
+      context,
+    ).colorScheme.primary.withValues(alpha: gaze.ok ? 1 : 0.4);
     return Positioned(
       left: at.$1 - kLiveDot / 2,
       top: at.$2 - kLiveDot / 2,
@@ -141,7 +145,7 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
           height: kLiveDot,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: color.withValues(alpha: 0.35),
+            color: color.withValues(alpha: color.a * 0.35),
             border: Border.all(color: color, width: 2),
           ),
         ),
@@ -262,7 +266,7 @@ class _EyeLivePanel extends StatelessWidget {
                       onPressed: () => unawaited(trial.finishEarly()),
                       child: const Text('Закончить'),
                     ),
-                  if (finished && folder != null)
+                  if ((finished || !full) && folder != null)
                     TextButton(
                       key: const Key('eye-live-folder'),
                       onPressed: () => unawaited(openFolder(folder)),

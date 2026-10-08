@@ -166,8 +166,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('eye-trial-quick')));
     await settle(tester);
-    // Окно — на монитор места записи, спутник запущен, камера открыта
-    // без файлов.
+    // Окно — на монитор места записи, спутник запущен, камера открыта.
     expect(window.locks, <String>[r'\\.\DISPLAY1']);
     expect(sat().names.take(4), <Object?>[
       'hello',
@@ -175,12 +174,17 @@ void main() {
       'open',
       'calibrate',
     ]);
-    // У быстрой проверки файлов нет — и самопроверки в папке тоже.
+    // BUG-59: и у быстрой проверки — папка стенда с признаками кадров,
+    // но без полосы глаз.
+    expect(files.folders, hasLength(1));
+    final String stand = files.folders.single;
+    expect(files.written.keys, contains(p.join(stand, 'place.json')));
     final Map<String, Object?> check = sent('selfcheck').single;
-    expect(check.containsKey('dir'), isFalse);
+    expect(check['dir'], stand);
     final Map<String, Object?> open = sent('open').single;
-    expect(open['write'], isFalse);
-    expect(open.containsKey('dir'), isFalse);
+    expect(open['write'], isTrue);
+    expect(open['dir'], stand);
+    expect(open['strip'], isFalse);
     expect(open['distance_mm'], 600);
     final Map<String, Object?> screen = open['screen']! as Map<String, Object?>;
     expect(screen['w'], 1920);
@@ -247,6 +251,20 @@ void main() {
     expect(find.text('30,0 к/с · лицо 100 % · 1,2°'), findsOneWidget);
     // Точка не забирает нажатий: под ней — приложение.
     expect(find.byKey(const Key('eye-live-again')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('eye-live-folder')));
+    await tester.pump();
+    expect(opened, <String>[stand]);
+    // BUG-59: моргание — спутник держит точку, и она не мигает.
+    sat().gaze(400, 300, t: 2000000, ok: false, held: true);
+    await tester.pump();
+    await tester.pump();
+    expect(dot, findsOneWidget);
+    expect(tester.getCenter(dot), const Offset(400, 300));
+    // Взгляда нет дольше полусекунды — точки нет.
+    sat().gaze(400, 300, t: 2600000, ok: false);
+    await tester.pump();
+    await tester.pump();
+    expect(dot, findsNothing);
 
     await tester.tap(find.byKey(const Key('eye-live-close')));
     await settle(tester);

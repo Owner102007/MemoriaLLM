@@ -121,11 +121,12 @@ class FakeEyeProcess implements EyeProcess {
       if (t['phase'] != 'off') t['id'],
   ];
 
-  /// Строка живой точки: взгляд в точке (x, y) окна.
-  void gaze(double x, double y, {int? t, bool ok = true}) {
+  /// Строка живой точки: взгляд в точке (x, y) окна. Кадр без взгляда
+  /// ([ok] — `false`) несёт точку, которую спутник держит, если [held].
+  void gaze(double x, double y, {int? t, bool ok = true, bool held = false}) {
     emit(<String, Object?>{
       'g': ok ? <double>[x, y] : null,
-      if (ok) 's': <double>[x, y],
+      if (ok || held) 's': <double>[x, y],
       'ok': ok,
       't': t ?? clock.nowUs(),
     });

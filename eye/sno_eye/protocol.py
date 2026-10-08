@@ -459,7 +459,13 @@ class Server:
             return
         g = cal.predict(frame.feat) if ok else None
         if g is None:
-            self.out.send({"g": None, "ok": False, "t": qpc}, droppable=True)
+            # Моргнул, отвернулся: точка стоит, где стояла, пока не прошло
+            # полсекунды, — иначе она мигала бы на каждом моргании (BUG-59).
+            held = self._smoother.held
+            fresh = self._smoother.t is not None and qpc - self._smoother.t <= self._smoother.gap
+            self.out.send({"g": None,
+                           "s": [round(held[0], 1), round(held[1], 1)] if held and fresh else None,
+                           "ok": False, "t": qpc}, droppable=True)
             return
         sx, sy = self._smoother.push(qpc, g[0], g[1])
         self.out.send({"g": [round(g[0], 1), round(g[1], 1)],
@@ -515,7 +521,7 @@ class Server:
             res = cal.fit()
         except calib.CalibrationError as e:
             raise CommandError(e.code, e.text) from None
-        self._smoother = calib.Smoother()
+        self._smoother = calib.Smoother(cal.noise_px)
         self._write_calibration(self.session, cal)
         self.out.send({"reply": "fit", "attempt": cal.attempt.n, **res})
 
@@ -535,7 +541,7 @@ class Server:
         cal = self._calibration()
         if on and cal.model is None:
             raise CommandError("bad_command", "Живой точке нужна модель: сначала fit")
-        self._smoother = calib.Smoother()
+        self._smoother = calib.Smoother(cal.noise_px)
         self.live = on
         self.out.send({"reply": "live", "on": on})
 
