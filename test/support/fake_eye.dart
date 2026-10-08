@@ -307,9 +307,12 @@ class FakeEyeProcess implements EyeProcess {
         final Object? screen = command['screen'];
         _screenKnown =
             screen is Map<String, Object?> &&
-            <String>['w', 'h', 'w_mm', 'h_mm'].every(
-              (String k) => screen[k] is num && (screen[k]! as num) > 0,
-            );
+            <String>[
+              'w',
+              'h',
+              'w_mm',
+              'h_mm',
+            ].every((String k) => screen[k] is num && (screen[k]! as num) > 0);
         _fitted = false;
         emit(<String, Object?>{
           'reply': 'open',

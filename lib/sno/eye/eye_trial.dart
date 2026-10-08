@@ -493,8 +493,7 @@ class EyeTrial extends ChangeNotifier {
     if (_phase == EyeTrialPhase.calibrating) {
       run?.cancel();
       unawaited(_reopen(next: false));
-    } else if (_phase == EyeTrialPhase.result ||
-        _phase == EyeTrialPhase.live) {
+    } else if (_phase == EyeTrialPhase.result || _phase == EyeTrialPhase.live) {
       _stale = true;
     }
   }
@@ -583,9 +582,8 @@ class EyeTrial extends ChangeNotifier {
     _freeTimer = null;
     _phase = EyeTrialPhase.closed;
     notifyListeners();
-    final StreamSubscription<EyeWindowLock>? changes = _windowChanges;
+    unawaited(_windowChanges?.cancel());
     _windowChanges = null;
-    unawaited(changes?.cancel());
     final EyeLink? link = _link;
     _link = null;
     // Окно — первым: его возвращают сразу, а спутник выходит до двух
