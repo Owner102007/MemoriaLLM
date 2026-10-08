@@ -125,6 +125,11 @@ def main() -> None:
                 shutil.rmtree(p, ignore_errors=True)
     for p in site.glob("numpy/*/tests"):
         shutil.rmtree(p, ignore_errors=True)
+    # Тесты MediaPipe (в одном из них знак, на котором спотыкается
+    # компиляция байт-кода) — тоже не сборке.
+    for p in sorted(site.glob("mediapipe/**/test"), reverse=True):
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
     shutil.rmtree(site / "matplotlib" / "mpl-data" / "sample_data", ignore_errors=True)
     # Видеоввод OpenCV через FFmpeg (≈ 30 МБ) спутнику не нужен: камера
     # читается через DirectShow, а полоса глаз пишется PyAV.
