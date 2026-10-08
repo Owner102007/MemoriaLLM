@@ -417,13 +417,10 @@ void main() {
     expect(sent('check').single['n'], 1);
     await runFor(tester, const Duration(seconds: 20));
     await settle(tester);
-    expect(
-      <Object?>[
-        for (final Map<String, Object?> t in sat().targets)
-          if (t['phase'] == 'check') t['id'],
-      ],
-      hasLength(9),
-    );
+    expect(<Object?>[
+      for (final Map<String, Object?> t in sat().targets)
+        if (t['phase'] == 'check') t['id'],
+    ], hasLength(9));
     expect(sat().names, contains('checked'));
     // Потом камера закрыта, файлы дописаны; итог — в панели.
     expect(sat().names.last, 'close');
@@ -665,13 +662,10 @@ void main() {
     expect(find.byType(EyeTrialScreen), findsOneWidget);
     await runFor(tester, const Duration(seconds: 22));
     await settle(tester);
-    expect(
-      <Object?>[
-        for (final Map<String, Object?> t in sat().targets)
-          if (t['phase'] == 'check') t['id'],
-      ],
-      hasLength(9),
-    );
+    expect(<Object?>[
+      for (final Map<String, Object?> t in sat().targets)
+        if (t['phase'] == 'check') t['id'],
+    ], hasLength(9));
     expect(sat().names, contains('checked'));
     expect(find.byType(EyeTrialScreen), findsNothing);
     expect(sat().liveOn, isTrue);
