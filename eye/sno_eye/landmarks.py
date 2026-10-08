@@ -143,7 +143,18 @@ class SyntheticLandmarker:
     version = "synthetic"
     model_sha256 = "synthetic"
 
+    def __init__(self, delay_s: float = 0.0):
+        # Сколько «думает» распознавание кадра 1080p: слабый ПК для
+        # самопроверки (вариант `slowproc`, BUG-58). Кадр меньше — думает
+        # меньше, по числу точек, как настоящее.
+        self.delay_s = delay_s
+
     def detect(self, frame_bgr: np.ndarray, t_ms: int, meta: dict | None = None) -> Detection:
+        if self.delay_s > 0:
+            import time
+
+            h, w = frame_bgr.shape[:2]
+            time.sleep(self.delay_s * (w * h) / (1920 * 1080))
         head: Head | None = (meta or {}).get("head")
         if head is None:
             return Detection(None, 0)

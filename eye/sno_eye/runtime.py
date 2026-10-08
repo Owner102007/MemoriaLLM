@@ -19,8 +19,12 @@ class Runtime:
     """Источник: `camera` — настоящая камера, `synthetic[:вариант]` —
     синтетика для тестов. Варианты: `denied`, `busy`, `none` (камера не
     открывается по своей причине), `dark` (мало света), `noface`, `slow`
-    (1080p даёт 20 к/с, 720p — 30), `twofaces`, `lost` (камера пропадает
-    через 60 кадров)."""
+    (1080p даёт 20 к/с, 720p — 30), `dim` (камера сама даёт 20 к/с в любом
+    режиме — как встроенная камера в тусклом свете, BUG-58), `slowproc`
+    (кадр 1080p обрабатывается 100 мс, 720p — 44 мс: слабый ПК),
+    `twofaces`, `lost` (камера пропадает через 60 кадров), `follow`
+    (синтетический участник смотрит на точки калибровки —
+    `synthetic.PARTICIPANT`, SNO-ALG-EYE-02)."""
 
     def __init__(self, source: str = "camera"):
         self.source = source
@@ -66,17 +70,34 @@ class Runtime:
         fps = 30.0
         if v == "slow" and mode[1] >= 1080:
             fps = 20.0
+        if v == "dim":
+            fps = 20.0
         scenario = (lambda sec: None) if v == "noface" else None
+        if v == "follow":
+            from .synthetic import PARTICIPANT
+            scenario = PARTICIPANT.head
         return SyntheticSource(fps=fps, scenario=scenario, light=light, fail=fail,
                                faces=2 if v == "twofaces" else 1,
                                lose_after=60 if v == "lost" else None)
+
+    # синтетический участник: видит экран из `open` и точки из `target`
+    def observe_screen(self, screen) -> None:
+        if self.synthetic and self.variant == "follow":
+            from .synthetic import PARTICIPANT
+            PARTICIPANT.set_screen(screen)
+
+    def observe_target(self, ev) -> None:
+        if self.synthetic and self.variant == "follow":
+            from .synthetic import PARTICIPANT
+            PARTICIPANT.target(ev)
 
     # распознавание
     def landmarker(self):
         if self._landmarker is None:
             if self.synthetic:
                 from .landmarks import SyntheticLandmarker
-                self._landmarker = SyntheticLandmarker()
+                self._landmarker = SyntheticLandmarker(
+                    delay_s=0.1 if self.variant == "slowproc" else 0.0)
             else:
                 from .landmarks import MediaPipeLandmarker
                 self._landmarker = MediaPipeLandmarker()

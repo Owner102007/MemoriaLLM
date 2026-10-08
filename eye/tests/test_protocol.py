@@ -92,8 +92,10 @@ def test_sno_alg_eye_03_bad_input(sat):
     sat.send({"cmd": "cameras", "v": 2})
     err = sat.wait(lambda m: "error" in m)
     assert err["error"] == "bad_command" and "версия обмена" in err["text"]
+    # Калибровка без открытой камеры — отказ словами (шаг 28).
     sat.send({"cmd": "fit"})
-    assert "следующей версии" in sat.wait(lambda m: "error" in m)["text"]
+    err = sat.wait(lambda m: "error" in m)
+    assert err["cmd"] == "fit" and "сначала open" in err["text"]
 
 
 def test_sno_alg_eye_03_open_close_writes_files_in_cyrillic_folder(sat, tmp_path):

@@ -20,10 +20,34 @@
 камеры для экрана «Место записи». Эти строки выбрасываются первыми,
 если приложение не успевает читать, как строки живой точки.
 
-В этой версии (ET-01) команды калибровки — `target`, `fit`, `validate`,
-`live` — отвечают `bad_command`: они придут с ET-03. Камера, пропавшая
-во время записи, — ошибка `camera_lost` без ответа на команду; поиск
-вернувшейся камеры придёт с ET-02.
+Калибровка (шаг 28, ET-03; SNO-ALG-EYE-02) идёт внутри открытой
+камеры — между `open` и `close`:
+
+* у `open` необязательный `write` (по умолчанию `true`): `false` —
+  камера и распознавание без файлов и без папки (быстрая «Проверка
+  айтрекера»); `screen` — `{w, h, w_mm, h_mm}`: окно приложения в
+  логических пикселях и в миллиметрах, `distance_mm` — расстояние до
+  экрана; без них калибровке не в чем считать углы;
+* `calibrate {attempt, kind}` → `{reply: calibrate}` — новая попытка
+  (`kind`: `full` — как у участника, `quick` — 9 точек без слежения);
+* `target {id, x, y, phase, qpc_us, path?}` — без ответа: точка фазы
+  `calib`, `pursuit` или `validate` появилась на экране в миг `qpc_us`
+  (QPC приложения), `off` — точек нет; у `pursuit` — путь
+  `{cx, cy, ax, ay, tx_ms, ty_ms}` (фигура Лиссажу), который спутник
+  сам продолжает по времени;
+* `samples {phase}` → сколько годных кадров у каждой точки, какие
+  повторить (`short`) и доля кадров с лицом (`face`);
+* `fit` → модель, ошибка «без одной точки», задержка камеры;
+* `validate` → точность, прецизионность, худшая точка, приём;
+* `live {on}` → `{reply: live, on}`; пока включено — по строке на кадр
+  `{g, s, ok, t}`: оценка взгляда, сглаженная для глаза, годен ли кадр,
+  его QPC. Эти строки выбрасываются первыми, если приложение не успевает
+  читать.
+
+У сессии с файлами итог калибровки ложится в `calibration.json` её папки
+после `fit`, `validate` и `close`. Камера, пропавшая во время записи, —
+ошибка `camera_lost` без ответа на команду; поиск вернувшейся камеры
+придёт с ET-06.
 """
 
 from __future__ import annotations
@@ -37,7 +61,8 @@ import threading
 import time
 from pathlib import Path
 
-from . import PROTOCOL, VERSION, clock, selfcheck
+from . import PROTOCOL, VERSION, calib, clock, featfile, selfcheck
+from .blink import BLINK_SCORE
 from .capture import MODES, CameraError
 from .landmarks import ModelError
 from .processing import Processor, Recorder
@@ -45,7 +70,6 @@ from .runtime import CpuMeter, Runtime
 
 log = logging.getLogger("sno_eye")
 
-LATER = ("target", "fit", "validate", "live")
 EXIT_DEADLINE_S = 1.8
 
 
@@ -128,32 +152,41 @@ class Session:
     закрывает её как обычно, а новый `open` убирает её сам.
     """
 
-    def __init__(self, rt: Runtime, cmd: dict, on_fail):
-        if not cmd.get("dir"):
+    def __init__(self, rt: Runtime, cmd: dict, on_fail, on_frame=None):
+        write = cmd.get("write", True)
+        if not isinstance(write, bool):
+            raise CommandError("bad_command", "«write» — true или false")
+        if write and not cmd.get("dir"):
             raise CommandError("bad_command", "нет папки записи")
         seg = _int(cmd, "seg", 0)
         n0 = _int(cmd, "n0", 0)
         mode = _mode(cmd, rt)
         camera = _camera(cmd)
-        self.dir = Path(cmd["dir"])
+        self.write = write
+        self.dir = Path(cmd["dir"]) if write else None
         lm = rt.landmarker()  # модель — до камеры: не загрузилась, камера свободна
-        self.dir.mkdir(parents=True, exist_ok=True)
+        if self.dir is not None:
+            self.dir.mkdir(parents=True, exist_ok=True)
         self.capture = rt.open_capture(mode, camera)
-        try:
-            header = {
-                "qpc0_us": cmd.get("qpc0_us"), "t0": cmd.get("t0"),
-                "camera": camera, "screen": cmd.get("screen"),
-                "distance_mm": cmd.get("distance_mm"),
-                "frame": [self.capture.source.width, self.capture.source.height],
-                "satellite": VERSION, "mediapipe": lm.version,
-                "model_sha256": lm.model_sha256,
-            }
-            self.recorder = Recorder(self.dir, seg=seg, n0=n0,
-                                     strip=bool(cmd.get("strip", True)), header=header)
-        except BaseException:
-            self.capture.stop()
-            raise
+        self.recorder: Recorder | None = None
+        if write:
+            try:
+                header = {
+                    "qpc0_us": cmd.get("qpc0_us"), "t0": cmd.get("t0"),
+                    "camera": camera, "screen": cmd.get("screen"),
+                    "distance_mm": cmd.get("distance_mm"),
+                    "frame": [self.capture.source.width, self.capture.source.height],
+                    "satellite": VERSION, "mediapipe": lm.version,
+                    "model_sha256": lm.model_sha256,
+                }
+                self.recorder = Recorder(self.dir, seg=seg, n0=n0,
+                                         strip=bool(cmd.get("strip", True)),
+                                         header=header)
+            except BaseException:
+                self.capture.stop()
+                raise
         self.processor = Processor(lm)
+        self._on_frame = on_frame
         self._on_fail = on_fail
         self._stop = threading.Event()
         self.dead = False
@@ -176,7 +209,10 @@ class Session:
                         return
                     continue
                 frame = self.processor.process(g)
-                self.recorder.add(frame)
+                if self.recorder is not None:
+                    self.recorder.add(frame)
+                if self._on_frame is not None:
+                    self._on_frame(frame)
                 self.frames += 1
                 if frame.px is not None:
                     self.face += 1
@@ -201,18 +237,22 @@ class Session:
         self._stop.set()
         self._thread.join(timeout=0.6)
         released = self.capture.stop(timeout=0.6)
-        try:
-            summary = self.recorder.close()
-        except OSError as e:
-            summary = {"error": str(e)}
+        if self.recorder is not None:
+            try:
+                summary = self.recorder.close()
+            except OSError as e:
+                summary = {"error": str(e)}
+        else:
+            summary = {"frames": self.frames, "face": self.face}
         summary.update({"dropped": self.capture.stats.dropped,
                         "lost": self.capture.stats.lost, "dead": self.dead,
                         "camera_released": released})
-        try:
-            (self.dir / "summary.json").write_text(
-                json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
-        except OSError:
-            pass
+        if self.dir is not None:
+            try:
+                (self.dir / "summary.json").write_text(
+                    json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
+            except OSError:
+                pass
         return summary
 
 
@@ -221,6 +261,10 @@ class Server:
         self.rt = rt
         self.out = out
         self.session: Session | None = None
+        # Калибровка открытой сессии (SNO-ALG-EYE-02) и живая точка.
+        self.calib: calib.Calibration | None = None
+        self.live = False
+        self._smoother = calib.Smoother()
         self.cpu = CpuMeter()
         self.abort = threading.Event()
         # Сессией и распознаванием распоряжаются рабочий поток и завершение:
@@ -294,9 +338,18 @@ class Server:
         elif name == "sync":
             self.out.send({"reply": "sync", "app_qpc_us": cmd.get("app_qpc_us"),
                            "eye_qpc_us": clock.qpc_us()})
-        elif name in LATER:
-            raise CommandError("bad_command",
-                               f"команда «{name}» — в следующей версии спутника")
+        elif name == "calibrate":
+            self._calibrate(cmd)
+        elif name == "target":
+            self._target(cmd)
+        elif name == "samples":
+            self._samples(cmd)
+        elif name == "fit":
+            self._fit()
+        elif name == "validate":
+            self._validate()
+        elif name == "live":
+            self._live(cmd)
         else:
             raise CommandError("bad_command", f"неизвестная команда «{name}»")
 
@@ -343,11 +396,19 @@ class Server:
                 if not self.session.dead:
                     raise CommandError("bad_command", "Запись уже идёт")
                 self._close_session(send=False)
-            self.session = Session(self.rt, cmd, self._on_session_fail)
-            handler = logging.FileHandler(self.session.dir / "log.txt", encoding="utf-8")
-            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-            log.addHandler(handler)
-            self._log_handler = handler
+            screen = calib.Screen.from_open(cmd.get("screen"), cmd.get("distance_mm"))
+            self.calib = calib.Calibration(screen, selfcheck.load_thresholds())
+            self.live = False
+            self._smoother = calib.Smoother()
+            self.rt.observe_screen(screen)
+            self.session = Session(self.rt, cmd, self._on_session_fail,
+                                   on_frame=self._on_frame)
+            if self.session.dir is not None:
+                handler = logging.FileHandler(self.session.dir / "log.txt",
+                                              encoding="utf-8")
+                handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+                log.addHandler(handler)
+                self._log_handler = handler
             log.info("open %s", cmd.get("dir"))
             self.out.send({"reply": "open",
                            "frame": [self.session.capture.source.width,
@@ -360,7 +421,17 @@ class Server:
     def _close_session(self, send: bool) -> None:
         s = self.session
         self.session = None
+        self.live = False
         summary = s.close() if s is not None else None
+        cal = self.calib
+        self.calib = None
+        if s is not None and cal is not None and cal.attempts:
+            self._write_calibration(s, cal)
+            if summary is not None:
+                last = cal.attempts[-1]
+                summary["calibration"] = {
+                    "attempts": len(cal.attempts),
+                    "fit": last.fit, "validation": _brief(last.validation)}
         if s is not None:
             log.info("close %s", summary)
         if self._log_handler is not None:
@@ -369,6 +440,114 @@ class Server:
             self._log_handler = None
         if send:
             self.out.send({"reply": "closed", "summary": summary})
+
+    # --- калибровка (SNO-ALG-EYE-02) ------------------------------------
+
+    def _on_frame(self, frame) -> None:
+        """Кадр после распознавания — в буфер калибровки и, если включена,
+        в живую точку. Поток распознавания."""
+        cal = self.calib
+        if cal is None:
+            return
+        flags = int(frame.record["flags"])
+        ok = (frame.feat is not None
+              and not flags & (featfile.NO_FACE | featfile.HEAD_TURNED)
+              and (frame.blink_score is None or frame.blink_score <= BLINK_SCORE))
+        qpc = frame.grabbed.qpc_us
+        cal.add(qpc, frame.feat, ok)
+        if not self.live:
+            return
+        g = cal.predict(frame.feat) if ok else None
+        if g is None:
+            self.out.send({"g": None, "ok": False, "t": qpc}, droppable=True)
+            return
+        sx, sy = self._smoother.push(qpc, g[0], g[1])
+        self.out.send({"g": [round(g[0], 1), round(g[1], 1)],
+                       "s": [round(sx, 1), round(sy, 1)], "ok": True, "t": qpc},
+                      droppable=True)
+
+    def _calibration(self) -> calib.Calibration:
+        with self.lock:
+            s, cal = self.session, self.calib
+        if s is None or cal is None:
+            raise CommandError("bad_command", "Калибровке нужна открытая камера: "
+                                              "сначала open")
+        if s.dead:
+            raise CommandError("camera_lost", "Камера пропала")
+        return cal
+
+    def _calibrate(self, cmd: dict) -> None:
+        cal = self._calibration()
+        n = _int(cmd, "attempt", len(cal.attempts) + 1)
+        kind = cmd.get("kind", "full")
+        try:
+            cal.begin(n, kind, clock.qpc_us())
+        except calib.CalibrationError as e:
+            raise CommandError(e.code, e.text) from None
+        self.live = False
+        self.out.send({"reply": "calibrate", "attempt": n, "kind": kind})
+
+    def _target(self, cmd: dict) -> None:
+        cal = self._calibration()
+        try:
+            ev = calib.target_from_command(cmd)
+            cal.target(ev)
+        except ValueError as e:
+            raise CommandError("bad_command", f"точка: {e}") from None
+        except calib.CalibrationError as e:
+            raise CommandError(e.code, e.text) from None
+        self.rt.observe_target(ev)
+
+    def _samples(self, cmd: dict) -> None:
+        cal = self._calibration()
+        phase = cmd.get("phase", "calib")
+        if phase not in ("calib", "validate"):
+            raise CommandError("bad_command", "«phase» — calib или validate")
+        try:
+            res = cal.samples(phase)
+        except calib.CalibrationError as e:
+            raise CommandError(e.code, e.text) from None
+        self.out.send({"reply": "samples", **res})
+
+    def _fit(self) -> None:
+        cal = self._calibration()
+        try:
+            res = cal.fit()
+        except calib.CalibrationError as e:
+            raise CommandError(e.code, e.text) from None
+        self._smoother = calib.Smoother()
+        self._write_calibration(self.session, cal)
+        self.out.send({"reply": "fit", "attempt": cal.attempt.n, **res})
+
+    def _validate(self) -> None:
+        cal = self._calibration()
+        try:
+            res = cal.validate()
+        except calib.CalibrationError as e:
+            raise CommandError(e.code, e.text) from None
+        self._write_calibration(self.session, cal)
+        self.out.send({"reply": "validate", "attempt": cal.attempt.n, **res})
+
+    def _live(self, cmd: dict) -> None:
+        on = cmd.get("on")
+        if not isinstance(on, bool):
+            raise CommandError("bad_command", "«on» — true или false")
+        cal = self._calibration()
+        if on and cal.model is None:
+            raise CommandError("bad_command", "Живой точке нужна модель: сначала fit")
+        self._smoother = calib.Smoother()
+        self.live = on
+        self.out.send({"reply": "live", "on": on})
+
+    @staticmethod
+    def _write_calibration(s: "Session | None", cal: calib.Calibration) -> None:
+        if s is None or s.dir is None:
+            return
+        try:
+            (s.dir / "calibration.json").write_text(
+                json.dumps(cal.to_json(), ensure_ascii=False), encoding="utf-8")
+        except OSError as e:
+            log.info("calibration.json: %s", e)
 
     def _error(self, code: str, text: str, cmd: str | None = None) -> None:
         msg = {"error": code, "text": text}
@@ -383,6 +562,13 @@ class Server:
             if self.session is not None:
                 self._close_session(send=False)
             self.rt.close()
+
+
+def _brief(validation: dict | None) -> dict | None:
+    if not validation:
+        return None
+    return {k: validation.get(k) for k in ("accuracy_deg", "accuracy_cm", "precision_deg",
+                                            "worst_deg", "accepted", "reason")}
 
 
 def serve(rt: Runtime) -> int:

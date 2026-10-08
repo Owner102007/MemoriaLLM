@@ -99,9 +99,7 @@ def evaluate(m: dict, t: dict) -> dict:
 
     fps = float(m.get("fps", 0.0))
     v = _higher(fps, t["fps"]["good"], t["fps"]["warn"])
-    text = (f"Частота {fps:.1f} к/с" if v != FAIL
-            else f"Мало света или слабый ПК: {fps:.1f} к/с")
-    rows.append(_row("fps", v, round(fps, 1), text))
+    rows.append(_row("fps", v, round(fps, 1), _fps_text(fps, v, fps_limit(m, t))))
 
     share = float(m.get("face_share", 0.0))
     v = _higher(share, t["face_share"]["good"], t["face_share"]["warn"])
@@ -172,6 +170,45 @@ def evaluate(m: dict, t: dict) -> dict:
                 FAIL: f"Слабый ПК: процессор {c:.0f} %, взгляд может прерываться"}[v]
         rows.append(_row("cpu", v, round(c, 1), text))
     return _summary(rows)
+
+
+def fps_limit(m: dict, t: dict) -> str | None:
+    """Кто упёрся в частоту кадров (BUG-58): `camera` — камера сама даёт
+    столько кадров (обычно от недостатка света: в тусклом свете камера
+    удлиняет выдержку), `pc` — ПК не успевает их обрабатывать, `None` —
+    замер этого не знает (самопроверка прежней версии).
+
+    ПК не успевает, если захват выбросил заметную долю кадров или
+    обработка кадра занимает почти весь промежуток между кадрами камеры.
+    """
+    grabbed_fps = m.get("camera_fps")
+    proc_ms = m.get("proc_ms")
+    drops = m.get("drop_share")
+    if grabbed_fps is None or proc_ms is None or drops is None:
+        return None
+    lim = t.get("fps_limit", {"drop_share": 0.05, "proc_share": 0.8})
+    interval_ms = 1000.0 / max(1e-6, float(grabbed_fps))
+    if float(drops) > lim["drop_share"] or float(proc_ms) > lim["proc_share"] * interval_ms:
+        return "pc"
+    return "camera"
+
+
+def _fps_text(fps: float, verdict: str, limit: str | None) -> str:
+    if verdict == GOOD:
+        return f"Частота {fps:.1f} к/с"
+    if limit == "camera":
+        if verdict == WARN:
+            return (f"Частота {fps:.1f} к/с — камере мало света: "
+                    "поставьте лампу перед лицом")
+        return (f"Камера сама даёт {fps:.1f} к/с — ей мало света: "
+                "поставьте лампу перед лицом")
+    if limit == "pc":
+        if verdict == WARN:
+            return f"Частота {fps:.1f} к/с — ПК едва успевает"
+        return f"ПК не успевает: {fps:.1f} к/с"
+    if verdict == WARN:
+        return f"Частота {fps:.1f} к/с"
+    return f"Мало света или слабый ПК: {fps:.1f} к/с"
 
 
 def _disk(rows: list[dict], m: dict, t: dict) -> None:
@@ -327,8 +364,12 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
     `open_source(mode)` → запущенный `Capture` (или `CameraError`);
     `cpu_meter` — `start()`/`stop()` → процент процессора. Если 1080p не
     держит 25 к/с с распознаванием, замер повторяется в 720p (решение
-    Т24). Камера закрывается при любом исходе. `preview(msg)` — если
-    назван, получает маленький кадр камеры (`preview_message`).
+    Т24) — но 720p берётся, только если он дал заметно больше кадров
+    (`mode_switch_gain`, решение Т27, BUG-58): когда кадров мало даёт сама
+    камера, 720p частоты не прибавляет, а глаза в кадре делает мельче.
+    Оба замера лежат в `measures.tried`. Камера закрывается при любом
+    исходе. `preview(msg)` — если назван, получает маленький кадр камеры
+    (`preview_message`).
     """
     from .capture import MODES, CameraError
 
@@ -336,12 +377,18 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
     shots = _Preview(preview)
     m: dict[str, Any] = {"satellite": True, "disk_free_bytes": disk_free(folder)}
     modes = [mode] if mode else list(MODES)
+    gain = float(thresholds.get("mode_switch_gain", 1.0))
     chosen = None
+    tried: list[dict] = []
     for k, md in enumerate(modes):
         proc = processor_factory()
         try:
             cap = open_source(md)
         except CameraError as e:
+            if chosen is not None:
+                # 1080p уже намерен: камера, отказавшая в 720p, места не
+                # портит — остаётся то, что было.
+                break
             m["camera"] = e.code
             return {**evaluate(m, thresholds), "measures": m}
         m["camera"] = "ok"
@@ -356,13 +403,22 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
         if lost:
             m["camera"] = "camera_lost"
             return {**evaluate(m, thresholds), "measures": m}
-        chosen = res
-        if res["fps"] >= thresholds["mode_switch_fps"] or k == len(modes) - 1:
+        tried.append({"mode": [res["width"], res["height"]],
+                      "fps": round(res["fps"], 1)})
+        if chosen is None:
+            chosen = res
+        elif res["fps"] >= chosen["fps"] * gain:
+            chosen = res
+        elif progress:
+            progress({"stage": "keep", "mode": [chosen["width"], chosen["height"]],
+                      "fps": round(chosen["fps"], 1)})
+        if chosen["fps"] >= thresholds["mode_switch_fps"] or k == len(modes) - 1:
             break
         if progress:
             progress({"stage": "switch", "from": [res["width"], res["height"]],
                       "fps": round(res["fps"], 1)})
     m.update(chosen or {})
+    m["tried"] = tried
     return {**evaluate(m, thresholds), "measures": m}
 
 
@@ -380,7 +436,9 @@ def _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped, shots=Non
     if progress:
         progress({"stage": "measure"})
     meas = Measures()
+    proc_ms: list[float] = []
     cpu_meter.start()
+    grabbed0, dropped0 = cap.stats.grabbed, cap.stats.dropped
     t0 = time.perf_counter()
     end = t0 + thresholds["measure_s"]
     while time.perf_counter() < end and not stopped():
@@ -390,12 +448,21 @@ def _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped, shots=Non
                 cpu_meter.stop()
                 return None, True
             continue
+        p0 = time.perf_counter()
         frame = proc.process(g)
+        proc_ms.append(1000.0 * (time.perf_counter() - p0))
         meas.add(frame)
         shots.offer(frame)
     seconds = time.perf_counter() - t0
     cpu = cpu_meter.stop()
+    grabbed = cap.stats.grabbed - grabbed0
+    dropped = cap.stats.dropped - dropped0
     res = meas.result(seconds)
+    # BUG-58: сколько кадров дала сама камера, сколько выбросил захват и
+    # сколько длится обработка — по ним видно, кто упёрся в частоту.
     res.update({"width": cap.source.width, "height": cap.source.height,
-                "cpu_percent": cpu, "dropped": cap.stats.dropped})
+                "cpu_percent": cpu, "dropped": cap.stats.dropped,
+                "camera_fps": grabbed / seconds if seconds > 0 else 0.0,
+                "drop_share": dropped / grabbed if grabbed else 0.0,
+                "proc_ms": float(np.median(proc_ms)) if proc_ms else None})
     return res, False
