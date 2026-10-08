@@ -196,13 +196,7 @@ class EyeCalibrationRun extends ChangeNotifier {
       return;
     }
     final Offset at = p.at(screen.size);
-    _link.target(
-      phase: p.phase.wire,
-      qpcUs: qpc,
-      id: p.id,
-      x: at.dx,
-      y: at.dy,
-    );
+    _link.target(phase: p.phase.wire, qpcUs: qpc, id: p.id, x: at.dx, y: at.dy);
     await _pause(time);
     done++;
   }

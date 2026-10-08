@@ -24,11 +24,15 @@ import 'eye_tracker.dart';
 import 'eye_trial.dart';
 
 /// Открывает «Проверку айтрекера». Места записи нет — ничего не
-/// открывается, `false`.
+/// открывается, `false`. Идёт живой взгляд идущей проверки — экран не
+/// ставится: проверка уже на виду панелью над приложением.
 Future<bool> openEyeTrial(NavigatorState navigator, EyeTracker eye) async {
   final EyeTrial? trial = eye.beginTrial();
   if (trial == null) {
     return false;
+  }
+  if (trial.overApp) {
+    return true;
   }
   unawaited(showEyeTrialScreen(navigator, trial));
   return true;
@@ -40,12 +44,11 @@ Future<void> showEyeTrialScreen(NavigatorState navigator, EyeTrial trial) {
   return navigator.push(
     PageRouteBuilder<void>(
       settings: const RouteSettings(name: kEyeTrialRoute),
-      pageBuilder:
-          (
-            BuildContext context,
-            Animation<double> animation,
-            Animation<double> secondary,
-          ) => EyeTrialScreen(trial: trial),
+      pageBuilder: (
+        BuildContext context,
+        Animation<double> animation,
+        Animation<double> secondary,
+      ) => EyeTrialScreen(trial: trial),
       transitionDuration: Duration.zero,
       reverseTransitionDuration: Duration.zero,
     ),
@@ -141,10 +144,11 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
       _trial.windowSize = null;
     }
     // Ушли с экрана не в живой взгляд («назад», `Esc`) — проверка
-    // закрыта: спутник и окно отпущены.
-    final EyeTrialPhase phase = _trial.phase;
-    if (phase != EyeTrialPhase.live && phase != EyeTrialPhase.finished) {
-      unawaited(_trial.close());
+    // закрыта: спутник и окно отпущены. Закрывается она после кадра:
+    // закрытие оповещает слушателей, а дерево виджетов сейчас под замком.
+    if (!_trial.overApp) {
+      final EyeTrial trial = _trial;
+      unawaited(Future<void>.microtask(trial.close));
     }
     _focus.dispose();
     super.dispose();

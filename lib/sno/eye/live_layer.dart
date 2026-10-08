@@ -25,7 +25,12 @@ import 'trial_screen.dart';
 const double kLiveDot = 28;
 
 /// Слой живого взгляда над приложением.
-class EyeLiveLayer extends StatelessWidget {
+///
+/// Строение слоя не меняется, есть проверка или нет: приложение всегда
+/// первый ребёнок одного и того же `Stack`, и его дерево — навигатор,
+/// фокус клавиатуры — не пересоздаётся оттого, что проверка началась
+/// или кончилась.
+class EyeLiveLayer extends StatefulWidget {
   /// Создаёт слой. [openFolder] открывает папку стенда; подменяется в
   /// тестах.
   const EyeLiveLayer({
@@ -49,43 +54,73 @@ class EyeLiveLayer extends StatelessWidget {
   final Future<bool> Function(String path) openFolder;
 
   @override
+  State<EyeLiveLayer> createState() => _EyeLiveLayerState();
+}
+
+class _EyeLiveLayerState extends State<EyeLiveLayer> {
+  EyeTrial? _trial;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.eye.trial.addListener(_trialChanged);
+    _trialChanged();
+  }
+
+  @override
+  void didUpdateWidget(EyeLiveLayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.eye, widget.eye)) {
+      oldWidget.eye.trial.removeListener(_trialChanged);
+      widget.eye.trial.addListener(_trialChanged);
+      _trialChanged();
+    }
+  }
+
+  void _trialChanged() {
+    final EyeTrial? next = widget.eye.trial.value;
+    if (identical(next, _trial)) {
+      return;
+    }
+    _trial?.removeListener(_changed);
+    _trial = next;
+    next?.addListener(_changed);
+    _changed();
+  }
+
+  void _changed() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.eye.trial.removeListener(_trialChanged);
+    _trial?.removeListener(_changed);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<EyeTrial?>(
-      valueListenable: eye.trial,
-      child: child,
-      builder: (BuildContext context, EyeTrial? trial, Widget? child) {
-        final Widget app = child ?? const SizedBox.shrink();
-        if (trial == null) {
-          return app;
-        }
-        return ListenableBuilder(
-          listenable: trial,
-          child: app,
-          builder: (BuildContext context, Widget? app) {
-            final EyeTrialPhase phase = trial.phase;
-            if (phase != EyeTrialPhase.live &&
-                phase != EyeTrialPhase.finished) {
-              return app ?? const SizedBox.shrink();
-            }
-            return Stack(
-              fit: StackFit.expand,
-              children: <Widget>[
-                ?app,
-                if (phase == EyeTrialPhase.live) _dot(context, trial),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: _EyeLivePanel(
-                    trial: trial,
-                    navigator: navigator,
-                    openFolder: openFolder,
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
+    final EyeTrial? trial = _trial;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        widget.child,
+        if (trial != null && trial.overApp) ...<Widget>[
+          if (trial.phase == EyeTrialPhase.live) _dot(context, trial),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: _EyeLivePanel(
+              trial: trial,
+              navigator: widget.navigator,
+              openFolder: widget.openFolder,
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -154,6 +189,7 @@ class _EyeLivePanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool finished = trial.phase == EyeTrialPhase.finished;
+    final bool failed = trial.phase == EyeTrialPhase.failed;
     final bool full = trial.kind == EyeCalibrationKind.full;
     final Duration? left = trial.freeLeft;
     final String? folder = trial.standFolder;
@@ -175,7 +211,7 @@ class _EyeLivePanel extends StatelessWidget {
                 children: <Widget>[
                   Flexible(
                     child: Text(
-                      finished ? 'Проверка айтрекера' : _numbers(),
+                      finished || failed ? 'Проверка айтрекера' : _numbers(),
                       key: const Key('eye-live-numbers'),
                       style: theme.textTheme.bodyMedium,
                     ),
@@ -189,7 +225,15 @@ class _EyeLivePanel extends StatelessWidget {
                   ),
                 ],
               ),
-              if (!finished && full && left != null)
+              if (failed)
+                Text(
+                  trial.failure ?? 'Проверка остановилась',
+                  key: const Key('eye-live-failure'),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              if (!finished && !failed && full && left != null)
                 Text(
                   'Свободный просмотр ${_left(left)} — смотрите на полку, '
                   'откройте книгу',
@@ -206,13 +250,13 @@ class _EyeLivePanel extends StatelessWidget {
               Wrap(
                 spacing: 8,
                 children: <Widget>[
-                  if (!full)
+                  if (!full && !failed)
                     TextButton(
                       key: const Key('eye-live-again'),
                       onPressed: _again,
                       child: const Text('Ещё раз'),
                     ),
-                  if (full && !finished)
+                  if (full && !finished && !failed)
                     TextButton(
                       key: const Key('eye-live-finish'),
                       onPressed: () => unawaited(trial.finishEarly()),

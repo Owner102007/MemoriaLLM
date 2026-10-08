@@ -26,7 +26,7 @@ void main() {
   test('SNO-F-EYE-04: hello — версии; камеры — списком', () async {
     final (EyeLink link, FakeEyeProcess process) = await open();
     final EyeHello hello = await link.hello(build: '0.33.0', branch: 'I');
-    expect(hello.version, '0.1.0');
+    expect(hello.version, '0.2.0');
     expect(hello.mediapipe, '1.1.0');
     expect(process.commands.first, <String, Object?>{
       'cmd': 'hello',

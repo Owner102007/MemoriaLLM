@@ -90,16 +90,19 @@ def evaluate(m: dict, t: dict) -> dict:
 
     w, h = int(m.get("width", 0)), int(m.get("height", 0))
     mt = t["mode"]
+    limit = fps_limit(m, t)
     if h >= mt["good_h"]:
         rows.append(_row("mode", GOOD, [w, h], f"Режим {w}×{h}"))
     elif h >= mt["warn_h"]:
-        rows.append(_row("mode", WARN, [w, h], f"Режим {w}×{h}: 1080p камера не держит"))
+        why = ("в 1080p ПК не успевает" if limit == "pc"
+               else "1080p камера не держит")
+        rows.append(_row("mode", WARN, [w, h], f"Режим {w}×{h}: {why}"))
     else:
         rows.append(_row("mode", FAIL, [w, h], f"Камера слишком слабая: {w}×{h}"))
 
     fps = float(m.get("fps", 0.0))
     v = _higher(fps, t["fps"]["good"], t["fps"]["warn"])
-    rows.append(_row("fps", v, round(fps, 1), _fps_text(fps, v, fps_limit(m, t))))
+    rows.append(_row("fps", v, round(fps, 1), _fps_text(fps, v, limit)))
 
     share = float(m.get("face_share", 0.0))
     v = _higher(share, t["face_share"]["good"], t["face_share"]["warn"])
@@ -388,6 +391,10 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
             if chosen is not None:
                 # 1080p уже намерен: камера, отказавшая в 720p, места не
                 # портит — остаётся то, что было.
+                if progress:
+                    progress({"stage": "keep",
+                              "mode": [chosen["width"], chosen["height"]],
+                              "fps": round(chosen["fps"], 1)})
                 break
             m["camera"] = e.code
             return {**evaluate(m, thresholds), "measures": m}
@@ -401,13 +408,21 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
             return {"verdict": FAIL, "words": WORDS[FAIL], "checks": [],
                     "measures": m, "aborted": True}
         if lost:
+            if chosen is not None:
+                # Камера отпала на пробе 720p, а 1080p уже намерен: место
+                # оценивается по нему, как при отказе камеры открыться.
+                if progress:
+                    progress({"stage": "keep",
+                              "mode": [chosen["width"], chosen["height"]],
+                              "fps": round(chosen["fps"], 1)})
+                break
             m["camera"] = "camera_lost"
             return {**evaluate(m, thresholds), "measures": m}
         tried.append({"mode": [res["width"], res["height"]],
                       "fps": round(res["fps"], 1)})
         if chosen is None:
             chosen = res
-        elif res["fps"] >= chosen["fps"] * gain:
+        elif res["fps"] > 0 and res["fps"] >= chosen["fps"] * gain:
             chosen = res
         elif progress:
             progress({"stage": "keep", "mode": [chosen["width"], chosen["height"]],

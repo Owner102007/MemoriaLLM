@@ -238,3 +238,14 @@ def test_sno_alg_eye_03_calibration_commands_are_checked(follower):
     assert sat.wait(lambda m: m.get("cmd") == "fit")["error"] == "no_face"
     sat.send({"cmd": "close"})
     sat.reply("closed")
+
+
+def test_bug_58_mode_row_names_the_pc_too():
+    res = selfcheck.evaluate({**GOOD_M, "width": 1280, "height": 720, "fps": 22.0,
+                              "camera_fps": 30.0, "drop_share": 0.3,
+                              "proc_ms": 44.0}, T)
+    rows = {r["id"]: r for r in res["checks"]}
+    assert rows["mode"]["text"] == "Режим 1280×720: в 1080p ПК не успевает"
+    res = selfcheck.evaluate({**GOOD_M, "width": 1280, "height": 720}, T)
+    rows = {r["id"]: r for r in res["checks"]}
+    assert rows["mode"]["text"] == "Режим 1280×720: 1080p камера не держит"

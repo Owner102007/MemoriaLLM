@@ -98,6 +98,17 @@ class FakeEyeProcess implements EyeProcess {
   /// Открыта ли камера (`open` … `close`).
   bool cameraOpen = false;
 
+  /// Есть ли у открытой камеры размеры экрана: без них, как настоящий
+  /// спутник, калибровку он не начинает.
+  bool _screenKnown = false;
+
+  /// Есть ли модель: живая точка, как у настоящего спутника, — только
+  /// после `fit`.
+  bool _fitted = false;
+
+  /// Номер текущей попытки калибровки.
+  Object? _attempt;
+
   /// Команды `target` по порядку.
   List<Map<String, Object?>> get targets => <Map<String, Object?>>[
     for (final Map<String, Object?> c in commands)
@@ -119,6 +130,7 @@ class FakeEyeProcess implements EyeProcess {
       't': t ?? clock.nowUs(),
     });
   }
+
   final StreamController<String> _out = StreamController<String>();
   final Completer<int> _exit = Completer<int>();
 
@@ -216,7 +228,7 @@ class FakeEyeProcess implements EyeProcess {
           jsonEncode(<String, Object?>{
             'v': protocol,
             'reply': 'hello',
-            'version': '0.1.0',
+            'version': '0.2.0',
             'mediapipe': '1.1.0',
             'model_sha256': '64184e22',
           }),
@@ -283,7 +295,22 @@ class FakeEyeProcess implements EyeProcess {
           'eye_qpc_us': clock.nowUs() + offsetUs,
         });
       case 'open':
+        if (cameraOpen) {
+          emit(<String, Object?>{
+            'error': 'bad_command',
+            'text': 'Запись уже идёт',
+            'cmd': 'open',
+          });
+          return;
+        }
         cameraOpen = true;
+        final Object? screen = command['screen'];
+        _screenKnown =
+            screen is Map<String, Object?> &&
+            <String>['w', 'h', 'w_mm', 'h_mm'].every(
+              (String k) => screen[k] is num && (screen[k]! as num) > 0,
+            );
+        _fitted = false;
         emit(<String, Object?>{
           'reply': 'open',
           'frame': <int>[1920, 1080],
@@ -291,11 +318,23 @@ class FakeEyeProcess implements EyeProcess {
       case 'close':
         cameraOpen = false;
         liveOn = false;
+        _fitted = false;
         emit(<String, Object?>{
           'reply': 'closed',
           'summary': <String, Object?>{'frames': 1800},
         });
       case 'calibrate':
+        if (!cameraOpen || !_screenKnown) {
+          emit(<String, Object?>{
+            'error': 'bad_command',
+            'text': cameraOpen
+                ? 'Нет размеров экрана: их называет команда open'
+                : 'Калибровке нужна открытая камера: сначала open',
+            'cmd': 'calibrate',
+          });
+          return;
+        }
+        _attempt = command['attempt'];
         emit(<String, Object?>{
           'reply': 'calibrate',
           'attempt': command['attempt'],
@@ -324,8 +363,10 @@ class FakeEyeProcess implements EyeProcess {
           });
           return;
         }
+        _fitted = true;
         emit(<String, Object?>{
           'reply': 'fit',
+          'attempt': _attempt,
           'model': 'ridge',
           'cv_deg': 1.2,
           'cv_cm': 1.3,
@@ -336,11 +377,20 @@ class FakeEyeProcess implements EyeProcess {
       case 'validate':
         emit(<String, Object?>{
           'reply': 'validate',
+          'attempt': _attempt,
           ...(validateReplies.isEmpty
               ? kAcceptedValidation
               : validateReplies.removeAt(0)),
         });
       case 'live':
+        if (command['on'] == true && !_fitted) {
+          emit(<String, Object?>{
+            'error': 'bad_command',
+            'text': 'Живой точке нужна модель: сначала fit',
+            'cmd': 'live',
+          });
+          return;
+        }
         liveOn = command['on'] == true;
         emit(<String, Object?>{'reply': 'live', 'on': liveOn});
       default:

@@ -298,3 +298,14 @@ def test_sno_alg_eye_02_smoother_follows_and_jumps():
         raw.append(gx)
         smooth.append(s.push(t, gx, gy)[0])
     assert np.std(smooth[30:]) < 0.6 * np.std(raw[30:])
+
+
+def test_sno_alg_eye_02_kernel_intercept_is_not_shrunk():
+    # Линейная часть ядерной модели не штрафует сдвиг: постоянная цель
+    # восстанавливается без перекоса (независимая проверка шага 28).
+    rng = np.random.default_rng(2)
+    x = rng.normal(size=(120, len(calib.USED)))
+    y = np.column_stack([np.full(120, 960.0), np.full(120, 540.0)])
+    m = calib.Kernel((0.1, 0.1), (0.1, 0.1)).fit(x, y)
+    pred = m.predict(rng.normal(size=(20, len(calib.USED))))
+    assert np.allclose(pred, [960.0, 540.0], atol=0.5)

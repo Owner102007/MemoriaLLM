@@ -340,12 +340,16 @@ KRR_LINEAR_ALPHA = 1e-2
 
 
 def _linear_part(z: np.ndarray, y: np.ndarray) -> np.ndarray:
-    z1 = np.column_stack([z, np.ones(len(z))])
-    return _ridge_solve(z1, y, KRR_LINEAR_ALPHA)
+    """Линейная модель `[веса; сдвиг]`. Сдвиг не штрафуется: признаки и
+    цели центрируются, и сдвиг — их средние."""
+    zm = z.mean(axis=0)
+    ym = y.mean(axis=0)
+    w = _ridge_solve(z - zm, y - ym, KRR_LINEAR_ALPHA)
+    return np.vstack([w, ym - zm @ w])
 
 
 def _linear_apply(z: np.ndarray, w: np.ndarray) -> np.ndarray:
-    return np.column_stack([z, np.ones(len(z))]) @ w
+    return z @ w[:-1] + w[-1]
 
 
 class Kernel:
@@ -425,7 +429,7 @@ def _loo_ridge(ts: TrainSet, groups: list[int]) -> dict:
         for a in RIDGE_ALPHAS:
             m = Ridge((a, a)).fit(ts.x[tr], ts.y[tr])
             pred = np.median(m.predict(ts.x[te]), axis=0)
-            errs[a][gi] = np.abs(pred - ts.y[te][0])
+            errs[a][gi] = pred - ts.y[te][0]
     return errs
 
 
@@ -455,15 +459,16 @@ def _loo_kernel(ts: TrainSet, groups: list[int]) -> dict:
             for a in KRR_ALPHAS:
                 coef = proj / (lam + a * n)[:, None]
                 pred = np.median(base + kv @ coef, axis=0)
-                errs[(gm, a)][gi] = np.abs(pred - ts.y[te][0])
+                errs[(gm, a)][gi] = pred - ts.y[te][0]
     return errs
 
 
 def _best(errs: dict) -> tuple[Any, Any]:
-    """Лучшая настройка для каждой оси по средней ошибке."""
+    """Лучшая настройка для каждой оси по средней ошибке (по модулю;
+    в ошибках хранится и знак — по нему считается угол)."""
     keys = list(errs)
-    ex = [float(errs[k][:, 0].mean()) for k in keys]
-    ey = [float(errs[k][:, 1].mean()) for k in keys]
+    ex = [float(np.abs(errs[k][:, 0]).mean()) for k in keys]
+    ey = [float(np.abs(errs[k][:, 1]).mean()) for k in keys]
     return keys[int(np.argmin(ex))], keys[int(np.argmin(ey))]
 
 
@@ -786,11 +791,9 @@ class Calibration:
         # Масштаб — по разбросу калибровки, и голова тоже: здесь важно
         # объяснить покачивание головы внутри калибровки, а не уйти от неё.
         norm = Norm.fit(fix.x, head_fixed=False)
-        z1 = np.column_stack([norm.apply(fix.x), np.ones(len(fix.x))])
-        w = np.linalg.solve(z1.T @ z1 + 1e-2 * len(z1) * np.eye(z1.shape[1]),
-                            z1.T @ fix.y)
+        lin = _linear_part(norm.apply(fix.x), fix.y)
         x = np.array([s.feat[USED_IDX] for s, _ in pur], dtype=np.float64)
-        raw = np.column_stack([norm.apply(x), np.ones(len(x))]) @ w
+        raw = _linear_apply(norm.apply(x), lin)
         half = 3
         pred = np.array([raw[max(0, i - half):i + half + 1].mean(axis=0)
                          for i in range(len(raw))])

@@ -367,6 +367,7 @@ class _TestingScreenState extends State<TestingScreen>
     _records?.addListener(_recordsChanged);
     _test?.addListener(_recordsChanged);
     _eye?.addListener(_recordsChanged);
+    _eye?.trial.addListener(_recordsChanged);
     unawaited(_test?.load());
     unawaited(_refreshReadiness());
     unawaited(_refreshRecords());
@@ -401,6 +402,7 @@ class _TestingScreenState extends State<TestingScreen>
     _records?.removeListener(_recordsChanged);
     _test?.removeListener(_recordsChanged);
     _eye?.removeListener(_recordsChanged);
+    _eye?.trial.removeListener(_recordsChanged);
     _searchRun++;
     unawaited(_searching?.cancel());
     super.dispose();
@@ -1001,6 +1003,7 @@ class _TestingScreenState extends State<TestingScreen>
       return null;
     }
     final EyePlace? place = eye.place;
+    final bool overApp = eye.trial.value?.overApp ?? false;
     final String? blocked = !eye.placeLoaded
         ? '…'
         : place == null
@@ -1013,7 +1016,10 @@ class _TestingScreenState extends State<TestingScreen>
       leading: const Icon(Icons.center_focus_strong_outlined),
       title: const Text('Проверка айтрекера'),
       subtitle: Text(
-        blocked ?? 'Калибровка и живой взгляд на себе',
+        blocked ??
+            (overApp
+                ? 'Идёт — её панель в правом верхнем углу'
+                : 'Калибровка и живой взгляд на себе'),
         key: const Key('sno-eye-trial-summary'),
       ),
       trailing: const Icon(Icons.chevron_right),

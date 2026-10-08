@@ -146,6 +146,14 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
   /// Место с этой проверкой сохранено (BUG-57).
   bool _saved = false;
 
+  /// Когда закончилась проверка: у места — время проверки, а не правки
+  /// расстояния после неё.
+  DateTime? _checkedAt;
+
+  /// Проверку провёл спутник. Спутник не ответил (не запустился, вышел,
+  /// не уложился во время) — это не проверка места, и место прежнее.
+  bool _measured = false;
+
   /// Номер сохранения: запоздавший ответ прежнего не в счёт.
   int _saving = 0;
   bool _closed = false;
@@ -302,6 +310,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       _preview = null;
     });
     EyeCheck check;
+    bool measured = true;
     try {
       final String? dir = await _eye.eyeFolder();
       check = await link.selfcheck(
@@ -312,6 +321,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       );
     } on EyeError catch (e) {
       check = EyeCheck.unavailable(describeEyeError(e));
+      measured = false;
     }
     check = check.withRow(windowCheckRow(lock: _lock, monitor: _monitor));
     if (_closed) {
@@ -321,6 +331,8 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       _check = check;
       _checking = false;
       _stage = null;
+      _measured = measured;
+      _checkedAt = DateTime.now();
     });
     // BUG-57: проверка закончилась — место пишется сразу, без кнопки.
     unawaited(_persist());
@@ -397,7 +409,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
     final EyeCamera? camera = _camera;
     final EyeMonitor? monitor = _monitor;
     final EyeCheck? check = _check;
-    if (camera == null || monitor == null || check == null) {
+    if (camera == null || monitor == null || check == null || !_measured) {
       return;
     }
     final int? distance = _distanceMm;
@@ -420,7 +432,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       sizeSource: _source,
       distanceMm: distance,
       verdict: check.verdict,
-      checkedAt: DateTime.now(),
+      checkedAt: _checkedAt ?? DateTime.now(),
       mode: check.mode,
       fps: check.fps,
       checks: check.rows,
@@ -872,8 +884,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
               children: <Widget>[
                 FilledButton(
                   key: const Key('eye-place-done'),
-                  onPressed: () =>
-                      unawaited(Navigator.of(context).maybePop()),
+                  onPressed: () => unawaited(Navigator.of(context).maybePop()),
                   child: const Text('Готово'),
                 ),
                 if (saveError != null)

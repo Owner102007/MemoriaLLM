@@ -259,9 +259,9 @@ PursuitPath pursuitPathFor(EyeScreen screen, int distanceMm) {
   final double axMm = kPursuitSpanX * screen.widthMm;
   final double ayMm = kPursuitSpanY * screen.heightMm;
   final double limit = kPursuitMaxSpeedDeg * math.pi / 180 * distanceMm;
-  final double tx = (2 * math.pi * math.sqrt(axMm * axMm + 2.25 * ayMm * ayMm) /
-          limit)
-      .ceilToDouble();
+  final double tx =
+      (2 * math.pi * math.sqrt(axMm * axMm + 2.25 * ayMm * ayMm) / limit)
+          .ceilToDouble();
   final double txS = math.max(4, tx);
   return PursuitPath(
     cx: screen.width / 2,
@@ -269,7 +269,8 @@ PursuitPath pursuitPathFor(EyeScreen screen, int distanceMm) {
     ax: kPursuitSpanX * screen.width,
     ay: kPursuitSpanY * screen.height,
     txMs: (txS * 1000).round(),
-    tyMs: (txS * 1000 / 1.5).round(),
+    // Вверх, а не к ближайшему: короче период — быстрее точка.
+    tyMs: (txS * 1000 / 1.5).ceil(),
   );
 }
 
@@ -284,8 +285,7 @@ double pursuitMaxSpeedDeg(PursuitPath path, EyeScreen screen, int distanceMm) {
 }
 
 /// Число с одним знаком после запятой: «2,4».
-String eyeNumber(double value) =>
-    value.toStringAsFixed(1).replaceAll('.', ',');
+String eyeNumber(double value) => value.toStringAsFixed(1).replaceAll('.', ',');
 
 /// Строка итога проверки (кадр SNO-SCR-07.2): «Точность 2,2° (≈ 2,3 см) ·
 /// худшая точка 4,1° · попытка 1 из 3».
@@ -297,9 +297,9 @@ String validationLine(
   final double? acc = v.accuracyDeg;
   final double? cm = v.accuracyCm;
   final double? worst = v.worstDeg;
+  final String inCm = cm == null ? '' : ' (≈ ${eyeNumber(cm)} см)';
   return <String>[
-    if (acc != null)
-      'Точность ${eyeNumber(acc)}°${cm != null ? ' (≈ ${eyeNumber(cm)} см)' : ''}',
+    if (acc != null) 'Точность ${eyeNumber(acc)}°$inCm',
     if (worst != null) 'худшая точка ${eyeNumber(worst)}°',
     'попытка $attempt из $attempts',
   ].join(' · ');

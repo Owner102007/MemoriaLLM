@@ -564,11 +564,7 @@ class EyeScreen {
 /// Ответ `samples`: сколько годных кадров у каждой точки калибровки.
 class EyeSamples {
   /// Создаёт ответ.
-  const EyeSamples({
-    required this.counts,
-    required this.short,
-    this.face,
-  });
+  const EyeSamples({required this.counts, required this.short, this.face});
 
   /// Ответ из строки спутника.
   factory EyeSamples.fromMessage(Map<String, Object?> message) {

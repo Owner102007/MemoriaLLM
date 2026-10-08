@@ -125,10 +125,21 @@ void main() {
     }
   }
 
+  /// Даёт договорить связи и спутнику: отписки от потоков отвечают
+  /// обещаниями корневой зоны, и продолжение кода ложится в очередь
+  /// теста только на следующем кадре. Ждать их `await` в теле теста
+  /// нельзя — тест повиснет.
+  Future<void> settle(WidgetTester tester) async {
+    for (int i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+  }
+
   Future<void> unmount(WidgetTester tester) async {
-    await eye.closeTrial();
+    unawaited(eye.closeTrial());
+    await settle(tester);
     await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(milliseconds: 100));
+    await settle(tester);
   }
 
   FakeEyeProcess sat() => launcher.last;
@@ -154,8 +165,7 @@ void main() {
     expect(find.byKey(const Key('eye-trial-place')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('eye-trial-quick')));
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     // Окно — на монитор места записи, спутник запущен, камера открыта
     // без файлов.
     expect(window.locks, <String>[r'\\.\DISPLAY1']);
@@ -165,8 +175,9 @@ void main() {
       'open',
       'calibrate',
     ]);
+    // У быстрой проверки файлов нет — и самопроверки в папке тоже.
     final Map<String, Object?> check = sent('selfcheck').single;
-    expect(check['dir'], p.join('/data', 'eye'));
+    expect(check.containsKey('dir'), isFalse);
     final Map<String, Object?> open = sent('open').single;
     expect(open['write'], isFalse);
     expect(open.containsKey('dir'), isFalse);
@@ -225,6 +236,9 @@ void main() {
     for (int i = 0; i < 30; i++) {
       sat().gaze(400, 300, t: 1000000 + i * 33000);
     }
+    // Строки приходят после того, как кадр уже решён: второй кадр их
+    // рисует.
+    await tester.pump();
     await tester.pump();
     final Finder dot = find.byKey(const Key('eye-live-dot'));
     expect(dot, findsOneWidget);
@@ -235,14 +249,13 @@ void main() {
     expect(find.byKey(const Key('eye-live-again')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('eye-live-close')));
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     expect(find.byKey(const Key('eye-live-panel')), findsNothing);
     expect(sat().inputClosed, isTrue);
     expect(window.locked, isFalse);
     expect(eye.trial.value, isNull);
     await unmount(tester);
-  });
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('SNO-F-EYE-03: «Ещё раз» из живого взгляда — новая быстрая '
       'калибровка', (WidgetTester tester) async {
@@ -252,19 +265,21 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('eye-live-panel')), findsOneWidget);
     await tester.tap(find.byKey(const Key('eye-live-again')));
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     expect(find.byType(EyeTrialScreen), findsOneWidget);
     expect(sat().liveOn, isFalse);
-    expect(<Object?>[
-      for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
-    ], <Object?>[1, 2]);
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
+      ],
+      <Object?>[1, 2],
+    );
     await runFor(tester, const Duration(seconds: 26));
     await tester.pump();
     expect(find.byType(EyeTrialScreen), findsNothing);
     expect(sat().liveOn, isTrue);
     await unmount(tester);
-  });
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('SNO-F-EYE-01: пробная полная калибровка — 13 точек, '
       'слежение, 9 точек проверки, итог, две минуты просмотра, файлы стенда', (
@@ -273,17 +288,16 @@ void main() {
     await pumpApp(tester);
     instantFrames();
     await tester.tap(find.byKey(const Key('eye-trial-full')));
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
 
     // Папка стенда создана, в ней — сведения о месте; самопроверка и
     // файлы камеры — туда же.
     expect(files.folders, hasLength(1));
     final String stand = files.folders.single;
     expect(p.dirname(stand), p.join('/data', 'Стенд'));
-    final Map<String, Object?> placeJson =
-        jsonDecode(files.written[p.join(stand, 'place.json')]!)
-            as Map<String, Object?>;
+    final Map<String, Object?> placeJson = jsonDecode(
+      files.written[p.join(stand, 'place.json')]!,
+    ) as Map<String, Object?>;
     expect(placeJson['distance_mm'], 600);
     expect(sent('selfcheck').single['dir'], stand);
     final Map<String, Object?> open = sent('open').single;
@@ -293,7 +307,10 @@ void main() {
 
     // 1,5 с подсказки и 13 точек по 2 с.
     await runFor(tester, const Duration(seconds: 28));
-    expect(sat().targetIds.where((Object? id) => '$id'.startsWith('c')), hasLength(13));
+    expect(
+      sat().targetIds.where((Object? id) => '$id'.startsWith('c')),
+      hasLength(13),
+    );
     expect(sat().names, contains('samples'));
     expect(find.text('Теперь следите глазами за точкой'), findsOneWidget);
     // Слежение — 20 с, путь уходит спутнику один раз.
@@ -324,14 +341,21 @@ void main() {
     expect(find.text('Задержка камеры 70 мс'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('eye-trial-live')));
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     expect(find.byType(EyeTrialScreen), findsNothing);
     expect(find.byKey(const Key('eye-live-left')), findsOneWidget);
     expect(find.textContaining('Свободный просмотр 2:00'), findsOneWidget);
-    await runFor(tester, const Duration(seconds: 30), step: const Duration(seconds: 1));
+    await runFor(
+      tester,
+      const Duration(seconds: 30),
+      step: const Duration(seconds: 1),
+    );
     expect(find.textContaining('Свободный просмотр 1:30'), findsOneWidget);
-    await runFor(tester, const Duration(seconds: 91), step: const Duration(seconds: 1));
+    await runFor(
+      tester,
+      const Duration(seconds: 91),
+      step: const Duration(seconds: 1),
+    );
     await tester.pump();
     // Просмотр кончился: камера закрыта, файлы дописаны.
     expect(sat().names, contains('close'));
@@ -341,7 +365,7 @@ void main() {
     await tester.pump();
     expect(opened, <String>[stand]);
     await unmount(tester);
-  });
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('SNO-F-EYE-01: не принято — повтор до трёх попыток, потом '
       '«не принято» и живой взгляд по желанию', (WidgetTester tester) async {
@@ -385,12 +409,15 @@ void main() {
       find.textContaining('Не принято и после 3 попыток.'),
       findsOneWidget,
     );
-    expect(<Object?>[
-      for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
-    ], <Object?>[1, 2, 3]);
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
+      ],
+      <Object?>[1, 2, 3],
+    );
     expect(find.byKey(const Key('eye-trial-live-anyway')), findsOneWidget);
     await unmount(tester);
-  });
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('SNO-ALG-EYE-02: точка без кадров повторяется в конце; лица '
       'нет — словами и без отсчёта попытки', (WidgetTester tester) async {
@@ -413,10 +440,7 @@ void main() {
     await tester.tap(find.byKey(const Key('eye-trial-quick')));
     await runFor(tester, const Duration(seconds: 24));
     await tester.pump();
-    expect(
-      sat().targetIds.where((Object? id) => id == 'q3'),
-      hasLength(2),
-    );
+    expect(sat().targetIds.where((Object? id) => id == 'q3'), hasLength(2));
     expect(sat().targetIds.last, 'q3');
     await unmount(tester);
 
@@ -445,12 +469,15 @@ void main() {
     );
     expect(sat().names, isNot(contains('fit')));
     await tester.tap(find.byKey(const Key('eye-trial-retry')));
-    await tester.pump();
-    expect(<Object?>[
-      for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
-    ], <Object?>[1, 1]);
+    await settle(tester);
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
+      ],
+      <Object?>[1, 1],
+    );
     await unmount(tester);
-  });
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('SNO-F-EYE-01: окно сменилось посреди калибровки — камера '
       'заново и та же попытка; Esc закрывает проверку', (
@@ -469,23 +496,24 @@ void main() {
         dpr: 1,
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     expect(sent('open'), hasLength(2));
-    expect(<Object?>[
-      for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
-    ], <Object?>[1, 1]);
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> c in sent('calibrate')) c['attempt'],
+      ],
+      <Object?>[1, 1],
+    );
     expect(find.byType(EyeTrialScreen), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     expect(find.byType(EyeTrialScreen), findsNothing);
     expect(window.locked, isFalse);
     expect(sat().inputClosed, isTrue);
     expect(eye.trial.value, isNull);
     await unmount(tester);
-  });
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('SNO-F-EYE-03: самопроверка «не годится» — сказано, '
       'калибровки нет', (WidgetTester tester) async {
@@ -513,8 +541,7 @@ void main() {
     await eye.savePlace(place);
     await pumpApp(tester);
     await tester.tap(find.byKey(const Key('eye-trial-quick')));
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     expect(find.text('Самопроверка: не годится'), findsOneWidget);
     expect(
       find.text(
@@ -524,12 +551,11 @@ void main() {
     );
     expect(sat().names, isNot(contains('open')));
     await tester.tap(find.byKey(const Key('eye-trial-close')));
-    await tester.pump();
-    await tester.pump();
+    await settle(tester);
     expect(find.byType(EyeTrialScreen), findsNothing);
     expect(window.locked, isFalse);
     await unmount(tester);
-  });
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   test('SNO-F-EYE-03: без места записи проверки нет', () async {
     final EyeTracker fresh = EyeTracker(

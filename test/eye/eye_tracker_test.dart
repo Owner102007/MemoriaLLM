@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/sno/eye/eye_calibration.dart';
@@ -125,7 +126,8 @@ void main() {
   test('SNO-F-EYE-03: старт записи закрывает идущую проверку айтрекера — '
       'спутник у машины один', () async {
     await eye.loadPlace();
-    final EyeTrial trial = eye.beginTrial()!;
+    final EyeTrial trial = eye.beginTrial()!
+      ..windowSize = () => const Size(1920, 1080);
     unawaited(trial.start(EyeCalibrationKind.quick));
     await settle();
     expect(trial.phase, EyeTrialPhase.calibrating);
@@ -167,7 +169,7 @@ void main() {
         expect(lock['dpr'], 1.0);
         expect(lock['found'], isTrue);
         final Map<String, Object?> ready = eyeEvents()[1].$2;
-        expect(ready['version'], '0.1.0');
+        expect(ready['version'], '0.2.0');
         expect(ready['model_sha256'], '64184e22');
         final Map<String, Object?> clock = eyeEvents()[2].$2;
         expect(clock['qpc0_us'], isA<int>());
@@ -217,7 +219,7 @@ void main() {
       expect(block['configured'], isTrue);
       expect(block['restarts'], 0);
       expect(block['gave_up'], isFalse);
-      expect((block['satellite']! as Map<String, Object?>)['version'], '0.1.0');
+      expect((block['satellite']! as Map<String, Object?>)['version'], '0.2.0');
       expect((block['place']! as Map<String, Object?>)['distance_mm'], 600);
     });
 
@@ -404,7 +406,7 @@ void main() {
           kit.store.json(folder, kRecordingFile)['eye_tracker']!
               as Map<String, Object?>;
       expect(block['configured'], isTrue);
-      expect((block['satellite']! as Map<String, Object?>)['version'], '0.1.0');
+      expect((block['satellite']! as Map<String, Object?>)['version'], '0.2.0');
       fresh.dispose();
       again.session.dispose();
     });

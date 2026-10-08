@@ -310,9 +310,9 @@ class EyeLink {
       timeout: kOpenTimeout,
     );
     final Object? frame = reply['frame'];
-    return frame is List<Object?> && frame.length == 2 && frame.every(
-          (Object? v) => v is int,
-        )
+    return frame is List<Object?> &&
+            frame.length == 2 &&
+            frame.every((Object? v) => v is int)
         ? <int>[frame[0]! as int, frame[1]! as int]
         : null;
   }

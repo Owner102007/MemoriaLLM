@@ -70,17 +70,27 @@ void main() {
       ).map((EyeTargetPoint p) => p.id),
       <String>['q2', 'q1', 'q4', 'q7', 'q6', 'q5', 'q8', 'q3', 'q0'],
     );
-    expect(
-      validationSequence(seed).map((EyeTargetPoint p) => p.id),
-      <String>['v0', 'v4', 'v3', 'v2', 'v1', 'v7', 'v5', 'v6', 'v8'],
-    );
+    expect(validationSequence(seed).map((EyeTargetPoint p) => p.id), <String>[
+      'v0',
+      'v4',
+      'v3',
+      'v2',
+      'v1',
+      'v7',
+      'v5',
+      'v6',
+      'v8',
+    ]);
     expect(eyeSeedOf('00000000'), 1641917084);
     // Точка — там, где её назвали: c9 — (0,29; 0,29) окна.
     final EyeTargetPoint c9 = calibrationSequence(
       EyeCalibrationKind.full,
       seed,
     )[1];
-    expect(c9.at(const Size(1920, 1080)), const Offset(0.29 * 1920, 0.29 * 1080));
+    expect(
+      c9.at(const Size(1920, 1080)),
+      const Offset(0.29 * 1920, 0.29 * 1080),
+    );
     expect(c9.phase, EyeTargetPhase.calib);
   });
 

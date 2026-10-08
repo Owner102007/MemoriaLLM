@@ -114,6 +114,19 @@ class EyeTrial extends ChangeNotifier {
   /// Номер сегмента файлов стенда: камера, открытая заново после смены
   /// окна, пишет в следующий.
   int _segment = 0;
+
+  /// Окно сменилось, пока калибровки не было (итог, живой взгляд):
+  /// следующая попытка начинается с камеры, открытой заново.
+  bool _stale = false;
+
+  /// Камеру открывают заново; пока это так, новые смены окна только
+  /// отмечаются — открытие повторится после текущего.
+  Future<void>? _reopening;
+  bool _reopenAgain = false;
+
+  /// Проверка остановилась, когда экрана проверки уже не было (живой
+  /// взгляд, свободный просмотр): об этом говорит панель над приложением.
+  bool failedLive = false;
   double _dpr = 1;
   EyeScreen? _screen;
 
@@ -154,6 +167,13 @@ class EyeTrial extends ChangeNotifier {
 
   /// Какой вид выбран.
   EyeCalibrationKind? get kind => _kind;
+
+  /// Видна ли проверка панелью над приложением, а не своим экраном:
+  /// живой взгляд, конец свободного просмотра или отказ во время них.
+  bool get overApp =>
+      _phase == EyeTrialPhase.live ||
+      _phase == EyeTrialPhase.finished ||
+      (_phase == EyeTrialPhase.failed && failedLive);
 
   /// Окно, в котором стоят точки.
   EyeScreen? get screen => _screen;
@@ -220,6 +240,9 @@ class EyeTrial extends ChangeNotifier {
   Future<void> _begin(EyeCalibrationKind kind) async {
     final EyeWindowLock? lock = await tracker.window.lock(place.monitor);
     if (_phase == EyeTrialPhase.closed) {
+      // Проверку закрыли, пока окно вставало на монитор: замок снимается
+      // здесь — `close` снимал ещё не поставленный.
+      await tracker.window.unlock();
       return;
     }
     if (lock != null) {
@@ -257,9 +280,10 @@ class EyeTrial extends ChangeNotifier {
           const JsonEncoder.withIndent(' ').convert(place.toJson()),
         );
       }
-    } else {
-      folder = await tracker.eyeFolder();
     }
+    // У быстрой проверки файлов нет: её самопроверка не ложится поверх
+    // самопроверки места записи в `eye/` (место на диске меряется у
+    // самого спутника).
     stage = 'Самопроверка…';
     notifyListeners();
     final EyeCheck checked = await link.selfcheck(
@@ -356,6 +380,10 @@ class EyeTrial extends ChangeNotifier {
       return;
     }
     final bool sameAttempt = outcome?.noFace ?? false;
+    if (_stale) {
+      await _reopen(next: !sameAttempt);
+      return;
+    }
     await _calibrate(next: !sameAttempt);
   }
 
@@ -375,6 +403,10 @@ class EyeTrial extends ChangeNotifier {
     }
     _recent.clear();
     gaze = null;
+    if (_stale) {
+      await _reopen(next: true);
+      return;
+    }
     await _calibrate(next: true);
   }
 
@@ -397,8 +429,8 @@ class EyeTrial extends ChangeNotifier {
       freeLeft = kFreeViewing;
       _freeTimer?.cancel();
       _freeTimer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
-        final Duration left = (freeLeft ?? Duration.zero) -
-            const Duration(seconds: 1);
+        final Duration left =
+            (freeLeft ?? Duration.zero) - const Duration(seconds: 1);
         freeLeft = left.isNegative ? Duration.zero : left;
         notifyListeners();
         if (left <= Duration.zero) {
@@ -452,43 +484,73 @@ class EyeTrial extends ChangeNotifier {
   }
 
   void _windowChanged(EyeWindowLock lock) {
-    // Окно сменило размер или монитор посреди калибровки: точки стояли
-    // не там — попытка заново и не в счёт (SNO-ALG-EYE-02, краевые
-    // случаи).
-    if (_phase != EyeTrialPhase.calibrating) {
-      return;
-    }
+    // Окно сменило размер или монитор: точки стояли бы не там, а спутник
+    // считает углы по окну из `open`. Посреди калибровки — попытка
+    // заново и не в счёт (SNO-ALG-EYE-02, краевые случаи); на итоге и в
+    // живом взгляде — следующая попытка начнётся с камеры, открытой
+    // заново.
     _dpr = lock.dpr;
-    run?.cancel();
-    unawaited(_reopenAndCalibrate());
+    if (_phase == EyeTrialPhase.calibrating) {
+      run?.cancel();
+      unawaited(_reopen(next: false));
+    } else if (_phase == EyeTrialPhase.result ||
+        _phase == EyeTrialPhase.live) {
+      _stale = true;
+    }
   }
 
-  Future<void> _reopenAndCalibrate() async {
-    // Спутник считает углы по окну из `open`: новое окно — новая камера.
-    final EyeLink? link = _link;
-    if (link == null) {
-      return;
+  /// Открывает камеру заново под новое окно и начинает попытку. Смены
+  /// окна, пришедшие, пока камеру открывают, не открывают её второй
+  /// раз параллельно, а повторяют открытие после текущего.
+  Future<void> _reopen({required bool next}) async {
+    if (_reopening != null) {
+      _reopenAgain = true;
+      return _reopening;
     }
-    final bool write = _kind == EyeCalibrationKind.full && standFolder != null;
+    final Future<void> going = _reopenLoop(next: next);
+    _reopening = going;
     try {
-      await link.closeCamera();
-      // Размер окна — уже новый: пока закрывалась камера, кадр с новым
-      // окном успел лечь.
-      final EyeScreen screen = _screenNow();
-      _screen = screen;
-      await link.open(
-        screen: screen,
-        distanceMm: place.distanceMm,
-        camera: place.camera,
-        dir: write ? standFolder : null,
-        write: write,
-        seg: write ? ++_segment : null,
-      );
-    } on EyeError catch (e) {
-      await _fail(describeEyeError(e));
-      return;
+      await going;
+    } finally {
+      _reopening = null;
     }
-    await _calibrate(next: false);
+  }
+
+  Future<void> _reopenLoop({required bool next}) async {
+    bool first = true;
+    do {
+      _reopenAgain = false;
+      final EyeLink? link = _link;
+      if (link == null || _phase == EyeTrialPhase.closed) {
+        return;
+      }
+      final bool write =
+          _kind == EyeCalibrationKind.full && standFolder != null;
+      try {
+        await link.closeCamera();
+        // Размер окна — уже новый: пока закрывалась камера, кадр с новым
+        // окном успел лечь.
+        final EyeScreen screen = _screenNow();
+        _screen = screen;
+        await link.open(
+          screen: screen,
+          distanceMm: place.distanceMm,
+          camera: place.camera,
+          dir: write ? standFolder : null,
+          write: write,
+          seg: write ? ++_segment : null,
+        );
+      } on EyeError catch (e) {
+        await _fail(describeEyeError(e));
+        return;
+      }
+      _stale = false;
+      if (!_reopenAgain) {
+        unawaited(_calibrate(next: first && next));
+        return;
+      }
+      first = false;
+    } while (_phase != EyeTrialPhase.closed);
   }
 
   Future<void> _fail(String text) async {
@@ -497,13 +559,17 @@ class EyeTrial extends ChangeNotifier {
     }
     run?.cancel();
     _freeTimer?.cancel();
+    failedLive =
+        _phase == EyeTrialPhase.live || _phase == EyeTrialPhase.finished;
+    gaze = null;
     failure = text;
     final EyeLink? link = _link;
     _link = null;
+    // Сначала — на экран: закрытие связи ждёт выхода спутника.
+    _set(EyeTrialPhase.failed);
     if (link != null) {
       await link.close();
     }
-    _set(EyeTrialPhase.failed);
   }
 
   /// Закрывает проверку: спутник закрыт (файлы стенда он дописывает
@@ -517,15 +583,19 @@ class EyeTrial extends ChangeNotifier {
     _freeTimer = null;
     _phase = EyeTrialPhase.closed;
     notifyListeners();
-    await _windowChanges?.cancel();
+    final StreamSubscription<EyeWindowLock>? changes = _windowChanges;
     _windowChanges = null;
+    unawaited(changes?.cancel());
     final EyeLink? link = _link;
     _link = null;
-    await Future.wait<void>(<Future<void>>[
-      if (link != null) link.close(),
-      tracker.window.unlock(),
-    ]);
+    // Окно — первым: его возвращают сразу, а спутник выходит до двух
+    // секунд.
+    final Future<void> unlocked = tracker.window.unlock();
     tracker.trialClosed(this);
+    await Future.wait<void>(<Future<void>>[
+      unlocked,
+      if (link != null) link.close(),
+    ]);
   }
 
   @override

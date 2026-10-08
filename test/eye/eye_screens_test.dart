@@ -504,9 +504,12 @@ void main() {
       await tester.pump();
       expect(find.byType(EyeTrialScreen), findsOneWidget);
       expect(eye.trial.value, isNotNull);
-      await eye.closeTrial();
-      await tester.pump();
-      await tester.pump();
+      // Закрытие ждёт отписок от потоков — их договаривают кадры, а не
+      // `await` в теле теста.
+      unawaited(eye.closeTrial());
+      for (int i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
       expect(find.byType(EyeTrialScreen), findsNothing);
       await unmount(tester);
     });
