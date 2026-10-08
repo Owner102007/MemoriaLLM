@@ -186,7 +186,8 @@ class AppServices {
       qpc: WindowsQpcClock.open() ?? StopwatchQpcClock(),
       window: window,
       recordsFolder: () async => (await _recordsFolder()).path,
-      build: '$appVersion ${appCommit.length > 7 ? appCommit.substring(0, 7) : appCommit}',
+      build:
+          '$appVersion ${appCommit.length > 7 ? appCommit.substring(0, 7) : appCommit}',
       branch: Sno.branch,
     )..attach(recording);
     unawaited(eye.loadPlace());

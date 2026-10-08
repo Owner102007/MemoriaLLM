@@ -57,8 +57,9 @@ const String kReferenceSchema = 'sno2026-reference/1';
 /// «Тестирование» не даёт, и отметка сессии от сброса не зависит;
 /// о разрешении на уведомления спрашивают один раз за всё время
 /// (SNO-F-REC-13); итог подготовки книг — о тексте страниц и карте,
-/// которых сброс не трогает (SNO-F-IDX-04); место записи айтрекера —
-/// настройка устройства, а не след участника (SNO-F-EYE-05).
+/// которых сброс не трогает (SNO-F-IDX-04); место записи айтрекера и
+/// сведения о спутнике последней записи — настройка устройства и
+/// сведения записи, а не след участника (SNO-F-EYE-05, SNO-F-EYE-04).
 const Set<String> _keptSettings = <String>{
   SettingsKeys.nodeId,
   SettingsKeys.lastHlc,
@@ -70,6 +71,7 @@ const Set<String> _keptSettings = <String>{
   SnoSettingsKeys.notificationsAsked,
   SnoSettingsKeys.shelfIndex,
   SnoSettingsKeys.eyePlace,
+  SnoSettingsKeys.eyeRun,
 };
 
 /// Настройки, которых нет в снимке состояния: их пишет само приложение,

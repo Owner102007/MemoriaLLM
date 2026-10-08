@@ -73,11 +73,10 @@ void main() {
         warmup: 0,
       );
       expect(check.verdict, EyeVerdict.fail);
-      expect(check.row('camera')?.value, isIn(<String>[
-        'no_camera',
-        'camera_busy',
-        'camera_denied',
-      ]));
+      expect(
+        check.row('camera')?.value,
+        isIn(<String>['no_camera', 'camera_busy', 'camera_denied']),
+      );
 
       final Stopwatch watch = Stopwatch()..start();
       await link.close();

@@ -141,9 +141,7 @@ class EyePlace {
       final Object? w = screen['w_px'];
       final Object? h = screen['h_px'];
       final Object? ppm = screen['px_per_mm'];
-      final ScreenSizeSource? source = ScreenSizeSource.named(
-        screen['source'],
-      );
+      final ScreenSizeSource? source = ScreenSizeSource.named(screen['source']);
       final Object? distance = raw['distance_mm'];
       final Object? checked = raw['checked_at'];
       final Object? mode = raw['mode'];
@@ -174,7 +172,8 @@ class EyePlace {
         distanceMm: distance,
         verdict: EyeVerdict.named(raw['verdict']),
         checkedAt: at,
-        mode: mode is List<Object?> &&
+        mode:
+            mode is List<Object?> &&
                 mode.length == 2 &&
                 mode.every((Object? v) => v is int)
             ? <int>[mode[0] as int, mode[1] as int]

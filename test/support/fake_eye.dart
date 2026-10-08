@@ -44,6 +44,7 @@ class FakeEyeProcess implements EyeProcess {
     this.helloError,
     this.check,
     this.cameraList,
+    this.exitOn,
   });
 
   /// Часы спутника.
@@ -66,6 +67,9 @@ class FakeEyeProcess implements EyeProcess {
 
   /// Камеры; `null` — одна встроенная.
   final List<Map<String, Object?>>? cameraList;
+
+  /// Команда, на которой спутник падает с кодом 1 вместо ответа.
+  final String? exitOn;
 
   final StreamController<String> _out = StreamController<String>();
   final Completer<int> _exit = Completer<int>();
@@ -137,6 +141,10 @@ class FakeEyeProcess implements EyeProcess {
 
   void _answer(Map<String, Object?> command) {
     final Object? name = command['cmd'];
+    if (exitOn != null && name == exitOn) {
+      exit(1);
+      return;
+    }
     if (alreadyRunning) {
       emit(<String, Object?>{
         'error': 'already_running',

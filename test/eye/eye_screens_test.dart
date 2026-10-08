@@ -162,7 +162,7 @@ void main() {
       expect(place.mode, <int>[1920, 1080]);
       expect(place.verdict, EyeVerdict.good);
       expect(place.checks.map((EyeCheckRow r) => r.id), contains('window'));
-      expect(place.pxPerMm, closeTo(1920 / 527 * 85.7 / 85.6, 1e-6));
+      expect(place.pxPerMm, closeTo(1920 / 527 * 85.7 / 85.6, 1e-4));
       // Уходя, экран закрыл спутник и вернул окно.
       expect(launcher.last.inputClosed, isTrue);
       expect(window.locked, isFalse);

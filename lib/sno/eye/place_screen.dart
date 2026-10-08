@@ -10,7 +10,6 @@ library;
 
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -166,6 +165,9 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
     if (monitor != null) {
       await _chooseMonitor(monitor, place: place);
     }
+    if (_closed) {
+      return;
+    }
     await _connect(place);
   }
 
@@ -179,6 +181,9 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
   }
 
   Future<void> _connect(EyePlace? place) async {
+    if (_closed) {
+      return;
+    }
     setState(() {
       _connecting = true;
       _linkError = null;
@@ -200,8 +205,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
         camera =
             _firstWhere(
               cameras,
-              (EyeCamera c) =>
-                  c.path != null && c.path == place.camera.path,
+              (EyeCamera c) => c.path != null && c.path == place.camera.path,
             ) ??
             _firstWhere(cameras, (EyeCamera c) => c.name == place.camera.name);
       }
@@ -222,12 +226,18 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
   }
 
   Future<void> _chooseMonitor(EyeMonitor monitor, {EyePlace? place}) async {
+    if (_closed) {
+      return;
+    }
     setState(() {
       _monitor = monitor;
       _check = null;
     });
     final EyeWindowLock? lock = await _eye.window.lock(monitor.id);
     if (_closed) {
+      // Экран закрыли, пока окно вставало на монитор: замок снимается
+      // здесь — уходя, экран снимал ещё не поставленный.
+      unawaited(_eye.window.unlock());
       return;
     }
     final double dpr = lock?.dpr ?? 1;
@@ -297,10 +307,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
 
   void _nudge(int steps) {
     setState(() {
-      _pxPerMm = nudgePxPerMm(
-        _pxPerMm,
-        steps,
-      ).clamp(kMinPxPerMm, kMaxPxPerMm);
+      _pxPerMm = nudgePxPerMm(_pxPerMm, steps).clamp(kMinPxPerMm, kMaxPxPerMm);
       _source = ScreenSizeSource.card;
     });
   }
@@ -482,7 +489,10 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
 
   Widget _monitorPicker() {
     if (_monitors.isEmpty) {
-      return const Text('Мониторы не определились', key: Key('eye-place-no-monitor'));
+      return const Text(
+        'Мониторы не определились',
+        key: Key('eye-place-no-monitor'),
+      );
     }
     return DropdownButton<String>(
       key: const Key('eye-place-monitor'),
@@ -535,9 +545,8 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
             onHorizontalDragUpdate: (DragUpdateDetails details) {
               final double next = (width + details.delta.dx) * dpr;
               setState(() {
-                _pxPerMm = pxPerMmFromCard(
-                  next,
-                ).clamp(kMinPxPerMm, kMaxPxPerMm);
+                _pxPerMm = pxPerMmFromCard(next)
+                    .clamp(kMinPxPerMm, kMaxPxPerMm);
                 _source = ScreenSizeSource.card;
               });
             },
@@ -557,7 +566,9 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
                             : theme.colorScheme.onSurface,
                         width: 2,
                       ),
-                      borderRadius: BorderRadius.circular(3.18 * _pxPerMm / dpr),
+                      borderRadius: BorderRadius.circular(
+                        3.18 * _pxPerMm / dpr,
+                      ),
                     ),
                   );
                 },
@@ -658,7 +669,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
           fit: StackFit.expand,
           children: <Widget>[
             Image.memory(
-              Uint8List.fromList(preview.jpeg),
+              preview.jpeg,
               key: const Key('eye-place-preview'),
               gaplessPlayback: true,
               fit: BoxFit.fill,

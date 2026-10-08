@@ -75,10 +75,7 @@ void main() {
 
     test('SNO-F-EYE-04: чужая версия обмена — отказ словами', () {
       expect(
-        () => EyeHello.fromMessage(<String, Object?>{
-          'v': 2,
-          'reply': 'hello',
-        }),
+        () => EyeHello.fromMessage(<String, Object?>{'v': 2, 'reply': 'hello'}),
         throwsA(
           isA<EyeError>()
               .having((EyeError e) => e.code, 'code', 'version')
@@ -146,7 +143,11 @@ void main() {
             'text': 'Мелко',
           },
         ],
-        'measures': <String, Object?>{'width': 1280, 'height': 720, 'fps': 29.7},
+        'measures': <String, Object?>{
+          'width': 1280,
+          'height': 720,
+          'fps': 29.7,
+        },
       });
       expect(check.verdict, EyeVerdict.warn);
       expect(check.row('iris')!.text, 'Мелко');
@@ -181,10 +182,7 @@ void main() {
         const EyeCheckRow(id: 'glare', verdict: EyeVerdict.fail, text: 'б'),
       );
       expect(glare.verdict, EyeVerdict.warn);
-      expect(
-        EyeCheck.unavailable('нет спутника').verdict,
-        EyeVerdict.fail,
-      );
+      expect(EyeCheck.unavailable('нет спутника').verdict, EyeVerdict.fail);
       expect(EyeVerdict.named('нечто'), EyeVerdict.fail);
       expect(EyeVerdict.good.worse(EyeVerdict.warn), EyeVerdict.warn);
     });

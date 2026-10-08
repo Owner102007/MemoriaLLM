@@ -110,7 +110,7 @@ Future<IOSink?> _openLog(File? log) async {
 }
 
 class _SatelliteProcess implements EyeProcess {
-  _SatelliteProcess(this._process, IOSink? log) {
+  _SatelliteProcess(this._process, this._log) {
     _process.stdin.encoding = utf8;
     // Запись в stdin вышедшего спутника кончается ошибкой «канал
     // закрыт» в будущем `done`: о выходе скажет код выхода, а не она.
@@ -122,10 +122,10 @@ class _SatelliteProcess implements EyeProcess {
         .transform(utf8.decoder)
         .listen(
           (String text) {
-            log?.write(text);
+            _log?.write(text);
           },
           onDone: () {
-            unawaited(_closeLog(log));
+            unawaited(_closeLog());
           },
           onError: (Object _) {},
           cancelOnError: false,
@@ -133,15 +133,23 @@ class _SatelliteProcess implements EyeProcess {
   }
 
   final Process _process;
+
+  /// Журнал спутника — его stderr; `null` — журнала нет.
+  final IOSink? _log;
+  bool _logClosed = false;
   late final Stream<String> _lines;
   // Подписка на stderr живёт столько же, сколько процесс: поток
   // кончается с выходом спутника, и подписка — вместе с ним.
   late final StreamSubscription<String> _logging;
   bool _inputClosed = false;
 
-  static Future<void> _closeLog(IOSink? log) async {
+  Future<void> _closeLog() async {
+    if (_logClosed) {
+      return;
+    }
+    _logClosed = true;
     try {
-      await log?.close();
+      await _log?.close();
     } on Object {
       // Журнал спутника не закрылся — терять из-за этого нечего.
     }
@@ -181,7 +189,13 @@ class _SatelliteProcess implements EyeProcess {
   @override
   void kill() {
     _process.kill();
-    unawaited(_logging.cancel().then((Object? _) {}, onError: (Object _) {}));
+    // Снятый процесс stderr может и не закрыть: журнал закрывается сам.
+    unawaited(
+      _logging.cancel().then(
+        (Object? _) => _closeLog(),
+        onError: (Object _) => _closeLog(),
+      ),
+    );
   }
 }
 

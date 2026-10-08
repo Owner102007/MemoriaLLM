@@ -165,9 +165,8 @@ void main() {
   });
 
   test('SNO-F-EYE-07: слова канала одни у Dart и у windows/runner', () {
-    final String runner = File(
-      'windows/runner/flutter_window.cpp',
-    ).readAsStringSync();
+    final String runner = File('windows/runner/flutter_window.cpp')
+        .readAsStringSync();
     for (final String word in <String>[
       '"memoria/window"',
       '"monitors"',

@@ -8,8 +8,8 @@
 /// * даёт экрану «Место записи» связь со спутником;
 /// * пока идёт запись — ставит окно на весь монитор места записи под
 ///   замок, поднимает спутник, сверяет часы при старте и раз в минуту,
-///   перезапускает спутник, если он вышел или замолчал (до трёх раз за
-///   запись), и пишет всё это в журнал событиями `eye.*`.
+///   поднимает спутник заново, если он вышел, замолчал или шлёт мусор
+///   (до трёх раз за запись), и пишет всё это в журнал событиями `eye.*`.
 ///
 /// В этом шаге (ET-02) спутник во время записи файлов взгляда не пишет:
 /// команда `open`, папка `eye/` в архиве и короткая самопроверка перед
@@ -20,6 +20,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -59,6 +60,9 @@ const Duration kAlreadyRunningPause = Duration(milliseconds: 700);
 
 /// Что известно о спутнике идущей записи — для сведений записи.
 class EyeRunInfo {
+  /// Запись, о которой эти сведения; `null` — записи не было.
+  String? recording;
+
   /// Место записи настроено.
   bool configured = false;
 
@@ -77,8 +81,9 @@ class EyeRunInfo {
   /// Сдались ли.
   bool gaveUp = false;
 
-  /// Новая запись — сведения с чистого листа.
-  void reset() {
+  /// Новая запись [id] — сведения с чистого листа.
+  void reset(String? id) {
+    recording = id;
     configured = false;
     unavailable = null;
     hello = null;
@@ -99,6 +104,18 @@ class EyeRunInfo {
     'restarts': restarts,
     'gave_up': gaveUp,
   };
+}
+
+/// Чем кончился подъём спутника.
+enum _Raised {
+  /// Спутник поднят и жив.
+  up,
+
+  /// Взгляда в этой записи не будет: спутника нет или он не тот.
+  unavailable,
+
+  /// Не поднялся или умер, пока поднимался: можно пробовать ещё раз.
+  failed,
 }
 
 /// Айтрекер приложения.
@@ -147,6 +164,10 @@ class EyeTracker extends ChangeNotifier {
   RecordingPhase _phase = RecordingPhase.idle;
   _EyeRun? _run;
   final EyeRunInfo _info = EyeRunInfo();
+
+  /// Сведения о спутнике записи, сохранённые прежним запуском
+  /// приложения: `{recording, block}`.
+  Map<String, Object?>? _stored;
   bool _disposed = false;
 
   /// Место записи; `null` — не задано или ещё не прочитано.
@@ -157,9 +178,6 @@ class EyeTracker extends ChangeNotifier {
 
   /// Сведения о спутнике последней записи.
   EyeRunInfo get info => _info;
-
-  /// Часы QPC — для экрана, который сверяет их сам.
-  QpcClock get qpc => _qpc;
 
   /// Читает место записи из настроек.
   Future<EyePlace?> loadPlace() async {
@@ -188,12 +206,17 @@ class EyeTracker extends ChangeNotifier {
   /// Запуск спутника и `hello`. Прежний спутник ещё держит имя
   /// экземпляра (`already_running`: «Место записи» закрыли только что) —
   /// ещё раз через [kAlreadyRunningPause], до [kAlreadyRunningTries]
-  /// раз. Любой другой отказ — [EyeError] сразу.
-  Future<(EyeLink, EyeHello)> _open() async {
+  /// раз. Любой другой отказ — [EyeError] сразу. [stopped] — запись,
+  /// ради которой поднимали, уже кончилась: спутник закрывается.
+  Future<(EyeLink, EyeHello)> _open({bool Function()? stopped}) async {
+    bool gone() => stopped?.call() ?? false;
     EyeError? last;
     for (int attempt = 0; attempt < kAlreadyRunningTries; attempt++) {
       if (attempt > 0) {
         await _wait(kAlreadyRunningPause);
+      }
+      if (gone()) {
+        throw const EyeError('stopped', 'запись остановлена');
       }
       final EyeLink link;
       try {
@@ -203,31 +226,88 @@ class EyeTracker extends ChangeNotifier {
       } on Object catch (e) {
         throw EyeError('start', '$e');
       }
+      final EyeHello hello;
       try {
-        final EyeHello hello = await link.hello(build: build, branch: branch);
-        return (link, hello);
+        hello = await link.hello(build: build, branch: branch);
       } on EyeError catch (e) {
         await link.close();
         if (e.code != 'already_running') {
           rethrow;
         }
         last = e;
+        continue;
       } on Object catch (e) {
         await link.close();
         throw EyeError('start', '$e');
       }
+      if (gone()) {
+        await link.close();
+        throw const EyeError('stopped', 'запись остановлена');
+      }
+      return (link, hello);
     }
     throw last ?? const EyeError('already_running', 'Спутник уже запущен');
   }
 
   /// Подключает айтрекер к записи: старт записи поднимает спутник,
-  /// остановка — опускает.
+  /// остановка — опускает. Сведения о спутнике идут в `recording.json`
+  /// той записи, о которой они: сведения, сохранённые до перезапуска
+  /// приложения, — тоже.
   void attach(RecordingSession session) {
     _session?.removeListener(_sessionChanged);
     _session = session;
     _phase = session.phase;
     session.addListener(_sessionChanged);
-    session.addInfoPart('eye_tracker', () => _info.toJson(_place));
+    session.addInfoPart('eye_tracker', () => _infoFor(session.state?.id));
+    unawaited(_loadStored());
+  }
+
+  /// Блок `eye_tracker` для записи [id]; `null` — о ней айтрекер ничего
+  /// не знает (запись оборвалась вместе с приложением).
+  Map<String, Object?>? _infoFor(String? id) {
+    if (id == null) {
+      return null;
+    }
+    if (_info.recording == id) {
+      return _info.toJson(_place);
+    }
+    final Map<String, Object?>? stored = _stored;
+    final Object? block = stored?['block'];
+    if (stored?['recording'] == id && block is Map<String, Object?>) {
+      return block;
+    }
+    return null;
+  }
+
+  Future<void> _loadStored() async {
+    try {
+      final String? text = await _settings.read(SnoSettingsKeys.eyeRun);
+      final Object? raw = text == null ? null : jsonDecode(text);
+      if (raw is Map<String, Object?> && _stored == null) {
+        _stored = raw;
+      }
+    } on Object {
+      // Нечитаемые сведения — то же, что их нет.
+    }
+  }
+
+  /// Сохраняет сведения о спутнике идущей записи: они переживут
+  /// перезапуск приложения между остановкой записи и завершением сессии.
+  Future<void> _store() async {
+    final String? id = _info.recording;
+    if (id == null) {
+      return;
+    }
+    final Map<String, Object?> stored = <String, Object?>{
+      'recording': id,
+      'block': _info.toJson(_place),
+    };
+    _stored = stored;
+    try {
+      await _settings.write(SnoSettingsKeys.eyeRun, jsonEncode(stored));
+    } on Object {
+      // Не легло — сведения останутся в памяти до конца запуска.
+    }
   }
 
   void _sessionChanged() {
@@ -241,7 +321,7 @@ class EyeTracker extends ChangeNotifier {
     if (now == RecordingPhase.recording && was != RecordingPhase.recording) {
       // Сведения прежней записи не должны попасть в сведения новой:
       // запись пишет их раньше, чем спутник успеет подняться.
-      _info.reset();
+      _info.reset(session.state?.id);
       unawaited(_startRun(session));
     } else if (now != RecordingPhase.recording &&
         was == RecordingPhase.recording) {
@@ -260,6 +340,9 @@ class EyeTracker extends ChangeNotifier {
     final _EyeRun? run = _run;
     _run = null;
     await run?.stop();
+    if (run != null) {
+      await _store();
+    }
   }
 
   /// Идёт ли сейчас спутник записи.
@@ -293,11 +376,18 @@ class _EyeRun {
   void Function()? _stopSync;
   StreamSubscription<EyeWindowLock>? _windowChanges;
   bool _stopped = false;
-  bool _restarting = false;
+
+  /// Идёт ли подъём спутника: сигналы о потере его ждут конца подъёма —
+  /// подъём сам узнаёт, жив ли поднятый.
+  bool _raising = false;
   bool _syncing = false;
 
   /// Номер подъёма спутника: запоздавшие сигналы прежнего — не в счёт.
   int _generation = 0;
+
+  /// Сколько раз спутник поднимали заново удачно: номер сегмента файлов
+  /// (с ET-06), без пропусков.
+  int _segment = 0;
 
   bool get alive => !_stopped && _link != null && !_link!.exited;
 
@@ -310,7 +400,6 @@ class _EyeRun {
   }
 
   Future<void> start() async {
-    final EyeRunInfo info = tracker._info;
     final EyePlace? place = await tracker.loadPlace();
     if (_stopped) {
       return;
@@ -321,6 +410,7 @@ class _EyeRun {
         'reason': 'not_configured',
         'text': 'Айтрекер не настроен — запись идёт без взгляда',
       });
+      unawaited(tracker._store());
       return;
     }
     info.configured = true;
@@ -343,19 +433,32 @@ class _EyeRun {
         ...changed.toJson(),
       });
     });
-    await _raise(first: true);
+    final _Raised raised = await _raise(first: true);
+    if (raised == _Raised.failed) {
+      await _restart();
+    }
+    unawaited(tracker._store());
+  }
+
+  Future<_Raised> _raise({required bool first}) async {
+    _raising = true;
+    try {
+      return await _raiseOnce(first: first);
+    } finally {
+      _raising = false;
+    }
   }
 
   /// Поднимает спутник: запуск, `hello`, сверка часов, таймеры.
-  Future<void> _raise({required bool first}) async {
+  Future<_Raised> _raiseOnce({required bool first}) async {
     final int generation = ++_generation;
     final int startedMs = tracker._monotonicMs();
     final (EyeLink, EyeHello) opened;
     try {
-      opened = await tracker._open();
+      opened = await tracker._open(stopped: () => _stopped);
     } on EyeError catch (e) {
       if (_stopped) {
-        return;
+        return _Raised.failed;
       }
       if (first) {
         info.unavailable = e.code;
@@ -363,21 +466,20 @@ class _EyeRun {
           'reason': e.code,
           'text': describeEyeError(e),
         });
-        return;
+        return _Raised.unavailable;
       }
       _log(SnoEventType.eyeLost, <String, Object?>{
         'reason': 'start',
         'error': e.code,
         'text': describeEyeError(e),
       });
-      await _restart();
-      return;
+      return _Raised.failed;
     }
     final EyeLink link = opened.$1;
     final EyeHello hello = opened.$2;
     if (_stopped) {
       await link.close();
-      return;
+      return _Raised.failed;
     }
     _link = link;
     info.hello = hello;
@@ -412,24 +514,40 @@ class _EyeRun {
     } else {
       _log(SnoEventType.eyeRestart, <String, Object?>{
         'n': info.restarts,
-        'seg': info.restarts,
+        'seg': ++_segment,
         'start_ms': tracker._monotonicMs() - startedMs,
       });
     }
-    await _sync(kSyncRoundsOpen);
+    await _sync(kSyncRoundsOpen, force: true);
     if (_stopped || generation != _generation) {
-      return;
+      return _Raised.failed;
+    }
+    if (link.exited || link.garbageInRow >= kEyeGarbageInRow) {
+      // Спутник умер или сломался, пока поднимался: сигнал о потере
+      // пришёл во время подъёма и ждал его конца.
+      _link = null;
+      _generation++;
+      final bool died = link.exited;
+      _log(SnoEventType.eyeLost, <String, Object?>{
+        'reason': died ? 'exit' : 'garbage',
+        if (died) 'code': await link.exitCode,
+      });
+      if (!died) {
+        await link.kill();
+      }
+      return _Raised.failed;
     }
     _watch = SilenceWatch(tracker._monotonicMs());
-    _stopTick ??= tracker._ticker(const Duration(seconds: 1), _tick);
+    _stopTick ??= tracker._ticker(kEyeTick, _tick);
     _stopSync ??= tracker._ticker(kSyncEvery, () {
       unawaited(_sync(kSyncRoundsMinute));
     });
+    return _Raised.up;
   }
 
   void _tick() {
     final SilenceWatch? watch = _watch;
-    if (watch == null || _stopped || _restarting) {
+    if (watch == null || _stopped || _raising) {
       return;
     }
     if (watch.tick(tracker._monotonicMs())) {
@@ -437,10 +555,11 @@ class _EyeRun {
     }
   }
 
-  /// Сверка часов: [rounds] обменов и событие `eye.sync`.
-  Future<void> _sync(int rounds) async {
+  /// Сверка часов: [rounds] обменов и событие `eye.sync`. Сверка раз в
+  /// минуту во время подъёма не идёт; сверка самого подъёма — [force].
+  Future<void> _sync(int rounds, {bool force = false}) async {
     final EyeLink? link = _link;
-    if (link == null || _stopped || _syncing || _restarting) {
+    if (link == null || _stopped || _syncing || (_raising && !force)) {
       return;
     }
     _syncing = true;
@@ -465,43 +584,48 @@ class _EyeRun {
     }
   }
 
-  /// Спутник потерян: `eye.lost` и подъём заново.
+  /// Спутник потерян: `eye.lost` и подъём заново. Во время подъёма
+  /// сигнал не в счёт: подъём сам проверит, жив ли поднятый.
   Future<void> _lost(String reason, {int? code, bool kill = false}) async {
-    if (_stopped || _restarting) {
+    if (_stopped || _raising) {
       return;
     }
     final EyeLink? link = _link;
+    if (link == null) {
+      return;
+    }
     _link = null;
     _watch = null;
     _generation++;
     _log(SnoEventType.eyeLost, <String, Object?>{
       'reason': reason,
-      if (code != null) 'code': code,
+      'code': ?code,
     });
-    if (link != null && kill) {
+    if (kill) {
       await link.kill();
     }
     await _restart();
   }
 
+  /// Поднимает спутник заново, пока он не поднимется или не кончатся
+  /// попытки: после [kEyeRestarts] — `eye.gaveup`, и запись идёт без
+  /// взгляда.
   Future<void> _restart() async {
-    if (_stopped) {
-      return;
-    }
-    if (info.restarts >= kEyeRestarts) {
-      info.gaveUp = true;
-      _log(SnoEventType.eyeGaveUp, <String, Object?>{
-        'restarts': info.restarts,
-      });
-      _stopTimers();
-      return;
-    }
-    _restarting = true;
-    info.restarts++;
-    try {
-      await _raise(first: false);
-    } finally {
-      _restarting = false;
+    while (!_stopped) {
+      if (info.restarts >= kEyeRestarts) {
+        info.gaveUp = true;
+        _log(SnoEventType.eyeGaveUp, <String, Object?>{
+          'restarts': info.restarts,
+        });
+        _stopTimers();
+        unawaited(tracker._store());
+        return;
+      }
+      info.restarts++;
+      if (await _raise(first: false) == _Raised.up) {
+        unawaited(tracker._store());
+        return;
+      }
     }
   }
 

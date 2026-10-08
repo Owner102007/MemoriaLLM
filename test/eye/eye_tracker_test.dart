@@ -120,43 +120,46 @@ void main() {
   }
 
   group('SNO-F-EYE-04: спутник на время записи', () {
-    test('SNO-F-EYE-07: старт — окно на монитор места, спутник, часы', () async {
-      await started();
+    test(
+      'SNO-F-EYE-07: старт — окно на монитор места, спутник, часы',
+      () async {
+        await started();
 
-      expect(window.locks, <String>[r'\\.\DISPLAY1']);
-      expect(window.locked, isTrue);
-      expect(launcher.started, hasLength(1));
-      expect(launcher.last.names.first, 'hello');
-      expect(eye.running, isTrue);
-      expect(eyeTypes(), <String>[
-        'eye.window',
-        'eye.ready',
-        'eye.clock',
-        'eye.sync',
-      ]);
-      final Map<String, Object?> lock = eyeEvents()[0].$2;
-      expect(lock['locked'], isTrue);
-      expect(lock['monitor'], r'\\.\DISPLAY1');
-      expect(lock['w_px'], 1920);
-      expect(lock['h_px'], 1080);
-      expect(lock['dpr'], 1.0);
-      expect(lock['found'], isTrue);
-      final Map<String, Object?> ready = eyeEvents()[1].$2;
-      expect(ready['version'], '0.1.0');
-      expect(ready['model_sha256'], '64184e22');
-      final Map<String, Object?> clock = eyeEvents()[2].$2;
-      expect(clock['qpc0_us'], isA<int>());
-      expect(clock['t0'], isA<int>());
-      final Map<String, Object?> sync = eyeEvents()[3].$2;
-      expect(sync['n'], 15);
-      expect(sync['offset_us'], 0);
-      expect(sync['rtt_us'], greaterThan(0));
-      // Сверка раз в минуту и проверка молчания раз в секунду заведены.
-      expect(
-        tickers.keys.toSet(),
-        <Duration>{const Duration(seconds: 1), const Duration(minutes: 1)},
-      );
-    });
+        expect(window.locks, <String>[r'\\.\DISPLAY1']);
+        expect(window.locked, isTrue);
+        expect(launcher.started, hasLength(1));
+        expect(launcher.last.names.first, 'hello');
+        expect(eye.running, isTrue);
+        expect(eyeTypes(), <String>[
+          'eye.window',
+          'eye.ready',
+          'eye.clock',
+          'eye.sync',
+        ]);
+        final Map<String, Object?> lock = eyeEvents()[0].$2;
+        expect(lock['locked'], isTrue);
+        expect(lock['monitor'], r'\\.\DISPLAY1');
+        expect(lock['w_px'], 1920);
+        expect(lock['h_px'], 1080);
+        expect(lock['dpr'], 1.0);
+        expect(lock['found'], isTrue);
+        final Map<String, Object?> ready = eyeEvents()[1].$2;
+        expect(ready['version'], '0.1.0');
+        expect(ready['model_sha256'], '64184e22');
+        final Map<String, Object?> clock = eyeEvents()[2].$2;
+        expect(clock['qpc0_us'], isA<int>());
+        expect(clock['t0'], isA<int>());
+        final Map<String, Object?> sync = eyeEvents()[3].$2;
+        expect(sync['n'], 15);
+        expect(sync['offset_us'], 0);
+        expect(sync['rtt_us'], greaterThan(0));
+        // Сверка раз в минуту и проверка молчания раз в секунду заведены.
+        expect(tickers.keys.toSet(), <Duration>{
+          const Duration(seconds: 1),
+          const Duration(minutes: 1),
+        });
+      },
+    );
 
     test('SNO-ALG-EYE-03: раз в минуту — пять обменов и eye.sync', () async {
       await started();
@@ -191,10 +194,7 @@ void main() {
       expect(block['configured'], isTrue);
       expect(block['restarts'], 0);
       expect(block['gave_up'], isFalse);
-      expect(
-        (block['satellite']! as Map<String, Object?>)['version'],
-        '0.1.0',
-      );
+      expect((block['satellite']! as Map<String, Object?>)['version'], '0.1.0');
       expect((block['place']! as Map<String, Object?>)['distance_mm'], 600);
     });
 
@@ -323,48 +323,110 @@ void main() {
     });
   });
 
-  group('SNO-F-EYE-04: без взгляда', () {
-    test('SNO-F-EYE-05: место не задано — eye.unavailable, окна не трогают',
+  group('SNO-F-EYE-04: спутник умер, пока поднимался', () {
+    test('SNO-F-EYE-04: упал на сверке часов — eye.lost и подъём заново',
         () async {
-      await kit.settings.remove(SnoSettingsKeys.eyePlace);
+      launcher = FakeEyeLauncher(
+        make: (int n) =>
+            FakeEyeProcess(clock: qpc, exitOn: n == 0 ? 'sync' : null),
+      );
+      eye.dispose();
+      eye = tracker();
       await started();
-      expect(eyeEvents(), <(String, Map<String, Object?>)>[
-        (
-          'eye.unavailable',
-          <String, Object?>{
-            'reason': 'not_configured',
-            'text': 'Айтрекер не настроен — запись идёт без взгляда',
-          },
-        ),
+      expect(eyeTypes(), <String>[
+        'eye.window',
+        'eye.ready',
+        'eye.clock',
+        'eye.lost',
+        'eye.restart',
+        'eye.sync',
       ]);
-      expect(window.locks, isEmpty);
-      expect(launcher.started, isEmpty);
-      await kit.session.stop(StopReason.experimenter);
-      await settle();
-      final Map<String, Object?> block =
-          kit.store.json(kit.folder, kRecordingFile)['eye_tracker']!
-              as Map<String, Object?>;
-      expect(block, <String, Object?>{
-        'present': false,
-        'configured': false,
-        'unavailable': 'not_configured',
-        'restarts': 0,
-        'gave_up': false,
-      });
+      expect(eyeEvents()[3].$2, <String, Object?>{'reason': 'exit', 'code': 1});
+      expect(launcher.started, hasLength(2));
+      expect(eye.running, isTrue);
     });
 
-    test('SNO-F-EYE-04: папки eye/ нет — eye.unavailable, запись идёт',
-        () async {
-      launcher.failWith = const EyeError('no_satellite', 'нет eye');
+    test('SNO-F-EYE-04: сведения о спутнике переживают перезапуск '
+        'приложения до завершения сессии', () async {
       await started();
-      expect(eyeTypes(), <String>['eye.window', 'eye.unavailable']);
-      expect(eyeEvents().last.$2, <String, Object?>{
-        'reason': 'no_satellite',
-        'text': 'Айтрекер не запустился: рядом с приложением нет папки eye',
-      });
-      expect(kit.session.recording, isTrue);
-      expect(tickers, isEmpty);
+      final String folder = kit.folder;
+      await kit.session.stop(StopReason.experimenter);
+      await settle();
+      expect(kit.settings.values[SnoSettingsKeys.eyeRun], isNotNull);
+
+      // «Перезапуск»: новая сессия и новый айтрекер на тех же
+      // настройках и записях.
+      final SessionKit again = SessionKit(
+        settings: kit.settings,
+        store: kit.store,
+        time: kit.time,
+      );
+      final EyeTracker fresh = EyeTracker(
+        settings: kit.settings,
+        launch: launcher.launch,
+        qpc: qpc,
+        window: window,
+      )..attach(again.session);
+      await settle();
+      await again.session.restore();
+      await again.session.finish();
+      await settle();
+
+      final Map<String, Object?> block =
+          kit.store.json(folder, kRecordingFile)['eye_tracker']!
+              as Map<String, Object?>;
+      expect(block['configured'], isTrue);
+      expect(
+        (block['satellite']! as Map<String, Object?>)['version'],
+        '0.1.0',
+      );
+      fresh.dispose();
+      again.session.dispose();
     });
+  });
+
+  group('SNO-F-EYE-04: без взгляда', () {
+    test(
+      'SNO-F-EYE-05: место не задано — eye.unavailable, окна не трогают',
+      () async {
+        await kit.settings.remove(SnoSettingsKeys.eyePlace);
+        await started();
+        expect(eyeTypes(), <String>['eye.unavailable']);
+        expect(eyeEvents().single.$2, <String, Object?>{
+          'reason': 'not_configured',
+          'text': 'Айтрекер не настроен — запись идёт без взгляда',
+        });
+        expect(window.locks, isEmpty);
+        expect(launcher.started, isEmpty);
+        await kit.session.stop(StopReason.experimenter);
+        await settle();
+        final Map<String, Object?> block =
+            kit.store.json(kit.folder, kRecordingFile)['eye_tracker']!
+                as Map<String, Object?>;
+        expect(block, <String, Object?>{
+          'present': false,
+          'configured': false,
+          'unavailable': 'not_configured',
+          'restarts': 0,
+          'gave_up': false,
+        });
+      },
+    );
+
+    test(
+      'SNO-F-EYE-04: папки eye/ нет — eye.unavailable, запись идёт',
+      () async {
+        launcher.failWith = const EyeError('no_satellite', 'нет eye');
+        await started();
+        expect(eyeTypes(), <String>['eye.window', 'eye.unavailable']);
+        expect(eyeEvents().last.$2, <String, Object?>{
+          'reason': 'no_satellite',
+          'text': 'Айтрекер не запустился: рядом с приложением нет папки eye',
+        });
+        expect(kit.session.recording, isTrue);
+        expect(tickers, isEmpty);
+      },
+    );
 
     test('SNO-F-EYE-04: спутник другой версии — eye.unavailable', () async {
       launcher = FakeEyeLauncher(
@@ -377,18 +439,20 @@ void main() {
       expect(launcher.last.inputClosed, isTrue);
     });
 
-    test('SNO-F-EYE-04: прежний спутник ещё держит имя — ждём и ещё раз',
-        () async {
-      launcher = FakeEyeLauncher(
-        make: (int n) => FakeEyeProcess(clock: qpc, alreadyRunning: n < 2),
-      );
-      eye.dispose();
-      eye = tracker();
-      await started();
-      expect(launcher.started, hasLength(3));
-      expect(waits, <Duration>[kAlreadyRunningPause, kAlreadyRunningPause]);
-      expect(eyeTypes(), contains('eye.ready'));
-    });
+    test(
+      'SNO-F-EYE-04: прежний спутник ещё держит имя — ждём и ещё раз',
+      () async {
+        launcher = FakeEyeLauncher(
+          make: (int n) => FakeEyeProcess(clock: qpc, alreadyRunning: n < 2),
+        );
+        eye.dispose();
+        eye = tracker();
+        await started();
+        expect(launcher.started, hasLength(3));
+        expect(waits, <Duration>[kAlreadyRunningPause, kAlreadyRunningPause]);
+        expect(eyeTypes(), contains('eye.ready'));
+      },
+    );
   });
 
   group('SNO-F-EYE-05: место записи', () {
@@ -415,11 +479,10 @@ void main() {
   });
 
   group('SNO-ALG-REC-03: блок eye_tracker манифеста', () {
-    test('SNO-F-EYE-04: манифест берёт блок из сведений и проходит схему',
-        () {
-      final Map<String, Object?> schema =
-          jsonDecode(File('tool/sno_manifest.schema.json').readAsStringSync())
-              as Map<String, Object?>;
+    test('SNO-F-EYE-04: манифест берёт блок из сведений и проходит схему', () {
+      final Map<String, Object?> schema = jsonDecode(
+        File('tool/sno_manifest.schema.json').readAsStringSync(),
+      ) as Map<String, Object?>;
       final Map<String, Object?> block = <String, Object?>{
         'present': false,
         'configured': true,
@@ -433,7 +496,7 @@ void main() {
           'branch': 'I',
           'eye_tracker': block,
         },
-        archiveName: 'a.zip',
+        archiveName: 'sno2026_I_67954332_a91f3c_20261008-1200.zip',
         packedAt: DateTime.utc(2026, 10, 8),
         files: const <PackedFile>[],
       );
@@ -442,7 +505,7 @@ void main() {
       // Без айтрекера — только то, что взгляда нет.
       final Map<String, Object?> phone = buildManifest(
         info: <String, Object?>{'schema': kRecordingSchema, 'branch': 'I'},
-        archiveName: 'a.zip',
+        archiveName: 'sno2026_I_67954332_a91f3c_20261008-1200.zip',
         packedAt: DateTime.utc(2026, 10, 8),
         files: const <PackedFile>[],
       );

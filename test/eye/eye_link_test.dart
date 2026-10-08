@@ -19,10 +19,7 @@ void main() {
     FakeEyeProcess Function()? make,
   ]) async {
     final FakeEyeProcess process = make?.call() ?? FakeEyeProcess(clock: qpc);
-    final EyeLink link = await EyeLink.start(
-      () async => process,
-      qpc: qpc,
-    );
+    final EyeLink link = await EyeLink.start(() async => process, qpc: qpc);
     return (link, process);
   }
 
@@ -49,7 +46,9 @@ void main() {
     );
     await expectLater(
       link.hello(),
-      throwsA(isA<EyeError>().having((EyeError e) => e.code, 'code', 'version')),
+      throwsA(
+        isA<EyeError>().having((EyeError e) => e.code, 'code', 'version'),
+      ),
     );
     await link.close();
   });
@@ -78,7 +77,11 @@ void main() {
     await expectLater(
       link.hello(),
       throwsA(
-        isA<EyeError>().having((EyeError e) => e.code, 'code', 'already_running'),
+        isA<EyeError>().having(
+          (EyeError e) => e.code,
+          'code',
+          'already_running',
+        ),
       ),
     );
     expect(await link.exitCode, 3);
@@ -104,52 +107,66 @@ void main() {
     await link.close();
   });
 
-  test('SNO-ALG-EYE-03: ответа нет — timeout, а запоздавший не чужой', () async {
-    final (EyeLink link, FakeEyeProcess process) = await open();
-    process.mute = true;
-    await expectLater(
-      link.request('cameras', timeout: const Duration(milliseconds: 20)),
-      throwsA(isA<EyeError>().having((EyeError e) => e.code, 'code', 'timeout')),
-    );
-    // Запоздавший ответ на снятую команду никому не достаётся.
-    process.emit(<String, Object?>{'reply': 'cameras', 'cameras': <Object?>[]});
-    await Future<void>.delayed(Duration.zero);
-    await link.kill();
-    expect(process.killed, isTrue);
-  });
-
-  test('SNO-ALG-EYE-03: сердцебиение, ход и мусор — своим слушателям', () async {
-    final (EyeLink link, FakeEyeProcess process) = await open();
-    final List<int> beats = <int>[];
-    final List<Object?> stages = <Object?>[];
-    final List<int> garbage = <int>[];
-    final List<EyeError> errors = <EyeError>[];
-    link
-      ..onHeartbeat = (EyeHeartbeat beat) => beats.add(beat.n)
-      ..onProgress = (Map<String, Object?> m) => stages.add(m['stage'])
-      ..onGarbage = garbage.add
-      ..onError = errors.add;
-    process
-      ..beat(1)
-      ..garbage('Traceback (most recent call last):')
-      ..garbage('  File "x.py"')
-      ..beat(2)
-      ..garbage('мусор')
-      ..emit(<String, Object?>{'progress': 'selfcheck', 'stage': 'warmup'})
-      ..emit(<String, Object?>{
-        'error': 'camera_lost',
-        'text': 'Камера пропала',
-        'cmd': 'record',
+  test(
+    'SNO-ALG-EYE-03: ответа нет — timeout, а запоздавший не чужой',
+    () async {
+      final (EyeLink link, FakeEyeProcess process) = await open();
+      process.mute = true;
+      await expectLater(
+        link.request('cameras', timeout: const Duration(milliseconds: 20)),
+        throwsA(
+          isA<EyeError>().having((EyeError e) => e.code, 'code', 'timeout'),
+        ),
+      );
+      // Запоздавший ответ на снятую команду никому не достаётся.
+      process.emit(<String, Object?>{
+        'reply': 'cameras',
+        'cameras': <Object?>[],
       });
-    await Future<void>.delayed(Duration.zero);
-    expect(beats, <int>[1, 2]);
-    // Счёт мусора — подряд: сердцебиение его обнуляет.
-    expect(garbage, <int>[1, 2, 1]);
-    expect(link.garbageInRow, 0);
-    expect(stages, <Object?>['warmup']);
-    expect(errors.single.code, 'camera_lost');
-    await link.close();
-  });
+      await Future<void>.delayed(Duration.zero);
+      await link.kill();
+      expect(process.killed, isTrue);
+    },
+  );
+
+  test(
+    'SNO-ALG-EYE-03: сердцебиение, ход и мусор — своим слушателям',
+    () async {
+      final (EyeLink link, FakeEyeProcess process) = await open();
+      final List<int> beats = <int>[];
+      final List<Object?> stages = <Object?>[];
+      final List<int> garbage = <int>[];
+      final List<EyeError> errors = <EyeError>[];
+      link.onHeartbeat = (EyeHeartbeat beat) {
+        beats.add(beat.n);
+      };
+      link.onProgress = (Map<String, Object?> m) {
+        stages.add(m['stage']);
+      };
+      link.onGarbage = garbage.add;
+      link.onError = errors.add;
+      process
+        ..beat(1)
+        ..garbage('Traceback (most recent call last):')
+        ..garbage('  File "x.py"')
+        ..beat(2)
+        ..garbage('мусор')
+        ..emit(<String, Object?>{'progress': 'selfcheck', 'stage': 'warmup'})
+        ..emit(<String, Object?>{
+          'error': 'camera_lost',
+          'text': 'Камера пропала',
+          'cmd': 'record',
+        });
+      await Future<void>.delayed(Duration.zero);
+      expect(beats, <int>[1, 2]);
+      // Счёт мусора — подряд: сердцебиение его обнуляет.
+      expect(garbage, <int>[1, 2, 1]);
+      expect(link.garbageInRow, 0);
+      expect(stages, <Object?>['warmup']);
+      expect(errors.single.code, 'camera_lost');
+      await link.close();
+    },
+  );
 
   test('SNO-ALG-EYE-04: самопроверка — камера, кадры и итог', () async {
     final (EyeLink link, FakeEyeProcess process) = await open();

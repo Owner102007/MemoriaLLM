@@ -59,7 +59,10 @@ void main() {
       expect(EyePlace.decode('{"schema":"другая/1"}'), isNull);
       expect(
         EyePlace.decode(
-          place.encode().replaceFirst('"distance_mm":600', '"distance_mm":"60"'),
+          place.encode().replaceFirst(
+            '"distance_mm":600',
+            '"distance_mm":"60"',
+          ),
         ),
         isNull,
       );
@@ -104,7 +107,10 @@ void main() {
       const double ppm = 4;
       final double wider = nudgePxPerMm(ppm, 1);
       // Рамка карты шире ровно на 0,1 мм по прежней оценке.
-      expect(kCardWidthMm * wider - kCardWidthMm * ppm, closeTo(0.1 * ppm, 1e-9));
+      expect(
+        kCardWidthMm * wider - kCardWidthMm * ppm,
+        closeTo(0.1 * ppm, 1e-9),
+      );
       expect(nudgePxPerMm(nudgePxPerMm(ppm, 10), -10), closeTo(4, 1e-3));
       expect(nudgePxPerMm(ppm, 0), ppm);
     });
@@ -125,7 +131,10 @@ void main() {
       );
       expect(initialPxPerMm(known, place, 1), place.pxPerMm);
       expect(initialPxPerMm(known, null, 1), closeTo(1920 / 527, 1e-9));
-      expect(initialPxPerMm(unknown, place, 1.5), closeTo(1.5 * 96 / 25.4, 1e-9));
+      expect(
+        initialPxPerMm(unknown, place, 1.5),
+        closeTo(1.5 * 96 / 25.4, 1e-9),
+      );
     });
   });
 
@@ -159,8 +168,10 @@ void main() {
         'Окно не на выбранном мониторе',
       );
       expect(
-        windowCheckRow(lock: lock(id: r'\\.\DISPLAY2'), monitor: monitor)
-            .verdict,
+        windowCheckRow(
+          lock: lock(id: r'\\.\DISPLAY2'),
+          monitor: monitor,
+        ).verdict,
         EyeVerdict.fail,
       );
       expect(

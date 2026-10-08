@@ -64,7 +64,8 @@ class WindowsQpcClock implements QpcClock {
 /// Тики QPC в микросекунды — без переполнения на больших значениях и с
 /// округлением к меньшему, как у `perf_counter_ns` Python.
 int qpcTicksToUs(int ticks, int frequency) {
-  return ticks ~/ frequency * 1000000 + (ticks % frequency) * 1000000 ~/ frequency;
+  return ticks ~/ frequency * 1000000 +
+      (ticks % frequency) * 1000000 ~/ frequency;
 }
 
 /// Часы без QPC: монотонный счёт от запуска приложения. Для платформ без

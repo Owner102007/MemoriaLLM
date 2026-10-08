@@ -46,6 +46,33 @@ void main() {
   });
 
   group('SNO-ALG-EYE-03: спутник молчит', () {
+    test('SNO-ALG-EYE-03: тики опаздывают на миллисекунды — молчание '
+        'всё равно замечено', () {
+      // Таймер Windows шагает по ~16 мс: тики приходят то на 1010-й,
+      // то на 1995-й миллисекунде. Подвисанием это не считается.
+      final SilenceWatch watch = SilenceWatch(0);
+      const List<int> late = <int>[
+        1016, 1995, 3020, 4001, 5016, 5998, 7031, 8000, 9016,
+      ];
+      for (final int at in late) {
+        expect(watch.tick(at), isFalse, reason: '$at мс');
+      }
+      expect(watch.tick(10016), isTrue);
+    });
+
+    test('SNO-ALG-EYE-03: тик позже двух секунд — подвисание', () {
+      final SilenceWatch watch = SilenceWatch(0);
+      for (int s = 1; s <= 8; s++) {
+        watch.tick(s * 1000);
+      }
+      // Между тиками 2001 мс: приложение стояло, ожидание — с начала.
+      expect(watch.tick(10001), isFalse);
+      for (int s = 11; s <= 19; s++) {
+        expect(watch.tick(s * 1000 + 1), isFalse, reason: '$s с');
+      }
+      expect(watch.tick(20001), isTrue);
+    });
+
     test('SNO-ALG-EYE-03: десять секунд без сердцебиения — молчит', () {
       final SilenceWatch watch = SilenceWatch(0);
       for (int s = 1; s < 10; s++) {

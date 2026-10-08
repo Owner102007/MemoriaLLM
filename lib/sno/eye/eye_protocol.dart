@@ -9,6 +9,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 /// Версия обмена. Меняется только вместе со спутником
 /// (`eye/sno_eye/__init__.py`, `PROTOCOL`): в ответе `hello` чужая
@@ -87,7 +88,8 @@ class EyeError implements Exception {
   final String? command;
 
   @override
-  String toString() => 'EyeError($code${command == null ? '' : ' $command'}: '
+  String toString() =>
+      'EyeError($code${command == null ? '' : ' $command'}: '
       '$text)';
 }
 
@@ -236,9 +238,7 @@ List<EyeCamera> camerasOf(Map<String, Object?> message) {
   if (raw is! List<Object?>) {
     return const <EyeCamera>[];
   }
-  return <EyeCamera>[
-    for (final Object? item in raw) ?EyeCamera.fromJson(item),
-  ];
+  return <EyeCamera>[for (final Object? item in raw) ?EyeCamera.fromJson(item)];
 }
 
 /// Итог проверки: годится, с оговоркой, не годится.
@@ -390,11 +390,7 @@ class EyeCheck {
         if (r.id != row.id) r,
       row,
     ];
-    return EyeCheck(
-      verdict: verdictOf(all),
-      rows: all,
-      measures: measures,
-    );
+    return EyeCheck(verdict: verdictOf(all), rows: all, measures: measures);
   }
 
   /// Общий итог строк [rows]: «не годится» в важной строке — «не
@@ -460,7 +456,7 @@ class EyePreview {
     if (jpeg is! String || w is! int || h is! int || w <= 0 || h <= 0) {
       return null;
     }
-    final List<int> bytes;
+    final Uint8List bytes;
     try {
       bytes = base64Decode(jpeg);
     } on FormatException {
@@ -479,8 +475,9 @@ class EyePreview {
     return EyePreview(jpeg: bytes, width: w, height: h, face: box);
   }
 
-  /// Кадр в JPEG.
-  final List<int> jpeg;
+  /// Кадр в JPEG — один и тот же список байт на все перерисовки, чтобы
+  /// картинка не распаковывалась заново при каждой.
+  final Uint8List jpeg;
 
   /// Ширина кадра в точках.
   final int width;

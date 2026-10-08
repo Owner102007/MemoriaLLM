@@ -507,6 +507,12 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
       case WM_SYSCOMMAND: {
         const WPARAM command = wparam & 0xFFF0;
+        // Свёрнутое окно (Win+D, Win+M сворачивают мимо SC_MINIMIZE)
+        // разворачивается обратно нажатием на панели задач — его
+        // SC_RESTORE проходит, а размер держит WM_WINDOWPOSCHANGING.
+        if (command == SC_RESTORE && IsIconic(hwnd)) {
+          break;
+        }
         if (command == SC_MOVE || command == SC_SIZE ||
             command == SC_MAXIMIZE || command == SC_RESTORE ||
             command == SC_MINIMIZE) {
