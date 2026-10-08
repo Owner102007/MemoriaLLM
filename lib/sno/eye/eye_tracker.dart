@@ -37,8 +37,10 @@ import 'eye_window.dart';
 import 'qpc_clock.dart';
 
 /// Таймер: зовёт [onTick] каждые [every]; возвращает, чем его снять.
-typedef EyeTicker =
-    void Function() Function(Duration every, void Function() onTick);
+typedef EyeTicker = void Function() Function(
+  Duration every,
+  void Function() onTick,
+);
 
 void Function() _timerTicker(Duration every, void Function() onTick) {
   final Timer timer = Timer.periodic(every, (Timer _) => onTick());

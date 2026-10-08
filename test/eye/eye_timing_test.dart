@@ -52,7 +52,15 @@ void main() {
       // то на 1995-й миллисекунде. Подвисанием это не считается.
       final SilenceWatch watch = SilenceWatch(0);
       const List<int> late = <int>[
-        1016, 1995, 3020, 4001, 5016, 5998, 7031, 8000, 9016,
+        1016,
+        1995,
+        3020,
+        4001,
+        5016,
+        5998,
+        7031,
+        8000,
+        9016,
       ];
       for (final int at in late) {
         expect(watch.tick(at), isFalse, reason: '$at мс');

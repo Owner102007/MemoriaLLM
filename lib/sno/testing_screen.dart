@@ -1279,6 +1279,18 @@ class _TestingScreenState extends State<TestingScreen>
               style: theme.textTheme.bodySmall,
             ),
           ),
+        // SNO-F-EYE-05: на ПК без места записи запись пойдёт без
+        // взгляда — сказано под кнопкой и ещё раз на экране кода.
+        if (_eye case final EyeTracker eye
+            when eye.placeLoaded && eye.place == null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              'Айтрекер не настроен — запись пойдёт без взгляда',
+              key: const Key('sno-record-eye'),
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
         if (_notifications == false)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),

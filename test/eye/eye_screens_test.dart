@@ -320,6 +320,7 @@ void main() {
 
       expect(find.text('Место записи (айтрекер)'), findsOneWidget);
       expect(find.text('не задано'), findsOneWidget);
+      expect(find.byKey(const Key('sno-record-eye')), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('sno-record-start')));
       await tester.pumpAndSettle();
@@ -360,6 +361,7 @@ void main() {
         ),
         findsOneWidget,
       );
+      expect(find.byKey(const Key('sno-record-eye')), findsNothing);
       await tester.tap(find.byKey(const Key('sno-record-start')));
       await tester.pumpAndSettle();
       expect(find.textContaining('Айтрекер не настроен'), findsNothing);

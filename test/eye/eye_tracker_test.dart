@@ -324,27 +324,32 @@ void main() {
   });
 
   group('SNO-F-EYE-04: спутник умер, пока поднимался', () {
-    test('SNO-F-EYE-04: упал на сверке часов — eye.lost и подъём заново',
-        () async {
-      launcher = FakeEyeLauncher(
-        make: (int n) =>
-            FakeEyeProcess(clock: qpc, exitOn: n == 0 ? 'sync' : null),
-      );
-      eye.dispose();
-      eye = tracker();
-      await started();
-      expect(eyeTypes(), <String>[
-        'eye.window',
-        'eye.ready',
-        'eye.clock',
-        'eye.lost',
-        'eye.restart',
-        'eye.sync',
-      ]);
-      expect(eyeEvents()[3].$2, <String, Object?>{'reason': 'exit', 'code': 1});
-      expect(launcher.started, hasLength(2));
-      expect(eye.running, isTrue);
-    });
+    test(
+      'SNO-F-EYE-04: упал на сверке часов — eye.lost и подъём заново',
+      () async {
+        launcher = FakeEyeLauncher(
+          make: (int n) =>
+              FakeEyeProcess(clock: qpc, exitOn: n == 0 ? 'sync' : null),
+        );
+        eye.dispose();
+        eye = tracker();
+        await started();
+        expect(eyeTypes(), <String>[
+          'eye.window',
+          'eye.ready',
+          'eye.clock',
+          'eye.lost',
+          'eye.restart',
+          'eye.sync',
+        ]);
+        expect(eyeEvents()[3].$2, <String, Object?>{
+          'reason': 'exit',
+          'code': 1,
+        });
+        expect(launcher.started, hasLength(2));
+        expect(eye.running, isTrue);
+      },
+    );
 
     test('SNO-F-EYE-04: сведения о спутнике переживают перезапуск '
         'приложения до завершения сессии', () async {
@@ -376,10 +381,7 @@ void main() {
           kit.store.json(folder, kRecordingFile)['eye_tracker']!
               as Map<String, Object?>;
       expect(block['configured'], isTrue);
-      expect(
-        (block['satellite']! as Map<String, Object?>)['version'],
-        '0.1.0',
-      );
+      expect((block['satellite']! as Map<String, Object?>)['version'], '0.1.0');
       fresh.dispose();
       again.session.dispose();
     });
