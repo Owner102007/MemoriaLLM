@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/sno/eye/eye_calibration.dart';
 import 'package:memoria/sno/eye/eye_link.dart';
 import 'package:memoria/sno/eye/eye_process.dart';
 import 'package:memoria/sno/eye/eye_protocol.dart';
@@ -120,6 +121,78 @@ void main() {
       expect(shots, isNotEmpty);
       expect(shots.last.width, lessThanOrEqualTo(320));
       expect(shots.last.face, isNotNull);
+      await link.close();
+    },
+    skip: skip,
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'SNO-ALG-EYE-02: быстрая калибровка на синтетическом участнике — '
+    'точки по QPC приложения, модель, проверка, живая точка, файл',
+    () async {
+      final QpcClock qpc = WindowsQpcClock.open()!;
+      final EyeLink link = await EyeLink.start(
+        launcher(extra: const <String>['--source', 'synthetic:follow']),
+        qpc: qpc,
+      );
+      final List<EyeGaze> gaze = <EyeGaze>[];
+      link.onGaze = gaze.add;
+      await link.hello();
+      final String folder = '${temp.path}${Platform.pathSeparator}стенд';
+      final List<int>? frame = await link.open(
+        screen: const EyeScreen(
+          width: 1920,
+          height: 1080,
+          widthMm: 527,
+          heightMm: 296,
+        ),
+        distanceMm: 600,
+        dir: folder,
+        strip: false,
+      );
+      expect(frame, isNotNull);
+      await link.calibrate(attempt: 1, kind: 'quick');
+      Future<void> show(String phase, String prefix) async {
+        for (int i = 0; i < kValidationPoints.length; i++) {
+          final (double fx, double fy) = kValidationPoints[i];
+          link.target(
+            phase: phase,
+            qpcUs: qpc.nowUs(),
+            id: '$prefix$i',
+            x: fx * 1920,
+            y: fy * 1080,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 1300));
+        }
+        link.target(phase: 'off', qpcUs: qpc.nowUs());
+      }
+
+      await show('calib', 'q');
+      final EyeSamples samples = await link.samples();
+      expect(samples.short, isEmpty);
+      expect(samples.face, 1.0);
+      final EyeFit fit = await link.fit();
+      expect(fit.model, 'ridge');
+      expect(fit.points, 9);
+      await show('validate', 'v');
+      final EyeValidation v = await link.validate();
+      stdout.writeln(
+        'ЗАМЕР SNO-ALG-EYE-02 | быстрая калибровка на синтетике | '
+        'ошибка без одной точки ${fit.cvDeg}° | проверка ${v.accuracyDeg}° '
+        '| прецизионность ${v.precisionDeg}°',
+      );
+      expect(v.accuracyDeg, lessThan(3.0));
+      await link.live(on: true);
+      await Future<void>.delayed(const Duration(seconds: 1));
+      await link.live(on: false);
+      expect(gaze.where((EyeGaze g) => g.ok), hasLength(greaterThan(20)));
+      final Map<String, Object?>? summary = await link.closeCamera();
+      expect(summary, isNotNull);
+      expect(
+        File('$folder${Platform.pathSeparator}calibration.json').existsSync(),
+        isTrue,
+      );
       await link.close();
     },
     skip: skip,

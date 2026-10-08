@@ -518,3 +518,266 @@ class EyeHeartbeat {
   /// Память спутника, МБ.
   final double? memoryMb;
 }
+
+// --- калибровка (шаг 28, SNO-ALG-EYE-02) ---------------------------------
+
+double? _num(Object? value) => value is num ? value.toDouble() : null;
+
+List<String> _ids(Object? raw) => <String>[
+  if (raw is List<Object?>)
+    for (final Object? v in raw)
+      if (v is String) v,
+];
+
+/// Окно приложения для спутника: размер в логических пикселях и в
+/// миллиметрах. По нему спутник переводит точки в градусы.
+class EyeScreen {
+  /// Создаёт окно.
+  const EyeScreen({
+    required this.width,
+    required this.height,
+    required this.widthMm,
+    required this.heightMm,
+  });
+
+  /// Ширина окна, логических пикселей.
+  final double width;
+
+  /// Высота окна, логических пикселей.
+  final double height;
+
+  /// Ширина окна, мм.
+  final double widthMm;
+
+  /// Высота окна, мм.
+  final double heightMm;
+
+  /// Поле `screen` команды `open`.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'w': width,
+    'h': height,
+    'w_mm': widthMm,
+    'h_mm': heightMm,
+  };
+}
+
+/// Ответ `samples`: сколько годных кадров у каждой точки калибровки.
+class EyeSamples {
+  /// Создаёт ответ.
+  const EyeSamples({
+    required this.counts,
+    required this.short,
+    this.face,
+  });
+
+  /// Ответ из строки спутника.
+  factory EyeSamples.fromMessage(Map<String, Object?> message) {
+    final Object? counts = message['counts'];
+    return EyeSamples(
+      counts: <String, int>{
+        if (counts is Map<String, Object?>)
+          for (final MapEntry<String, Object?> e in counts.entries)
+            if (e.value is int) e.key: e.value! as int,
+      },
+      short: _ids(message['short']),
+      face: _num(message['face']),
+    );
+  }
+
+  /// Годных кадров по точкам.
+  final Map<String, int> counts;
+
+  /// Точки, которым не хватило кадров: их показывают ещё раз в конце.
+  final List<String> short;
+
+  /// Доля кадров с лицом; `null` — кадров не было.
+  final double? face;
+}
+
+/// Ответ `fit`: модель попытки.
+class EyeFit {
+  /// Создаёт ответ.
+  const EyeFit({
+    required this.model,
+    required this.cvDeg,
+    required this.points,
+    this.cvCm,
+    this.latencyMs,
+    this.excluded = const <String>[],
+    this.raw = const <String, Object?>{},
+  });
+
+  /// Ответ из строки спутника.
+  factory EyeFit.fromMessage(Map<String, Object?> message) {
+    final Object? points = message['points'];
+    return EyeFit(
+      model: message['model'] is String ? message['model']! as String : '',
+      cvDeg: _num(message['cv_deg']) ?? double.nan,
+      cvCm: _num(message['cv_cm']),
+      latencyMs: _num(message['latency_ms']),
+      points: points is int ? points : 0,
+      excluded: _ids(message['excluded']),
+      raw: message,
+    );
+  }
+
+  /// Какая модель выбрана: `ridge` или `krr`.
+  final String model;
+
+  /// Ошибка «без одной точки», градусов.
+  final double cvDeg;
+
+  /// Та же ошибка в сантиметрах на экране.
+  final double? cvCm;
+
+  /// Задержка камеры, мс; `null` — слежения не было.
+  final double? latencyMs;
+
+  /// Сколько точек вошло в модель.
+  final int points;
+
+  /// Точки, исключённые за нехваткой кадров.
+  final List<String> excluded;
+
+  /// Ответ как есть — для файлов и журнала.
+  final Map<String, Object?> raw;
+}
+
+/// Почему калибровка не принята.
+enum EyeRejectReason {
+  /// Средняя точность хуже порога.
+  accuracy('accuracy'),
+
+  /// Одна из точек хуже порога худшей.
+  worst('worst'),
+
+  /// Годных точек проверки слишком мало.
+  fewPoints('few_points');
+
+  const EyeRejectReason(this.wire);
+
+  /// Имя в обмене.
+  final String wire;
+
+  /// Причина по имени; `null` — принято или имя незнакомо.
+  static EyeRejectReason? named(Object? wire) {
+    for (final EyeRejectReason r in values) {
+      if (r.wire == wire) {
+        return r;
+      }
+    }
+    return null;
+  }
+}
+
+/// Ответ `validate`: проверка точности и приём.
+class EyeValidation {
+  /// Создаёт ответ.
+  const EyeValidation({
+    required this.accepted,
+    this.accuracyDeg,
+    this.accuracyCm,
+    this.precisionDeg,
+    this.worstDeg,
+    this.worstId,
+    this.reason,
+    this.acceptDeg = 2.5,
+    this.worstMaxDeg = 5,
+    this.excluded = const <String>[],
+    this.raw = const <String, Object?>{},
+  });
+
+  /// Ответ из строки спутника.
+  factory EyeValidation.fromMessage(Map<String, Object?> message) {
+    final Object? t = message['thresholds'];
+    final Map<String, Object?> thresholds = t is Map<String, Object?>
+        ? t
+        : const <String, Object?>{};
+    final Object? worstId = message['worst_id'];
+    return EyeValidation(
+      accepted: message['accepted'] == true,
+      accuracyDeg: _num(message['accuracy_deg']),
+      accuracyCm: _num(message['accuracy_cm']),
+      precisionDeg: _num(message['precision_deg']),
+      worstDeg: _num(message['worst_deg']),
+      worstId: worstId is String ? worstId : null,
+      reason: EyeRejectReason.named(message['reason']),
+      acceptDeg: _num(thresholds['accept_deg']) ?? 2.5,
+      worstMaxDeg: _num(thresholds['worst_deg']) ?? 5,
+      excluded: _ids(message['excluded']),
+      raw: message,
+    );
+  }
+
+  /// Принята ли калибровка.
+  final bool accepted;
+
+  /// Точность — средний угол, градусов; `null` — годных точек нет.
+  final double? accuracyDeg;
+
+  /// Точность в сантиметрах на экране.
+  final double? accuracyCm;
+
+  /// Прецизионность — RMS угла между соседними выборками, градусов.
+  final double? precisionDeg;
+
+  /// Худшая точка, градусов.
+  final double? worstDeg;
+
+  /// Какая точка худшая.
+  final String? worstId;
+
+  /// Почему не принята; `null` — принята.
+  final EyeRejectReason? reason;
+
+  /// Порог приёма, градусов.
+  final double acceptDeg;
+
+  /// Порог худшей точки, градусов.
+  final double worstMaxDeg;
+
+  /// Точки проверки без годных кадров.
+  final List<String> excluded;
+
+  /// Ответ как есть — для файлов и журнала.
+  final Map<String, Object?> raw;
+}
+
+/// Строка живой точки `{g, s, ok, t}`: оценка взгляда на кадре.
+class EyeGaze {
+  /// Создаёт точку.
+  const EyeGaze({required this.ok, required this.qpcUs, this.raw, this.smooth});
+
+  /// Точка из строки спутника; `null` — строка не о ней.
+  static EyeGaze? fromMessage(Map<String, Object?> message) {
+    if (!message.containsKey('g') || message['t'] is! int) {
+      return null;
+    }
+    (double, double)? pair(Object? v) {
+      if (v is List<Object?> && v.length == 2 && v[0] is num && v[1] is num) {
+        return ((v[0]! as num).toDouble(), (v[1]! as num).toDouble());
+      }
+      return null;
+    }
+
+    final (double, double)? g = pair(message['g']);
+    return EyeGaze(
+      ok: message['ok'] == true && g != null,
+      qpcUs: message['t']! as int,
+      raw: g,
+      smooth: pair(message['s']) ?? g,
+    );
+  }
+
+  /// Годен ли кадр: лицо есть, голова не отвёрнута, не моргание.
+  final bool ok;
+
+  /// QPC кадра, мкс.
+  final int qpcUs;
+
+  /// Оценка взгляда в логических пикселях окна; `null` — кадр негоден.
+  final (double, double)? raw;
+
+  /// Она же, сглаженная для глаза.
+  final (double, double)? smooth;
+}

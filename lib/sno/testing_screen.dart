@@ -15,8 +15,11 @@ import '../domain/library/storage_access.dart';
 import '../domain/reading/reader_document.dart';
 import 'clt/load_test.dart';
 import 'clt/test_screens.dart';
+import 'eye/eye_place.dart';
+import 'eye/eye_protocol.dart';
 import 'eye/eye_tracker.dart';
 import 'eye/place_screen.dart';
+import 'eye/trial_screen.dart';
 import 'flags.dart';
 import 'hold_button.dart';
 import 'index/shelf_reading.dart';
@@ -988,13 +991,48 @@ class _TestingScreenState extends State<TestingScreen>
     );
   }
 
+  /// Строка «Проверка айтрекера» (SNO-F-EYE-03, кадр SNO-SCR-01.1):
+  /// калибровка и живой взгляд на себе, до прихода участника. Пока
+  /// сессия открыта, строки нет; без места записи или с местом, которое
+  /// «не годится», она есть, но не открывается — и сказано почему.
+  Widget? _eyeTrialTile() {
+    final EyeTracker? eye = _eye;
+    if (eye == null || _sessionOpen || _starting) {
+      return null;
+    }
+    final EyePlace? place = eye.place;
+    final String? blocked = !eye.placeLoaded
+        ? '…'
+        : place == null
+        ? 'Сначала задайте место записи'
+        : place.verdict == EyeVerdict.fail
+        ? 'Место записи не годится — проверьте его ещё раз'
+        : null;
+    return ListTile(
+      key: const Key('sno-eye-trial'),
+      leading: const Icon(Icons.center_focus_strong_outlined),
+      title: const Text('Проверка айтрекера'),
+      subtitle: Text(
+        blocked ?? 'Калибровка и живой взгляд на себе',
+        key: const Key('sno-eye-trial-summary'),
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      enabled: blocked == null,
+      onTap: () => unawaited(
+        openEyeTrial(Navigator.of(context, rootNavigator: true), eye),
+      ),
+    );
+  }
+
   /// Блок «Для экспериментатора»: архивы с книгами (SNO-F-LIT-03).
   List<Widget> _experimenter(ThemeData theme) {
     final bool needsAccess = _phase == ArchiveSearchPhase.needsAccess;
     final String? failure = _searchFailure;
     final Widget? eyePlace = _eyePlaceTile();
+    final Widget? eyeTrial = _eyeTrialTile();
     return <Widget>[
       ?eyePlace,
+      ?eyeTrial,
       if (_busy)
         ListTile(
           key: const Key('sno-archive-busy'),

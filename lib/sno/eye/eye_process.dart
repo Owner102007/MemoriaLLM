@@ -209,3 +209,14 @@ Future<bool> openCameraSettings() async {
     return false;
   }
 }
+
+/// Открывает папку [path] в «Проводнике» — папку стенда пробной полной
+/// калибровки (SNO-F-EYE-03).
+Future<bool> openFolderInExplorer(String path) async {
+  try {
+    await Process.start('explorer.exe', <String>[path]);
+    return true;
+  } on Object {
+    return false;
+  }
+}

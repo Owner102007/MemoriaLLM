@@ -185,7 +185,9 @@ class AppServices {
       ),
       qpc: WindowsQpcClock.open() ?? StopwatchQpcClock(),
       window: window,
-      recordsFolder: () async => (await _recordsFolder()).path,
+      // Журнал спутника, самопроверка места и стенд — в папке данных
+      // приложения, а не в `Записи/` (BUG-58).
+      dataFolder: () async => (await appDataDirectory()).path,
       build:
           '$appVersion ${appCommit.length > 7 ? appCommit.substring(0, 7) : appCommit}',
       branch: Sno.branch,

@@ -8,6 +8,8 @@ import '../domain/library/shelf.dart';
 import '../domain/navigation/sections.dart';
 import '../domain/settings/app_settings.dart';
 import '../domain/theme/app_palette.dart';
+import '../sno/eye/eye_tracker.dart';
+import '../sno/eye/live_layer.dart';
 import '../sno/flags.dart';
 import '../sno/recording/event.dart';
 import '../sno/recording/logged_settings.dart';
@@ -86,8 +88,19 @@ class _MemoriaAppState extends State<MemoriaApp> {
       navigator: _navigator,
       records: widget.services.records,
       test: widget.services.loadTest,
-      child: page,
+      child: _underEye(page),
     );
+  }
+
+  /// Кладёт поверх приложения слой живого взгляда «Проверки айтрекера»
+  /// (SNO-F-EYE-03), если айтрекер в сборке есть: точка взгляда видна на
+  /// любом экране, а точка записи остаётся выше неё.
+  Widget _underEye(Widget page) {
+    final EyeTracker? eye = widget.services.eye;
+    if (eye == null) {
+      return page;
+    }
+    return EyeLiveLayer(eye: eye, navigator: _navigator, child: page);
   }
 }
 

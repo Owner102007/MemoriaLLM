@@ -21,8 +21,10 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import '../../domain/settings/app_settings.dart';
 import '../recording/event.dart';
@@ -33,6 +35,7 @@ import 'eye_place.dart';
 import 'eye_process.dart';
 import 'eye_protocol.dart';
 import 'eye_timing.dart';
+import 'eye_trial.dart';
 import 'eye_window.dart';
 import 'qpc_clock.dart';
 
@@ -50,6 +53,32 @@ void Function() _timerTicker(Duration every, void Function() onTick) {
 int Function() _stopwatchMs() {
   final Stopwatch watch = Stopwatch()..start();
   return () => watch.elapsedMilliseconds;
+}
+
+/// Файлы айтрекера на диске: папка стенда и сведения о месте в ней
+/// (SNO-F-EYE-03). Договор — чтобы проверка шла в тестах без диска.
+abstract interface class EyeFiles {
+  /// Создаёт папку [path] со всеми недостающими.
+  Future<void> createFolder(String path);
+
+  /// Пишет текст [text] в файл [path].
+  Future<void> writeText(String path, String text);
+}
+
+/// Файлы айтрекера на настоящем диске.
+class EyeDiskFiles implements EyeFiles {
+  /// Создаёт доступ.
+  const EyeDiskFiles();
+
+  @override
+  Future<void> createFolder(String path) async {
+    await Directory(path).create(recursive: true);
+  }
+
+  @override
+  Future<void> writeText(String path, String text) async {
+    await File(path).writeAsString(text);
+  }
 }
 
 /// Сколько раз пробовать запуск, если прежний спутник ещё держит имя
@@ -128,7 +157,8 @@ class EyeTracker extends ChangeNotifier {
     required EyeLauncher launch,
     required QpcClock qpc,
     required this.window,
-    this.recordsFolder,
+    this.dataFolder,
+    this.files = const EyeDiskFiles(),
     this.build = '',
     this.branch = '',
     int Function()? monotonicMs,
@@ -151,8 +181,14 @@ class EyeTracker extends ChangeNotifier {
   /// Окно приложения: мониторы и замок.
   final EyeWindow window;
 
-  /// Папка записей: по ней самопроверка меряет место на диске.
-  final Future<String?> Function()? recordsFolder;
+  /// Папка данных приложения. В её подпапке `eye/` лежат журнал спутника
+  /// и самопроверка места записи (BUG-58: не в `Записи/` — это не
+  /// запись), в `Стенд/` — файлы пробной полной калибровки
+  /// (SNO-F-EYE-03).
+  final Future<String?> Function()? dataFolder;
+
+  /// Файлы на диске: папка стенда и сведения о месте в ней.
+  final EyeFiles files;
 
   /// Версия сборки — для `hello`.
   final String build;
@@ -180,6 +216,67 @@ class EyeTracker extends ChangeNotifier {
 
   /// Сведения о спутнике последней записи.
   EyeRunInfo get info => _info;
+
+  /// Часы QPC приложения.
+  QpcClock get qpc => _qpc;
+
+  /// Идущая «Проверка айтрекера»; `null` — её нет (SNO-F-EYE-03).
+  final ValueNotifier<EyeTrial?> trial = ValueNotifier<EyeTrial?>(null);
+
+  /// Папка `eye/` в папке данных: по ней самопроверка меряет место на
+  /// диске и в неё кладёт `selfcheck.json`; `null` — папки данных нет.
+  Future<String?> eyeFolder() async {
+    final String? root = await dataFolder?.call();
+    return root == null ? null : p.join(root, 'eye');
+  }
+
+  /// Новая папка стенда `Стенд/<дата-время>/` для пробной полной
+  /// калибровки; создана. `null` — папки данных нет.
+  Future<String?> standFolder(DateTime at) async {
+    final String? root = await dataFolder?.call();
+    if (root == null) {
+      return null;
+    }
+    String two(int v) => v.toString().padLeft(2, '0');
+    final String name =
+        '${at.year}${two(at.month)}${two(at.day)}-'
+        '${two(at.hour)}${two(at.minute)}${two(at.second)}';
+    final String folder = p.join(root, kStandFolder, name);
+    await files.createFolder(folder);
+    return folder;
+  }
+
+  /// Начинает «Проверку айтрекера» на месте записи; идущая — та же.
+  /// `null` — места записи нет.
+  EyeTrial? beginTrial({int? seed}) {
+    final EyeTrial? current = trial.value;
+    if (current != null && current.phase != EyeTrialPhase.closed) {
+      return current;
+    }
+    final EyePlace? place = _place;
+    if (place == null) {
+      return null;
+    }
+    final EyeTrial created = EyeTrial(tracker: this, place: place, seed: seed);
+    trial.value = created;
+    return created;
+  }
+
+  /// Проверка закрылась сама.
+  void trialClosed(EyeTrial closed) {
+    if (!_disposed && identical(trial.value, closed)) {
+      trial.value = null;
+    }
+  }
+
+  /// Закрывает идущую проверку: место записи открывают заново или
+  /// начинается запись — спутник у машины один.
+  Future<void> closeTrial() async {
+    final EyeTrial? current = trial.value;
+    if (current != null) {
+      await current.close();
+    }
+  }
 
   /// Читает место записи из настроек.
   Future<EyePlace?> loadPlace() async {
@@ -332,6 +429,8 @@ class EyeTracker extends ChangeNotifier {
   }
 
   Future<void> _startRun(RecordingSession session) async {
+    // Проверка айтрекера держит спутник и окно: запись важнее.
+    await closeTrial();
     await _run?.stop();
     final _EyeRun run = _EyeRun(this, session);
     _run = run;
@@ -361,10 +460,15 @@ class EyeTracker extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _session?.removeListener(_sessionChanged);
+    unawaited(closeTrial());
     unawaited(_stopRun());
+    trial.dispose();
     super.dispose();
   }
 }
+
+/// Папка стенда в папке данных приложения (SNO-F-EYE-03).
+const String kStandFolder = 'Стенд';
 
 /// Спутник одной записи: от старта записи до её остановки.
 class _EyeRun {

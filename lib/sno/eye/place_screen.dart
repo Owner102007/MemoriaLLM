@@ -6,6 +6,14 @@
 /// картинкой камеры. Пока экран открыт, окно стоит на весь выбранный
 /// монитор: и рамка карты, и строка самопроверки «окно» меряются там,
 /// где пойдёт запись. Уходя, экран закрывает спутник и возвращает окно.
+///
+/// Место пишется само (BUG-57): как только самопроверка закончилась — с
+/// камерой, монитором, размером экрана и расстоянием, какие стоят на
+/// экране, — и потом при каждой смене размера и расстояния, пока
+/// проверка есть. Смена камеры или монитора проверку снимает, и место
+/// остаётся прежним до новой проверки: в место не попадает камера,
+/// которую не проверяли. Кнопка внизу — «Готово»: она только закрывает
+/// экран.
 library;
 
 import 'dart:async';
@@ -24,8 +32,10 @@ import 'eye_window.dart';
 /// Длина замера самопроверки на этом экране, секунд (без прогрева).
 const double kPlaceCheckSeconds = 5;
 
-/// Открывает «Место записи» поверх приложения.
+/// Открывает «Место записи» поверх приложения. Идущая «Проверка
+/// айтрекера» закрывается: спутник у машины один.
 Future<void> openEyePlace(NavigatorState navigator, EyeTracker eye) {
+  unawaited(eye.closeTrial());
   return navigator.push(
     MaterialPageRoute<void>(
       builder: (BuildContext context) => EyePlaceScreen(eye: eye),
@@ -132,6 +142,12 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
   String? _stage;
   EyePreview? _preview;
   String? _saveError;
+
+  /// Место с этой проверкой сохранено (BUG-57).
+  bool _saved = false;
+
+  /// Номер сохранения: запоздавший ответ прежнего не в счёт.
+  int _saving = 0;
   bool _closed = false;
 
   EyeTracker get _eye => widget.eye;
@@ -232,6 +248,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
     setState(() {
       _monitor = monitor;
       _check = null;
+      _saved = false;
     });
     final EyeWindowLock? lock = await _eye.window.lock(monitor.id);
     if (_closed) {
@@ -266,6 +283,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
         'warmup' => 'Камера прогревается…',
         'measure' => 'Замер…',
         'switch' => '1080p не держит частоту — пробую 720p…',
+        'keep' => '720p кадров не прибавил — остаётся 1080p',
         _ => _stage,
       };
     });
@@ -280,11 +298,12 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       _checking = true;
       _stage = 'Камера открывается…';
       _check = null;
+      _saved = false;
       _preview = null;
     });
     EyeCheck check;
     try {
-      final String? dir = await _eye.recordsFolder?.call();
+      final String? dir = await _eye.eyeFolder();
       check = await link.selfcheck(
         camera: _camera,
         seconds: kPlaceCheckSeconds,
@@ -303,6 +322,16 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       _checking = false;
       _stage = null;
     });
+    // BUG-57: проверка закончилась — место пишется сразу, без кнопки.
+    unawaited(_persist());
+  }
+
+  /// После правки размера или расстояния: место с прежней проверкой и
+  /// новыми числами пишется заново.
+  void _changed() {
+    if (_check != null) {
+      unawaited(_persist());
+    }
   }
 
   void _nudge(int steps) {
@@ -310,6 +339,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       _pxPerMm = nudgePxPerMm(_pxPerMm, steps).clamp(kMinPxPerMm, kMaxPxPerMm);
       _source = ScreenSizeSource.card;
     });
+    _changed();
   }
 
   KeyEventResult _onCardKey(FocusNode node, KeyEvent event) {
@@ -349,6 +379,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       );
       _source = ScreenSizeSource.diagonal;
     });
+    _changed();
   }
 
   int? get _distanceMm {
@@ -360,21 +391,23 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
     return mm < kMinDistanceMm || mm > kMaxDistanceMm ? null : mm;
   }
 
-  Future<void> _save() async {
+  /// Пишет место с текущей проверкой (BUG-57). Проверки нет — писать
+  /// нечего: место остаётся прежним.
+  Future<void> _persist() async {
     final EyeCamera? camera = _camera;
     final EyeMonitor? monitor = _monitor;
     final EyeCheck? check = _check;
-    final int? distance = _distanceMm;
     if (camera == null || monitor == null || check == null) {
-      setState(() => _saveError = 'Сначала выберите камеру и проверьте место');
       return;
     }
+    final int? distance = _distanceMm;
     if (distance == null) {
-      setState(
-        () => _saveError =
+      setState(() {
+        _saved = false;
+        _saveError =
             'Расстояние — от ${kMinDistanceMm ~/ 10} до '
-            '${kMaxDistanceMm ~/ 10} см',
-      );
+            '${kMaxDistanceMm ~/ 10} см: место не сохранено';
+      });
       return;
     }
     final EyePlace place = EyePlace(
@@ -392,16 +425,23 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       fps: check.fps,
       checks: check.rows,
     );
+    final int run = ++_saving;
     try {
       await _eye.savePlace(place);
     } on Object {
-      if (mounted) {
-        setState(() => _saveError = 'Место записи не сохранилось');
+      if (mounted && run == _saving) {
+        setState(() {
+          _saved = false;
+          _saveError = 'Место записи не сохранилось';
+        });
       }
       return;
     }
-    if (mounted) {
-      Navigator.of(context).pop();
+    if (mounted && run == _saving) {
+      setState(() {
+        _saved = true;
+        _saveError = null;
+      });
     }
   }
 
@@ -483,6 +523,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
           : (EyeCamera? camera) => setState(() {
               _camera = camera;
               _check = null;
+              _saved = false;
             }),
     );
   }
@@ -549,6 +590,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
                     .clamp(kMinPxPerMm, kMaxPxPerMm);
                 _source = ScreenSizeSource.card;
               });
+              _changed();
             },
             child: MouseRegion(
               cursor: SystemMouseCursors.resizeLeftRight,
@@ -596,7 +638,10 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
             ),
             FilledButton.tonal(
               key: const Key('eye-place-card-ok'),
-              onPressed: () => setState(() => _source = ScreenSizeSource.card),
+              onPressed: () {
+                setState(() => _source = ScreenSizeSource.card);
+                _changed();
+              },
               child: const Text('Совпадает'),
             ),
             Text(
@@ -650,7 +695,10 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
           labelText: 'От глаз до экрана, см',
           helperText: 'рулеткой, в обычной позе; место стула отметьте',
         ),
-        onChanged: (String value) => setState(() {}),
+        onChanged: (String value) {
+          setState(() {});
+          _changed();
+        },
       ),
     );
   }
@@ -661,7 +709,7 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
       return const SizedBox.shrink();
     }
     final List<double>? face = preview.face;
-    return SizedBox(
+    final Widget picture = SizedBox(
       width: 320,
       child: AspectRatio(
         aspectRatio: preview.width / preview.height,
@@ -684,6 +732,25 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
               ),
           ],
         ),
+      ),
+    );
+    // BUG-58: картинка нарочно редкая — пять кадров в секунду, чтобы не
+    // отнимать частоту, которую меряет проверка; иначе кажется, что
+    // камера медленная.
+    return SizedBox(
+      width: 320,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          picture,
+          const SizedBox(height: 4),
+          Text(
+            'Картинка — 5 кадров в секунду; частоту камеры показывает '
+            'строка «Частота».',
+            key: const Key('eye-place-preview-note'),
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
       ),
     );
   }
@@ -729,10 +796,30 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
               ),
             ),
           const SizedBox(height: 6),
-          Text(
-            'Итог: ${check.verdict.words}',
-            key: const Key('eye-place-verdict'),
-            style: theme.textTheme.titleSmall,
+          Wrap(
+            spacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              Text(
+                'Итог: ${check.verdict.words}',
+                key: const Key('eye-place-verdict'),
+                style: theme.textTheme.titleSmall,
+              ),
+              if (_saved)
+                Row(
+                  key: const Key('eye-place-saved'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(
+                      Icons.check,
+                      size: 16,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    const Text('Сохранено'),
+                  ],
+                ),
+            ],
           ),
           if (denied)
             TextButton.icon(
@@ -784,11 +871,10 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 FilledButton(
-                  key: const Key('eye-place-save'),
-                  onPressed: _check == null || _checking
-                      ? null
-                      : () => unawaited(_save()),
-                  child: const Text('Сохранить'),
+                  key: const Key('eye-place-done'),
+                  onPressed: () =>
+                      unawaited(Navigator.of(context).maybePop()),
+                  child: const Text('Готово'),
                 ),
                 if (saveError != null)
                   Padding(

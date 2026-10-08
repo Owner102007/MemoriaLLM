@@ -7,10 +7,12 @@ import 'package:memoria/sno/eye/eye_place.dart';
 import 'package:memoria/sno/eye/eye_protocol.dart';
 import 'package:memoria/sno/eye/eye_tracker.dart';
 import 'package:memoria/sno/eye/place_screen.dart';
+import 'package:memoria/sno/eye/trial_screen.dart';
 import 'package:memoria/sno/flags.dart';
 import 'package:memoria/sno/recording/code_screen.dart';
 import 'package:memoria/sno/settings_keys.dart';
 import 'package:memoria/sno/testing_screen.dart';
+import 'package:path/path.dart' as p;
 
 import '../data/test_data.dart';
 import '../support/fake_eye.dart';
@@ -26,6 +28,7 @@ void main() {
   late FakeQpc qpc;
   late FakeEyeLauncher launcher;
   late FakeEyeWindow window;
+  late MemoryEyeFiles files;
   late EyeTracker eye;
 
   EyeTracker tracker() {
@@ -34,7 +37,8 @@ void main() {
       launch: launcher.launch,
       qpc: qpc,
       window: window,
-      recordsFolder: () async => r'C:\Memoria\Записи',
+      dataFolder: () async => r'C:\Memoria',
+      files: files,
       monotonicMs: () => 0,
       ticker: (Duration every, void Function() onTick) => () {},
       wait: (Duration pause) async {},
@@ -46,6 +50,7 @@ void main() {
     qpc = FakeQpc();
     launcher = FakeEyeLauncher(make: (int n) => FakeEyeProcess(clock: qpc));
     window = FakeEyeWindow();
+    files = MemoryEyeFiles();
     eye = tracker();
   });
 
@@ -110,7 +115,7 @@ void main() {
     }
 
     testWidgets('SNO-F-EYE-05: камера, монитор, карта, расстояние, '
-        'самопроверка — и место сохранено', (WidgetTester tester) async {
+        'самопроверка — и место сохранено само', (WidgetTester tester) async {
       await pumpPlace(tester);
 
       // Окно встало на монитор, где оно стоит; спутник запущен.
@@ -123,11 +128,9 @@ void main() {
         find.textContaining('527 × 296 мм (по сведениям системы)'),
         findsOneWidget,
       );
-      // Сохранить нечего, пока место не проверено.
-      final FilledButton save = tester.widget(
-        find.byKey(const Key('eye-place-save')),
-      );
-      expect(save.onPressed, isNull);
+      // Сохранять нечего, пока место не проверено.
+      expect(find.byKey(const Key('eye-place-saved')), findsNothing);
+      expect(await settings.read(SnoSettingsKeys.eyePlace), isNull);
 
       await tapKey(tester, 'eye-place-card-plus');
       expect(find.textContaining('(по банковской карте)'), findsOneWidget);
@@ -142,16 +145,16 @@ void main() {
       final Map<String, Object?> check = launcher.last.commands.last;
       expect(check['cmd'], 'selfcheck');
       expect(check['preview'], isTrue);
-      expect(check['dir'], r'C:\Memoria\Записи');
+      // BUG-58: самопроверка места — в папке спутника, не в «Записях».
+      expect(check['dir'], p.join(r'C:\Memoria', 'eye'));
       expect(check['camera'], <String, Object?>{
         'index': 0,
         'name': 'Integrated Camera',
         'path': r'\\?\usb#vid_0001',
       });
 
-      await tapKey(tester, 'eye-place-save');
-
-      expect(find.byType(EyePlaceScreen), findsNothing);
+      // BUG-57: место сохранено без кнопки — сказано «Сохранено».
+      expect(find.byKey(const Key('eye-place-saved')), findsOneWidget);
       final EyePlace place = EyePlace.decode(
         await settings.read(SnoSettingsKeys.eyePlace),
       )!;
@@ -163,9 +166,133 @@ void main() {
       expect(place.verdict, EyeVerdict.good);
       expect(place.checks.map((EyeCheckRow r) => r.id), contains('window'));
       expect(place.pxPerMm, closeTo(1920 / 527 * 85.7 / 85.6, 1e-4));
+
+      await tapKey(tester, 'eye-place-done');
+      expect(find.byType(EyePlaceScreen), findsNothing);
       // Уходя, экран закрыл спутник и вернул окно.
       expect(launcher.last.inputClosed, isTrue);
       expect(window.locked, isFalse);
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-57: проверку унесли «назад» без кнопок — место с ней '
+        'сохранено', (WidgetTester tester) async {
+      // Прежнее место — проверка «не годится» в 720p.
+      await eye.savePlace(
+        EyePlace(
+          camera: const EyeCamera(
+            index: 0,
+            name: 'Integrated Camera',
+            path: r'\\?\usb#vid_0001',
+          ),
+          monitor: r'\\.\DISPLAY1',
+          monitorName: 'DELL P2419H',
+          widthPx: 1920,
+          heightPx: 1080,
+          pxPerMm: 1920 / 527,
+          sizeSource: ScreenSizeSource.card,
+          distanceMm: 600,
+          verdict: EyeVerdict.fail,
+          checkedAt: DateTime(2026, 10, 8, 18, 16),
+          mode: const <int>[1280, 720],
+          fps: 20,
+        ),
+      );
+      await pumpPlace(tester);
+      await tapKey(tester, 'eye-place-check');
+      expect(find.text('Итог: годится'), findsOneWidget);
+
+      // «Назад» — ни «Сохранить», ни «Готово».
+      final NavigatorState navigator = tester.state<NavigatorState>(
+        find.byType(Navigator),
+      );
+      navigator.pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(EyePlaceScreen), findsNothing);
+
+      final EyePlace place = EyePlace.decode(
+        await settings.read(SnoSettingsKeys.eyePlace),
+      )!;
+      expect(place.verdict, EyeVerdict.good);
+      expect(place.mode, <int>[1920, 1080]);
+      expect(place.fps, closeTo(29.9, 1e-9));
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-57: расстояние после проверки — место с новым '
+        'расстоянием; другая камера — место прежнее до новой проверки', (
+      WidgetTester tester,
+    ) async {
+      launcher = FakeEyeLauncher(
+        make: (int n) => FakeEyeProcess(
+          clock: qpc,
+          cameraList: <Map<String, Object?>>[
+            <String, Object?>{
+              'index': 0,
+              'name': 'Integrated Camera',
+              'path': r'\\?\usb#vid_0001',
+            },
+            <String, Object?>{
+              'index': 1,
+              'name': 'Logitech C920',
+              'path': r'\\?\usb#vid_046d',
+            },
+          ],
+        ),
+      );
+      eye.dispose();
+      eye = tracker();
+      await pumpPlace(tester);
+      await tapKey(tester, 'eye-place-check');
+      await tester.enterText(find.byKey(const Key('eye-place-distance')), '58');
+      await tester.pumpAndSettle();
+      EyePlace place = EyePlace.decode(
+        await settings.read(SnoSettingsKeys.eyePlace),
+      )!;
+      expect(place.distanceMm, 580);
+      expect(place.camera.name, 'Integrated Camera');
+
+      // Другая камера: проверки нет, «Сохранено» снято, место прежнее.
+      await tester.tap(find.byKey(const Key('eye-place-camera')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Logitech C920').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('eye-place-saved')), findsNothing);
+      await tester.enterText(find.byKey(const Key('eye-place-distance')), '62');
+      await tester.pumpAndSettle();
+      place = EyePlace.decode(await settings.read(SnoSettingsKeys.eyePlace))!;
+      expect(place.camera.name, 'Integrated Camera');
+      expect(place.distanceMm, 580);
+
+      // Новая проверка — место с новой камерой.
+      await tapKey(tester, 'eye-place-check');
+      place = EyePlace.decode(await settings.read(SnoSettingsKeys.eyePlace))!;
+      expect(place.camera.name, 'Logitech C920');
+      expect(place.distanceMm, 620);
+      await unmount(tester);
+    });
+
+    testWidgets('BUG-58: под картинкой сказано, что она редкая; «720p не '
+        'прибавил» — словами', (WidgetTester tester) async {
+      launcher = FakeEyeLauncher(
+        make: (int n) => FakeEyeProcess(
+          clock: qpc,
+          preview: true,
+          stages: const <String>['warmup', 'measure', 'switch', 'keep'],
+        ),
+      );
+      eye.dispose();
+      eye = tracker();
+      await pumpPlace(tester);
+      await tapKey(tester, 'eye-place-check');
+      expect(find.byKey(const Key('eye-place-preview')), findsOneWidget);
+      expect(
+        find.text(
+          'Картинка — 5 кадров в секунду; частоту камеры показывает строка '
+          '«Частота».',
+        ),
+        findsOneWidget,
+      );
       await unmount(tester);
     });
 
@@ -218,7 +345,7 @@ void main() {
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-EYE-05: камера занята, темно — словами спутника', (
+    testWidgets('SNO-F-EYE-05, BUG-58: темно — словами спутника', (
       WidgetTester tester,
     ) async {
       launcher = FakeEyeLauncher(
@@ -230,8 +357,10 @@ void main() {
               <String, Object?>{
                 'id': 'fps',
                 'verdict': 'fail',
-                'value': 14.2,
-                'text': 'Мало света или слабый ПК: 14.2 к/с',
+                'value': 20.0,
+                'text':
+                    'Камера сама даёт 20.0 к/с — ей мало света: поставьте '
+                    'лампу перед лицом',
               },
             ],
           },
@@ -241,7 +370,13 @@ void main() {
       eye = tracker();
       await pumpPlace(tester);
       await tapKey(tester, 'eye-place-check');
-      expect(find.text('Мало света или слабый ПК: 14.2 к/с'), findsOneWidget);
+      expect(
+        find.text(
+          'Камера сама даёт 20.0 к/с — ей мало света: поставьте лампу перед '
+          'лицом',
+        ),
+        findsOneWidget,
+      );
       expect(find.byKey(const Key('eye-place-settings')), findsNothing);
       await unmount(tester);
     });
@@ -331,6 +466,76 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('sno-code-cancel')));
       await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-EYE-03: «Проверка айтрекера» — без места не '
+        'открывается, с местом — открывается', (WidgetTester tester) async {
+      await eye.loadPlace();
+      await pumpTesting(tester);
+      final Finder tile = find.byKey(const Key('sno-eye-trial'));
+      expect(tile, findsOneWidget);
+      expect(find.text('Сначала задайте место записи'), findsOneWidget);
+      expect(tester.widget<ListTile>(tile).enabled, isFalse);
+      await unmount(tester);
+
+      await eye.savePlace(
+        EyePlace(
+          camera: const EyeCamera(index: 0, name: 'Logitech C920'),
+          monitor: r'\\.\DISPLAY1',
+          monitorName: 'DELL P2419H',
+          widthPx: 1920,
+          heightPx: 1080,
+          pxPerMm: 1920 / 527,
+          sizeSource: ScreenSizeSource.card,
+          distanceMm: 600,
+          verdict: EyeVerdict.good,
+          checkedAt: DateTime(2026, 10, 8, 12),
+          mode: const <int>[1920, 1080],
+          fps: 30,
+        ),
+      );
+      await pumpTesting(tester);
+      expect(find.text('Калибровка и живой взгляд на себе'), findsOneWidget);
+      expect(tester.widget<ListTile>(tile).enabled, isTrue);
+      await tester.ensureVisible(tile);
+      await tester.tap(tile);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(EyeTrialScreen), findsOneWidget);
+      expect(eye.trial.value, isNotNull);
+      await eye.closeTrial();
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(EyeTrialScreen), findsNothing);
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-EYE-03: место «не годится» — проверка не '
+        'открывается и сказано почему', (WidgetTester tester) async {
+      await eye.savePlace(
+        EyePlace(
+          camera: const EyeCamera(index: 0, name: 'Logitech C920'),
+          monitor: r'\\.\DISPLAY1',
+          monitorName: 'DELL P2419H',
+          widthPx: 1920,
+          heightPx: 1080,
+          pxPerMm: 1920 / 527,
+          sizeSource: ScreenSizeSource.card,
+          distanceMm: 600,
+          verdict: EyeVerdict.fail,
+          checkedAt: DateTime(2026, 10, 8, 12),
+        ),
+      );
+      await pumpTesting(tester);
+      expect(
+        find.text('Место записи не годится — проверьте его ещё раз'),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<ListTile>(find.byKey(const Key('sno-eye-trial'))).enabled,
+        isFalse,
+      );
       await unmount(tester);
     });
 

@@ -32,6 +32,13 @@ const Duration kSelfcheckTimeout = Duration(seconds: 60);
 /// его: сам он обязан уйти за две секунды.
 const Duration kExitGrace = Duration(milliseconds: 2500);
 
+/// Сколько ждать открытия камеры (`open`): модель, камера, файлы.
+const Duration kOpenTimeout = Duration(seconds: 30);
+
+/// Сколько ждать модели (`fit`): подбор двух моделей перекрёстной
+/// проверкой на слабом ПК — секунды, с запасом.
+const Duration kFitTimeout = Duration(seconds: 60);
+
 class _Waiting {
   _Waiting(this.done);
 
@@ -81,6 +88,9 @@ class EyeLink {
   /// Пришла строка мусора; число — сколько их подряд.
   void Function(int inRow)? onGarbage;
 
+  /// Живая точка взгляда — по строке на кадр, пока включена (`live`).
+  void Function(EyeGaze gaze)? onGaze;
+
   /// Код выхода спутника, когда он вышел.
   Future<int> get exitCode => _exited.future;
 
@@ -129,6 +139,11 @@ class EyeLink {
     final EyeHeartbeat? beat = EyeHeartbeat.fromMessage(message);
     if (beat != null) {
       onHeartbeat?.call(beat);
+      return;
+    }
+    final EyeGaze? gaze = EyeGaze.fromMessage(message);
+    if (gaze != null) {
+      onGaze?.call(gaze);
       return;
     }
     if (message.containsKey('progress')) {
@@ -263,6 +278,109 @@ class EyeLink {
       done.add(SyncRound(sentUs: sent, eyeUs: eye, receivedUs: arrived));
     }
     return SyncResult.best(done);
+  }
+
+  /// Открывает камеру (SNO-ALG-EYE-02, SNO-ALG-EYE-03): [write] —
+  /// писать ли файлы в папку [dir]; [screen] и [distanceMm] — по ним
+  /// спутник считает углы. Ответ — размер кадра камеры.
+  Future<List<int>?> open({
+    required EyeScreen screen,
+    required int distanceMm,
+    EyeCamera? camera,
+    String? dir,
+    bool write = true,
+    bool strip = true,
+    int? seg,
+    int? qpc0Us,
+    int? t0,
+  }) async {
+    final Map<String, Object?> reply = await request(
+      'open',
+      fields: <String, Object?>{
+        'write': write,
+        'dir': ?dir,
+        if (camera != null) 'camera': camera.toJson(),
+        'screen': screen.toJson(),
+        'distance_mm': distanceMm,
+        'strip': strip,
+        'seg': ?seg,
+        'qpc0_us': ?qpc0Us,
+        't0': ?t0,
+      },
+      timeout: kOpenTimeout,
+    );
+    final Object? frame = reply['frame'];
+    return frame is List<Object?> && frame.length == 2 && frame.every(
+          (Object? v) => v is int,
+        )
+        ? <int>[frame[0]! as int, frame[1]! as int]
+        : null;
+  }
+
+  /// Новая попытка калибровки: [kind] — `full` (как у участника) или
+  /// `quick` (девять точек без слежения).
+  Future<void> calibrate({required int attempt, required String kind}) async {
+    await request(
+      'calibrate',
+      fields: <String, Object?>{'attempt': attempt, 'kind': kind},
+    );
+  }
+
+  /// Точка появилась на экране в миг [qpcUs] — без ответа. [phase] —
+  /// `calib`, `pursuit`, `validate` или `off`; у `pursuit` — путь
+  /// [path].
+  void target({
+    required String phase,
+    required int qpcUs,
+    String? id,
+    double? x,
+    double? y,
+    Map<String, Object?>? path,
+  }) {
+    if (exited) {
+      return;
+    }
+    _process.write(
+      encodeEyeCommand('target', <String, Object?>{
+        'phase': phase,
+        'qpc_us': qpcUs,
+        'id': ?id,
+        'x': ?x,
+        'y': ?y,
+        'path': ?path,
+      }),
+    );
+  }
+
+  /// Сколько годных кадров набрали точки фазы [phase].
+  Future<EyeSamples> samples({String phase = 'calib'}) async {
+    return EyeSamples.fromMessage(
+      await request('samples', fields: <String, Object?>{'phase': phase}),
+    );
+  }
+
+  /// Модель попытки.
+  Future<EyeFit> fit() async {
+    return EyeFit.fromMessage(await request('fit', timeout: kFitTimeout));
+  }
+
+  /// Проверка точности и приём.
+  Future<EyeValidation> validate() async {
+    return EyeValidation.fromMessage(
+      await request('validate', timeout: kFitTimeout),
+    );
+  }
+
+  /// Живая точка: включить или выключить поток [onGaze].
+  Future<void> live({required bool on}) async {
+    await request('live', fields: <String, Object?>{'on': on});
+  }
+
+  /// Закрывает камеру: файлы дописаны. Ответ — сводка спутника.
+  Future<Map<String, Object?>?> closeCamera() async {
+    final Map<String, Object?> reply = await request('close');
+    final Object? summary = reply['summary'];
+    return summary is Map<String, Object?> ? summary : null;
   }
 
   /// Закрывает связь: stdin закрыт, спутник дописывает файлы и выходит;

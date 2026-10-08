@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/sno/eye/eye_calibration.dart';
 import 'package:memoria/sno/eye/eye_link.dart';
 import 'package:memoria/sno/eye/eye_place.dart';
 import 'package:memoria/sno/eye/eye_protocol.dart';
 import 'package:memoria/sno/eye/eye_tracker.dart';
+import 'package:memoria/sno/eye/eye_trial.dart';
 import 'package:memoria/sno/eye/eye_window.dart';
 import 'package:memoria/sno/participant_code.dart';
 import 'package:memoria/sno/recording/archive.dart';
@@ -118,6 +121,26 @@ void main() {
     kit.run(1);
     await settle();
   }
+
+  test('SNO-F-EYE-03: старт записи закрывает идущую проверку айтрекера — '
+      'спутник у машины один', () async {
+    await eye.loadPlace();
+    final EyeTrial trial = eye.beginTrial()!;
+    unawaited(trial.start(EyeCalibrationKind.quick));
+    await settle();
+    expect(trial.phase, EyeTrialPhase.calibrating);
+    final FakeEyeProcess first = launcher.last;
+    expect(first.names, contains('calibrate'));
+
+    await started();
+    expect(trial.phase, EyeTrialPhase.closed);
+    expect(first.inputClosed, isTrue);
+    expect(eye.trial.value, isNull);
+    // Запись подняла свой спутник и поставила окно под свой замок.
+    expect(launcher.started, hasLength(2));
+    expect(eye.running, isTrue);
+    expect(window.locked, isTrue);
+  });
 
   group('SNO-F-EYE-04: спутник на время записи', () {
     test(

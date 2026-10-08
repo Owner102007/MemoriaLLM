@@ -11,6 +11,7 @@ import 'dart:convert';
 
 import 'package:memoria/sno/eye/eye_process.dart';
 import 'package:memoria/sno/eye/eye_protocol.dart';
+import 'package:memoria/sno/eye/eye_tracker.dart';
 import 'package:memoria/sno/eye/eye_window.dart';
 import 'package:memoria/sno/eye/qpc_clock.dart';
 
@@ -45,7 +46,12 @@ class FakeEyeProcess implements EyeProcess {
     this.check,
     this.cameraList,
     this.exitOn,
-  });
+    this.preview = false,
+    this.stages = const <String>['warmup', 'measure'],
+    this.samplesReply,
+    this.fitError,
+    List<Map<String, Object?>>? validateReplies,
+  }) : validateReplies = validateReplies ?? <Map<String, Object?>>[];
 
   /// Часы спутника.
   final FakeQpc clock;
@@ -71,6 +77,48 @@ class FakeEyeProcess implements EyeProcess {
   /// Команда, на которой спутник падает с кодом 1 вместо ответа.
   final String? exitOn;
 
+  /// Присылать ли кадр камеры во время самопроверки.
+  final bool preview;
+
+  /// Этапы хода самопроверки, которые спутник пришлёт перед итогом.
+  final List<String> stages;
+
+  /// Ответ на `samples`; `null` — у всех точек кадров хватает.
+  Map<String, Object?>? samplesReply;
+
+  /// Ошибка на `fit` (например, `no_face`); `null` — модель есть.
+  String? fitError;
+
+  /// Ответы на `validate` по порядку попыток; кончились — «принято».
+  final List<Map<String, Object?>> validateReplies;
+
+  /// Включена ли живая точка.
+  bool liveOn = false;
+
+  /// Открыта ли камера (`open` … `close`).
+  bool cameraOpen = false;
+
+  /// Команды `target` по порядку.
+  List<Map<String, Object?>> get targets => <Map<String, Object?>>[
+    for (final Map<String, Object?> c in commands)
+      if (c['cmd'] == 'target') c,
+  ];
+
+  /// Имена точек по порядку показа (без `off`).
+  List<Object?> get targetIds => <Object?>[
+    for (final Map<String, Object?> t in targets)
+      if (t['phase'] != 'off') t['id'],
+  ];
+
+  /// Строка живой точки: взгляд в точке (x, y) окна.
+  void gaze(double x, double y, {int? t, bool ok = true}) {
+    emit(<String, Object?>{
+      'g': ok ? <double>[x, y] : null,
+      if (ok) 's': <double>[x, y],
+      'ok': ok,
+      't': t ?? clock.nowUs(),
+    });
+  }
   final StreamController<String> _out = StreamController<String>();
   final Completer<int> _exit = Completer<int>();
 
@@ -187,8 +235,20 @@ class FakeEyeProcess implements EyeProcess {
               ],
         });
       case 'selfcheck':
-        emit(<String, Object?>{'progress': 'selfcheck', 'stage': 'warmup'});
-        emit(<String, Object?>{'progress': 'selfcheck', 'stage': 'measure'});
+        for (final String stage in stages) {
+          emit(<String, Object?>{'progress': 'selfcheck', 'stage': stage});
+        }
+        if (preview) {
+          emit(<String, Object?>{
+            'progress': 'preview',
+            // Не JPEG: картинка не распакуется, и экран покажет чёрный
+            // кадр — для проверки подписи этого хватает.
+            'jpeg': 'AAECAw==',
+            'w': 320,
+            'h': 180,
+            'face': <double>[0.3, 0.2, 0.7, 0.8],
+          });
+        }
         emit(<String, Object?>{
           'reply': 'selfcheck',
           ...(check ??
@@ -222,6 +282,67 @@ class FakeEyeProcess implements EyeProcess {
           'app_qpc_us': command['app_qpc_us'],
           'eye_qpc_us': clock.nowUs() + offsetUs,
         });
+      case 'open':
+        cameraOpen = true;
+        emit(<String, Object?>{
+          'reply': 'open',
+          'frame': <int>[1920, 1080],
+        });
+      case 'close':
+        cameraOpen = false;
+        liveOn = false;
+        emit(<String, Object?>{
+          'reply': 'closed',
+          'summary': <String, Object?>{'frames': 1800},
+        });
+      case 'calibrate':
+        emit(<String, Object?>{
+          'reply': 'calibrate',
+          'attempt': command['attempt'],
+          'kind': command['kind'],
+        });
+      case 'target':
+        break;
+      case 'samples':
+        emit(<String, Object?>{
+          'reply': 'samples',
+          ...(samplesReply ??
+              <String, Object?>{
+                'phase': 'calib',
+                'counts': <String, Object?>{},
+                'short': <Object?>[],
+                'face': 1.0,
+              }),
+        });
+      case 'fit':
+        final String? error = fitError;
+        if (error != null) {
+          emit(<String, Object?>{
+            'error': error,
+            'text': 'Камера не видит лица',
+            'cmd': 'fit',
+          });
+          return;
+        }
+        emit(<String, Object?>{
+          'reply': 'fit',
+          'model': 'ridge',
+          'cv_deg': 1.2,
+          'cv_cm': 1.3,
+          'latency_ms': 70.0,
+          'points': 13,
+          'excluded': <Object?>[],
+        });
+      case 'validate':
+        emit(<String, Object?>{
+          'reply': 'validate',
+          ...(validateReplies.isEmpty
+              ? kAcceptedValidation
+              : validateReplies.removeAt(0)),
+        });
+      case 'live':
+        liveOn = command['on'] == true;
+        emit(<String, Object?>{'reply': 'live', 'on': liveOn});
       default:
         emit(<String, Object?>{
           'error': 'bad_command',
@@ -243,6 +364,42 @@ class FakeEyeProcess implements EyeProcess {
     exit(-1);
   }
 }
+
+/// Проверка, которую подставной спутник отвечает по умолчанию: принято.
+const Map<String, Object?> kAcceptedValidation = <String, Object?>{
+  'accuracy_deg': 2.2,
+  'accuracy_cm': 2.3,
+  'precision_deg': 0.5,
+  'worst_deg': 4.1,
+  'worst_id': 'v4',
+  'accepted': true,
+  'reason': null,
+  'points': <Object?>[],
+  'excluded': <Object?>[],
+  'thresholds': <String, Object?>{
+    'accept_deg': 2.5,
+    'worst_deg': 5.0,
+    'min_points': 6,
+  },
+};
+
+/// Проверка «не принято»: точность 3,1°.
+const Map<String, Object?> kRejectedValidation = <String, Object?>{
+  'accuracy_deg': 3.1,
+  'accuracy_cm': 3.3,
+  'precision_deg': 0.6,
+  'worst_deg': 4.6,
+  'worst_id': 'v2',
+  'accepted': false,
+  'reason': 'accuracy',
+  'points': <Object?>[],
+  'excluded': <Object?>[],
+  'thresholds': <String, Object?>{
+    'accept_deg': 2.5,
+    'worst_deg': 5.0,
+    'min_points': 6,
+  },
+};
 
 /// Запуск подставных спутников: каждый запуск — новый процесс из
 /// [make]; [failWith] — запуск не удаётся вовсе.
@@ -361,4 +518,23 @@ class FakeEyeWindow implements EyeWindow {
 
   /// Закрывает поток смен.
   Future<void> dispose() => _changes.close();
+}
+
+/// Файлы айтрекера в памяти: какие папки создавали и что писали.
+class MemoryEyeFiles implements EyeFiles {
+  /// Созданные папки по порядку.
+  final List<String> folders = <String>[];
+
+  /// Записанные файлы: путь → текст.
+  final Map<String, String> written = <String, String>{};
+
+  @override
+  Future<void> createFolder(String path) async {
+    folders.add(path);
+  }
+
+  @override
+  Future<void> writeText(String path, String text) async {
+    written[path] = text;
+  }
 }
