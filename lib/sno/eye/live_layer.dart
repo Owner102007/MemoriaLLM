@@ -132,9 +132,8 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
     }
     // Кадр без взгляда (моргание): спутник держит точку на месте до
     // полусекунды, и она не мигает, а бледнеет (BUG-59).
-    final Color color = Theme.of(
-      context,
-    ).colorScheme.primary.withValues(alpha: gaze.ok ? 1 : 0.4);
+    final Color color = Theme.of(context).colorScheme.primary
+        .withValues(alpha: gaze.ok ? 1 : 0.4);
     return Positioned(
       left: at.$1 - kLiveDot / 2,
       top: at.$2 - kLiveDot / 2,

@@ -569,9 +569,9 @@ class Smoother:
     владельца шум втрое больше, и точка дрожала на 3–5 см.
     """
 
-    def __init__(self, noise_px=(40.0, 40.0), window_s: float = 0.6,
+    def __init__(self, noise_px=(40.0, 40.0), window_s: float = 0.8,
                  k: float = 3.0, confirm: int = 3, gap_s: float = 0.5,
-                 tail: int = 6, k_tail: float = 4.0):
+                 tail: int = 6, k_tail: float = 5.0):
         nx, ny = (noise_px, noise_px) if isinstance(noise_px, (int, float)) else noise_px
         self.noise = (max(1.0, float(nx)), max(1.0, float(ny)))
         self.window = int(window_s * 1e6)
