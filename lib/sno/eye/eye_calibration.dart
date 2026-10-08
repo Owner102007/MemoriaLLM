@@ -68,6 +68,28 @@ const Duration kValidationPointTime = Duration(milliseconds: 1500);
 /// Сколько идёт слежение за движущейся точкой.
 const Duration kPursuitTime = Duration(seconds: 20);
 
+/// Сколько идёт фаза движения головы (BUG-60): точка в середине, человек
+/// водит головой, глядя на неё, — первые [kHeadTurnTime] влево-вправо,
+/// остальное вверх-вниз.
+const Duration kHeadPhaseTime = Duration(seconds: 12);
+
+/// Сколько из фазы движения головы — влево-вправо.
+const Duration kHeadTurnTime = Duration(seconds: 6);
+
+/// Подсказка перед фазой движения головы.
+const String kHeadIntro = 'Теперь смотрите на точку и медленно водите головой';
+
+/// Подсказка первой половины фазы движения головы.
+const String kHeadHintTurn =
+    'Смотрите на точку и медленно поворачивайте голову\n← влево-вправо →';
+
+/// Подсказка второй половины.
+const String kHeadHintNod =
+    'Смотрите на точку и медленно наклоняйте голову\n↑ вверх-вниз ↓';
+
+/// Подсказка перед точками проверки точности без новой калибровки.
+const String kCheckIntro = 'Смотрите на точки — проверка точности';
+
 /// Сколько висит подсказка перед точками и перед слежением.
 const Duration kIntroTime = Duration(milliseconds: 1500);
 
@@ -116,7 +138,13 @@ enum EyeTargetPhase {
   pursuit('pursuit'),
 
   /// Точка проверки.
-  validate('validate');
+  validate('validate'),
+
+  /// Точка фазы движения головы (BUG-60).
+  head('head'),
+
+  /// Точка проверки точности без новой калибровки (BUG-60).
+  check('check');
 
   const EyeTargetPhase(this.wire);
 
@@ -197,6 +225,25 @@ List<EyeTargetPoint> validationSequence(int seed) {
     'v',
     EyeTargetPhase.validate,
     (seed ^ 0x5bd1e995) & 0xFFFFFFFF,
+  );
+}
+
+/// Точка фазы движения головы — середина окна.
+const EyeTargetPoint kHeadPoint = EyeTargetPoint(
+  id: 'head',
+  fx: 0.5,
+  fy: 0.5,
+  phase: EyeTargetPhase.head,
+);
+
+/// Точки проверки точности [n] без новой калибровки: те же девять, что у
+/// проверки сразу после неё, в своём порядке у каждой проверки.
+List<EyeTargetPoint> checkSequence(int seed, int n) {
+  return _ordered(
+    kValidationPoints,
+    'k',
+    EyeTargetPhase.check,
+    (seed ^ 0x2545f491 ^ (n * 0x9e3779b9)) & 0xFFFFFFFF,
   );
 }
 
@@ -319,4 +366,90 @@ String rejectAdvice(EyeValidation v) {
       'Точность ${eyeNumber(acc ?? 0)}° (порог — ${eyeNumber(v.acceptDeg)}°) — '
           'поправьте посадку и свет',
   };
+}
+
+/// Голова на проверке против калибровки словами (BUG-60): «голова
+/// повёрнута вправо на 6°, наклонена вниз на 3°, сдвинута на 2 см, ближе
+/// на 8 %»; ничего заметного — «голова как при калибровке».
+String headMoveWords(EyeHeadMove m) {
+  String deg(double v) => '${v.abs().round()}°';
+  final double shiftMm = math.sqrt(m.dxMm * m.dxMm + m.dyMm * m.dyMm);
+  final List<String> parts = <String>[
+    if (m.turnDeg.abs() >= 1.5)
+      'повёрнута ${m.turnDeg > 0 ? 'вправо' : 'влево'} на ${deg(m.turnDeg)}',
+    if (m.tiltDeg.abs() >= 1.5)
+      'наклонена ${m.tiltDeg > 0 ? 'вниз' : 'вверх'} на ${deg(m.tiltDeg)}',
+    if (m.rollDeg.abs() >= 2)
+      'к ${m.rollDeg > 0 ? 'правому' : 'левому'} плечу на ${deg(m.rollDeg)}',
+    if (shiftMm >= 10) 'сдвинута на ${eyeNumber(shiftMm / 10)} см',
+    if (m.dzPct.abs() >= 3)
+      '${m.dzPct < 0 ? 'ближе' : 'дальше'} на ${m.dzPct.abs().round()} %',
+  ];
+  return parts.isEmpty ? 'голова как при калибровке' : 'голова ${parts.join(', ')}';
+}
+
+String _accuracy(EyeAccuracy a) {
+  final double? acc = a.accuracyDeg;
+  final double? cm = a.accuracyCm;
+  if (acc == null) {
+    return 'камера мало видела глаза';
+  }
+  return '${eyeNumber(acc)}°${cm == null ? '' : ' (≈ ${eyeNumber(cm)} см)'}';
+}
+
+/// Строка итога проверки точности из живого взгляда (кадр SNO-SCR-07.3):
+/// «Проверка 2: 1,9° (≈ 1,9 см) · голова повёрнута вправо на 6°».
+String checkLine(EyeAccuracy a) {
+  final EyeHeadMove? head = a.head;
+  return <String>[
+    'Проверка ${a.n}: ${_accuracy(a)}',
+    if (head != null) headMoveWords(head),
+  ].join(' · ');
+}
+
+/// Строка проверки в конце пробной калибровки: «В конце: 2,1° (в начале
+/// 1,4°) · голова как при калибровке».
+String endCheckLine(EyeAccuracy a) {
+  final double? start = a.startDeg;
+  final EyeHeadMove? head = a.head;
+  return <String>[
+    'В конце: ${_accuracy(a)}'
+        '${start == null ? '' : ', в начале ${eyeNumber(start)}°'}',
+    if (head != null) headMoveWords(head),
+  ].join(' · ');
+}
+
+/// Способы поправки на голову словами — по порядку показа.
+const Map<String, String> kHeadModelNames = <String, String>{
+  'phase': 'по движению головы',
+  'geometry': 'по геометрии',
+  'learned': 'прежний',
+};
+
+/// Точность всех способов поправки на голову (BUG-60): «Способы: по
+/// движению головы 1,9° · по геометрии 2,0° · прежний 3,8°»; `null` —
+/// спутник их не прислал.
+String? variantsLine(EyeAccuracy a) {
+  final List<String> parts = <String>[
+    for (final MapEntry<String, String> e in kHeadModelNames.entries)
+      if (a.variants[e.key] case final double v) '${e.value} ${eyeNumber(v)}°',
+  ];
+  return parts.isEmpty ? null : 'Способы: ${parts.join(' · ')}';
+}
+
+/// Как прошла фаза движения головы (итог калибровки, кадр SNO-SCR-07.2);
+/// `null` — спутник о ней не сказал.
+String? headPhaseLine(EyeFit fit) {
+  final EyeHeadPhase? h = fit.headPhase;
+  if (h == null) {
+    return null;
+  }
+  if (h.frames == 0) {
+    return 'Движение головы не записалось — поправка только по геометрии';
+  }
+  if (!h.moved) {
+    return 'Голова почти не двигалась — поправка только по геометрии';
+  }
+  return 'Движение головы: влево-вправо ${(h.turnDeg ?? 0).round()}°, '
+      'вверх-вниз ${(h.tiltDeg ?? 0).round()}°';
 }

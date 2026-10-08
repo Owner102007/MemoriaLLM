@@ -4,13 +4,18 @@
 ///
 /// Два вида:
 ///
-/// * **быстро** — самопроверка, девять точек и живой взгляд поверх
-///   приложения; ничего не хранится;
+/// * **быстро** — самопроверка, девять точек, фаза движения головы и
+///   живой взгляд поверх приложения;
 /// * **пробная полная калибровка** — ровно то, что пройдёт участник:
-///   самопроверка, 13 точек, слежение, 9 точек проверки, итог и приём;
-///   потом живой взгляд и две минуты свободного просмотра. Файлы — в
-///   папку стенда `Стенд/<дата-время>/` в папке данных приложения: по
-///   ним меряются ворота Г2.
+///   самопроверка, 13 точек, фаза движения головы, слежение, 9 точек
+///   проверки, итог и приём; потом живой взгляд, две минуты свободного
+///   просмотра и проверка точности в конце — как будет в конце записи.
+///   Файлы обоих видов — в папку стенда `Стенд/<дата-время>/` в папке
+///   данных приложения: по ним меряются ворота Г2.
+///
+/// Из живого взгляда — «Проверить точность» (BUG-60): девять точек той
+/// моделью, что есть, после того как человек посидел и подвигался;
+/// итог — точность каждого способа поправки на голову и где была голова.
 ///
 /// Окно на всё время проверки стоит на мониторе места записи под
 /// замком: углы считаются по размеру этого монитора. В «Записи»
@@ -63,6 +68,10 @@ enum EyeTrialPhase {
 
   /// Итог попытки.
   result,
+
+  /// Проверка точности без новой калибровки: из живого взгляда или в
+  /// конце пробной полной калибровки (BUG-60).
+  checking,
 
   /// Живой взгляд поверх приложения.
   live,
@@ -133,6 +142,19 @@ class EyeTrial extends ChangeNotifier {
   /// Попытка, которая сейчас идёт или кончилась.
   EyeCalibrationRun? run;
 
+  /// Проверка точности, которая идёт сейчас.
+  EyeCheckRun? checkRun;
+
+  /// Итог последней проверки точности; `null` — проверок не было.
+  EyeAccuracy? lastCheck;
+
+  /// Последняя проверка — та, что в конце пробной полной калибровки.
+  bool endChecked = false;
+
+  /// Сколько проверок точности начато: номер следующей — на единицу
+  /// больше.
+  int checks = 0;
+
   /// Номер попытки.
   int attempt = 0;
 
@@ -177,6 +199,11 @@ class EyeTrial extends ChangeNotifier {
 
   /// Окно, в котором стоят точки.
   EyeScreen? get screen => _screen;
+
+  /// Идёт ли показ точек: калибровка или проверка точности. Клавиши и
+  /// нажатия тогда не достаются никому.
+  bool get showingTargets =>
+      _phase == EyeTrialPhase.calibrating || _phase == EyeTrialPhase.checking;
 
   /// Сколько попыток ещё можно сделать у полной калибровки.
   bool get canRetry =>
@@ -425,29 +452,135 @@ class EyeTrial extends ChangeNotifier {
     gaze = null;
     if (_kind == EyeCalibrationKind.full) {
       freeLeft = kFreeViewing;
-      _freeTimer?.cancel();
-      _freeTimer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
-        final Duration left =
-            (freeLeft ?? Duration.zero) - const Duration(seconds: 1);
-        freeLeft = left.isNegative ? Duration.zero : left;
-        notifyListeners();
-        if (left <= Duration.zero) {
-          t.cancel();
-          unawaited(_finish());
-        }
-      });
+      _startFreeTimer();
     }
     _set(EyeTrialPhase.live);
   }
 
-  /// Свободный просмотр кончился: камера закрыта, файлы дописаны.
+  void _startFreeTimer() {
+    _freeTimer?.cancel();
+    _freeTimer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
+      final Duration left =
+          (freeLeft ?? Duration.zero) - const Duration(seconds: 1);
+      freeLeft = left.isNegative ? Duration.zero : left;
+      notifyListeners();
+      if (left <= Duration.zero) {
+        t.cancel();
+        unawaited(_finish());
+      }
+    });
+  }
+
+  /// «Проверить точность» из живого взгляда (BUG-60): живая точка
+  /// выключена, девять точек на экране проверки, потом снова живой
+  /// взгляд с итогом в панели. Свободный просмотр на это время стоит.
+  Future<void> checkAccuracy() async {
+    if (_phase != EyeTrialPhase.live) {
+      return;
+    }
+    _freeTimer?.cancel();
+    if (_stale) {
+      // Окно сменилось после калибровки: модель — под прежнее окно, и
+      // проверять её не на чем. Калибровка заново.
+      freeLeft = null;
+      await again();
+      return;
+    }
+    final EyeAccuracy? done = await _check(end: false);
+    if (done == null || _phase != EyeTrialPhase.checking) {
+      return;
+    }
+    await _resumeLive();
+  }
+
+  Future<void> _resumeLive() async {
+    final EyeLink? link = _link;
+    if (link == null) {
+      return;
+    }
+    try {
+      await link.live(on: true);
+    } on EyeError catch (e) {
+      await _fail(describeEyeError(e));
+      return;
+    }
+    _recent.clear();
+    gaze = null;
+    if (_kind == EyeCalibrationKind.full && freeLeft != null) {
+      _startFreeTimer();
+    }
+    _set(EyeTrialPhase.live);
+  }
+
+  /// Проверка точности: живая точка выключена, точки на экране проверки.
+  /// Итог — в [lastCheck]; `null` — проверку прервали или она отказала
+  /// (тогда проверка остановлена словами).
+  Future<EyeAccuracy?> _check({required bool end}) async {
+    final EyeLink? link = _link;
+    final EyeScreen? screen = _screen;
+    if (link == null || screen == null) {
+      return null;
+    }
+    try {
+      await link.live(on: false);
+    } on EyeError catch (e) {
+      await _fail(describeEyeError(e));
+      return null;
+    }
+    gaze = null;
+    checks++;
+    checkRun?.dispose();
+    final EyeCheckRun current = EyeCheckRun(
+      link: link,
+      qpc: tracker.qpc,
+      screen: screen,
+      frameShown: _shownOnScreen,
+      n: checks,
+      seed: seed,
+    );
+    checkRun = current;
+    _set(EyeTrialPhase.checking);
+    final EyeCheckOutcome result = await current.run();
+    if (!identical(checkRun, current) || _phase != EyeTrialPhase.checking) {
+      return null;
+    }
+    if (result.cancelled) {
+      return null;
+    }
+    final EyeError? error = result.error;
+    if (error != null) {
+      await _fail(describeEyeError(error));
+      return null;
+    }
+    lastCheck = result.accuracy;
+    endChecked = end;
+    return result.accuracy;
+  }
+
+  /// Свободный просмотр кончился: проверка точности в конце — как будет
+  /// в конце записи (SNO-F-EYE-06), — потом камера закрыта, файлы
+  /// дописаны.
   Future<void> _finish() async {
     final EyeLink? link = _link;
     if (link == null || _phase != EyeTrialPhase.live) {
       return;
     }
+    // Окно сменилось после калибровки — проверка в конце мерила бы модель
+    // под прежнее окно: её нет, файлы просто дописываются.
+    if (!_stale) {
+      final EyeAccuracy? done = await _check(end: true);
+      if (done == null || _phase != EyeTrialPhase.checking) {
+        return;
+      }
+    } else {
+      try {
+        await link.live(on: false);
+      } on EyeError catch (e) {
+        await _fail(describeEyeError(e));
+        return;
+      }
+    }
     try {
-      await link.live(on: false);
       summary = await link.closeCamera();
     } on EyeError catch (e) {
       await _fail(describeEyeError(e));
@@ -491,6 +624,13 @@ class EyeTrial extends ChangeNotifier {
     if (_phase == EyeTrialPhase.calibrating) {
       run?.cancel();
       unawaited(_reopen(next: false));
+    } else if (_phase == EyeTrialPhase.checking) {
+      // Точки проверки стояли бы не там: проверка прервана, а модель под
+      // прежнее окно больше не годится — калибровка заново.
+      checkRun?.cancel();
+      _freeTimer?.cancel();
+      freeLeft = null;
+      unawaited(_reopen(next: true));
     } else if (_phase == EyeTrialPhase.result || _phase == EyeTrialPhase.live) {
       _stale = true;
     }
@@ -555,7 +695,9 @@ class EyeTrial extends ChangeNotifier {
       return;
     }
     run?.cancel();
+    checkRun?.cancel();
     _freeTimer?.cancel();
+    // Проверка точности идёт на экране проверки — там отказ и виден.
     failedLive =
         _phase == EyeTrialPhase.live || _phase == EyeTrialPhase.finished;
     gaze = null;
@@ -576,6 +718,7 @@ class EyeTrial extends ChangeNotifier {
       return;
     }
     run?.cancel();
+    checkRun?.cancel();
     _freeTimer?.cancel();
     _freeTimer = null;
     _phase = EyeTrialPhase.closed;
@@ -597,6 +740,7 @@ class EyeTrial extends ChangeNotifier {
   @override
   void dispose() {
     run?.dispose();
+    checkRun?.dispose();
     _freeTimer?.cancel();
     super.dispose();
   }

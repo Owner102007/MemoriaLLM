@@ -1,9 +1,10 @@
 /// Экран «Проверки айтрекера» и калибровки (SNO-F-EYE-03, SNO-F-EYE-01;
 /// кадры SNO-SCR-07.1, SNO-SCR-07.2).
 ///
-/// Один экран на всю проверку: выбор вида, запуск, точки калибровки и
-/// слежение, итог. Когда начинается живой взгляд, экран уходит сам —
-/// точку взгляда поверх приложения рисует [EyeLiveLayer]
+/// Один экран на всю проверку: выбор вида, запуск, точки калибровки,
+/// фаза движения головы и слежение, итог, точки проверки точности без
+/// новой калибровки (BUG-60). Когда начинается живой взгляд, экран
+/// уходит сам — точку взгляда поверх приложения рисует [EyeLiveLayer]
 /// (`live_layer.dart`), чтобы экспериментатор смотрел на настоящую полку
 /// и книгу.
 ///
@@ -166,9 +167,7 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
     }
     // Пока идут точки, клавиши не достаются никому: ни листание, ни
     // `F11`, ни поиск.
-    return _trial.phase == EyeTrialPhase.calibrating
-        ? KeyEventResult.handled
-        : KeyEventResult.ignored;
+    return _trial.showingTargets ? KeyEventResult.handled : KeyEventResult.ignored;
   }
 
   @override
@@ -178,7 +177,8 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
       EyeTrialPhase.choose => _choose(theme),
       EyeTrialPhase.starting => _starting(theme),
       EyeTrialPhase.failed => _failed(theme),
-      EyeTrialPhase.calibrating => _calibrating(theme),
+      EyeTrialPhase.calibrating => _targets(_trial.run),
+      EyeTrialPhase.checking => _targets(_trial.checkRun),
       EyeTrialPhase.result => _result(theme),
       _ => const SizedBox.shrink(),
     };
@@ -223,7 +223,7 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
       FilledButton.tonal(
         key: const Key('eye-trial-quick'),
         onPressed: () => unawaited(_trial.start(EyeCalibrationKind.quick)),
-        child: const Text('Быстро: 9 точек и живой взгляд'),
+        child: const Text('Быстро: 9 точек, движение головы и живой взгляд'),
       ),
       const SizedBox(height: 8),
       FilledButton(
@@ -233,9 +233,12 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
       ),
       const SizedBox(height: 8),
       Text(
-        'Полная — то, что пройдёт участник: 13 точек, слежение за точкой и '
-        '9 точек проверки, потом живой взгляд и две минуты свободного '
-        'просмотра. Файлы лягут в папку стенда.',
+        'Полная — то, что пройдёт участник: 13 точек, 12 секунд движения '
+        'головы, слежение за точкой и 9 точек проверки, потом живой взгляд, '
+        'две минуты свободного просмотра и проверка точности в конце. '
+        'Из живого взгляда точность можно проверить в любой миг — посидите, '
+        'откиньтесь, повернитесь и нажмите «Проверить точность». Файлы '
+        'лягут в папку стенда.',
         style: theme.textTheme.bodySmall,
       ),
       const SizedBox(height: 16),
@@ -292,8 +295,7 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
     ]);
   }
 
-  Widget _calibrating(ThemeData theme) {
-    final EyeCalibrationRun? run = _trial.run;
+  Widget _targets(EyeTargetsRun? run) {
     if (run == null) {
       return const SizedBox.shrink();
     }
@@ -343,6 +345,16 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
               style: theme.textTheme.bodySmall,
             ),
           ),
+        if (outcome?.fit case final EyeFit fit)
+          if (headPhaseLine(fit) case final String head)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                head,
+                key: const Key('eye-trial-head'),
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
       ],
       const SizedBox(height: 20),
       Wrap(
@@ -380,8 +392,8 @@ class EyeTargetsView extends StatefulWidget {
   /// Создаёт вид.
   const EyeTargetsView({required this.run, super.key});
 
-  /// Попытка, которую он показывает.
-  final EyeCalibrationRun run;
+  /// Попытка калибровки или проверка точности, которую он показывает.
+  final EyeTargetsRun run;
 
   @override
   State<EyeTargetsView> createState() => _EyeTargetsViewState();
@@ -422,7 +434,7 @@ class _EyeTargetsViewState extends State<EyeTargetsView>
     if (!mounted) {
       return;
     }
-    final EyeCalibrationRun run = widget.run;
+    final EyeTargetsRun run = widget.run;
     if (run.shown != _shown) {
       _shown = run.shown;
       if (run.point != null) {
@@ -450,7 +462,7 @@ class _EyeTargetsViewState extends State<EyeTargetsView>
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final EyeCalibrationRun run = widget.run;
+    final EyeTargetsRun run = widget.run;
     final Size size = MediaQuery.sizeOf(context);
     final EyeTargetPoint? point = run.point;
     final PursuitPath? path = run.pursuit;

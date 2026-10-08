@@ -8,6 +8,10 @@
 ///
 /// Слой стоит выше навигатора, как слой записи: точка видна на любом
 /// экране. Нажатия он не забирает — кроме кнопок своей панели.
+///
+/// «Проверить точность» (BUG-60) и проверка в конце свободного просмотра
+/// идут на экране проверки: слой ставит его на навигатор, как только
+/// проверка из живого взгляда начинает показывать точки.
 library;
 
 import 'dart:async';
@@ -59,6 +63,8 @@ class EyeLiveLayer extends StatefulWidget {
 
 class _EyeLiveLayerState extends State<EyeLiveLayer> {
   EyeTrial? _trial;
+  EyeTrialPhase? _phase;
+  bool _screenUp = false;
 
   @override
   void initState() {
@@ -84,14 +90,45 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
     }
     _trial?.removeListener(_changed);
     _trial = next;
+    _phase = next?.phase;
     next?.addListener(_changed);
     _changed();
   }
 
   void _changed() {
+    final EyeTrial? trial = _trial;
+    final EyeTrialPhase? was = _phase;
+    _phase = trial?.phase;
+    // Из живого взгляда пошли точки — проверка точности (кнопкой или
+    // концом свободного просмотра) или калибровка заново: они — на экране
+    // проверки. «Ещё раз» ставит его сам.
+    if (trial != null &&
+        trial.showingTargets &&
+        was == EyeTrialPhase.live &&
+        !_screenUp) {
+      final NavigatorState? nav = widget.navigator.currentState;
+      if (nav != null && !_onTrialScreen(nav)) {
+        _screenUp = true;
+        unawaited(
+          showEyeTrialScreen(nav, trial).whenComplete(() {
+            _screenUp = false;
+          }),
+        );
+      }
+    }
     if (mounted) {
       setState(() {});
     }
+  }
+
+  /// Стоит ли наверху навигатора экран проверки.
+  bool _onTrialScreen(NavigatorState nav) {
+    bool top = false;
+    nav.popUntil((Route<dynamic> route) {
+      top = route.settings.name == kEyeTrialRoute;
+      return true;
+    });
+    return top;
   }
 
   @override
@@ -188,6 +225,13 @@ class _EyeLivePanel extends StatelessWidget {
     }
   }
 
+  Widget _small(ThemeData theme, String text, String key) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Text(text, key: Key(key), style: theme.textTheme.bodySmall),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -196,6 +240,10 @@ class _EyeLivePanel extends StatelessWidget {
     final bool full = trial.kind == EyeCalibrationKind.full;
     final Duration? left = trial.freeLeft;
     final String? folder = trial.standFolder;
+    final EyeAccuracy? check = trial.lastCheck;
+    final String? variants = check == null ? null : variantsLine(check);
+    final EyeFit? fit = trial.outcome?.fit;
+    final String? head = fit == null ? null : headPhaseLine(fit);
     return Material(
       key: const Key('eye-live-panel'),
       elevation: 4,
@@ -249,10 +297,26 @@ class _EyeLivePanel extends StatelessWidget {
                   key: const Key('eye-live-finished'),
                   style: theme.textTheme.bodyMedium,
                 ),
+              if (!failed && head != null && check == null)
+                _small(theme, head, 'eye-live-head'),
+              if (!failed && check != null)
+                _small(
+                  theme,
+                  trial.endChecked ? endCheckLine(check) : checkLine(check),
+                  'eye-live-check-line',
+                ),
+              if (!failed && variants != null)
+                _small(theme, variants, 'eye-live-variants'),
               const SizedBox(height: 4),
               Wrap(
                 spacing: 8,
                 children: <Widget>[
+                  if (!finished && !failed)
+                    TextButton(
+                      key: const Key('eye-live-check'),
+                      onPressed: () => unawaited(trial.checkAccuracy()),
+                      child: const Text('Проверить точность'),
+                    ),
                   if (!full && !failed)
                     TextButton(
                       key: const Key('eye-live-again'),

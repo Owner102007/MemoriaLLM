@@ -600,12 +600,16 @@ class EyeFit {
     this.cvCm,
     this.latencyMs,
     this.excluded = const <String>[],
+    this.headModel,
+    this.headPhase,
     this.raw = const <String, Object?>{},
   });
 
   /// Ответ из строки спутника.
   factory EyeFit.fromMessage(Map<String, Object?> message) {
     final Object? points = message['points'];
+    final Object? head = message['head'];
+    final Object? model = message['head_model'];
     return EyeFit(
       model: message['model'] is String ? message['model']! as String : '',
       cvDeg: _num(message['cv_deg']) ?? double.nan,
@@ -613,6 +617,8 @@ class EyeFit {
       latencyMs: _num(message['latency_ms']),
       points: points is int ? points : 0,
       excluded: _ids(message['excluded']),
+      headModel: model is String ? model : null,
+      headPhase: head is Map<String, Object?> ? EyeHeadPhase.fromJson(head) : null,
       raw: message,
     );
   }
@@ -635,7 +641,159 @@ class EyeFit {
   /// Точки, исключённые за нехваткой кадров.
   final List<String> excluded;
 
+  /// Каким способом поправки на голову идут живая точка и итог
+  /// (BUG-60): `learned`, `geometry` или `phase`; `null` — спутник
+  /// прежней версии.
+  final String? headModel;
+
+  /// Как прошла фаза движения головы; `null` — спутник прежней версии.
+  final EyeHeadPhase? headPhase;
+
   /// Ответ как есть — для файлов и журнала.
+  final Map<String, Object?> raw;
+}
+
+/// Фаза движения головы в итоге `fit` (BUG-60): сколько кадров, на
+/// сколько ходила голова и выучен ли по ней остаток поправки.
+class EyeHeadPhase {
+  /// Создаёт сведения.
+  const EyeHeadPhase({
+    required this.frames,
+    required this.moved,
+    this.turnDeg,
+    this.tiltDeg,
+  });
+
+  /// Сведения из поля `head`.
+  factory EyeHeadPhase.fromJson(Map<String, Object?> json) {
+    final Object? frames = json['frames'];
+    return EyeHeadPhase(
+      frames: frames is int ? frames : 0,
+      moved: json['moved'] == true,
+      turnDeg: _num(json['turn_deg']),
+      tiltDeg: _num(json['tilt_deg']),
+    );
+  }
+
+  /// Кадров с лицом в фазе.
+  final int frames;
+
+  /// Ходила ли голова настолько, чтобы выучить остаток.
+  final bool moved;
+
+  /// Размах поворота влево-вправо, градусов; `null` — кадров не было.
+  final double? turnDeg;
+
+  /// Размах наклона вверх-вниз, градусов.
+  final double? tiltDeg;
+}
+
+/// Где была голова на проверке против калибровки (BUG-60).
+class EyeHeadMove {
+  /// Создаёт сведения.
+  const EyeHeadMove({
+    this.turnDeg = 0,
+    this.tiltDeg = 0,
+    this.rollDeg = 0,
+    this.dxMm = 0,
+    this.dyMm = 0,
+    this.dzPct = 0,
+  });
+
+  /// Сведения из поля `head`.
+  factory EyeHeadMove.fromJson(Map<String, Object?> json) => EyeHeadMove(
+    turnDeg: _num(json['turn_deg']) ?? 0,
+    tiltDeg: _num(json['tilt_deg']) ?? 0,
+    rollDeg: _num(json['roll_deg']) ?? 0,
+    dxMm: _num(json['dx_mm']) ?? 0,
+    dyMm: _num(json['dy_mm']) ?? 0,
+    dzPct: _num(json['dz_pct']) ?? 0,
+  );
+
+  /// Поворот к правому краю экрана, градусов.
+  final double turnDeg;
+
+  /// Наклон вниз, градусов.
+  final double tiltDeg;
+
+  /// Наклон к правому плечу, градусов.
+  final double rollDeg;
+
+  /// Сдвиг вправо, мм.
+  final double dxMm;
+
+  /// Сдвиг вниз, мм.
+  final double dyMm;
+
+  /// Расстояние до экрана, проценты: минус — ближе.
+  final double dzPct;
+}
+
+/// Итог проверки точности без новой калибровки — ответ `checked`
+/// (BUG-60, SNO-F-EYE-03).
+class EyeAccuracy {
+  /// Создаёт итог.
+  const EyeAccuracy({
+    required this.n,
+    this.accuracyDeg,
+    this.accuracyCm,
+    this.worstDeg,
+    this.startDeg,
+    this.headModel,
+    this.variants = const <String, double?>{},
+    this.head,
+    this.raw = const <String, Object?>{},
+  });
+
+  /// Итог из строки спутника.
+  factory EyeAccuracy.fromMessage(Map<String, Object?> message) {
+    final Object? n = message['n'];
+    final Object? variants = message['variants'];
+    final Object? head = message['head'];
+    final Object? model = message['head_model'];
+    return EyeAccuracy(
+      n: n is int ? n : 0,
+      accuracyDeg: _num(message['accuracy_deg']),
+      accuracyCm: _num(message['accuracy_cm']),
+      worstDeg: _num(message['worst_deg']),
+      startDeg: _num(message['start_deg']),
+      headModel: model is String ? model : null,
+      variants: <String, double?>{
+        if (variants is Map<String, Object?>)
+          for (final MapEntry<String, Object?> e in variants.entries)
+            if (e.value is Map<String, Object?>)
+              e.key: _num((e.value! as Map<String, Object?>)['accuracy_deg']),
+      },
+      head: head is Map<String, Object?> ? EyeHeadMove.fromJson(head) : null,
+      raw: message,
+    );
+  }
+
+  /// Номер проверки.
+  final int n;
+
+  /// Точность главным способом, градусов; `null` — годных точек нет.
+  final double? accuracyDeg;
+
+  /// Она же в сантиметрах на экране.
+  final double? accuracyCm;
+
+  /// Худшая точка, градусов.
+  final double? worstDeg;
+
+  /// Точность проверки сразу после калибровки; `null` — её не было.
+  final double? startDeg;
+
+  /// Главный способ поправки на голову.
+  final String? headModel;
+
+  /// Точность каждого способа: `learned`, `geometry`, `phase`.
+  final Map<String, double?> variants;
+
+  /// Где была голова против калибровки.
+  final EyeHeadMove? head;
+
+  /// Ответ как есть — для файлов.
   final Map<String, Object?> raw;
 }
 

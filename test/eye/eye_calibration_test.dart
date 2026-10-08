@@ -203,4 +203,164 @@ void main() {
     expect(lost.smooth, isNull);
     expect(EyeGaze.fromMessage(<String, Object?>{'hb': 1}), isNull);
   });
+
+  test('BUG-60: точки проверки точности — те же девять, свой порядок у '
+      'каждой проверки, как у второй реализации на Python', () {
+    // Числа посчитаны независимой реализацией FNV-1a и Mulberry32 на
+    // Python при подготовке шага 29.
+    final int seed = eyeSeedOf('12345674');
+    final List<EyeTargetPoint> first = checkSequence(seed, 1);
+    expect(first.map((EyeTargetPoint p) => p.id), <String>[
+      'k7',
+      'k4',
+      'k2',
+      'k6',
+      'k0',
+      'k5',
+      'k3',
+      'k8',
+      'k1',
+    ]);
+    expect(checkSequence(seed, 2).map((EyeTargetPoint p) => p.id), <String>[
+      'k8',
+      'k6',
+      'k7',
+      'k1',
+      'k2',
+      'k5',
+      'k4',
+      'k0',
+      'k3',
+    ]);
+    expect(
+      first.every((EyeTargetPoint p) => p.phase == EyeTargetPhase.check),
+      isTrue,
+    );
+    // Точка k7 — та же, что v7 проверки сразу после калибровки.
+    expect(first.first.fx, kValidationPoints[7].$1);
+    expect(first.first.fy, kValidationPoints[7].$2);
+    expect(kHeadPoint.phase, EyeTargetPhase.head);
+    expect(kHeadPoint.at(const Size(1920, 1080)), const Offset(960, 540));
+    expect(EyeTargetPhase.head.wire, 'head');
+    expect(EyeTargetPhase.check.wire, 'check');
+    expect(kHeadPhaseTime, const Duration(seconds: 12));
+  });
+
+  test('BUG-60: голова на проверке словами', () {
+    expect(headMoveWords(const EyeHeadMove()), 'голова как при калибровке');
+    expect(
+      headMoveWords(const EyeHeadMove(turnDeg: 6.2, dzPct: -8.4)),
+      'голова повёрнута вправо на 6°, ближе на 8 %',
+    );
+    expect(
+      headMoveWords(
+        const EyeHeadMove(
+          turnDeg: -2,
+          tiltDeg: 3.4,
+          rollDeg: -2.6,
+          dxMm: 18,
+          dyMm: -12,
+          dzPct: 5,
+        ),
+      ),
+      'голова повёрнута влево на 2°, наклонена вниз на 3°, к левому плечу '
+      'на 3°, сдвинута на 2,2 см, дальше на 5 %',
+    );
+    // Мелочи — не в счёт: меньше 1,5°, 2° к плечу, 1 см и 3 %.
+    expect(
+      headMoveWords(
+        const EyeHeadMove(
+          turnDeg: 1.4,
+          tiltDeg: -1.2,
+          rollDeg: 1.9,
+          dxMm: 6,
+          dyMm: 5,
+          dzPct: -2.9,
+        ),
+      ),
+      'голова как при калибровке',
+    );
+  });
+
+  test('BUG-60: итог проверки точности словами — главный способ, голова, '
+      'все способы рядом', () {
+    final EyeAccuracy a = EyeAccuracy.fromMessage(<String, Object?>{
+      'reply': 'checked',
+      'n': 2,
+      'accuracy_deg': 1.94,
+      'accuracy_cm': 1.96,
+      'worst_deg': 3.2,
+      'start_deg': 1.42,
+      'head_model': 'phase',
+      'variants': <String, Object?>{
+        'learned': <String, Object?>{'accuracy_deg': 3.81},
+        'geometry': <String, Object?>{'accuracy_deg': 2.04},
+        'phase': <String, Object?>{'accuracy_deg': 1.94},
+      },
+      'head': <String, Object?>{
+        'turn_deg': 6.2,
+        'tilt_deg': 0.4,
+        'roll_deg': 0.3,
+        'dx_mm': 2.0,
+        'dy_mm': -1.0,
+        'dz_pct': -8.4,
+      },
+    });
+    expect(a.n, 2);
+    expect(a.headModel, 'phase');
+    expect(
+      checkLine(a),
+      'Проверка 2: 1,9° (≈ 2,0 см) · голова повёрнута вправо на 6°, ближе на '
+      '8 %',
+    );
+    expect(
+      endCheckLine(a),
+      'В конце: 1,9° (≈ 2,0 см), в начале 1,4° · голова повёрнута вправо на '
+      '6°, ближе на 8 %',
+    );
+    expect(
+      variantsLine(a),
+      'Способы: по движению головы 1,9° · по геометрии 2,0° · прежний 3,8°',
+    );
+    final EyeAccuracy empty = EyeAccuracy.fromMessage(<String, Object?>{
+      'n': 1,
+      'accuracy_deg': null,
+    });
+    expect(checkLine(empty), 'Проверка 1: камера мало видела глаза');
+    expect(variantsLine(empty), isNull);
+  });
+
+  test('BUG-60: фаза движения головы в итоге калибровки', () {
+    EyeFit fit(Map<String, Object?>? head) =>
+        EyeFit.fromMessage(<String, Object?>{
+          'model': 'ridge',
+          'cv_deg': 1.2,
+          'points': 9,
+          'head_model': 'phase',
+          'head': ?head,
+        });
+    expect(headPhaseLine(fit(null)), isNull);
+    expect(fit(null).headModel, 'phase');
+    expect(
+      headPhaseLine(
+        fit(<String, Object?>{
+          'frames': 340,
+          'moved': true,
+          'turn_deg': 17.3,
+          'tilt_deg': 13.4,
+        }),
+      ),
+      'Движение головы: влево-вправо 17°, вверх-вниз 13°',
+    );
+    expect(
+      headPhaseLine(
+        fit(<String, Object?>{'frames': 300, 'moved': false, 'turn_deg': 0.8}),
+      ),
+      'Голова почти не двигалась — поправка только по геометрии',
+    );
+    expect(
+      headPhaseLine(fit(<String, Object?>{'frames': 0, 'moved': false})),
+      'Движение головы не записалось — поправка только по геометрии',
+    );
+  });
 }

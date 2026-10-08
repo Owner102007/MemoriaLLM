@@ -49,7 +49,10 @@ class FakeEyeProcess implements EyeProcess {
     this.preview = false,
     this.stages = const <String>['warmup', 'measure'],
     this.samplesReply,
+    this.headSamples,
     this.fitError,
+    this.fitHead,
+    this.checkedError,
     List<Map<String, Object?>>? validateReplies,
   }) : validateReplies = validateReplies ?? <Map<String, Object?>>[];
 
@@ -85,6 +88,19 @@ class FakeEyeProcess implements EyeProcess {
 
   /// Ответ на `samples`; `null` — у всех точек кадров хватает.
   Map<String, Object?>? samplesReply;
+
+  /// Ответы на `samples` фазы движения головы по порядку; кончились —
+  /// лицо видно всё время (BUG-60).
+  List<Map<String, Object?>>? headSamples;
+
+  /// Поле `head` ответа `fit`; `null` — голова ходила как надо.
+  Map<String, Object?>? fitHead;
+
+  /// Ошибка на `checked`; `null` — итог есть.
+  String? checkedError;
+
+  /// Номер начатой проверки точности.
+  Object? _check;
 
   /// Ошибка на `fit` (например, `no_face`); `null` — модель есть.
   String? fitError;
@@ -347,6 +363,21 @@ class FakeEyeProcess implements EyeProcess {
       case 'target':
         break;
       case 'samples':
+        if (command['phase'] == 'head') {
+          final List<Map<String, Object?>>? queue = headSamples;
+          emit(<String, Object?>{
+            'reply': 'samples',
+            ...(queue != null && queue.isNotEmpty
+                ? queue.removeAt(0)
+                : <String, Object?>{
+                    'phase': 'head',
+                    'counts': <String, Object?>{'head': 340},
+                    'short': <Object?>[],
+                    'face': 1.0,
+                  }),
+          });
+          return;
+        }
         emit(<String, Object?>{
           'reply': 'samples',
           ...(samplesReply ??
@@ -377,6 +408,16 @@ class FakeEyeProcess implements EyeProcess {
           'latency_ms': 70.0,
           'points': 13,
           'excluded': <Object?>[],
+          'head_model': 'phase',
+          'head':
+              fitHead ??
+              <String, Object?>{
+                'frames': 340,
+                'used': 338,
+                'moved': true,
+                'turn_deg': 17.3,
+                'tilt_deg': 13.4,
+              },
         });
       case 'validate':
         emit(<String, Object?>{
@@ -385,6 +426,32 @@ class FakeEyeProcess implements EyeProcess {
           ...(validateReplies.isEmpty
               ? kAcceptedValidation
               : validateReplies.removeAt(0)),
+        });
+      case 'check':
+        if (!_fitted) {
+          emit(<String, Object?>{
+            'error': 'bad_command',
+            'text': 'Проверке нужна модель: сначала fit',
+            'cmd': 'check',
+          });
+          return;
+        }
+        _check = command['n'];
+        emit(<String, Object?>{'reply': 'check', 'n': command['n']});
+      case 'checked':
+        final String? error = checkedError;
+        if (error != null || _check == null) {
+          emit(<String, Object?>{
+            'error': error ?? 'bad_command',
+            'text': 'Проверка не начата',
+            'cmd': 'checked',
+          });
+          return;
+        }
+        emit(<String, Object?>{
+          'reply': 'checked',
+          'n': _check,
+          ...kCheckedReply,
         });
       case 'live':
         if (command['on'] == true && !_fitted) {
@@ -435,6 +502,34 @@ const Map<String, Object?> kAcceptedValidation = <String, Object?>{
     'worst_deg': 5.0,
     'min_points': 6,
   },
+};
+
+/// Итог проверки точности без новой калибровки по умолчанию (BUG-60):
+/// голова повёрнута вправо на 6° и ближе на 8 %.
+const Map<String, Object?> kCheckedReply = <String, Object?>{
+  'accuracy_deg': 1.9,
+  'accuracy_cm': 1.9,
+  'precision_deg': 0.5,
+  'worst_deg': 3.2,
+  'worst_id': 'k2',
+  'shift_mm': <double>[4.0, -2.0],
+  'points': <Object?>[],
+  'excluded': <Object?>[],
+  'head_model': 'phase',
+  'variants': <String, Object?>{
+    'learned': <String, Object?>{'accuracy_deg': 3.8, 'accuracy_cm': 3.9},
+    'geometry': <String, Object?>{'accuracy_deg': 2.0, 'accuracy_cm': 2.1},
+    'phase': <String, Object?>{'accuracy_deg': 1.9, 'accuracy_cm': 1.9},
+  },
+  'head': <String, Object?>{
+    'turn_deg': 6.2,
+    'tilt_deg': 0.4,
+    'roll_deg': 0.3,
+    'dx_mm': 2.0,
+    'dy_mm': -1.0,
+    'dz_pct': -8.4,
+  },
+  'start_deg': 1.4,
 };
 
 /// Проверка «не принято»: точность 3,1°.

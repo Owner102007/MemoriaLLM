@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/sno/eye/eye_calibration.dart';
 import 'package:memoria/sno/eye/eye_place.dart';
 import 'package:memoria/sno/eye/eye_protocol.dart';
 import 'package:memoria/sno/eye/eye_tracker.dart';
@@ -209,15 +210,38 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(sat().targetIds, hasLength(9));
+    // BUG-60: за точками — фаза движения головы: точка в середине и
+    // подсказка, сначала влево-вправо.
+    await runFor(tester, const Duration(seconds: 2));
     expect(
-      sat().targetIds.every((Object? id) => (id! as String).startsWith('q')),
-      isTrue,
+      sat().targetIds.where((Object? id) => '$id'.startsWith('q')),
+      hasLength(9),
     );
+    expect(sat().targetIds.last, 'head');
+    expect(find.text(kHeadHintTurn), findsOneWidget);
+    expect(find.byKey(const Key('eye-targets-point')), findsOneWidget);
+    final Map<String, Object?> head = sat().targets.firstWhere(
+      (Map<String, Object?> t) => t['phase'] == 'head',
+    );
+    expect(head['x'], 960);
+    expect(head['y'], 540);
+    await runFor(tester, const Duration(seconds: 6));
+    expect(find.text(kHeadHintNod), findsOneWidget);
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(1));
+    await runFor(tester, const Duration(seconds: 6));
+    await tester.pump();
+    await tester.pump();
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> c in sent('samples')) c['phase'],
+      ],
+      <Object?>['calib', 'head'],
+    );
+
     for (final Map<String, Object?> t in sat().targets) {
       expect(t['qpc_us'], isA<int>());
       if (t['phase'] != 'off') {
-        expect(t['phase'], 'calib');
+        expect(t['phase'], isIn(<String>['calib', 'head']));
         expect(t['x'], isA<double>());
       }
     }
@@ -279,7 +303,7 @@ void main() {
       'калибровка', (WidgetTester tester) async {
     await pumpApp(tester);
     await tester.tap(find.byKey(const Key('eye-trial-quick')));
-    await runFor(tester, const Duration(seconds: 26));
+    await runFor(tester, const Duration(seconds: 42));
     await tester.pump();
     expect(find.byKey(const Key('eye-live-panel')), findsOneWidget);
     await tester.tap(find.byKey(const Key('eye-live-again')));
@@ -292,7 +316,7 @@ void main() {
       ],
       <Object?>[1, 2],
     );
-    await runFor(tester, const Duration(seconds: 26));
+    await runFor(tester, const Duration(seconds: 42));
     await tester.pump();
     expect(find.byType(EyeTrialScreen), findsNothing);
     expect(sat().liveOn, isTrue);
@@ -330,6 +354,10 @@ void main() {
       hasLength(13),
     );
     expect(sat().names, contains('samples'));
+    // BUG-60: фаза движения головы — 1,5 с подсказки и 12 с точки.
+    expect(find.text(kHeadIntro), findsOneWidget);
+    await runFor(tester, const Duration(seconds: 14));
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(1));
     expect(find.text('Теперь следите глазами за точкой'), findsOneWidget);
     // Слежение — 20 с, путь уходит спутнику один раз.
     await runFor(tester, const Duration(seconds: 2));
@@ -357,6 +385,10 @@ void main() {
     );
     expect(find.text('Принято.'), findsOneWidget);
     expect(find.text('Задержка камеры 70 мс'), findsOneWidget);
+    expect(
+      find.text('Движение головы: влево-вправо 17°, вверх-вниз 13°'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const Key('eye-trial-live')));
     await settle(tester);
@@ -374,10 +406,34 @@ void main() {
       const Duration(seconds: 91),
       step: const Duration(seconds: 1),
     );
-    await tester.pump();
-    // Просмотр кончился: камера закрыта, файлы дописаны.
-    expect(sat().names, contains('close'));
+    await settle(tester);
+    // BUG-60: просмотр кончился — проверка точности в конце, как будет в
+    // конце записи: живая точка выключена, экран проверки, девять точек.
+    expect(sat().liveOn, isFalse);
+    expect(find.byType(EyeTrialScreen), findsOneWidget);
+    expect(find.text(kCheckIntro), findsOneWidget);
+    expect(sent('check').single['n'], 1);
+    await runFor(tester, const Duration(seconds: 20));
+    await settle(tester);
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> t in sat().targets)
+          if (t['phase'] == 'check') t['id'],
+      ],
+      hasLength(9),
+    );
+    expect(sat().names, contains('checked'));
+    // Потом камера закрыта, файлы дописаны; итог — в панели.
+    expect(sat().names.last, 'close');
+    expect(find.byType(EyeTrialScreen), findsNothing);
     expect(find.byKey(const Key('eye-live-finished')), findsOneWidget);
+    expect(
+      find.text(
+        'В конце: 1,9° (≈ 1,9 см), в начале 1,4° · голова повёрнута вправо '
+        'на 6°, ближе на 8 %',
+      ),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('eye-live-dot')), findsNothing);
     await tester.tap(find.byKey(const Key('eye-live-folder')));
     await tester.pump();
@@ -404,7 +460,7 @@ void main() {
     instantFrames();
     await tester.tap(find.byKey(const Key('eye-trial-full')));
     for (int attempt = 1; attempt <= 3; attempt++) {
-      await runFor(tester, const Duration(seconds: 66));
+      await runFor(tester, const Duration(seconds: 80));
       await tester.pump();
       expect(
         find.text(
@@ -459,7 +515,11 @@ void main() {
     await runFor(tester, const Duration(seconds: 24));
     await tester.pump();
     expect(sat().targetIds.where((Object? id) => id == 'q3'), hasLength(2));
-    expect(sat().targetIds.last, 'q3');
+    // Повтор — до фазы движения головы.
+    expect(
+      sat().targetIds.where((Object? id) => '$id'.startsWith('q')).last,
+      'q3',
+    );
     await unmount(tester);
 
     launcher = FakeEyeLauncher(
@@ -572,6 +632,107 @@ void main() {
     await settle(tester);
     expect(find.byType(EyeTrialScreen), findsNothing);
     expect(window.locked, isFalse);
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets('BUG-60: «Проверить точность» из живого взгляда — экран '
+      'проверки, девять точек, итог и способы в панели, снова живой взгляд', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester);
+    instantFrames();
+    await tester.tap(find.byKey(const Key('eye-trial-quick')));
+    await runFor(tester, const Duration(seconds: 36));
+    await settle(tester);
+    expect(find.byKey(const Key('eye-live-panel')), findsOneWidget);
+    expect(sat().liveOn, isTrue);
+    expect(
+      find.text('Движение головы: влево-вправо 17°, вверх-вниз 13°'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('eye-live-check')));
+    await settle(tester);
+    expect(sat().liveOn, isFalse);
+    expect(find.byType(EyeTrialScreen), findsOneWidget);
+    expect(find.byKey(const Key('eye-live-panel')), findsNothing);
+    expect(find.text(kCheckIntro), findsOneWidget);
+    // Пока идут точки, клавиши не достаются никому.
+    await tester.sendKeyEvent(LogicalKeyboardKey.f11);
+    await tester.pump();
+    expect(find.byType(EyeTrialScreen), findsOneWidget);
+    await runFor(tester, const Duration(seconds: 22));
+    await settle(tester);
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> t in sat().targets)
+          if (t['phase'] == 'check') t['id'],
+      ],
+      hasLength(9),
+    );
+    expect(sat().names, contains('checked'));
+    expect(find.byType(EyeTrialScreen), findsNothing);
+    expect(sat().liveOn, isTrue);
+    expect(
+      find.text(
+        'Проверка 1: 1,9° (≈ 1,9 см) · голова повёрнута вправо на 6°, ближе '
+        'на 8 %',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Способы: по движению головы 1,9° · по геометрии 2,0° · прежний 3,8°',
+      ),
+      findsOneWidget,
+    );
+
+    // Вторая проверка — со своим номером.
+    await tester.tap(find.byKey(const Key('eye-live-check')));
+    await settle(tester);
+    await runFor(tester, const Duration(seconds: 22));
+    await settle(tester);
+    expect(
+      <Object?>[for (final Map<String, Object?> c in sent('check')) c['n']],
+      <Object?>[1, 2],
+    );
+    expect(sat().liveOn, isTrue);
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets('BUG-60: лица мало в фазе движения головы — фаза повторяется '
+      'один раз, потом калибровка идёт без неё', (WidgetTester tester) async {
+    launcher = FakeEyeLauncher(
+      make: (int n) => FakeEyeProcess(
+        clock: qpc,
+        headSamples: <Map<String, Object?>>[
+          <String, Object?>{'phase': 'head', 'face': 0.2},
+          <String, Object?>{'phase': 'head', 'face': 0.1},
+        ],
+        fitHead: <String, Object?>{'frames': 0, 'used': 0, 'moved': false},
+      ),
+    );
+    eye.dispose();
+    eye = tracker();
+    await eye.savePlace(place);
+    await pumpApp(tester);
+    instantFrames();
+    await tester.tap(find.byKey(const Key('eye-trial-quick')));
+    await runFor(tester, const Duration(seconds: 50));
+    await settle(tester);
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(2));
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> c in sent('samples')) c['phase'],
+      ],
+      <Object?>['calib', 'head', 'head'],
+    );
+    expect(sat().names, contains('fit'));
+    expect(sat().liveOn, isTrue);
+    expect(
+      find.text('Движение головы не записалось — поправка только по геометрии'),
+      findsOneWidget,
+    );
     await unmount(tester);
   }, timeout: const Timeout(Duration(minutes: 3)));
 

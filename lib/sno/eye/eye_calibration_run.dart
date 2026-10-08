@@ -1,5 +1,7 @@
 /// Одна попытка калибровки (SNO-F-EYE-01, SNO-ALG-EYE-02): точки по
-/// одной, повтор точек без кадров, слежение, модель, точки проверки.
+/// одной, повтор точек без кадров, фаза движения головы, слежение,
+/// модель, точки проверки. И проверка точности без новой калибровки
+/// (BUG-60, SNO-F-EYE-03) — девять точек той моделью, что есть.
 ///
 /// Попытка ведёт спутник командами и держит то, что сейчас на экране:
 /// подсказку, неподвижную точку или путь движущейся. Рисует экран
@@ -70,18 +72,15 @@ class EyeAttemptOutcome {
   final bool cancelled;
 }
 
-/// Одна попытка калибровки.
-class EyeCalibrationRun extends ChangeNotifier {
-  /// Создаёт попытку. [seed] — зерно порядка точек; [screen] —
-  /// окно, на котором они рисуются.
-  EyeCalibrationRun({
+/// Точки на экране — общая часть попытки калибровки и проверки
+/// точности: подсказка, неподвижная точка или путь движущейся, таймеры и
+/// отправка точки спутнику после отрисовки её кадра.
+abstract class EyeTargetsRun extends ChangeNotifier {
+  /// Создаёт показ точек в окне [screen].
+  EyeTargetsRun({
     required EyeLink link,
     required QpcClock qpc,
-    required this.kind,
-    required this.attempt,
-    required this.seed,
     required this.screen,
-    required this.distanceMm,
     required EyeFrameShown frameShown,
   }) : _link = link,
        _qpc = qpc,
@@ -91,20 +90,8 @@ class EyeCalibrationRun extends ChangeNotifier {
   final QpcClock _qpc;
   final EyeFrameShown _frameShown;
 
-  /// Какая калибровка.
-  final EyeCalibrationKind kind;
-
-  /// Номер попытки.
-  final int attempt;
-
-  /// Зерно порядка точек.
-  final int seed;
-
   /// Окно, в котором стоят точки.
   final EyeScreen screen;
-
-  /// Расстояние до экрана, мм.
-  final int distanceMm;
 
   bool _cancelled = false;
   final Set<Completer<void>> _pauses = <Completer<void>>{};
@@ -126,10 +113,10 @@ class EyeCalibrationRun extends ChangeNotifier {
   /// Сколько точек уже отстояло своё.
   int done = 0;
 
-  /// Прервана ли попытка.
+  /// Прерван ли показ.
   bool get cancelled => _cancelled;
 
-  /// Прерывает попытку: таймеры сняты, `run` вернёт «прервано».
+  /// Прерывает показ: таймеры сняты, `run` вернёт «прервано».
   void cancel() {
     if (_cancelled) {
       return;
@@ -166,8 +153,8 @@ class EyeCalibrationRun extends ChangeNotifier {
   }
 
   void _show({String? hint, EyeTargetPoint? point, PursuitPath? pursuit}) {
-    // Прерванная попытка экран больше не трогает: её место уже заняла
-    // следующая.
+    // Прерванный показ экран больше не трогает: его место уже занял
+    // следующий.
     if (_cancelled) {
       return;
     }
@@ -175,6 +162,15 @@ class EyeCalibrationRun extends ChangeNotifier {
     this.point = point;
     this.pursuit = pursuit;
     shown++;
+    notifyListeners();
+  }
+
+  /// Меняет только подсказку: точка стоит, и кольцо заново не сжимается.
+  void _hint(String? text) {
+    if (_cancelled) {
+      return;
+    }
+    hint = text;
     notifyListeners();
   }
 
@@ -186,11 +182,11 @@ class EyeCalibrationRun extends ChangeNotifier {
     }
   }
 
-  Future<void> _point(EyeTargetPoint p, Duration time) async {
+  Future<void> _point(EyeTargetPoint p, Duration time, {String? hint}) async {
     if (_cancelled) {
       return;
     }
-    _show(point: p);
+    _show(point: p, hint: hint);
     final int qpc = await _onScreen();
     if (_cancelled) {
       return;
@@ -208,6 +204,40 @@ class EyeCalibrationRun extends ChangeNotifier {
     _link.target(phase: 'off', qpcUs: _qpc.nowUs());
   }
 
+  @override
+  void dispose() {
+    cancel();
+    super.dispose();
+  }
+}
+
+/// Одна попытка калибровки.
+class EyeCalibrationRun extends EyeTargetsRun {
+  /// Создаёт попытку. [seed] — зерно порядка точек; [screen] —
+  /// окно, на котором они рисуются.
+  EyeCalibrationRun({
+    required super.link,
+    required super.qpc,
+    required this.kind,
+    required this.attempt,
+    required this.seed,
+    required super.screen,
+    required this.distanceMm,
+    required super.frameShown,
+  });
+
+  /// Какая калибровка.
+  final EyeCalibrationKind kind;
+
+  /// Номер попытки.
+  final int attempt;
+
+  /// Зерно порядка точек.
+  final int seed;
+
+  /// Расстояние до экрана, мм.
+  final int distanceMm;
+
   /// Ведёт попытку до конца.
   Future<EyeAttemptOutcome> run() async {
     try {
@@ -220,6 +250,47 @@ class EyeCalibrationRun extends ChangeNotifier {
         return const EyeAttemptOutcome.noFace();
       }
       return EyeAttemptOutcome.failed(e);
+    }
+  }
+
+  /// Фаза движения головы (BUG-60): точка в середине, человек водит
+  /// головой, глядя на неё, — по ней спутник учит поправку на голову.
+  /// Лица мало — фаза повторяется один раз; мало и после повтора —
+  /// калибровка идёт без неё, и поправка остаётся по геометрии.
+  Future<void> _headPhase() async {
+    for (int round = 0; round < 2; round++) {
+      _show(hint: kHeadIntro);
+      await _pause(kIntroTime);
+      if (_cancelled) {
+        return;
+      }
+      _show(hint: kHeadHintTurn, point: kHeadPoint);
+      final int qpc = await _onScreen();
+      if (_cancelled) {
+        return;
+      }
+      final Offset at = kHeadPoint.at(screen.size);
+      _link.target(
+        phase: EyeTargetPhase.head.wire,
+        qpcUs: qpc,
+        id: kHeadPoint.id,
+        x: at.dx,
+        y: at.dy,
+      );
+      await _pause(kHeadTurnTime);
+      _hint(kHeadHintNod);
+      await _pause(kHeadPhaseTime - kHeadTurnTime);
+      _off();
+      if (_cancelled) {
+        return;
+      }
+      final EyeSamples samples = await _link.samples(
+        phase: EyeTargetPhase.head.wire,
+      );
+      final double? face = samples.face;
+      if (face == null || face >= kFaceMinShare) {
+        return;
+      }
     }
   }
 
@@ -251,6 +322,10 @@ class EyeCalibrationRun extends ChangeNotifier {
     }
     if (again.isNotEmpty) {
       _off();
+    }
+    await _headPhase();
+    if (_cancelled) {
+      return const EyeAttemptOutcome.cancelled();
     }
     if (kind == EyeCalibrationKind.full) {
       _show(hint: 'Теперь следите глазами за точкой');
@@ -299,11 +374,77 @@ class EyeCalibrationRun extends ChangeNotifier {
     _show();
     return EyeAttemptOutcome.done(fit, validation);
   }
+}
 
-  @override
-  void dispose() {
-    cancel();
-    super.dispose();
+/// Чем кончилась проверка точности без новой калибровки.
+class EyeCheckOutcome {
+  const EyeCheckOutcome._({this.accuracy, this.error, this.cancelled = false});
+
+  /// Проверка прошла.
+  const EyeCheckOutcome.done(EyeAccuracy accuracy) : this._(accuracy: accuracy);
+
+  /// Спутник отказал.
+  const EyeCheckOutcome.failed(EyeError error) : this._(error: error);
+
+  /// Проверку прервали.
+  const EyeCheckOutcome.cancelled() : this._(cancelled: true);
+
+  /// Итог; `null` — до него не дошло.
+  final EyeAccuracy? accuracy;
+
+  /// Отказ спутника.
+  final EyeError? error;
+
+  /// Прервана.
+  final bool cancelled;
+}
+
+/// Проверка точности без новой калибровки (BUG-60, SNO-F-EYE-03):
+/// подсказка и девять точек по [kValidationPointTime] той моделью, что
+/// есть. Итог — точность каждого способа поправки на голову и где была
+/// голова против калибровки.
+class EyeCheckRun extends EyeTargetsRun {
+  /// Создаёт проверку номер [n]; [seed] — зерно порядка точек.
+  EyeCheckRun({
+    required super.link,
+    required super.qpc,
+    required super.screen,
+    required super.frameShown,
+    required this.n,
+    required this.seed,
+  });
+
+  /// Номер проверки.
+  final int n;
+
+  /// Зерно порядка точек.
+  final int seed;
+
+  /// Ведёт проверку до конца.
+  Future<EyeCheckOutcome> run() async {
+    try {
+      await _link.check(n);
+      _show(hint: kCheckIntro);
+      await _pause(kIntroTime);
+      for (final EyeTargetPoint p in checkSequence(seed, n)) {
+        await _point(p, kValidationPointTime);
+      }
+      _off();
+      if (_cancelled) {
+        return const EyeCheckOutcome.cancelled();
+      }
+      _show(hint: 'Считаю…');
+      final EyeAccuracy accuracy = await _link.checked();
+      _show();
+      return _cancelled
+          ? const EyeCheckOutcome.cancelled()
+          : EyeCheckOutcome.done(accuracy);
+    } on EyeError catch (e) {
+      if (_cancelled) {
+        return const EyeCheckOutcome.cancelled();
+      }
+      return EyeCheckOutcome.failed(e);
+    }
   }
 }
 

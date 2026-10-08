@@ -46,12 +46,43 @@ void main() {
     );
   }
 
+  /// Запускает спутник и здоровается. На свежем раннере первый запуск
+  /// бывает холодным — распаковка и первая загрузка колёс — и `hello` не
+  /// успевает: такой спутник снимается (иначе он держит замок экземпляра,
+  /// и следующие тесты отказывают «спутник уже запущен»), и запуск
+  /// повторяется один раз (шаг 29; CI №316).
+  Future<(EyeLink, EyeHello)> started(
+    QpcClock qpc, {
+    List<String> extra = const <String>[],
+    String build = '',
+    String branch = '',
+  }) async {
+    for (int round = 0; ; round++) {
+      final EyeLink link = await EyeLink.start(
+        launcher(extra: extra),
+        qpc: qpc,
+      );
+      try {
+        return (link, await link.hello(build: build, branch: branch));
+      } on EyeError catch (e) {
+        await link.kill();
+        if (e.code != 'timeout' || round > 0) {
+          rethrow;
+        }
+        stdout.writeln('ЗАМЕР SNO-F-EYE-04 | холодный запуск: hello не успел');
+      }
+    }
+  }
+
   test(
     'SNO-ALG-EYE-03: hello, камеры, общие часы и выход за две секунды',
     () async {
       final QpcClock qpc = WindowsQpcClock.open()!;
-      final EyeLink link = await EyeLink.start(launcher(), qpc: qpc);
-      final EyeHello hello = await link.hello(build: 'ci', branch: 'I');
+      final (EyeLink link, EyeHello hello) = await started(
+        qpc,
+        build: 'ci',
+        branch: 'I',
+      );
       expect(hello.protocol, kEyeProtocol);
       expect(hello.mediapipe, isNotEmpty);
       expect(hello.modelSha256, hasLength(64));
@@ -98,9 +129,9 @@ void main() {
     'SNO-F-EYE-05: самопроверка с кадрами камеры — на синтетике',
     () async {
       final QpcClock qpc = WindowsQpcClock.open()!;
-      final EyeLink link = await EyeLink.start(
-        launcher(extra: const <String>['--source', 'synthetic']),
-        qpc: qpc,
+      final (EyeLink link, _) = await started(
+        qpc,
+        extra: const <String>['--source', 'synthetic'],
       );
       final List<EyePreview> shots = <EyePreview>[];
       link.onProgress = (Map<String, Object?> message) {
@@ -109,7 +140,6 @@ void main() {
           shots.add(shot);
         }
       };
-      await link.hello();
       final EyeCheck check = await link.selfcheck(
         camera: const EyeCamera(index: 0, name: 'Синтетическая камера'),
         seconds: 1,
@@ -128,17 +158,17 @@ void main() {
   );
 
   test(
-    'SNO-ALG-EYE-02: быстрая калибровка на синтетическом участнике — '
-    'точки по QPC приложения, модель, проверка, живая точка, файл',
+    'SNO-ALG-EYE-02, BUG-60: быстрая калибровка на синтетическом участнике — '
+    'точки по QPC приложения, фаза движения головы, модель, проверка, '
+    'проверка точности без новой калибровки, живая точка, файлы',
     () async {
       final QpcClock qpc = WindowsQpcClock.open()!;
-      final EyeLink link = await EyeLink.start(
-        launcher(extra: const <String>['--source', 'synthetic:follow']),
-        qpc: qpc,
+      final (EyeLink link, _) = await started(
+        qpc,
+        extra: const <String>['--source', 'synthetic:follow'],
       );
       final List<EyeGaze> gaze = <EyeGaze>[];
       link.onGaze = gaze.add;
-      await link.hello();
       final String folder = '${temp.path}${Platform.pathSeparator}стенд';
       final List<int>? frame = await link.open(
         screen: const EyeScreen(
@@ -172,17 +202,33 @@ void main() {
       final EyeSamples samples = await link.samples();
       expect(samples.short, isEmpty);
       expect(samples.face, 1.0);
+      // BUG-60: фаза движения головы — участник водит головой, глядя в
+      // середину.
+      link.target(phase: 'head', qpcUs: qpc.nowUs(), id: 'head', x: 960, y: 540);
+      await Future<void>.delayed(const Duration(seconds: 9));
+      link.target(phase: 'off', qpcUs: qpc.nowUs());
+      final EyeSamples head = await link.samples(phase: 'head');
+      expect(head.face, 1.0);
       final EyeFit fit = await link.fit();
       expect(fit.model, 'ridge');
       expect(fit.points, 9);
+      expect(fit.headModel, 'phase');
+      expect(fit.headPhase?.moved, isTrue);
       await show('validate', 'v');
       final EyeValidation v = await link.validate();
+      await link.check(1);
+      await show('check', 'k');
+      final EyeAccuracy a = await link.checked();
       stdout.writeln(
         'ЗАМЕР SNO-ALG-EYE-02 | быстрая калибровка на синтетике | '
         'ошибка без одной точки ${fit.cvDeg}° | проверка ${v.accuracyDeg}° '
-        '| прецизионность ${v.precisionDeg}°',
+        '| прецизионность ${v.precisionDeg}° | проверка без калибровки '
+        '${a.accuracyDeg}° | способы ${a.variants}',
       );
       expect(v.accuracyDeg, lessThan(3.0));
+      expect(a.n, 1);
+      expect(a.accuracyDeg, lessThan(3.0));
+      expect(a.variants.keys, containsAll(<String>['learned', 'geometry']));
       await link.live(on: true);
       await Future<void>.delayed(const Duration(seconds: 1));
       await link.live(on: false);
@@ -191,6 +237,10 @@ void main() {
       expect(summary, isNotNull);
       expect(
         File('$folder${Platform.pathSeparator}calibration.json').existsSync(),
+        isTrue,
+      );
+      expect(
+        File('$folder${Platform.pathSeparator}checks.json').existsSync(),
         isTrue,
       );
       await link.close();
@@ -203,8 +253,7 @@ void main() {
     'SNO-F-EYE-04: второй экземпляр отказывается словами',
     () async {
       final QpcClock qpc = WindowsQpcClock.open()!;
-      final EyeLink first = await EyeLink.start(launcher(), qpc: qpc);
-      await first.hello();
+      final (EyeLink first, _) = await started(qpc);
       final EyeLink second = await EyeLink.start(launcher(), qpc: qpc);
       await expectLater(
         second.hello(),

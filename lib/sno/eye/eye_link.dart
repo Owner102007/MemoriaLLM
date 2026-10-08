@@ -327,8 +327,8 @@ class EyeLink {
   }
 
   /// Точка появилась на экране в миг [qpcUs] — без ответа. [phase] —
-  /// `calib`, `pursuit`, `validate` или `off`; у `pursuit` — путь
-  /// [path].
+  /// `calib`, `pursuit`, `validate`, `head`, `check` или `off`; у
+  /// `pursuit` — путь [path].
   void target({
     required String phase,
     required int qpcUs,
@@ -368,6 +368,20 @@ class EyeLink {
   Future<EyeValidation> validate() async {
     return EyeValidation.fromMessage(
       await request('validate', timeout: kFitTimeout),
+    );
+  }
+
+  /// Начинает проверку точности [n] без новой калибровки (BUG-60): её
+  /// точки — [target] с фазой `check`.
+  Future<void> check(int n) async {
+    await request('check', fields: <String, Object?>{'n': n});
+  }
+
+  /// Итог начатой проверки точности: точность каждого способа поправки
+  /// на голову и где была голова.
+  Future<EyeAccuracy> checked() async {
+    return EyeAccuracy.fromMessage(
+      await request('checked', timeout: kFitTimeout),
     );
   }
 
