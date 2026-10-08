@@ -36,7 +36,9 @@ import numpy as np
 
 from . import faceparts as fp
 
-SCHEMA = "sno2026-eyecal/1"
+# Вторая версия (шаг 29, BUG-60): модель вида `head`, способы поправки на
+# голову (`variants`), проверки без новой калибровки (`checks`), `setup`.
+SCHEMA = "sno2026-eyecal/2"
 
 # Признаки, на которых учится модель: радужки, веки, поза и место лица.
 # Диаметр радужки шумит и почти не меняется со взглядом — его нет.
@@ -560,16 +562,22 @@ HEAD_MODELS = ("learned", "geometry", "phase")
 # Признаки головы в `USED`.
 _YAW, _PITCH, _ROLL, _FX, _FY, _SC = range(N_EYE, N_EYE + 6)
 
-# Из системы MediaPipe (x вправо по снимку, y вверх, z к человеку) в
-# систему человека (x — его право, y вниз, z от него к экрану) — поворот
-# на 180° вокруг z. Сверено на кадрах владельца: положительный yaw у
-# MediaPipe — голова к левому краю экрана, pitch — вниз, roll — к правому
-# плечу.
+# Из системы MediaPipe (камерная система OpenGL: x вправо по снимку, y
+# вверх, z к камере — лицо стоит на отрицательном z) в систему человека
+# (x — его право, y вниз, z от него к экрану) — поворот на 180° вокруг z.
+# Сверено на кадрах владельца: положительный yaw у MediaPipe — голова к
+# левому краю экрана, pitch — вниз, roll — к правому плечу.
 _MP_TO_PERSON = np.diag([-1.0, -1.0, 1.0])
 
-# Масштаб отклонений головы для остатка: поворот — на 5°, сдвиг — на
-# 2 см, расстояние — на 5 %.
+# Масштаб отклонений головы: поворот — на 5°, сдвиг — на 2 см,
+# расстояние — на 5 %.
 HEAD_DELTA_SCALE = np.array([5.0, 5.0, 5.0, 20.0, 20.0, 0.05])
+# Остаток учится только по поворотам (turn, tilt, roll). В фазе движения
+# головы голова поворачивается вокруг шеи, и глаза при этом сдвигаются в
+# ногу с поворотом: по таким кадрам не отличить, что от поворота, а что от
+# сдвига, и остаток по сдвигам портил бы чистый сдвиг головы (независимая
+# проверка шага 29). Сдвиги и расстояние остаются геометрии.
+HEAD_REST_COLUMNS = 3
 
 
 def head_rotations(yaw, pitch, roll) -> np.ndarray:
@@ -718,10 +726,11 @@ class Geometry:
                 "dz": z / self.screen.distance_mm - 1.0}
 
     def deltas(self, x: np.ndarray) -> np.ndarray:
-        """Отклонения головы для остатка, в масштабе `HEAD_DELTA_SCALE`."""
+        """Повороты головы против опоры для остатка — turn, tilt, roll в
+        масштабе `HEAD_DELTA_SCALE` (`HEAD_REST_COLUMNS`)."""
         rel = self.relative(x)
-        d = np.column_stack([rel[k] for k in ("turn", "tilt", "roll", "dx", "dy", "dz")])
-        return d / HEAD_DELTA_SCALE
+        d = np.column_stack([rel[k] for k in ("turn", "tilt", "roll")])
+        return d / HEAD_DELTA_SCALE[:HEAD_REST_COLUMNS]
 
     def to_json(self) -> dict:
         return {"screen": self.screen.as_dict(), "setup": self.setup.as_dict(),
@@ -797,18 +806,25 @@ def fit_head_rest(model: HeadModel, x: np.ndarray, target: np.ndarray, screen: S
     d = model.geo.deltas(x)[keep]
     r = (tgt - pred)[keep]
     alpha = float(t.get("alpha", 0.1))
-    w = None
-    for _ in range(2):
+    min_frames = int(t.get("min_frames", 90))
+
+    def solve(d, r):
         dc = d - d.mean(axis=0)
         rc = r - r.mean(axis=0)
         w = np.linalg.solve(dc.T @ dc + alpha * len(dc) * np.eye(dc.shape[1]), dc.T @ rc)
-        res = np.hypot(*(rc - dc @ w).T)
-        med = float(np.median(res))
-        mad = 1.4826 * float(np.median(np.abs(res - med)))
-        ok = res <= med + float(t.get("mad_k", 3.0)) * max(mad, 1e-6)
-        if ok.all():
-            break
+        return w, np.hypot(*(rc - dc @ w).T)
+
+    w, res = solve(d, r)
+    # Выбросы — один раз, и остаток считается заново по тому, что осталось.
+    med = float(np.median(res))
+    mad = 1.4826 * float(np.median(np.abs(res - med)))
+    ok = res <= med + float(t.get("mad_k", 3.0)) * max(mad, 1e-6)
+    if not ok.all():
         d, r = d[ok], r[ok]
+        if len(d) < min_frames:
+            info["used"] = int(len(d))
+            return None, info
+        w, _ = solve(d, r)
     info["used"] = int(len(d))
     info["w"] = np.round(w, 3).tolist()
     return w, info

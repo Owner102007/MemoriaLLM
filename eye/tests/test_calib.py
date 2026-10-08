@@ -258,7 +258,7 @@ def test_sno_alg_eye_02_model_survives_json():
     sim = Sim(noise=0.3, seed=14)
     sim.calibrate()
     data = json.loads(json.dumps(sim.cal.to_json()))
-    assert data["schema"] == "sno2026-eyecal/1"
+    assert data["schema"] == "sno2026-eyecal/2"
     assert data["attempts"][0]["fit"]["model"] in ("ridge", "krr")
     model = calib.model_from_json(data["model"])
     x = np.array([features.compute(*(lambda f: (f.landmarks, f.matrix))(

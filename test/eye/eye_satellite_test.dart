@@ -204,7 +204,13 @@ void main() {
       expect(samples.face, 1.0);
       // BUG-60: фаза движения головы — участник водит головой, глядя в
       // середину.
-      link.target(phase: 'head', qpcUs: qpc.nowUs(), id: 'head', x: 960, y: 540);
+      link.target(
+        phase: 'head',
+        qpcUs: qpc.nowUs(),
+        id: 'head',
+        x: 960,
+        y: 540,
+      );
       await Future<void>.delayed(const Duration(seconds: 9));
       link.target(phase: 'off', qpcUs: qpc.nowUs());
       final EyeSamples head = await link.samples(phase: 'head');

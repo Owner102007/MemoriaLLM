@@ -253,6 +253,17 @@ class EyeCalibrationRun extends EyeTargetsRun {
     }
   }
 
+  void _headTarget(int qpc) {
+    final Offset at = kHeadPoint.at(screen.size);
+    _link.target(
+      phase: EyeTargetPhase.head.wire,
+      qpcUs: qpc,
+      id: kHeadPoint.id,
+      x: at.dx,
+      y: at.dy,
+    );
+  }
+
   /// Фаза движения головы (BUG-60): точка в середине, человек водит
   /// головой, глядя на неё, — по ней спутник учит поправку на голову.
   /// Лица мало — фаза повторяется один раз; мало и после повтора —
@@ -269,16 +280,16 @@ class EyeCalibrationRun extends EyeTargetsRun {
       if (_cancelled) {
         return;
       }
-      final Offset at = kHeadPoint.at(screen.size);
-      _link.target(
-        phase: EyeTargetPhase.head.wire,
-        qpcUs: qpc,
-        id: kHeadPoint.id,
-        x: at.dx,
-        y: at.dy,
-      );
+      _headTarget(qpc);
       await _pause(kHeadTurnTime);
       _hint(kHeadHintNod);
+      // Новую подсказку читают — точка уходит спутнику заново, и он
+      // отбросит первые полсекунды после неё, как после новой точки.
+      final int read = await _onScreen();
+      if (_cancelled) {
+        return;
+      }
+      _headTarget(read);
       await _pause(kHeadPhaseTime - kHeadTurnTime);
       _off();
       if (_cancelled) {

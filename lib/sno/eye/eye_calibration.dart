@@ -385,7 +385,9 @@ String headMoveWords(EyeHeadMove m) {
     if (m.dzPct.abs() >= 3)
       '${m.dzPct < 0 ? 'ближе' : 'дальше'} на ${m.dzPct.abs().round()} %',
   ];
-  return parts.isEmpty ? 'голова как при калибровке' : 'голова ${parts.join(', ')}';
+  return parts.isEmpty
+      ? 'голова как при калибровке'
+      : 'голова ${parts.join(', ')}';
 }
 
 String _accuracy(EyeAccuracy a) {

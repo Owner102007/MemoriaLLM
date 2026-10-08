@@ -155,6 +155,9 @@ class EyeTrial extends ChangeNotifier {
   /// больше.
   int checks = 0;
 
+  /// Проверка точности начинается: живую точку выключают.
+  bool _checkBusy = false;
+
   /// Номер попытки.
   int attempt = 0;
 
@@ -252,6 +255,8 @@ class EyeTrial extends ChangeNotifier {
     failure = null;
     check = null;
     outcome = null;
+    lastCheck = null;
+    endChecked = false;
     attempt = 0;
     stage = 'Окно встаёт на монитор места записи…';
     _set(EyeTrialPhase.starting);
@@ -378,6 +383,9 @@ class EyeTrial extends ChangeNotifier {
     );
     run = current;
     outcome = null;
+    // Итог прежней проверки точности мерил прежнюю модель.
+    lastCheck = null;
+    endChecked = false;
     _set(EyeTrialPhase.calibrating);
     final EyeAttemptOutcome result = await current.run();
     if (!identical(run, current) || _phase == EyeTrialPhase.closed) {
@@ -475,15 +483,24 @@ class EyeTrial extends ChangeNotifier {
   /// выключена, девять точек на экране проверки, потом снова живой
   /// взгляд с итогом в панели. Свободный просмотр на это время стоит.
   Future<void> checkAccuracy() async {
-    if (_phase != EyeTrialPhase.live) {
+    if (_phase != EyeTrialPhase.live || _checkBusy) {
       return;
     }
     _freeTimer?.cancel();
     if (_stale) {
       // Окно сменилось после калибровки: модель — под прежнее окно, и
-      // проверять её не на чем. Калибровка заново.
+      // проверять её не на чем. Калибровка заново — та же попытка, не в
+      // счёт, как при смене окна посреди калибровки.
+      final EyeLink? link = _link;
       freeLeft = null;
-      await again();
+      _recent.clear();
+      gaze = null;
+      try {
+        await link?.live(on: false);
+      } on EyeError {
+        // Живая точка не выключилась — калибровка выключит её сама.
+      }
+      await _reopen(next: false);
       return;
     }
     final EyeAccuracy? done = await _check(end: false);
@@ -518,15 +535,20 @@ class EyeTrial extends ChangeNotifier {
   Future<EyeAccuracy?> _check({required bool end}) async {
     final EyeLink? link = _link;
     final EyeScreen? screen = _screen;
-    if (link == null || screen == null) {
+    if (link == null || screen == null || _checkBusy) {
       return null;
     }
+    // Кнопка и конец свободного просмотра разом не начинают двух
+    // проверок: вторая ждёт, пока выключится живая точка, и не нужна.
+    _checkBusy = true;
     try {
       await link.live(on: false);
     } on EyeError catch (e) {
+      _checkBusy = false;
       await _fail(describeEyeError(e));
       return null;
     }
+    _checkBusy = false;
     gaze = null;
     checks++;
     checkRun?.dispose();
@@ -626,11 +648,12 @@ class EyeTrial extends ChangeNotifier {
       unawaited(_reopen(next: false));
     } else if (_phase == EyeTrialPhase.checking) {
       // Точки проверки стояли бы не там: проверка прервана, а модель под
-      // прежнее окно больше не годится — калибровка заново.
+      // прежнее окно больше не годится — калибровка заново, та же
+      // попытка, не в счёт.
       checkRun?.cancel();
       _freeTimer?.cancel();
       freeLeft = null;
-      unawaited(_reopen(next: true));
+      unawaited(_reopen(next: false));
     } else if (_phase == EyeTrialPhase.result || _phase == EyeTrialPhase.live) {
       _stale = true;
     }

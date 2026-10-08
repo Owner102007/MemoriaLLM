@@ -45,8 +45,13 @@ class Sim:
     настоящей; `sweep` — водит ли участник головой в фазе движения
     головы."""
 
-    def __init__(self, noise=0.3, seed=1, artifact=3.0, pose_gain=1.0, sweep=True):
+    def __init__(self, noise=0.3, seed=1, artifact=3.0, pose_gain=1.0, sweep=True,
+                 pivot=None):
         self.cal = calib.Calibration(SCREEN, T, frame=(W, H))
+        # Голова поворачивается вокруг шеи: центр поворота — `pivot` мм от
+        # глаз (x вправо, y вниз, z к экрану), и глаза при повороте
+        # сдвигаются. `None` — глаза стоят на месте.
+        self.pivot = None if pivot is None else np.asarray(pivot, dtype=np.float64)
         self.rng = np.random.default_rng(seed)
         self.t = T0
         self.noise = noise
@@ -76,7 +81,13 @@ class Sim:
         noise = tuple(self.rng.normal(0, self.noise, 2))
         shift = (-self.artifact * xm / (SCREEN.w_mm / 2),
                  self.artifact * ym / (SCREEN.h_mm / 2))
-        head = synthetic.look_from(xm, ym, p["eye"], screen_h_mm=SCREEN.h_mm,
+        eye = p["eye"]
+        if self.pivot is not None:
+            r = synthetic._TO_PERSON @ synthetic.rotation(yaw, pitch, p["roll"]) \
+                @ synthetic._TO_PERSON
+            d = (np.eye(3) - r) @ self.pivot
+            eye = (eye[0] + d[0], eye[1] + d[1], eye[2] - d[2])
+        head = synthetic.look_from(xm, ym, eye, screen_h_mm=SCREEN.h_mm,
                                    yaw=yaw, pitch=pitch, roll=p["roll"], noise=noise,
                                    shift_px=shift, pose_gain=self.pose_gain)
         face = synthetic.render(head, W, H)
@@ -244,6 +255,28 @@ def test_bug_60_rest_fixes_what_geometry_does_not_know():
     assert acc(r, "phase") < 0.6, r["variants"]
 
 
+# Шея: центр поворота на 10 см позади глаз и на 8 см ниже.
+NECK = (0.0, 80.0, -100.0)
+
+
+@pytest.mark.parametrize("move", ["сдвиг", "выше", "ближе", "поворот", "всё разом"])
+def test_bug_60_rest_does_not_spoil_a_pure_shift(move):
+    # Независимая проверка шага 29: в фазе движения голова поворачивается
+    # вокруг шеи, глаза сдвигаются в ногу с поворотом, и остаток по сдвигам
+    # портил чистый сдвиг головы (сдвиг на 4 см — 1,07° против 0,20° у
+    # геометрии). Остаток учится только по поворотам; поза в матрице к
+    # тому же меньше настоящей, чтобы остатку было что учить.
+    moves = {**MOVES, "выше": {"eye": (0.0, -90.0, 600.0)},
+             "ближе": {"eye": (0.0, -60.0, 540.0)}}
+    s = Sim(noise=0.3, seed=7, pose_gain=0.8, pivot=NECK)
+    fit = s.calibrate()
+    assert fit["variants"]["phase"]["rest"]
+    r = s.check(**moves[move])
+    assert acc(r, "phase") <= 1.0 + s.noise, r["variants"]
+    if move in ("сдвиг", "выше", "ближе"):
+        assert acc(r, "phase") <= acc(r, "geometry") + 0.3, r["variants"]
+
+
 def test_bug_60_geometry_round_trip():
     # Перенос точки к голове кадра и обратно — та же точка.
     s = Sim(noise=0.0, seed=6)
@@ -260,11 +293,13 @@ def test_bug_60_geometry_round_trip():
 
 
 def test_bug_60_model_survives_json(sim):
+    sim.check()
     data = json.loads(json.dumps(sim.cal.to_json()))
     assert data["head_model"] == "phase" and set(data["variants"]) == set(calib.HEAD_MODELS)
     assert data["model"]["kind"] == "head" and data["model"]["label"] == "phase"
     assert data["setup"] == {"frame": [W, H], "iod_mm": 90.0, "camera_above_mm": 8.0}
-    assert data["checks"] and data["checks"][0]["result"]["n"] == 1
+    assert data["schema"] == "sno2026-eyecal/2"
+    assert data["checks"] and data["checks"][-1]["result"]["n"] == 1
     head = synthetic.look_from(10, 20, (20.0, -50.0, 580.0), screen_h_mm=SCREEN.h_mm, yaw=4)
     face = synthetic.render(head, W, H)
     x = features.compute(face.landmarks, face.matrix, W, H)[calib.USED_IDX]

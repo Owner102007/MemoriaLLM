@@ -167,7 +167,9 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
     }
     // Пока идут точки, клавиши не достаются никому: ни листание, ни
     // `F11`, ни поиск.
-    return _trial.showingTargets ? KeyEventResult.handled : KeyEventResult.ignored;
+    return _trial.showingTargets
+        ? KeyEventResult.handled
+        : KeyEventResult.ignored;
   }
 
   @override

@@ -227,7 +227,9 @@ void main() {
     expect(head['y'], 540);
     await runFor(tester, const Duration(seconds: 6));
     expect(find.text(kHeadHintNod), findsOneWidget);
-    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(1));
+    // Новая подсказка — точка уходит спутнику заново: он отбросит первые
+    // полсекунды после неё.
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(2));
     await runFor(tester, const Duration(seconds: 6));
     await tester.pump();
     await tester.pump();
@@ -357,7 +359,7 @@ void main() {
     // BUG-60: фаза движения головы — 1,5 с подсказки и 12 с точки.
     expect(find.text(kHeadIntro), findsOneWidget);
     await runFor(tester, const Duration(seconds: 14));
-    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(1));
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(2));
     expect(find.text('Теперь следите глазами за точкой'), findsOneWidget);
     // Слежение — 20 с, путь уходит спутнику один раз.
     await runFor(tester, const Duration(seconds: 2));
@@ -720,7 +722,7 @@ void main() {
     await tester.tap(find.byKey(const Key('eye-trial-quick')));
     await runFor(tester, const Duration(seconds: 50));
     await settle(tester);
-    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(2));
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(4));
     expect(
       <Object?>[
         for (final Map<String, Object?> c in sent('samples')) c['phase'],

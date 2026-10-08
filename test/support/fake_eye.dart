@@ -339,6 +339,7 @@ class FakeEyeProcess implements EyeProcess {
         cameraOpen = false;
         liveOn = false;
         _fitted = false;
+        _check = null;
         emit(<String, Object?>{
           'reply': 'closed',
           'summary': <String, Object?>{'frames': 1800},
@@ -355,6 +356,7 @@ class FakeEyeProcess implements EyeProcess {
           return;
         }
         _attempt = command['attempt'];
+        _check = null;
         emit(<String, Object?>{
           'reply': 'calibrate',
           'attempt': command['attempt'],

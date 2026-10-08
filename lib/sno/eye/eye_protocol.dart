@@ -618,7 +618,9 @@ class EyeFit {
       points: points is int ? points : 0,
       excluded: _ids(message['excluded']),
       headModel: model is String ? model : null,
-      headPhase: head is Map<String, Object?> ? EyeHeadPhase.fromJson(head) : null,
+      headPhase: head is Map<String, Object?>
+          ? EyeHeadPhase.fromJson(head)
+          : null,
       raw: message,
     );
   }

@@ -39,9 +39,9 @@ def test_sno_alg_eye_01_features_monotonic_in_gaze(axis, idx):
 
 
 def test_sno_alg_eye_01_angles_from_matrix():
-    # Матрица синтетической головы — как у MediaPipe (BUG-60): система
-    # OpenGL, y вверх и z к человеку, поэтому yaw и roll в ней обратны
-    # повороту шаблона, а pitch тот же. Сверено на кадрах владельца.
+    # Матрица синтетической головы — как у MediaPipe (BUG-60): камерная
+    # система OpenGL, y вверх и z к камере, поэтому yaw и roll в ней
+    # обратны повороту шаблона, а pitch тот же. Сверено на кадрах владельца.
     f = feat(yaw=17, pitch=-9, roll=4)
     names = fp.FEATURE_NAMES
     assert f[names.index("yaw")] == pytest.approx(-17, abs=1e-4)
@@ -53,7 +53,7 @@ def test_bug_60_pose_signs_follow_the_landmarks_like_mediapipe():
     # BUG-60: знаки позы — как у настоящей модели на кадрах владельца:
     # yaw растёт — кончик носа уходит вправо по снимку; pitch растёт —
     # вниз; roll растёт — линия уголков глаз поворачивается против часовой
-    # стрелки на снимке (левый на снимке уголок поднимается).
+    # стрелки на снимке (правый на снимке уголок поднимается).
     from sno_eye import synthetic
 
     def nose_and_line(**head):
