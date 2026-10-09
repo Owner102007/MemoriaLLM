@@ -11,6 +11,8 @@ import '../../domain/reading/selection_query.dart';
 import '../../domain/reading/text_search.dart';
 import '../../sno/recording/action_log.dart';
 import '../../sno/recording/event.dart';
+import '../../sno/recording/layout_frames.dart';
+import '../../sno/recording/layout_probe.dart';
 import 'key_bindings.dart';
 import 'outline_panel.dart';
 import 'reader_keys.dart';
@@ -692,7 +694,10 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
           // на экране чтения принадлежит странице.
           drawerEnableOpenDragGesture: false,
           onDrawerChanged: _onOutline,
-          drawer: OutlinePanel(
+          // SNO-F-REC-03: оглавление — зона кадров раскладки записи.
+          drawer: LayoutProbe(
+            kind: LayoutKind.toc,
+            child: OutlinePanel(
             controller: controller,
             onSelect: (int page) async {
               Navigator.of(context).pop();
@@ -704,6 +709,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
               await _goTo(page);
               hideChrome();
             },
+          ),
           ),
           body: LayoutBuilder(
             builder: (BuildContext context, BoxConstraints limits) {
@@ -849,7 +855,11 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
     bool translucent = false,
     bool edged = false,
   }) {
-    return SearchPanel(
+    // SNO-F-REC-03: панель поиска — зона кадров раскладки записи.
+    return LayoutProbe(
+      kind: LayoutKind.searchDock,
+      id: edged ? 'beside' : 'strip',
+      child: SearchPanel(
       key: _searchKey,
       search: widget.search,
       current: _hit,
@@ -865,6 +875,7 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       // курсор стоит в поле, клавиши чтения молчат вовсе, и до нас
       // событие не дошло бы.
       onClose: closeSearch,
+      ),
     );
   }
 }
@@ -907,7 +918,11 @@ class _TopBar extends StatelessWidget {
       child: _ChromeSlide(
         visible: visible,
         fromTop: true,
-        child: Material(
+        // SNO-F-REC-03: панель — зона кадров раскладки, пока видна.
+        child: LayoutProbe(
+          kind: LayoutKind.panelTop,
+          active: visible,
+          child: Material(
           color: theme.colorScheme.surface.withValues(alpha: 0.96),
           child: SafeArea(
             bottom: false,
@@ -949,6 +964,7 @@ class _TopBar extends StatelessWidget {
               ],
             ),
           ),
+        ),
         ),
       ),
     );
@@ -996,7 +1012,11 @@ class _BottomBar extends StatelessWidget {
       child: _ChromeSlide(
         visible: visible,
         fromTop: false,
-        child: Material(
+        // SNO-F-REC-03: панель — зона кадров раскладки, пока видна.
+        child: LayoutProbe(
+          kind: LayoutKind.panelBottom,
+          active: visible,
+          child: Material(
           color: theme.colorScheme.surface.withValues(alpha: 0.96),
           child: SafeArea(
             top: false,
@@ -1051,6 +1071,7 @@ class _BottomBar extends StatelessWidget {
               ),
             ),
           ),
+        ),
         ),
       ),
     );

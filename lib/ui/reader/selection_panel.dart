@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/prompts/selection_prompt.dart';
+import '../../sno/recording/layout_frames.dart';
+import '../../sno/recording/layout_probe.dart';
 
 /// Панель действий над выделением.
 ///
@@ -101,7 +103,11 @@ class SelectionPanel extends StatelessWidget {
     // левого края — на широком окне ПК в полуэкране от выделенного.
     return CustomSingleChildLayout(
       delegate: _PanelPlace(anchor: anchor),
-      child: Material(
+      // SNO-F-REC-03: панель — зона кадров раскладки записи; вне записи
+      // обёртка пустая.
+      child: LayoutProbe(
+        kind: LayoutKind.selectionPanel,
+        child: Material(
         key: const Key('selection-panel'),
         color: theme.colorScheme.surface,
         elevation: 6,
@@ -176,6 +182,7 @@ class SelectionPanel extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }

@@ -11,6 +11,8 @@ import '../clt/load_test.dart';
 import '../hold_button.dart';
 import 'finish_screen.dart';
 import 'input_layer.dart';
+import 'layout_frames.dart';
+import 'layout_probe.dart';
 import 'records.dart';
 import 'session.dart';
 
@@ -53,7 +55,11 @@ const Color kRecordingDotRing = Color(0xFFF5E9E6);
 ///
 /// Здесь же запись узнаёт, что приложение ушло с переднего плана и
 /// вернулось, — и здесь же, пока запись идёт, слушается сырой ввод:
-/// каждое касание, колесо и клавиша (SNO-F-REC-11, `input_layer.dart`).
+/// каждое касание, колесо и клавиша (SNO-F-REC-11, `input_layer.dart`),
+/// — и снимаются кадры раскладки: где лежали страница и зоны поверх
+/// неё (SNO-F-REC-03, `layout_probe.dart`). Доска зон ([LayoutScope])
+/// стоит здесь же, над навигатором: зоны встают на неё с любого экрана
+/// и из любого диалога.
 class RecordingOverlay extends StatefulWidget {
   /// Создаёт слой.
   const RecordingOverlay({
@@ -98,6 +104,18 @@ class _RecordingOverlayState extends State<RecordingOverlay>
 
   /// Размер окна по последнему построению — строкам ввода.
   Size _window = Size.zero;
+
+  /// Плотность пикселей окна — кадрам раскладки.
+  double _dpr = 1;
+
+  /// Доска зон кадров раскладки (SNO-F-REC-03): живёт, пока живёт слой.
+  final LayoutBoard _board = LayoutBoard();
+
+  /// Слой кадров раскладки: есть, только пока запись идёт.
+  LayoutLayer? _layout;
+
+  /// Место слоя в окне: от него меряются зоны.
+  final GlobalKey _root = GlobalKey(debugLabel: 'recording-overlay');
 
   /// Назначена ли уже попытка закрыть приложение после кадра: вторая,
   /// пока ждёт первая, не назначается.
@@ -204,11 +222,28 @@ class _RecordingOverlayState extends State<RecordingOverlay>
       stage: () => _asking ? kInputStopScreen : null,
     );
     layer.attach();
+    // SNO-F-REC-03: кадры раскладки — так же, только во время записи.
+    final LayoutLayer frames = _layout ??= LayoutLayer(
+      session: widget.session,
+      board: _board,
+      root: () {
+        final RenderObject? object = _root.currentContext?.findRenderObject();
+        return object is RenderBox ? object : null;
+      },
+      viewport: () => LayoutViewport(
+        width: _window.width,
+        height: _window.height,
+        dpr: _dpr,
+      ),
+    );
+    frames.attach();
   }
 
   void _dropInput() {
     _input?.detach();
     _input = null;
+    _layout?.detach();
+    _layout = null;
   }
 
   @override
@@ -264,7 +299,12 @@ class _RecordingOverlayState extends State<RecordingOverlay>
       stop = await showDialog<bool>(
         context: host,
         builder: (BuildContext context) {
-          return StopRecordingDialog(session: widget.session);
+          // SNO-F-REC-03: вопрос об остановке — диалог экспериментатора.
+          return LayoutProbe(
+            kind: LayoutKind.dialog,
+            id: 'stop',
+            child: StopRecordingDialog(session: widget.session),
+          );
         },
       );
     } finally {
@@ -282,10 +322,14 @@ class _RecordingOverlayState extends State<RecordingOverlay>
   Widget build(BuildContext context) {
     final RecordingSession session = widget.session;
     _window = MediaQuery.sizeOf(context);
+    _dpr = MediaQuery.devicePixelRatioOf(context);
     final EdgeInsets safe = MediaQuery.paddingOf(context);
     final bool wide =
         navPlacementFor(MediaQuery.sizeOf(context).width) == NavPlacement.top;
-    return Stack(
+    return LayoutScope(
+      board: _board,
+      child: Stack(
+      key: _root,
       fit: StackFit.expand,
       children: <Widget>[
         widget.child,
@@ -296,12 +340,16 @@ class _RecordingOverlayState extends State<RecordingOverlay>
             // не ложится на разделы навигации.
             left: wide ? null : safe.left,
             right: wide ? safe.right : null,
-            child: RecordingDot(
-              key: const Key('sno-recording-dot'),
-              onHeld: () => unawaited(_askStop()),
-              // SNO-F-REC-11: удержание точки — экспериментатор; в
-              // потоке ввода это касание помечено.
-              onClaimed: (int pointer) => _input?.claimedByDot(pointer),
+            // SNO-F-REC-03: точка — зона экспериментатора.
+            child: LayoutProbe(
+              kind: LayoutKind.recordingDot,
+              child: RecordingDot(
+                key: const Key('sno-recording-dot'),
+                onHeld: () => unawaited(_askStop()),
+                // SNO-F-REC-11: удержание точки — экспериментатор; в
+                // потоке ввода это касание помечено.
+                onClaimed: (int pointer) => _input?.claimedByDot(pointer),
+              ),
             ),
           ),
         if (session.phase == RecordingPhase.stopped)
@@ -318,6 +366,7 @@ class _RecordingOverlayState extends State<RecordingOverlay>
             },
           ),
       ],
+      ),
     );
   }
 }

@@ -190,6 +190,10 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   String? _inputCheck;
   bool _inputIntact = true;
 
+  /// То же о потоке кадров раскладки (SNO-F-REC-03).
+  String? _layoutCheck;
+  bool _layoutIntact = true;
+
   /// Завершена ли сессия: экран показывает архив, а не код.
   bool _finished = false;
 
@@ -257,6 +261,9 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
       final JournalCheck? input = session.inputCheck;
       _inputCheck = describeInputCheck(input);
       _inputIntact = input?.intact ?? true;
+      final JournalCheck? layout = session.layoutCheck;
+      _layoutCheck = describeLayoutCheck(layout);
+      _layoutIntact = layout?.intact ?? true;
     }
   }
 
@@ -674,6 +681,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     final String? away = _away;
     final String? check = _check;
     final String? inputCheck = _inputCheck;
+    final String? layoutCheck = _layoutCheck;
     return <Widget>[
       Text(
         'Записано событий: $_events',
@@ -696,6 +704,15 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
             inputCheck,
             key: const Key('sno-finish-input'),
             style: _inputIntact ? small : wrong,
+          ),
+        ),
+      if (layoutCheck != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            layoutCheck,
+            key: const Key('sno-finish-layout'),
+            style: _layoutIntact ? small : wrong,
           ),
         ),
       if (away != null)

@@ -167,7 +167,23 @@ void main() {
         name.replaceAll(RegExp(r'_\d+\.json$'), '_<t>.json'),
       if (kit.store.journals.containsKey(folder)) kEventsFile,
       if (kit.store.inputs.containsKey(folder)) kInputFile,
+      if (kit.store.layouts.containsKey(folder)) kLayoutFile,
     ]..sort();
+    // SNO-F-REC-03: кадры раскладки — поля строк и виды зон, собранные
+    // со всех кадров сценария.
+    final Set<String> frameFields = <String>{};
+    final Set<String> kinds = <String>{};
+    for (final Map<String, Object?> frame in kit.store.layoutLines(folder)) {
+      frameFields.addAll(frame.keys);
+      final Object? regions = frame['regions'];
+      if (regions is List<Object?>) {
+        for (final Object? region in regions) {
+          if (region is Map<String, Object?>) {
+            kinds.add('${region['kind']}');
+          }
+        }
+      }
+    }
     final Map<String, Object?> info = kit.store.json(folder, kRecordingFile);
     final Map<String, Object?> scores = kit.store.json(
       folder,
@@ -182,6 +198,9 @@ void main() {
       'recording.json: recording | ${fieldsOf(info['recording'])} |',
       'recording.json: device | ${fieldsOf(info['device'])} |',
       'recording.json: input | ${fieldsOf(info['input'])} |',
+      'recording.json: layout | ${fieldsOf(info['layout'])} |',
+      'layout.jsonl | ${(frameFields.toList()..sort()).join(',')} | '
+          '${(kinds.toList()..sort()).join(',')}',
       'recording.json: clt | ${fieldsOf(info['clt'])} |',
       'clt/scores.json | ${fieldsOf(scores)} |',
       'clt/scores.json: checks | ${fieldsOf(scores['checks'])} |',

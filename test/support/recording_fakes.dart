@@ -77,6 +77,18 @@ class MemoryRecordingStore implements RecordingStore {
   /// Сколько потоков ввода открыто и ещё не закрыто.
   int openInputs = 0;
 
+  /// Тексты потоков кадров раскладки по папкам (SNO-F-REC-03).
+  final Map<String, StringBuffer> layouts = <String, StringBuffer>{};
+
+  /// Отказывать ли в открытии потока кадров: «файл не завёлся».
+  bool failLayoutOpen = false;
+
+  /// Отказывать ли потоку кадров в записи: «диск отказал».
+  bool failLayoutAppend = false;
+
+  /// Сколько потоков кадров открыто и ещё не закрыто.
+  int openLayouts = 0;
+
   /// Файлы папок: имя → содержимое.
   final Map<String, Map<String, String>> files =
       <String, Map<String, String>>{};
@@ -123,6 +135,17 @@ class MemoryRecordingStore implements RecordingStore {
     String folder, {
     String name = kEventsFile,
   }) async {
+    if (name == kLayoutFile) {
+      if (failLayoutOpen) {
+        throw StateError('поток кадров не открывается');
+      }
+      openLayouts++;
+      return _MemoryJournal(
+        layouts.putIfAbsent(folder, StringBuffer.new),
+        () => openLayouts--,
+        () => failLayoutAppend,
+      );
+    }
     if (name == kInputFile) {
       if (failInputOpen) {
         throw StateError('поток ввода не открывается');
@@ -219,9 +242,11 @@ class MemoryRecordingStore implements RecordingStore {
     if (failBytes) {
       throw StateError('журнал не читается');
     }
-    final StringBuffer? journal = name == kInputFile
-        ? inputs[folder]
-        : journals[folder];
+    final StringBuffer? journal = switch (name) {
+      kInputFile => inputs[folder],
+      kLayoutFile => layouts[folder],
+      _ => journals[folder],
+    };
     return journal == null ? null : utf8.encode(journal.toString());
   }
 
@@ -231,6 +256,17 @@ class MemoryRecordingStore implements RecordingStore {
     files.remove(folder);
     journals.remove(folder);
     inputs.remove(folder);
+    layouts.remove(folder);
+  }
+
+  /// Кадры раскладки папки [folder], разобранные из JSON (SNO-F-REC-03).
+  List<Map<String, Object?>> layoutLines(String folder) {
+    return <Map<String, Object?>>[
+      for (final String line in const LineSplitter().convert(
+        layouts[folder]?.toString() ?? '',
+      ))
+        if (line.isNotEmpty) jsonDecode(line) as Map<String, Object?>,
+    ];
   }
 
   /// Строки потока сырого ввода папки [folder], разобранные из JSON.

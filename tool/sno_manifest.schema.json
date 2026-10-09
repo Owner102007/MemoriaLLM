@@ -112,6 +112,26 @@
         "blind": {"type": "array", "items": {"type": "string"}}
       }
     },
+    "layout": {
+      "description": "Поток кадров раскладки layout.jsonl (SNO-F-REC-03, шаг 30): сколько кадров запись посчитала, итог самопроверки и единицы координат кадров — логические пиксели окна, как у потока ввода.",
+      "type": "object",
+      "required": ["file", "units"],
+      "properties": {
+        "file": {"const": "layout.jsonl"},
+        "lines": {"type": ["integer", "null"], "minimum": 0},
+        "check": {
+          "type": "object",
+          "required": ["lines", "gaps", "torn"],
+          "properties": {
+            "lines": {"type": "integer", "minimum": 0},
+            "gaps": {"type": "integer", "minimum": 0},
+            "torn": {"type": "boolean"},
+            "late": {"const": true}
+          }
+        },
+        "units": {"const": "logical_px"}
+      }
+    },
     "clt": {
       "type": "object",
       "required": ["final"],

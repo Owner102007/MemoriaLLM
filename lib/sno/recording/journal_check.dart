@@ -160,6 +160,21 @@ String describeLineCount(int count) {
   return '$count $word';
 }
 
+/// «кадр» с числом: 1 кадр, 2 кадра, 5 кадров, 21 кадр.
+String describeFrameCount(int count) {
+  final int tens = count % 100;
+  final int ones = count % 10;
+  final String word;
+  if (ones == 1 && tens != 11) {
+    word = 'кадр';
+  } else if (ones >= 2 && ones <= 4 && (tens < 12 || tens > 14)) {
+    word = 'кадра';
+  } else {
+    word = 'кадров';
+  }
+  return '$count $word';
+}
+
 /// Итог самопроверки потока сырого ввода словами — вторая строка
 /// экрана завершения (SNO-F-REC-11): «Ввод цел: 312 строк, пропусков
 /// нет» или «Ввод неполон: …». `null` на входе — потока в записи нет
@@ -178,6 +193,28 @@ String? describeInputCheck(JournalCheck? check) {
     'Ввод неполон: $lines',
     if (check.gaps > 0) 'пропущено строк ${check.gaps}',
     if (check.torn) 'последняя оборвана',
+  ].join(', ');
+}
+
+/// Итог самопроверки потока кадров раскладки словами — третья строка
+/// экрана завершения (SNO-F-REC-03): «Кадры раскладки целы: 96 кадров,
+/// пропусков нет» или «Кадры раскладки неполны: …». `null` на входе —
+/// потока в записи нет (запись прежней сборки) или он не перечитался:
+/// строки нет.
+String? describeLayoutCheck(JournalCheck? check) {
+  if (check == null) {
+    return null;
+  }
+  final String frames = describeFrameCount(check.lines);
+  if (check.intact) {
+    return check.late
+        ? 'Кадры раскладки целы до обрыва записи: $frames, пропусков нет'
+        : 'Кадры раскладки целы: $frames, пропусков нет';
+  }
+  return <String>[
+    'Кадры раскладки неполны: $frames',
+    if (check.gaps > 0) 'пропущено кадров ${check.gaps}',
+    if (check.torn) 'последний оборван',
   ].join(', ');
 }
 

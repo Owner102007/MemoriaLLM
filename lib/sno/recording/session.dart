@@ -41,6 +41,7 @@ import 'event.dart';
 import 'input_tap.dart';
 import 'journal.dart';
 import 'journal_check.dart';
+import 'layout_frames.dart';
 import 'recording_guard.dart';
 import 'store.dart';
 import 'summary.dart';
@@ -179,6 +180,8 @@ class SessionState {
     this.passport = const <String, Object?>{},
     this.inputs,
     this.inputCheck,
+    this.layouts,
+    this.layoutCheck,
   });
 
   /// Идентификатор записи.
@@ -255,6 +258,45 @@ class SessionState {
   /// запись идёт, потока нет или он не перечитался.
   final JournalCheck? inputCheck;
 
+  /// Сколько кадров раскладки запись посчитала (SNO-F-REC-03); `null` —
+  /// запись идёт, потока у неё нет (запись прежней сборки) или она
+  /// оборвалась, и счёт остался в умершем приложении.
+  final int? layouts;
+
+  /// Итог самопроверки потока кадров раскладки после остановки; `null`
+  /// — запись идёт, потока нет или он не перечитался.
+  final JournalCheck? layoutCheck;
+
+  /// То же состояние с итогом потока кадров раскладки (SNO-F-REC-03).
+  SessionState withLayout({
+    required int? lines,
+    required JournalCheck? check,
+  }) {
+    return SessionState(
+      id: id,
+      folder: folder,
+      participant: participant,
+      startedAt: startedAt,
+      plannedSeconds: plannedSeconds,
+      phase: phase,
+      stoppedBy: stoppedBy,
+      durationMs: durationMs,
+      events: events,
+      lastT: lastT,
+      resyncs: resyncs,
+      failed: failed,
+      away: away,
+      blocks: blocks,
+      inBackground: inBackground,
+      check: this.check,
+      passport: passport,
+      inputs: inputs,
+      inputCheck: inputCheck,
+      layouts: lines,
+      layoutCheck: check,
+    );
+  }
+
   /// То же состояние с итогом потока сырого ввода (SNO-F-REC-11).
   SessionState withInput({required int? lines, required JournalCheck? check}) {
     return SessionState(
@@ -277,6 +319,8 @@ class SessionState {
       passport: passport,
       inputs: lines,
       inputCheck: check,
+      layouts: layouts,
+      layoutCheck: layoutCheck,
     );
   }
 
@@ -302,6 +346,8 @@ class SessionState {
       passport: passport,
       inputs: inputs,
       inputCheck: inputCheck,
+      layouts: layouts,
+      layoutCheck: layoutCheck,
     );
   }
 
@@ -327,6 +373,8 @@ class SessionState {
       passport: passport,
       inputs: inputs,
       inputCheck: inputCheck,
+      layouts: layouts,
+      layoutCheck: layoutCheck,
     );
   }
 
@@ -364,6 +412,8 @@ class SessionState {
       passport: passport,
       inputs: inputs,
       inputCheck: inputCheck,
+      layouts: layouts,
+      layoutCheck: layoutCheck,
     );
   }
 
@@ -389,6 +439,8 @@ class SessionState {
       'passport': passport,
       'inputs': inputs,
       'input_check': inputCheck?.toJson(),
+      'layouts': layouts,
+      'layout_check': layoutCheck?.toJson(),
     });
   }
 
@@ -414,6 +466,7 @@ class SessionState {
       final Object? failed = raw['write_failed'];
       final Object? passport = raw['passport'];
       final Object? inputs = raw['inputs'];
+      final Object? layouts = raw['layouts'];
       final ParticipantCode? participant = ParticipantCode.fromJson(
         raw['participant'],
       );
@@ -454,6 +507,8 @@ class SessionState {
             : const <String, Object?>{},
         inputs: inputs is int ? inputs : null,
         inputCheck: JournalCheck.fromJson(raw['input_check']),
+        layouts: layouts is int ? layouts : null,
+        layoutCheck: JournalCheck.fromJson(raw['layout_check']),
       );
     } on FormatException {
       return null;
@@ -645,6 +700,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   EventJournal? _inputJournal;
   InputTracker? _input;
 
+  /// Поток кадров раскладки идущей записи (SNO-F-REC-03): его писатель
+  /// и сборщик; `null` — запись не идёт или поток не открылся.
+  EventJournal? _layoutJournal;
+  LayoutTracker? _layout;
+
   /// Строка ввода, которой участник открыл экран чтения: открытие
   /// книги — ответ на неё, сколько бы книга ни открывалась.
   int? _readerInput;
@@ -769,6 +829,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// Время `t` по часам записи для строки ввода.
   int get inputNow => _tNow();
 
+  /// Сборщик кадров раскладки (SNO-F-REC-03); `null` — запись не идёт,
+  /// и ни один кадр не пишется никуда.
+  ///
+  /// Кадры снимает слой записи (`layout_probe.dart`); время для них —
+  /// [layoutNow].
+  LayoutTracker? get layout => _logging ? _layout : null;
+
+  /// Время `t` по часам записи для кадра раскладки.
+  int get layoutNow => _tNow();
+
   /// Время `t` по часам записи для пары часов взгляда «QPC — `t`»
   /// (SNO-ALG-EYE-03, шаг 5).
   int get eyeNow => _tNow();
@@ -794,6 +864,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// перечитался.
   JournalCheck? get inputCheck => recording ? null : _state?.inputCheck;
 
+  /// Сколько кадров раскладки посчитала остановленная запись; `null` —
+  /// запись идёт, потока нет или счёт неизвестен.
+  int? get layouts => recording ? null : _state?.layouts;
+
+  /// Итог самопроверки потока кадров раскладки остановленной записи
+  /// (SNO-F-REC-03); `null` — запись идёт, потока нет или он не
+  /// перечитался.
+  JournalCheck? get layoutCheck => recording ? null : _state?.layoutCheck;
+
   /// Клавиша, которую Flutter не видит, — кнопка громкости телефона,
   /// перехваченная для листания (SNO-F-REC-11): [name] — её имя в
   /// потоке, [id] отличает одну клавишу от другой.
@@ -815,6 +894,40 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     } else {
       tracker.keyDown(id, t: t, name: name, screen: context.screen);
     }
+  }
+
+  /// Кадр раскладки — в его файл (SNO-F-REC-03): за номером и временем
+  /// — экран, книга, страница, полоса и режим, как у событий журнала.
+  /// Кадр, который не пишется в JSON, не роняет экран: пишется без
+  /// тела, с тем же номером.
+  void _writeLayout(Map<String, Object?> frame) {
+    final EventJournal? journal = _layoutJournal;
+    if (journal == null) {
+      return;
+    }
+    final RecordingContext where = context;
+    final Map<String, Object?> line = <String, Object?>{
+      'n': frame['n'],
+      't': frame['t'],
+      'screen': where.screen,
+      'book': ?where.book,
+      'page': ?where.page,
+      'strip': ?where.strip,
+      'mode': ?where.mode,
+      for (final MapEntry<String, Object?> entry in frame.entries)
+        if (entry.key != 'n' && entry.key != 't') entry.key: entry.value,
+    };
+    String encoded;
+    try {
+      encoded = jsonEncode(line);
+    } on Object {
+      encoded = jsonEncode(<String, Object?>{
+        'n': frame['n'],
+        't': frame['t'],
+        'unencodable': true,
+      });
+    }
+    journal.add(encoded);
   }
 
   /// Строка потока сырого ввода — в его файл. Строка, которая не
@@ -950,10 +1063,19 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       name: kInputFile,
       key: 'n',
     );
+    // SNO-F-REC-03: и поток кадров раскладки.
+    final JournalCheck? layoutCheck = await _checkJournal(
+      state.folder,
+      late: true,
+      name: kLayoutFile,
+      key: 'n',
+    );
     // Оборванной записи нужен журнал целиком: блоки и отлучки остались
     // только в нём.
     _state = await _stoppedByCrash(
-      state.withInput(lines: null, check: inputCheck),
+      state
+          .withInput(lines: null, check: inputCheck)
+          .withLayout(lines: null, check: layoutCheck),
       await _tail(state.folder, count: _wholeJournal),
       check,
     );
@@ -1314,6 +1436,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     } on Object {
       inputJournal = null;
     }
+    // SNO-F-REC-03: кадры раскладки — третьим писателем того же вида.
+    EventJournal? layoutJournal;
+    try {
+      layoutJournal = EventJournal(
+        await _store.openJournal(folder, name: kLayoutFile),
+      );
+    } on Object {
+      layoutJournal = null;
+    }
 
     // SNO-F-REC-13: паспорт — до часов записи: вопрос к устройству в
     // её время не входит.
@@ -1349,11 +1480,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         '${since + 1}',
       );
     } on Object {
-      await _abandon(journal, inputJournal, folder);
+      await _abandon(journal, inputJournal, layoutJournal, folder);
       return false;
     }
     if (_disposed) {
-      await _abandon(journal, inputJournal, folder);
+      await _abandon(journal, inputJournal, layoutJournal, folder);
       return false;
     }
     // Отметка о сессии теперь наша: чья папка — известно.
@@ -1362,8 +1493,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _journal = journal;
     _inputJournal = inputJournal;
     _input = inputJournal == null ? null : InputTracker(_writeInput);
+    _layoutJournal = layoutJournal;
+    _layout = layoutJournal == null ? null : LayoutTracker(_writeLayout);
     _readerInput = null;
-    _failed = inputJournal == null;
+    _failed = inputJournal == null || layoutJournal == null;
     _seq = 0;
     _beats = 0;
     _leftAt = null;
@@ -1623,10 +1756,12 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   Future<void> _abandon(
     EventJournal journal,
     EventJournal? inputJournal,
+    EventJournal? layoutJournal,
     String folder,
   ) async {
     await journal.close();
     await inputJournal?.close();
+    await layoutJournal?.close();
     try {
       await _settings.remove(SnoSettingsKeys.session);
     } on Object {
@@ -1704,6 +1839,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     final JournalCheck? check = state.check;
     final int? inputs = state.inputs;
     final JournalCheck? inputCheck = state.inputCheck;
+    final int? layouts = state.layouts;
+    final JournalCheck? layoutCheck = state.layoutCheck;
     final Map<String, Object?> info = <String, Object?>{
       'schema': kRecordingSchema,
       'branch': branch,
@@ -1751,6 +1888,16 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
           'lines': inputs,
           if (inputCheck != null) 'check': inputCheck.toJson(),
           'blind': kInputBlind,
+        },
+      // SNO-F-REC-03: поток кадров раскладки — сколько кадров запись
+      // посчитала и цел ли он на диске. Координаты кадров — логические
+      // пиксели окна, как у потока ввода.
+      if (!running && (layouts != null || layoutCheck != null))
+        'layout': <String, Object?>{
+          'file': kLayoutFile,
+          'lines': layouts,
+          if (layoutCheck != null) 'check': layoutCheck.toJson(),
+          'units': 'logical_px',
         },
       // SNO-F-CLT-03: пройден ли тест нагрузки и где лежат ответы.
       if (test != null) 'clt': test,
@@ -2202,6 +2349,8 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     // прокрутка, которая кончилась, и путь мыши уходят строками.
     _input?.poll(_tNow());
     unawaited(_inputJournal?.flush());
+    // SNO-F-REC-03: и кадры раскладки.
+    unawaited(_layoutJournal?.flush());
     ticks.value++;
   }
 
@@ -2482,6 +2631,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _input = null;
     _inputJournal = null;
     _readerInput = null;
+    // SNO-F-REC-03: кадр, который ещё не устоялся, дописывается сейчас;
+    // дальше кадры не пишутся.
+    final LayoutTracker? frames = _layout;
+    final EventJournal? layoutJournal = _layoutJournal;
+    frames?.finish();
+    _layout = null;
+    _layoutJournal = null;
     // SNO-F-REC-16: литература закрыта от остановки до завершения
     // сессии — открытую книгу закрывает сама остановка, тем же мигом и
     // раньше своей строки: `book.close`, потом `recording.stop`.
@@ -2547,6 +2703,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (inputJournal?.failed ?? false) {
       _failed = true;
     }
+    // SNO-F-REC-03: и кадры раскладки.
+    await layoutJournal?.close();
+    if (layoutJournal?.failed ?? false) {
+      _failed = true;
+    }
     // Снимок конца — сразу за журналом, пока устройство не трогали
     // (SNO-ALG-REC-03); и до отметки: отказ диска на нём попадёт в неё.
     await _putEndSnapshot(state.folder, late: false);
@@ -2565,11 +2726,21 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
             name: kInputFile,
             key: 'n',
           );
+    // SNO-F-REC-03: и кадры раскладки.
+    final JournalCheck? layoutCheck = frames == null
+        ? null
+        : await _checkJournal(
+            state.folder,
+            expected: frames.count,
+            name: kLayoutFile,
+            key: 'n',
+          );
     // Отказ диска — в отметку сессии: его помнят и после перезапуска.
     final SessionState marked = stopped
         .withFailure(writeFailed)
         .withCheck(check)
-        .withInput(lines: tracker?.count, check: inputCheck);
+        .withInput(lines: tracker?.count, check: inputCheck)
+        .withLayout(lines: frames?.count, check: layoutCheck);
     _state = marked;
     _setChecked(true);
     try {

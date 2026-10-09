@@ -33,6 +33,8 @@ import '../../domain/reading/window_settle.dart';
 import '../../domain/settings/app_settings.dart';
 import '../../sno/recording/action_log.dart';
 import '../../sno/recording/event.dart';
+import '../../sno/recording/layout_frames.dart';
+import '../../sno/recording/layout_probe.dart';
 import '../../sno/recording/thinning.dart';
 import '../annotations/annotations_screen.dart';
 import 'crop_editor_screen.dart';
@@ -1718,7 +1720,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     final String? body = await showDialog<String>(
       context: context,
-      builder: (BuildContext context) => NoteDialog(quote: quoted),
+      // SNO-F-REC-03: модальный диалог — зона во всё окно: под его
+      // затемнением страница не действует.
+      builder: (BuildContext context) => LayoutProbe(
+        kind: LayoutKind.dialog,
+        id: 'note',
+        child: NoteDialog(quote: quoted),
+      ),
     );
     _refreshOnTop();
     if (body == null || !mounted) {
@@ -1912,10 +1920,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final AnnotationTarget? target = await Navigator.of(context)
         .push<AnnotationTarget>(
           MaterialPageRoute<AnnotationTarget>(
-            builder: (BuildContext context) => AnnotationsScreen(
-              book: _book,
-              annotations: widget.services.data.annotations,
-              log: _log,
+            // SNO-F-REC-03: экран целиком — зона кадров раскладки.
+            builder: (BuildContext context) => LayoutProbe(
+              kind: LayoutKind.screen,
+              id: 'annotations',
+              child: AnnotationsScreen(
+                book: _book,
+                annotations: widget.services.data.annotations,
+                log: _log,
+              ),
             ),
           ),
         );
@@ -2064,16 +2077,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext context) {
-        return ReaderSettingsSheet(
-          controller: controller,
-          flow: _flowNow,
-          onFlow: (PageFlow value) => unawaited(_setFlow(value)),
-          onDisplayMode: (PageDisplayMode mode) =>
-              unawaited(_setDisplayMode(mode)),
-          onEditCrop: () {
-            Navigator.of(context).pop();
-            unawaited(_editCrop());
-          },
+        // SNO-F-REC-03: лист настроек — зона кадров раскладки записи.
+        return LayoutProbe(
+          kind: LayoutKind.dialog,
+          id: 'reader_settings',
+          child: ReaderSettingsSheet(
+            controller: controller,
+            flow: _flowNow,
+            onFlow: (PageFlow value) => unawaited(_setFlow(value)),
+            onDisplayMode: (PageDisplayMode mode) =>
+                unawaited(_setDisplayMode(mode)),
+            onEditCrop: () {
+              Navigator.of(context).pop();
+              unawaited(_editCrop());
+            },
+          ),
         );
       },
     );
@@ -2100,12 +2118,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
     final CropBox? box = await Navigator.of(context).push<CropBox>(
       MaterialPageRoute<CropBox>(
-        builder: (BuildContext context) => CropEditorScreen(
-          document: controller.document,
-          pageNumber: controller.page,
-          // Рамка страницы, а не листа: редактор показывает одну
-          // страницу, а в развороте рамка листа записана в его долях.
-          initial: controller.pageContentBox,
+        // SNO-F-REC-03: экран целиком — зона кадров раскладки.
+        builder: (BuildContext context) => LayoutProbe(
+          kind: LayoutKind.screen,
+          id: 'crop_editor',
+          child: CropEditorScreen(
+            document: controller.document,
+            pageNumber: controller.page,
+            // Рамка страницы, а не листа: редактор показывает одну
+            // страницу, а в развороте рамка листа записана в его долях.
+            initial: controller.pageContentBox,
+          ),
         ),
       ),
     );
@@ -2265,15 +2288,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // F-READ-23: подсказка о зонах лежит поверх страницы, но под
         // панелями. Страница при этом стоит в дереве на одном и том же
         // месте, с подсказкой и без неё.
+        //
+        // SNO-F-REC-03: место под страницу — зона кадров раскладки
+        // записи; подсказка о зонах — зона поверх неё.
         return Stack(
           children: <Widget>[
-            Positioned.fill(child: page),
+            Positioned.fill(
+              child: LayoutProbe(
+                kind: LayoutKind.page,
+                id: _flow == PageFlow.continuous ? 'ribbon' : '',
+                child: page,
+              ),
+            ),
             if (_zoneHintOn && _flow == PageFlow.paged)
               Positioned.fill(
-                child: TapZoneHint(
-                  zone: _tapZone,
-                  keyboard: widget.services.window.available,
-                  onDismiss: _dismissZoneHint,
+                child: LayoutProbe(
+                  kind: LayoutKind.dialog,
+                  id: 'tap_zone_hint',
+                  child: TapZoneHint(
+                    zone: _tapZone,
+                    keyboard: widget.services.window.available,
+                    onDismiss: _dismissZoneHint,
+                  ),
                 ),
               ),
           ],
@@ -2418,6 +2454,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
           );
     return Stack(
       children: <Widget>[
+        // SNO-F-REC-03: где лежит лист — кадрам раскладки записи. Ничего
+        // не рисует и нажатий не ловит.
+        Positioned.fill(
+          child: LayoutSheetProbe(
+            geometry: () => _sheetGeometry(view, document, pages),
+          ),
+        ),
         if (others.isNotEmpty)
           Positioned.fill(
             child: HighlightLayer(
@@ -2450,6 +2493,77 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ),
       ],
     );
+  }
+
+  /// Где лежит лист на месте листа — кадрам раскладки записи
+  /// (SNO-F-REC-03, SNO-ALG-REC-02, шаг 2): страницы, масштаб, рамка
+  /// обрезки, читаемая полоса и соседи. `null` — книги нет.
+  SheetGeometry? _sheetGeometry(
+    SheetView view,
+    PdfDocument document,
+    List<int> pages,
+  ) {
+    final ReaderController? controller = _controller;
+    if (controller == null) {
+      return null;
+    }
+    final CropBox content = controller.contentBox;
+    final CropBox strip = controller.fragmentBox;
+    final List<({int page, double width, double height})> sizes =
+        <({int page, double width, double height})>[
+          for (final int number in pages)
+            if (number >= 1 && number <= document.pages.length)
+              (
+                page: number,
+                width: document.pages[number - 1].width,
+                height: document.pages[number - 1].height,
+              ),
+        ];
+    double width = 0;
+    double height = 0;
+    for (final ({int page, double width, double height}) size in sizes) {
+      width += size.width;
+      height = height < size.height ? size.height : height;
+    }
+    // Середина листа на экране: сосед после листа лежит правее или ниже.
+    final Offset middle = view.toScreen(width / 2, height / 2);
+    return sheetGeometry(
+      pages: sizes,
+      scale: view.placement.scale,
+      left: view.placement.left,
+      top: view.placement.top,
+      zoom: view.transform.scale,
+      dx: view.transform.dx,
+      dy: view.transform.dy,
+      content: SheetBox(
+        content.left,
+        content.top,
+        content.right,
+        content.bottom,
+      ),
+      strip: SheetBox(strip.left, strip.top, strip.right, strip.bottom),
+      stripIndex: controller.fragment + 1,
+      strips: controller.fragmentCount,
+      neighbours: <LayoutNeighbour>[
+        for (final NeighbourZone zone in view.neighbours)
+          LayoutNeighbour(
+            after: _afterSheet(zone.rect.center - middle),
+            rect: LayoutRect(
+              zone.rect.left,
+              zone.rect.top,
+              zone.rect.width,
+              zone.rect.height,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Лежит ли сосед со сдвигом [shift] от середины листа после него:
+  /// в ряду — правее, в столбике — ниже. Ось — та, по которой сдвиг
+  /// больше.
+  static bool _afterSheet(Offset shift) {
+    return shift.dx.abs() >= shift.dy.abs() ? shift.dx > 0 : shift.dy > 0;
   }
 
   /// Переводит прямоугольники страницы в прямоугольники экрана.

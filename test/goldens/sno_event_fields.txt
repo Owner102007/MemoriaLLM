@@ -7,7 +7,9 @@
 # файлом в обоих прогонах. Расхождение валит прогон: значит, запись
 # или тест в ветвях стали разными либо изменились в обеих.
 #
-# Строка: «что | поля строки | поля data». Поля — по алфавиту; у вида
+# Строка: «что | поля строки | поля data». У кадров раскладки
+# (layout.jsonl, SNO-F-REC-03) вместо полей data — виды зон, собранные
+# со всех кадров сценария. Поля — по алфавиту; у вида
 # события они собраны со всех его строк в сценарии. События, которые
 # пишет только ветвь II (карта, подготовка книг — kSecondBranchEvents),
 # сюда не входят.
@@ -26,11 +28,13 @@ recording.stop | screen,seq,t,type,wall | duration_ms,stopped_by
 session.finish | phase,screen,seq,t,type,wall |
 session.heartbeat | book,mode,page,screen,seq,strip,t,type,wall | battery,free_mb
 shelf.shown | input,screen,seq,t,type,wall | books,categories,locked,offset,sort
-файлы записи | clt/scenario.json,clt/scores.json,clt/sno-clt-main_B_<t>.json,events.jsonl,input.jsonl,recording.json,snapshot_end.json,snapshot_start.json |
-recording.json | app,branch,clt,device,input,participant,recording,schema |
+файлы записи | clt/scenario.json,clt/scores.json,clt/sno-clt-main_B_<t>.json,events.jsonl,input.jsonl,layout.jsonl,recording.json,snapshot_end.json,snapshot_start.json |
+recording.json | app,branch,clt,device,input,layout,participant,recording,schema |
 recording.json: recording | away,blocks,check,clock_anchor,duration_ms,duration_s,events,finished,id,in_background,planned_s,resyncs,stopped_by,write_failed |
 recording.json: device | code,node_id |
 recording.json: input | blind,check,file,lines |
+recording.json: layout | check,file,lines,units |
+layout.jsonl | book,mode,moving,n,page,regions,screen,strip,t,viewport | page,recording_dot
 recording.json: clt | checks_flags,files,final,final_answers,final_items |
 clt/scores.json | checks,final,participant,rule,scenario,schema,version |
 clt/scores.json: checks | fast_answers,flags,items,longest_same,rule,verdict |

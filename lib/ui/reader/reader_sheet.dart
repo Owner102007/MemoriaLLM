@@ -26,13 +26,21 @@ import 'reading_progress_book.dart';
 /// долях страницы, а рисуются они на экране.
 class SheetView {
   /// Создаёт вид листа.
-  const SheetView({required this.placement, required this.transform});
+  const SheetView({
+    required this.placement,
+    required this.transform,
+    this.neighbours = const <NeighbourZone>[],
+  });
 
   /// Куда положен лист.
   final SheetPlacement placement;
 
   /// Что читатель добавил сам; единичное, когда замок заперт.
   final SheetTransform transform;
+
+  /// Что видно от соседних листов, на экране (F-READ-12, F-READ-13):
+  /// кадрам раскладки записи (SNO-F-REC-03).
+  final List<NeighbourZone> neighbours;
 
   /// Переводит точку листа (в точках PDF) в точку экрана.
   Offset toScreen(double x, double y) {
@@ -784,10 +792,6 @@ class _ReaderSheetState extends State<ReaderSheet> {
             wanted: placement.scale * MediaQuery.devicePixelRatioOf(context),
           );
 
-          final SheetView view = SheetView(
-            placement: placement,
-            transform: _transform,
-          );
           final Rect sheetRect = sheetRectOnScreen(
             placement: placement,
             transform: _transform,
@@ -808,6 +812,11 @@ class _ReaderSheetState extends State<ReaderSheet> {
             width: widget.neighbourShare * limits.maxWidth * _transform.scale,
             hasBefore: widget.pages.first > 1,
             hasAfter: widget.pages.last < widget.document.pages.length,
+          );
+          final SheetView view = SheetView(
+            placement: placement,
+            transform: _transform,
+            neighbours: neighbours,
           );
           final int reserve = widget.preview && !_reserveHeld
               ? widget.reserve

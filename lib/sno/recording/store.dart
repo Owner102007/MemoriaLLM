@@ -18,6 +18,11 @@ const String kEventsFile = 'events.jsonl';
 /// номером `n`.
 const String kInputFile = 'input.jsonl';
 
+/// Имя файла потока кадров раскладки в папке записи (SNO-F-REC-03):
+/// где в каждый миг лежала страница и что было поверх неё — одна
+/// строка JSON на кадр со сквозным номером `n`.
+const String kLayoutFile = 'layout.jsonl';
+
 /// Имя снимка состояния в начале записи.
 const String kSnapshotStartFile = 'snapshot_start.json';
 
@@ -52,7 +57,8 @@ abstract interface class RecordingStore {
   Future<String> create(String wanted);
 
   /// Открывает поток строк [name] записи [folder] на дозапись: журнал
-  /// событий либо поток сырого ввода ([kInputFile], SNO-F-REC-11).
+  /// событий, поток сырого ввода ([kInputFile], SNO-F-REC-11) или поток
+  /// кадров раскладки ([kLayoutFile], SNO-F-REC-03).
   Future<JournalFile> openJournal(String folder, {String name = kEventsFile});
 
   /// Кладёт в папку записи файл [name] целиком. Имя может называть

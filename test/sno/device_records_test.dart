@@ -1128,6 +1128,9 @@ void main() {
         // SNO-F-REC-11: поток сырого ввода лежит в архиве всегда — и
         // пустым, когда экрана не касались.
         kInputFile,
+        // SNO-F-REC-03: и поток кадров раскладки — пустым, когда слоя
+        // записи нет.
+        kLayoutFile,
         kSnapshotEndFile,
         kSnapshotStartFile,
       ]);
