@@ -121,9 +121,8 @@ void main() {
     await kit.settle();
     // Поправка помнится в отметке сессии.
     expect(
-      SessionState.decode(
-        kit.settings.values[SnoSettingsKeys.session],
-      )!.studyFrom,
+      SessionState.decode(kit.settings.values[SnoSettingsKeys.session])!
+          .studyFrom,
       12 * 60 * 1000,
     );
     kit.run(40 * 60 - 1);

@@ -669,8 +669,7 @@ class EyeTracker extends ChangeNotifier {
     }
     final Completer<void> done = Completer<void>();
     void heard() {
-      if ((session.checked.value ||
-              session.phase != RecordingPhase.stopped) &&
+      if ((session.checked.value || session.phase != RecordingPhase.stopped) &&
           !done.isCompleted) {
         done.complete();
       }
