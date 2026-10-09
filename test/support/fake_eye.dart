@@ -150,6 +150,30 @@ class FakeEyeProcess implements EyeProcess {
   /// Включена ли живая точка.
   bool liveOn = false;
 
+  /// Идёт ли поток взгляда записи (`gaze`, SNO-F-REC-04).
+  bool gazeOn = false;
+
+  /// Номер следующей строки потока взгляда, который отвечает `gaze`.
+  int gazeNext = 1;
+
+  /// Ошибка на `gaze`; `null` — поток пошёл.
+  String? gazeError;
+
+  /// Ошибка на `open` с файлом калибровки (`model_missing`); `null` —
+  /// модель поднята.
+  String? restoreError;
+
+  /// Строка сторожа лица (SNO-F-EYE-02).
+  void face({required bool lost, int? t, int ms = 1500}) {
+    final int at = t ?? clock.nowUs();
+    emit(<String, Object?>{
+      'face': lost ? 'lost' : 'back',
+      't': at,
+      if (lost) 'since': at - 1000000,
+      if (!lost) 'ms': ms,
+    });
+  }
+
   /// Открыта ли камера (`open` … `close`).
   bool cameraOpen = false;
 
@@ -360,6 +384,15 @@ class FakeEyeProcess implements EyeProcess {
           });
           return;
         }
+        final String? restore = restoreError;
+        if (command['calibration'] != null && restore != null) {
+          emit(<String, Object?>{
+            'error': restore,
+            'text': 'Файл калибровки не читается',
+            'cmd': 'open',
+          });
+          return;
+        }
         cameraOpen = true;
         final Object? screen = command['screen'];
         _screenKnown =
@@ -370,21 +403,46 @@ class FakeEyeProcess implements EyeProcess {
               'w_mm',
               'h_mm',
             ].every((String k) => screen[k] is num && (screen[k]! as num) > 0);
-        _fitted = false;
+        // Спутник, поднятый заново посреди записи, берёт модель из файла.
+        _fitted = command['calibration'] != null;
         emit(<String, Object?>{
           'reply': 'open',
           'frame': <int>[1920, 1080],
         });
       case 'close':
         _headPhase(on: false);
+        final bool hadGaze = gazeOn;
         cameraOpen = false;
         liveOn = false;
+        gazeOn = false;
         _fitted = false;
         _check = null;
         emit(<String, Object?>{
           'reply': 'closed',
-          'summary': <String, Object?>{'frames': 1800},
+          'summary': <String, Object?>{
+            'frames': 1800,
+            'ok': 1700,
+            if (hadGaze)
+              'gaze': <String, Object?>{
+                'lines': 1800,
+                'ok': 1700,
+                'valid_share': 0.9444,
+              },
+            'files': <String, Object?>{'features.bin': 100},
+          },
         });
+      case 'gaze':
+        final String? error = gazeError;
+        if (command['on'] == true && (error != null || !_fitted)) {
+          emit(<String, Object?>{
+            'error': error ?? 'bad_command',
+            'text': 'Потоку взгляда нужна модель: сначала fit',
+            'cmd': 'gaze',
+          });
+          return;
+        }
+        gazeOn = command['on'] == true;
+        emit(<String, Object?>{'reply': 'gaze', 'on': gazeOn, 'n': gazeNext});
       case 'calibrate':
         if (!cameraOpen || !_screenKnown) {
           emit(<String, Object?>{

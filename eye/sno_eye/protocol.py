@@ -64,8 +64,24 @@
 У сессии с файлами итог калибровки ложится в `calibration.json` её папки
 после `fit`, `validate`, `checked` и `close`, итоги проверок — ещё и в
 `checks.json`. Камера, пропавшая во время записи, —
-ошибка `camera_lost` без ответа на команду; поиск вернувшейся камеры
-придёт с ET-06.
+ошибка `camera_lost` без ответа на команду.
+
+Взгляд всю запись (шаг 32, ET-06; SNO-F-EYE-02, SNO-F-REC-04):
+
+* у `open` необязательный `calibration` — путь к `calibration.json`
+  прежнего сегмента: спутник, поднятый заново посреди записи, берёт ту
+  же модель и пишет взгляд дальше (`seg` — следующий сегмент файлов).
+  Файл не читается или модели в нём нет — ошибка `model_missing`, камера
+  не открывается. Файл калибровки такая сессия не переписывает — только
+  `checks.json`;
+* `gaze {on}` → `{reply: gaze, on, n}` — писать ли `gaze.jsonl` в папку
+  записи: строка на кадр моделью калибровки (`gaze.py`), номер `n`
+  продолжает последнюю целую строку файла. Нужны модель и папка;
+* пока поток идёт, лица нет дольше секунды — строка `{face: lost, t,
+  since}`, вернулось — `{face: back, t, ms}` (QPC кадров);
+* итог сегмента — `summary.json` (у сегмента `k > 0` — `summary.k.json`):
+  кадры, файлы, частота, поток взгляда (`gaze`: строк, годных, доля),
+  калибровка.
 """
 
 from __future__ import annotations
@@ -80,6 +96,7 @@ import time
 from pathlib import Path
 
 from . import PROTOCOL, VERSION, calib, clock, featfile, selfcheck
+from .gaze import FaceWatch, GazeWriter
 from .blink import BLINK_SCORE
 from .capture import MODES, CameraError
 from .landmarks import ModelError
@@ -178,6 +195,9 @@ class Session:
             raise CommandError("bad_command", "нет папки записи")
         seg = _int(cmd, "seg", 0)
         n0 = _int(cmd, "n0", 0)
+        self.seg = seg
+        self.qpc0_us = cmd.get("qpc0_us") if isinstance(cmd.get("qpc0_us"), int) else None
+        self.t0 = cmd.get("t0") if isinstance(cmd.get("t0"), int) else None
         mode = _mode(cmd, rt)
         camera = _camera(cmd)
         self.write = write
@@ -251,7 +271,10 @@ class Session:
         self._recent = [t for t in self._recent if now - t <= 2.0]
         return len(self._recent) / 2.0
 
-    def close(self) -> dict:
+    def close(self, extra: dict | None = None) -> dict:
+        """Останавливает захват, дописывает файлы и кладёт итог сегмента
+        в `summary.json` (сегмент `k > 0` — `summary.k.json`); [extra] —
+        что знает сервер: поток взгляда, калибровка."""
         self._stop.set()
         self._thread.join(timeout=0.6)
         released = self.capture.stop(timeout=0.6)
@@ -264,10 +287,14 @@ class Session:
             summary = {"frames": self.frames, "face": self.face}
         summary.update({"dropped": self.capture.stats.dropped,
                         "lost": self.capture.stats.lost, "dead": self.dead,
-                        "camera_released": released})
+                        "camera_released": released, "seg": self.seg,
+                        "satellite": VERSION})
+        if extra:
+            summary.update(extra)
         if self.dir is not None:
+            name = "summary.json" if self.seg == 0 else f"summary.{self.seg}.json"
             try:
-                (self.dir / "summary.json").write_text(
+                (self.dir / name).write_text(
                     json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
             except OSError:
                 pass
@@ -283,6 +310,10 @@ class Server:
         self.calib: calib.Calibration | None = None
         self.live = False
         self._smoother = calib.Smoother()
+        # Поток взгляда записи (SNO-F-REC-04) и сторож лица при нём.
+        self._gaze: GazeWriter | None = None
+        self._face = FaceWatch()
+        self._gaze_lock = threading.Lock()
         self.cpu = CpuMeter()
         self.abort = threading.Event()
         # Сессией и распознаванием распоряжаются рабочий поток и завершение:
@@ -372,6 +403,8 @@ class Server:
             self._check(cmd)
         elif name == "checked":
             self._checked()
+        elif name == "gaze":
+            self._gaze_cmd(cmd)
         else:
             raise CommandError("bad_command", f"неизвестная команда «{name}»")
 
@@ -419,7 +452,25 @@ class Server:
                     raise CommandError("bad_command", "Запись уже идёт")
                 self._close_session(send=False)
             screen = calib.Screen.from_open(cmd.get("screen"), cmd.get("distance_mm"))
-            self.calib = calib.Calibration(screen, selfcheck.load_thresholds())
+            source = cmd.get("calibration")
+            if source is not None:
+                # Спутник поднят заново посреди записи (SNO-F-EYE-02): та же
+                # модель, что принята в начале, — до камеры: не читается
+                # файл, камера остаётся свободной.
+                if not isinstance(source, str) or not source:
+                    raise CommandError("bad_command", "«calibration» — путь к файлу")
+                try:
+                    data = json.loads(Path(source).read_text(encoding="utf-8"))
+                except (OSError, ValueError) as e:
+                    raise CommandError("model_missing",
+                                       f"Файл калибровки не читается: {e}") from None
+                try:
+                    self.calib = calib.Calibration.restore(
+                        data, screen, selfcheck.load_thresholds())
+                except calib.CalibrationError as e:
+                    raise CommandError(e.code, e.text) from None
+            else:
+                self.calib = calib.Calibration(screen, selfcheck.load_thresholds())
             self.live = False
             self._smoother = calib.Smoother()
             self.rt.observe_screen(screen)
@@ -447,16 +498,22 @@ class Server:
         s = self.session
         self.session = None
         self.live = False
-        summary = s.close() if s is not None else None
         cal = self.calib
+        extra: dict = {}
+        if cal is not None and cal.attempts:
+            last = cal.attempts[-1]
+            extra["calibration"] = {
+                "attempts": len(cal.attempts), "restored": cal.restored,
+                "fit": last.fit, "validation": _brief(last.validation)}
+        # Поток взгляда — до камеры: захват ещё идёт, но строки больше не
+        # пишутся, и итог файла ложится в итог сегмента.
+        gaze = self._stop_gaze()
+        if gaze is not None:
+            extra["gaze"] = gaze
+        summary = s.close(extra) if s is not None else None
         self.calib = None
         if s is not None and cal is not None and cal.attempts:
             self._write_calibration(s, cal)
-            if summary is not None:
-                last = cal.attempts[-1]
-                summary["calibration"] = {
-                    "attempts": len(cal.attempts),
-                    "fit": last.fit, "validation": _brief(last.validation)}
         if s is not None:
             log.info("close %s", summary)
         if self._log_handler is not None:
@@ -480,6 +537,9 @@ class Server:
               and (frame.blink_score is None or frame.blink_score <= BLINK_SCORE))
         qpc = frame.grabbed.qpc_us
         cal.add(qpc, frame.feat, ok)
+        predicted: tuple[float, float] | None = None
+        if self._gaze is not None:
+            predicted = self._gaze_frame(cal, frame, qpc, ok, flags)
         if not flags & featfile.NO_FACE:
             # Фаза движения головы (BUG-61): где голова — приложению на
             # подсказку; моргание позе не мешает.
@@ -493,7 +553,7 @@ class Server:
                                "far": head["far"], "t": qpc}, droppable=True)
         if not self.live:
             return
-        g = cal.predict(frame.feat) if ok else None
+        g = predicted if predicted is not None else (cal.predict(frame.feat) if ok else None)
         if g is None:
             # Моргнул, отвернулся: точка стоит, где стояла, пока не прошло
             # полсекунды, — иначе она мигала бы на каждом моргании (BUG-59).
@@ -507,6 +567,79 @@ class Server:
         self.out.send({"g": [round(g[0], 1), round(g[1], 1)],
                        "s": [round(sx, 1), round(sy, 1)], "ok": True, "t": qpc},
                       droppable=True)
+
+    def _gaze_frame(self, cal: calib.Calibration, frame, qpc: int, ok: bool,
+                    flags: int) -> tuple[float, float] | None:
+        """Строка потока взгляда на кадр и сторож лица (SNO-F-REC-04,
+        SNO-F-EYE-02). Поток распознавания. Отвечает оценкой взгляда —
+        живой точке её не считать второй раз."""
+        g = None
+        try:
+            g = cal.predict(frame.feat) if ok else None
+        except Exception:  # noqa: BLE001 — кадр без оценки лучше обрыва записи
+            log.exception("predict")
+        feat = frame.feat if not flags & featfile.NO_FACE else None
+        dist = None
+        if feat is not None and cal.scale_ref:
+            scale = float(feat[calib.SCALE_IDX])
+            dist = cal.scale_ref / scale if scale > 0 else None
+        failed: str | None = None
+        face = None
+        with self._gaze_lock:
+            writer = self._gaze
+            if writer is None:
+                return g
+            try:
+                writer.add(qpc, g, ok, feat=feat, blink=frame.blink_score, dist=dist)
+                face = self._face.push(qpc, frame.px is not None)
+            except OSError as e:
+                self._gaze = None
+                failed = str(e)
+                try:
+                    writer.close()
+                except OSError:
+                    pass
+        if failed is not None:
+            self._error("disk", f"Поток взгляда остановился: {failed}", "gaze")
+        elif face is not None:
+            self.out.send(face)
+        return g
+
+    def _gaze_cmd(self, cmd: dict) -> None:
+        """`gaze {on}` — писать ли поток взгляда записи (SNO-F-REC-04)."""
+        on = cmd.get("on")
+        if not isinstance(on, bool):
+            raise CommandError("bad_command", "«on» — true или false")
+        if not on:
+            stats = self._stop_gaze()
+            self.out.send({"reply": "gaze", "on": False,
+                           "n": stats["last_n"] + 1 if stats and stats["last_n"] is not None
+                           else None})
+            return
+        cal = self._calibration()
+        s = self.session
+        if cal.model is None:
+            raise CommandError("bad_command", "Потоку взгляда нужна модель: сначала fit")
+        if s is None or s.dir is None:
+            raise CommandError("bad_command", "Потоку взгляда нужна папка записи")
+        with self._gaze_lock:
+            if self._gaze is None:
+                self._gaze = GazeWriter(s.dir, s.seg, s.qpc0_us, s.t0)
+                self._face = FaceWatch()
+            n = self._gaze.n
+        self.out.send({"reply": "gaze", "on": True, "n": n})
+
+    def _stop_gaze(self) -> dict | None:
+        with self._gaze_lock:
+            writer = self._gaze
+            self._gaze = None
+        if writer is None:
+            return None
+        try:
+            return writer.close()
+        except OSError as e:
+            log.info("gaze close: %s", e)
+            return None
 
     def _calibration(self) -> calib.Calibration:
         with self.lock:
@@ -605,8 +738,11 @@ class Server:
         if s is None or s.dir is None:
             return
         try:
-            (s.dir / "calibration.json").write_text(
-                json.dumps(cal.to_json(), ensure_ascii=False), encoding="utf-8")
+            # Поднятая из файла калибровка его не переписывает: в нём
+            # точки и выборки первого сегмента, которых у неё нет.
+            if not cal.restored:
+                (s.dir / "calibration.json").write_text(
+                    json.dumps(cal.to_json(), ensure_ascii=False), encoding="utf-8")
             if cal.checks:
                 (s.dir / "checks.json").write_text(json.dumps(
                     [c.result for c in cal.checks if c.result is not None],

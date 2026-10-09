@@ -1,13 +1,26 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/sno/eye/eye_calibration.dart';
 import 'package:memoria/sno/eye/eye_link.dart';
+import 'package:memoria/sno/eye/eye_place.dart';
 import 'package:memoria/sno/eye/eye_process.dart';
 import 'package:memoria/sno/eye/eye_protocol.dart';
+import 'package:memoria/sno/eye/eye_recording.dart';
 import 'package:memoria/sno/eye/eye_timing.dart';
+import 'package:memoria/sno/eye/eye_tracker.dart';
 import 'package:memoria/sno/eye/qpc_clock.dart';
+import 'package:memoria/sno/participant_code.dart';
+import 'package:memoria/sno/recording/archive.dart';
+import 'package:memoria/sno/recording/file_store.dart';
+import 'package:memoria/sno/recording/session.dart';
+import 'package:memoria/sno/settings_keys.dart';
+
+import '../support/fake_eye.dart';
+import '../support/recording_fakes.dart';
 
 /// SNO-ALG-EYE-03, SNO-F-EYE-04: связь приложения с настоящим спутником
 /// на Windows.
@@ -268,6 +281,265 @@ void main() {
     },
     skip: skip,
     timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'SNO-F-REC-04, SNO-F-EYE-02: поток взгляда на синтетическом участнике — '
+    'строки по часам записи, перезапуск той же моделью в следующий '
+    'сегмент, итоги сегментов',
+    () async {
+      final QpcClock qpc = WindowsQpcClock.open()!;
+      final String sep = Platform.pathSeparator;
+      final String folder = '${temp.path}${sep}Записи$sep.current${sep}запись${sep}eye';
+      const EyeScreen screen = EyeScreen(
+        width: 1920,
+        height: 1080,
+        widthMm: 527,
+        heightMm: 296,
+      );
+      final int qpc0 = qpc.nowUs();
+      final (EyeLink link, _) = await started(
+        qpc,
+        extra: const <String>['--source', 'synthetic:follow'],
+      );
+      await link.open(
+        screen: screen,
+        distanceMm: 600,
+        dir: folder,
+        seg: 0,
+        qpc0Us: qpc0,
+        t0: 0,
+      );
+      await link.calibrate(attempt: 1, kind: 'quick');
+      for (int i = 0; i < kValidationPoints.length; i++) {
+        final (double fx, double fy) = kValidationPoints[i];
+        link.target(
+          phase: 'calib',
+          qpcUs: qpc.nowUs(),
+          id: 'q$i',
+          x: fx * 1920,
+          y: fy * 1080,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 1300));
+      }
+      link.target(phase: 'off', qpcUs: qpc.nowUs());
+      await link.fit();
+      final List<EyeFace> faces = <EyeFace>[];
+      link.onFace = faces.add;
+      expect(await link.gaze(on: true), 1);
+      await Future<void>.delayed(const Duration(seconds: 3));
+      final Map<String, Object?>? first = await link.closeCamera();
+      await link.close();
+      final Map<String, Object?> gaze1 = first!['gaze']! as Map<String, Object?>;
+      final int lines1 = gaze1['lines']! as int;
+      stdout.writeln(
+        'ЗАМЕР SNO-F-REC-04 | поток взгляда | строк за 3 с: $lines1 | '
+        'годных ${gaze1['valid_share']}',
+      );
+      expect(lines1, greaterThanOrEqualTo(60));
+
+      // Спутник поднят заново: модель из файла, следующий сегмент.
+      final (EyeLink again, _) = await started(
+        qpc,
+        extra: const <String>['--source', 'synthetic:follow'],
+      );
+      await again.open(
+        screen: screen,
+        distanceMm: 600,
+        dir: folder,
+        seg: 1,
+        qpc0Us: qpc0,
+        t0: 0,
+        calibration: '$folder${sep}calibration.json',
+      );
+      expect(await again.gaze(on: true), lines1 + 1);
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await again.closeCamera();
+      await again.close();
+
+      final List<Map<String, Object?>> rows = <Map<String, Object?>>[
+        for (final String line in File(
+          '$folder${sep}gaze.jsonl',
+        ).readAsLinesSync())
+          if (line.isNotEmpty) jsonDecode(line) as Map<String, Object?>,
+      ];
+      expect(
+        rows.map((Map<String, Object?> r) => r['n']),
+        List<int>.generate(rows.length, (int i) => i + 1),
+      );
+      expect(rows.map((Map<String, Object?> r) => r['seg']).toSet(), <int>{0, 1});
+      final List<int> times = <int>[
+        for (final Map<String, Object?> r in rows) r['t']! as int,
+      ];
+      expect(times, orderedEquals(List<int>.of(times)..sort()));
+      for (final String name in <String>[
+        'features.bin',
+        'features.1.bin',
+        'eyes.mp4',
+        'eyes.1.mp4',
+        'summary.json',
+        'summary.1.json',
+        'calibration.json',
+      ]) {
+        expect(File('$folder$sep$name').existsSync(), isTrue, reason: name);
+      }
+    },
+    skip: skip,
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'SNO-F-EYE-01, SNO-F-EYE-02, SNO-F-EYE-06: запись с настоящим '
+    'спутником на синтетическом участнике — калибровка внутри записи, '
+    'изучение со взглядом, проверка в конце, файлы eye/ в архиве',
+    () async {
+      final QpcClock qpc = WindowsQpcClock.open()!;
+      final String sep = Platform.pathSeparator;
+      final Directory records = Directory('${temp.path}${sep}Записи');
+      final MemorySettings settings = MemorySettings();
+      final RecordingSession session = RecordingSession(
+        settings: settings,
+        store: FileRecordingStore(() async => records),
+        nodeId: kTestNode,
+        snapshot: () async => <String, Object?>{'schema': 'sno2026-snapshot/1'},
+        branch: 'I',
+        device: 'a91f3c',
+      );
+      await settings.write(
+        SnoSettingsKeys.eyePlace,
+        EyePlace(
+          camera: const EyeCamera(index: 0, name: 'Синтетическая камера'),
+          monitor: r'\\.\DISPLAY1',
+          monitorName: 'CI',
+          widthPx: 1920,
+          heightPx: 1080,
+          pxPerMm: 1920 / 527,
+          sizeSource: ScreenSizeSource.card,
+          distanceMm: 600,
+          verdict: EyeVerdict.good,
+          checkedAt: DateTime.utc(2026, 10, 9, 12),
+          mode: const <int>[1280, 720],
+          fps: 30,
+        ).encode(),
+      );
+      final FakeEyeWindow window = FakeEyeWindow();
+      final EyeTracker eye = EyeTracker(
+        settings: settings,
+        launch: launcher(extra: const <String>['--source', 'synthetic:follow']),
+        qpc: qpc,
+        window: window,
+      )..attach(session);
+
+      Future<void> waitFor(bool Function() done, Duration limit) async {
+        final Stopwatch watch = Stopwatch()..start();
+        while (!done() && watch.elapsed < limit) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(done(), isTrue, reason: 'не дождались за $limit');
+      }
+
+      final Stopwatch total = Stopwatch()..start();
+      expect(
+        await session.start(
+          ParticipantCode(
+            code: kTestCode,
+            generated: true,
+            generatedAt: DateTime.fromMillisecondsSinceEpoch(kTestMoment),
+          ),
+        ),
+        isTrue,
+      );
+      await waitFor(
+        () => eye.recording.value != null,
+        const Duration(seconds: 60),
+      );
+      // Экрана в этом тесте нет: окно и миг показа точки называет тест.
+      final EyeRecordingView view = eye.recording.value!
+        ..windowSize = () => const Size(1920, 1080)
+        ..frameShown = () async => qpc.nowUs();
+      await waitFor(
+        () => view.phase == EyeRecordingPhase.result,
+        const Duration(minutes: 3),
+      );
+      final int calibrationMs = total.elapsedMilliseconds;
+      final double? accuracy = view.outcome?.validation?.accuracyDeg;
+      stdout.writeln(
+        'ЗАМЕР SNO-F-EYE-01 | калибровка внутри записи на синтетике | '
+        '${calibrationMs ~/ 1000} с | точность $accuracy° | '
+        'принята ${view.outcome?.validation?.accepted}',
+      );
+      if (view.outcome?.validation?.accepted ?? false) {
+        await view.begin();
+      } else {
+        await view.choose(write: true);
+      }
+      await waitFor(() => !session.studyPending, const Duration(seconds: 20));
+      expect(eye.info.present, isTrue);
+      await Future<void>.delayed(const Duration(seconds: 3));
+      await session.stop(StopReason.experimenter);
+      await waitFor(
+        () => eye.recording.value == null,
+        const Duration(seconds: 90),
+      );
+      final String folder = session.state!.folder;
+      final String eyeDir = (await session.folderPath(kEyeFolder))!;
+      final List<String> lines = File(
+        '$eyeDir${sep}gaze.jsonl',
+      ).readAsLinesSync();
+      stdout.writeln(
+        'ЗАМЕР SNO-F-EYE-02 | запись со взглядом на синтетике | строк '
+        '${lines.length} | годных ${eye.info.validShare} | в конце '
+        '${eye.info.endCheck?['accuracy_deg']}°',
+      );
+      expect(lines.length, greaterThanOrEqualTo(60));
+      expect(eye.info.check?.intact, isTrue);
+      expect(eye.info.endCheck?['accuracy_deg'], isA<double>());
+      for (final String name in <String>[
+        'features.bin',
+        'eyes.mp4',
+        'calibration.json',
+        'selfcheck.json',
+        'summary.json',
+      ]) {
+        expect(File('$eyeDir$sep$name').existsSync(), isTrue, reason: name);
+      }
+      expect(window.locked, isFalse);
+
+      await session.finish();
+      final Stopwatch packing = Stopwatch()..start();
+      final File archive = await packRecording(
+        Directory('${records.path}$sep$folder'),
+      );
+      stdout.writeln(
+        'ЗАМЕР SNO-F-REC-04 | архив записи со взглядом | '
+        '${archive.lengthSync() ~/ 1024} КБ | упаковка '
+        '${packing.elapsedMilliseconds} мс',
+      );
+      final ArchiveCheck check = await checkArchive(archive);
+      expect(check.intact, isTrue);
+      final Map<String, Object?> manifest = check.manifest!;
+      final Map<String, Object?> block =
+          manifest['eye_tracker']! as Map<String, Object?>;
+      expect(block['present'], isTrue);
+      expect(block['file'], 'eye/gaze.jsonl');
+      final Map<String, Object?> files =
+          manifest['files']! as Map<String, Object?>;
+      expect(files.keys, containsAll(<String>[
+        'eye/gaze.jsonl',
+        'eye/features.bin',
+        'eye/eyes.mp4',
+        'eye/calibration.json',
+      ]));
+      expect(
+        (files['eye/gaze.jsonl']! as Map<String, Object?>)['lines'],
+        lines.length,
+      );
+      eye.dispose();
+      session.dispose();
+      await window.dispose();
+    },
+    skip: skip,
+    timeout: const Timeout(Duration(minutes: 6)),
   );
 
   test(

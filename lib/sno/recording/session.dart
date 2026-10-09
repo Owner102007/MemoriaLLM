@@ -49,6 +49,11 @@ import 'summary.dart';
 /// Сколько длится запись.
 const Duration kRecordingLength = Duration(minutes: 40);
 
+/// Сколько изучение может ждать калибровки взгляда (SNO-F-EYE-01):
+/// калибровка, которая так и не кончилась, не держит запись без конца —
+/// изучение начинается само, а взгляд не пишется.
+const Duration kStudyHoldLimit = Duration(minutes: 15);
+
 /// Как часто пишется сердцебиение, в тиках записи (тик — секунда).
 const int kHeartbeatTicks = 10;
 
@@ -182,6 +187,8 @@ class SessionState {
     this.inputCheck,
     this.layouts,
     this.layoutCheck,
+    this.studyHeld = false,
+    this.studyT,
   });
 
   /// Идентификатор записи.
@@ -267,6 +274,48 @@ class SessionState {
   /// — запись идёт, потока нет или он не перечитался.
   final JournalCheck? layoutCheck;
 
+  /// Ждёт ли изучение своего начала (SNO-F-EYE-01): перед ним идёт
+  /// калибровка взгляда, и сорок минут считаются от `study.start`, а не
+  /// от старта записи. `false` — изучение началось вместе с записью.
+  final bool studyHeld;
+
+  /// Когда началось изучение, по часам записи (`t` строки
+  /// `study.start`); `null` — не началось или не ждало ([studyHeld]).
+  final int? studyT;
+
+  /// С какого мига записи идут сорок минут: начало изучения, у записи
+  /// без калибровки — ноль. `null` — изучение ещё ждёт калибровки.
+  int? get studyFrom => studyHeld ? studyT : 0;
+
+  /// То же состояние с началом изучения в миг [t] (SNO-F-EYE-01).
+  SessionState withStudy(int t) {
+    return SessionState(
+      id: id,
+      folder: folder,
+      participant: participant,
+      startedAt: startedAt,
+      plannedSeconds: plannedSeconds,
+      phase: phase,
+      stoppedBy: stoppedBy,
+      durationMs: durationMs,
+      events: events,
+      lastT: lastT,
+      resyncs: resyncs,
+      failed: failed,
+      away: away,
+      blocks: blocks,
+      inBackground: inBackground,
+      check: check,
+      passport: passport,
+      inputs: inputs,
+      inputCheck: inputCheck,
+      layouts: layouts,
+      layoutCheck: layoutCheck,
+      studyHeld: studyHeld,
+      studyT: t,
+    );
+  }
+
   /// То же состояние с итогом потока кадров раскладки (SNO-F-REC-03).
   SessionState withLayout({required int? lines, required JournalCheck? check}) {
     return SessionState(
@@ -291,6 +340,8 @@ class SessionState {
       inputCheck: inputCheck,
       layouts: lines,
       layoutCheck: check,
+      studyHeld: studyHeld,
+      studyT: studyT,
     );
   }
 
@@ -318,6 +369,8 @@ class SessionState {
       inputCheck: check,
       layouts: layouts,
       layoutCheck: layoutCheck,
+      studyHeld: studyHeld,
+      studyT: studyT,
     );
   }
 
@@ -345,6 +398,8 @@ class SessionState {
       inputCheck: inputCheck,
       layouts: layouts,
       layoutCheck: layoutCheck,
+      studyHeld: studyHeld,
+      studyT: studyT,
     );
   }
 
@@ -372,6 +427,8 @@ class SessionState {
       inputCheck: inputCheck,
       layouts: layouts,
       layoutCheck: layoutCheck,
+      studyHeld: studyHeld,
+      studyT: studyT,
     );
   }
 
@@ -411,6 +468,8 @@ class SessionState {
       inputCheck: inputCheck,
       layouts: layouts,
       layoutCheck: layoutCheck,
+      studyHeld: studyHeld,
+      studyT: studyT,
     );
   }
 
@@ -438,6 +497,8 @@ class SessionState {
       'input_check': inputCheck?.toJson(),
       'layouts': layouts,
       'layout_check': layoutCheck?.toJson(),
+      'study_held': studyHeld,
+      'study_t': studyT,
     });
   }
 
@@ -464,6 +525,7 @@ class SessionState {
       final Object? passport = raw['passport'];
       final Object? inputs = raw['inputs'];
       final Object? layouts = raw['layouts'];
+      final Object? studyT = raw['study_t'];
       final ParticipantCode? participant = ParticipantCode.fromJson(
         raw['participant'],
       );
@@ -506,6 +568,8 @@ class SessionState {
         inputCheck: JournalCheck.fromJson(raw['input_check']),
         layouts: layouts is int ? layouts : null,
         layoutCheck: JournalCheck.fromJson(raw['layout_check']),
+        studyHeld: raw['study_held'] == true,
+        studyT: studyT is int ? studyT : null,
       );
     } on FormatException {
       return null;
@@ -671,6 +735,17 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// он. Книгу, открытую в миг остановки записи, закрывает сама запись
   /// (SNO-F-REC-16) — и берёт их отсюда, чтобы строка вышла той же.
   final Map<String, Object?> Function()? closingFacts;
+
+  /// Ждёт ли изучение калибровки взгляда (SNO-F-EYE-01): ставит
+  /// айтрекер сборки ветви на ПК, когда подключается к записи. Тогда
+  /// сорок минут идут не от старта записи, а от [beginStudy]; без
+  /// айтрекера (телефон, тесты) изучение начинается вместе с записью.
+  bool holdStudy = false;
+
+  /// Что ждёт завершение сессии, прежде чем подвести итог и перенести
+  /// папку записи (SNO-F-EYE-06: спутник дописывает файлы взгляда).
+  final List<Future<void> Function()> _finishHooks =
+      <Future<void> Function()>[];
 
   /// Где участник находится: подставляется в каждое событие.
   final RecordingContext context = RecordingContext();
@@ -951,7 +1026,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
   /// Не удалось ли записать что-то на диск.
   bool get writeFailed => _failed || (_journal?.failed ?? false);
 
-  /// Сколько запись идёт или шла, в миллисекундах.
+  /// Сколько изучение идёт или шло, в миллисекундах: сорок минут
+  /// записи считаются от его начала (SNO-F-EYE-01). Пока изучение ждёт
+  /// калибровки — ноль.
   int get elapsedMs {
     final SessionState? state = _state;
     if (state == null) {
@@ -959,11 +1036,49 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     }
     final int? done = state.durationMs;
     if (done != null) {
-      return done;
+      final int study = done - (state.studyFrom ?? done);
+      return study < 0 ? 0 : study;
+    }
+    final int? from = state.studyFrom;
+    if (from == null) {
+      return 0;
     }
     final int limit = _planned.inMilliseconds;
-    final int passed = _passedMs(state);
-    return passed > limit ? limit : passed;
+    final int passed = _passedMs(state) - from;
+    return passed > limit ? limit : (passed < 0 ? 0 : passed);
+  }
+
+  /// Ждёт ли изучение калибровки взгляда (SNO-F-EYE-01).
+  bool get studyPending {
+    final SessionState? state = _state;
+    return recording && state != null && state.studyFrom == null;
+  }
+
+  /// Начинает изучение: строка `study.start` с данными [data], и сорок
+  /// минут идут от этого мига (SNO-F-EYE-01). Отвечает, началось ли:
+  /// не идёт запись или изучение уже идёт — нет.
+  bool beginStudy(Map<String, Object?> data) {
+    final SessionState? state = _state;
+    if (!_logging || state == null || state.studyFrom != null) {
+      return false;
+    }
+    final int t = _tNow();
+    _write(SnoEventType.studyStart, at: t, data: data);
+    final SessionState started = state.withStudy(t);
+    _state = started;
+    unawaited(_saveState(started));
+    _notify();
+    return true;
+  }
+
+  /// Записывает отметку сессии; не легла — после перезапуска начало
+  /// изучения найдётся в журнале.
+  Future<void> _saveState(SessionState state) async {
+    try {
+      await _settings.write(SnoSettingsKeys.session, state.encode());
+    } on Object {
+      // См. выше.
+    }
   }
 
   /// Сколько записи осталось, в миллисекундах.
@@ -1179,7 +1294,19 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     List<EventMarks> tail,
     JournalCheck? check,
   ) async {
-    final int limit = state.plannedSeconds * 1000;
+    // SNO-F-EYE-01: сорок минут — от начала изучения; его миг знает
+    // отметка сессии, а если она отстала — журнал.
+    int? studyT = state.studyT;
+    for (final EventMarks event in tail) {
+      if (event.type == SnoEventType.studyStart.wire) {
+        studyT ??= event.t;
+      }
+    }
+    if (studyT != null && state.studyT == null) {
+      state = state.withStudy(studyT);
+    }
+    final int limit =
+        (state.studyHeld ? (studyT ?? 0) : 0) + state.plannedSeconds * 1000;
     int clip(int value) => value < 0 ? 0 : (value > limit ? limit : value);
 
     final EventMarks? last = tail.isEmpty ? null : tail.last;
@@ -1456,6 +1583,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
       plannedSeconds: _planned.inSeconds,
       phase: RecordingPhase.recording,
       passport: passport,
+      studyHeld: holdStudy,
     );
     try {
       // Код — раньше отметки о сессии: отказ на нём не оставит сессии,
@@ -1875,6 +2003,9 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
               ],
         // SNO-F-REC-13: итог самопроверки журнала после остановки.
         if (!running && check != null) 'check': check.toJson(),
+        // SNO-F-EYE-01: у записи с калибровкой взгляда — когда началось
+        // изучение (`null` — не началось).
+        if (state.studyHeld) 'study_t': state.studyT,
       },
       // SNO-F-REC-11: поток сырого ввода — сколько строк запись
       // посчитала, цел ли он на диске и чего он не видит: разбор не
@@ -2065,6 +2196,17 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     SnoEventType.eyeRestart,
     SnoEventType.eyeGaveUp,
     SnoEventType.eyeWindow,
+    // SNO-F-EYE-01, SNO-F-EYE-02: калибровка и поток взгляда тоже.
+    SnoEventType.eyeCheck,
+    SnoEventType.eyeCalibrationStart,
+    SnoEventType.eyeTarget,
+    SnoEventType.eyeCalibrationResult,
+    SnoEventType.eyeGaze,
+    SnoEventType.eyeFaceLost,
+    SnoEventType.eyeFaceBack,
+    SnoEventType.eyeEndcheckStart,
+    SnoEventType.eyeEndcheckResult,
+    SnoEventType.eyeClosed,
   };
 
   /// Строка журнала с номером и временем; без открытого журнала не
@@ -2184,6 +2326,100 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     }
     _write(type, data: data, post: true);
     await _journal?.flush();
+  }
+
+  /// Событие после остановки записи — проверка точности взгляда в конце
+  /// и закрытие спутника (SNO-F-EYE-06): строка с пометкой `post`,
+  /// на диск сразу, как у теста нагрузки.
+  Future<void> logAfter(
+    SnoEventType type, {
+    Map<String, Object?> data = const <String, Object?>{},
+  }) {
+    return logTest(type, data: data);
+  }
+
+  /// Подключает к завершению сессии то, что оно обязано дождаться
+  /// (SNO-F-EYE-06): спутник взгляда дописывает свои файлы в папку
+  /// записи, а завершение переносит её и подводит итог.
+  void addFinishHook(Future<void> Function() hook) {
+    _finishHooks.add(hook);
+  }
+
+  /// Путь подпапки [sub] папки записи на диске — спутнику взгляда,
+  /// который пишет в неё сам (SNO-F-REC-04); `null` — записи нет или
+  /// хранилище не на диске.
+  Future<String?> folderPath(String sub) async {
+    final SessionState? state = _state;
+    if (state == null) {
+      return null;
+    }
+    try {
+      return await _store.pathOf(state.folder, sub);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Убирает подпапку [sub] папки записи (SNO-F-EYE-01: «Без взгляда» —
+  /// в архиве подпапки `eye/` нет). Отвечает, убрана ли.
+  Future<bool> dropFolder(String sub) async {
+    final SessionState? state = _state;
+    if (state == null) {
+      return false;
+    }
+    try {
+      await _store.removeSub(state.folder, sub);
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Перечитывает поток строк [name] папки записи с диска и сверяет его
+  /// сам с собой по полю [key] (SNO-F-REC-04: поток взгляда); `null` —
+  /// потока нет или он не прочитался. [late] — запись оборвалась.
+  Future<JournalCheck?> checkStream(
+    String name, {
+    String key = 'n',
+    int? expected,
+    bool late = false,
+  }) async {
+    final SessionState? state = _state;
+    if (state == null) {
+      return null;
+    }
+    return _checkJournal(
+      state.folder,
+      expected: expected,
+      late: late,
+      name: name,
+      key: key,
+    );
+  }
+
+  /// Байты потока строк [name] папки записи; `null` — его нет или он
+  /// не прочитался.
+  Future<List<int>?> streamBytes(String name) async {
+    final SessionState? state = _state;
+    if (state == null) {
+      return null;
+    }
+    try {
+      return await _store.journalBytes(state.folder, name: name);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Части сведений записи изменились (SNO-F-EYE-06: итог взгляда):
+  /// экран завершения перечитывает их.
+  void infoChanged() => _notify();
+
+  /// Часть сведений записи [key] сейчас — экрану завершения; `null` —
+  /// её нет.
+  Object? infoPartNow(String key) {
+    final Object? Function()? part = _infoParts[key];
+    return part == null ? null : _infoPart(part);
   }
 
   /// Кладёт файл теста нагрузки [name] в папку записи (SNO-F-CLT-03).
@@ -2311,7 +2547,17 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (state == null || _clock == null) {
       return false;
     }
-    return _passedMs(state) >= _planned.inMilliseconds;
+    final int? from = state.studyFrom;
+    return from != null && _passedMs(state) >= from + _planned.inMilliseconds;
+  }
+
+  /// Изучение ждёт калибровки дольше [kStudyHoldLimit].
+  bool get _heldTooLong {
+    final SessionState? state = _state;
+    return state != null &&
+        _clock != null &&
+        state.studyFrom == null &&
+        _passedMs(state) >= kStudyHoldLimit.inMilliseconds;
   }
 
   /// Секунда записи: сброс журнала на диск, сердцебиение, конец
@@ -2325,6 +2571,12 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     if (_due) {
       unawaited(stop(StopReason.auto));
       return;
+    }
+    if (_heldTooLong) {
+      // SNO-F-EYE-01: калибровка не кончилась за разумное время —
+      // изучение начинается само; айтрекер узнаёт об этом и закрывает
+      // калибровку без взгляда.
+      beginStudy(const <String, Object?>{'gaze': false, 'by': 'limit'});
     }
     _beats++;
     if (_beats % kHeartbeatTicks == 0) {
@@ -2612,8 +2864,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     _stopTicker?.call();
     _stopTicker = null;
     final RecordingClock? clock = _clock;
-    final int limit = _planned.inMilliseconds;
     final int passed = _passedMs(state);
+    // SNO-F-EYE-01: сорок минут — от начала изучения; запись,
+    // остановленную до него (во время калибровки), ничто не ограничивает.
+    final int limit = (state.studyFrom ?? passed) + _planned.inMilliseconds;
     // Запись, которая кончилась сама, длилась ровно сколько положено,
     // даже если приложение узнало об этом позже.
     final int duration = by == StopReason.auto || passed > limit
@@ -2665,6 +2919,10 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         'duration_ms': duration,
         if (passed > limit) 'late_ms': passed - limit,
         if (inBackground) 'in_background': true,
+        // SNO-F-EYE-01: у записи с калибровкой — сколько длилось само
+        // изучение.
+        if (state.studyHeld)
+          'study_ms': state.studyT == null ? 0 : duration - state.studyT!,
       },
     );
     final SessionState stopped = state.stopped(
@@ -2780,6 +3038,15 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     final Future<void>? stopping = _stopRun;
     if (stopping != null) {
       await stopping;
+    }
+    // SNO-F-EYE-06: спутник взгляда дописывает свои файлы — папку
+    // записи переносят и подводят итог после него.
+    for (final Future<void> Function() hook in _finishHooks) {
+      try {
+        await hook();
+      } on Object {
+        // Не дождались — итог подводится с тем, что есть.
+      }
     }
     final SessionState? state = _state;
     if (state == null || state.phase != RecordingPhase.stopped) {

@@ -242,12 +242,34 @@ class MemoryRecordingStore implements RecordingStore {
     if (failBytes) {
       throw StateError('журнал не читается');
     }
+    if (name != kEventsFile && name != kInputFile && name != kLayoutFile) {
+      // Поток, который пишет не запись, а спутник взгляда (SNO-F-REC-04):
+      // в памяти он лежит файлом папки.
+      final String? text = files[folder]?[name];
+      return text == null ? null : utf8.encode(text);
+    }
     final StringBuffer? journal = switch (name) {
       kInputFile => inputs[folder],
       kLayoutFile => layouts[folder],
       _ => journals[folder],
     };
     return journal == null ? null : utf8.encode(journal.toString());
+  }
+
+  @override
+  Future<String> pathOf(String folder, String sub) async {
+    return '/records/.current/$folder/$sub';
+  }
+
+  /// Какие подпапки убирали: папка → имена.
+  final Map<String, List<String>> removed = <String, List<String>>{};
+
+  @override
+  Future<void> removeSub(String folder, String sub) async {
+    (removed[folder] ??= <String>[]).add(sub);
+    files[folder]?.removeWhere(
+      (String name, String content) => name.startsWith('$sub/'),
+    );
   }
 
   @override

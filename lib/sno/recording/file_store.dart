@@ -204,6 +204,19 @@ class FileRecordingStore implements RecordingStore {
   }
 
   @override
+  Future<String> pathOf(String folder, String sub) async {
+    return p.joinAll(<String>[(await _folder(folder)).path, ...sub.split('/')]);
+  }
+
+  @override
+  Future<void> removeSub(String folder, String sub) async {
+    final Directory target = Directory(await pathOf(folder, sub));
+    if (await target.exists()) {
+      await target.delete(recursive: true);
+    }
+  }
+
+  @override
   Future<void> finish(String folder) async {
     final Directory records = await _records();
     final Directory open = Directory(p.join(_current(records).path, folder));

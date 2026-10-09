@@ -177,6 +177,13 @@ Map<String, Object?> _eyeTrackerOf(Map<String, Object?>? info) {
   return const <String, Object?>{'present': false};
 }
 
+/// Кладётся ли файл [name] в архив без сжатия (SNO-F-REC-04): полоса
+/// глаз и признаки кадров уже сжаты, и Deflate по ним только тратит
+/// время упаковки.
+bool storedAsIs(String name) {
+  return name.endsWith('.mp4') || name.endsWith('.bin');
+}
+
 /// Один файл папки записи.
 class _Source {
   _Source(this.name, this.file);
@@ -624,6 +631,7 @@ Future<File> packRecording(
           source.name,
           source.open(),
           modified: source.modified ?? stamp,
+          level: storedAsIs(source.name) ? 0 : 6,
         );
         if (written.size != source.keep) {
           throw PackException(

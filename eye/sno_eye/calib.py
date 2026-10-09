@@ -1111,6 +1111,61 @@ class Calibration:
         # Опора и пределы головы для подсказки в фазе движения головы
         # (BUG-61): считаются один раз на попытку, по её точкам.
         self._live_head: tuple[Attempt, tuple | None] | None = None
+        # Калибровка поднята из `calibration.json` прежнего сегмента
+        # (SNO-F-EYE-02: спутник перезапущен посреди записи) — файл
+        # калибровки остаётся тем, каким его оставил прежний спутник.
+        self.restored = False
+
+    @staticmethod
+    def restore(data: dict, screen: "Screen | None", thresholds: dict,
+                frame: tuple[int, int] | None = None) -> "Calibration":
+        """Калибровка из `calibration.json` (SNO-F-EYE-02): модель, способы
+        поправки на голову, опора расстояния и попытки с их итогами — чтобы
+        спутник, поднятый заново посреди записи, писал взгляд той же
+        моделью, а проверка в конце знала точность в начале."""
+        if not isinstance(data, dict) or not isinstance(data.get("model"), dict):
+            raise CalibrationError("model_missing", "В файле калибровки нет модели")
+        cal = Calibration(screen, thresholds, frame)
+        try:
+            cal.model = model_from_json(data["model"])
+            variants = data.get("variants") or {}
+            cal.models = {name: model_from_json(m) for name, m in variants.items()
+                          if isinstance(m, dict)}
+        except (KeyError, TypeError, ValueError) as e:
+            raise CalibrationError("model_missing",
+                                   f"Модель калибровки не читается: {e}") from None
+        head_model = data.get("head_model")
+        if head_model in HEAD_MODELS:
+            cal.head_model = head_model
+        if not cal.models:
+            cal.models = {cal.head_model: cal.model}
+        geo = cal.models.get("geometry")
+        if isinstance(geo, HeadModel):
+            cal.geo = geo.geo
+        elif isinstance(cal.model, HeadModel):
+            cal.geo = cal.model.geo
+        ref = data.get("scale_ref")
+        cal.scale_ref = float(ref) if isinstance(ref, (int, float)) else None
+        for a in data.get("attempts") or []:
+            if not isinstance(a, dict):
+                continue
+            targets = []
+            for t in a.get("targets") or []:
+                try:
+                    targets.append(Target(str(t["id"]), float(t["x"]), float(t["y"]),
+                                          str(t["phase"]), int(t["qpc_us"]), t.get("path")))
+                except (KeyError, TypeError, ValueError):
+                    continue
+            cal.attempts.append(Attempt(n=int(a.get("attempt", len(cal.attempts) + 1)),
+                                        kind=str(a.get("kind", "full")), targets=targets,
+                                        started_us=a.get("started_qpc_us"),
+                                        fit=a.get("fit"), validation=a.get("validation")))
+        last = cal.attempts[-1].fit if cal.attempts else None
+        noise = (last or {}).get("noise_px")
+        if isinstance(noise, list) and len(noise) == 2:
+            cal.noise_px = (float(noise[0]), float(noise[1]))
+        cal.restored = True
+        return cal
 
     # кадры
     def add(self, qpc_us: int, feat: np.ndarray | None, ok: bool) -> None:

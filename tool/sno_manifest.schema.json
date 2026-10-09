@@ -58,6 +58,7 @@
         "write_failed": {"type": ["boolean", "null"]},
         "finished": {"type": "boolean"},
         "in_background": {"type": ["boolean", "null"]},
+        "study_t": {"type": ["integer", "null"], "minimum": 0},
         "check": {
           "type": "object",
           "required": ["lines", "gaps", "torn"],
@@ -146,7 +147,7 @@
     },
     "info_missing": {"const": true},
     "eye_tracker": {
-      "description": "Айтрекер (SNO-F-EYE-04). present — есть ли в записи файлы взгляда (с ET-06). С шага 27 сборка ветви для ПК пишет ещё: настроено ли место записи (configured), место (place), почему взгляда нет (unavailable), спутник (satellite), окно под замком (window), сколько раз спутник поднимали заново (restarts) и сдались ли (gave_up).",
+      "description": "Айтрекер (SNO-F-EYE-04, SNO-F-REC-04). present — есть ли в записи поток взгляда eye/gaze.jsonl (с шага 32: изучение шло со взглядом). С шага 27 сборка ветви для ПК пишет ещё: настроено ли место записи (configured), место (place), почему спутник не поднялся (unavailable), спутник (satellite), окно под замком (window), сколько раз спутник поднимали заново (restarts) и сдались ли (gave_up). С шага 32: почему взгляда нет (reason), качество (quality: ok — калибровка принята, low — организатор выбрал «Писать с пометкой»), источник (source), итог калибровки (calibration), проверка в конце (end_check), файл потока (file), сегменты (segments), доля годных строк (valid_share), самопроверка потока (check) и итог спутника (summary).",
       "type": "object",
       "required": ["present"],
       "properties": {
@@ -157,7 +158,44 @@
         "satellite": {"type": "object"},
         "window": {"type": "object"},
         "restarts": {"type": "integer", "minimum": 0},
-        "gave_up": {"type": "boolean"}
+        "gave_up": {"type": "boolean"},
+        "quality": {"enum": ["ok", "low"]},
+        "reason": {"enum": ["not_configured", "unavailable", "selfcheck_failed", "open_failed", "skipped", "stopped", "gave_up", "limit"]},
+        "source": {"const": "webcam"},
+        "calibration": {
+          "type": "object",
+          "properties": {
+            "attempts": {"type": "integer", "minimum": 1},
+            "accepted": {"type": "boolean"},
+            "model": {"type": "string"},
+            "accuracy_deg": {"type": ["number", "null"], "minimum": 0},
+            "latency_ms": {"type": ["number", "null"], "minimum": 0},
+            "seed": {"type": "integer", "minimum": 0}
+          }
+        },
+        "end_check": {
+          "type": "object",
+          "properties": {
+            "skipped": {"type": "boolean"},
+            "done": {"type": "boolean"},
+            "accuracy_deg": {"type": ["number", "null"], "minimum": 0},
+            "drift_deg": {"type": ["number", "null"]}
+          }
+        },
+        "file": {"const": "eye/gaze.jsonl"},
+        "segments": {"type": "integer", "minimum": 0},
+        "valid_share": {"type": ["number", "null"], "minimum": 0},
+        "check": {
+          "type": "object",
+          "required": ["lines", "gaps", "torn"],
+          "properties": {
+            "lines": {"type": "integer", "minimum": 0},
+            "gaps": {"type": "integer", "minimum": 0},
+            "torn": {"type": "boolean"},
+            "late": {"const": true}
+          }
+        },
+        "summary": {"type": "object"}
       }
     },
     "archive": {

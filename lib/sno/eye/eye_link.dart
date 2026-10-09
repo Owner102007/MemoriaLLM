@@ -95,6 +95,10 @@ class EyeLink {
   /// головы (BUG-61).
   void Function(EyeHeadPose pose)? onHead;
 
+  /// Лица нет дольше секунды или оно вернулось — пока идёт поток взгляда
+  /// записи (SNO-F-EYE-02).
+  void Function(EyeFace face)? onFace;
+
   /// Код выхода спутника, когда он вышел.
   Future<int> get exitCode => _exited.future;
 
@@ -143,6 +147,11 @@ class EyeLink {
     final EyeHeartbeat? beat = EyeHeartbeat.fromMessage(message);
     if (beat != null) {
       onHeartbeat?.call(beat);
+      return;
+    }
+    final EyeFace? face = EyeFace.fromMessage(message);
+    if (face != null) {
+      onFace?.call(face);
       return;
     }
     final EyeHeadPose? head = EyeHeadPose.fromMessage(message);
@@ -302,6 +311,7 @@ class EyeLink {
     int? seg,
     int? qpc0Us,
     int? t0,
+    String? calibration,
   }) async {
     final Map<String, Object?> reply = await request(
       'open',
@@ -315,6 +325,9 @@ class EyeLink {
         'seg': ?seg,
         'qpc0_us': ?qpc0Us,
         't0': ?t0,
+        // SNO-F-EYE-02: спутник поднят заново посреди записи — та же
+        // модель из файла калибровки.
+        'calibration': ?calibration,
       },
       timeout: kOpenTimeout,
     );
@@ -392,6 +405,17 @@ class EyeLink {
     return EyeAccuracy.fromMessage(
       await request('checked', timeout: kFitTimeout),
     );
+  }
+
+  /// Поток взгляда записи `gaze.jsonl` (SNO-F-REC-04): включить или
+  /// выключить. Ответ — номер следующей строки файла.
+  Future<int?> gaze({required bool on}) async {
+    final Map<String, Object?> reply = await request(
+      'gaze',
+      fields: <String, Object?>{'on': on},
+    );
+    final Object? n = reply['n'];
+    return n is int ? n : null;
   }
 
   /// Живая точка: включить или выключить поток [onGaze].

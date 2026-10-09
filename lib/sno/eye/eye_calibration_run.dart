@@ -26,6 +26,18 @@ import 'qpc_clock.dart';
 /// этого мига (SNO-ALG-EYE-03, шаг 9).
 typedef EyeFrameShown = Future<int> Function();
 
+/// Точка ушла спутнику: фаза, имя, место в окне, QPC мига и путь у
+/// движущейся — журналу записи (SNO-F-EYE-01: `eye.target`).
+typedef EyeTargetSent =
+    void Function({
+      required String phase,
+      required int qpcUs,
+      String? id,
+      double? x,
+      double? y,
+      Map<String, Object?>? path,
+    });
+
 /// Сколько ждать отрисовки кадра, прежде чем взять QPC без неё: экран
 /// калибровки могли закрыть, а попытка не должна висеть.
 const Duration kFrameShownLimit = Duration(milliseconds: 500);
@@ -117,6 +129,25 @@ abstract class EyeTargetsRun extends ChangeNotifier {
   /// Прерван ли показ.
   bool get cancelled => _cancelled;
 
+  /// Кому сказать о каждой точке, ушедшей спутнику (журнал записи);
+  /// `null` — никому.
+  EyeTargetSent? onTarget;
+
+  /// Точка уходит спутнику — и тому, кто слушает.
+  void _send({
+    required String phase,
+    required int qpcUs,
+    String? id,
+    double? x,
+    double? y,
+    Map<String, Object?>? path,
+  }) {
+    _link.target(phase: phase, qpcUs: qpcUs, id: id, x: x, y: y, path: path);
+    if (phase != 'off') {
+      onTarget?.call(phase: phase, qpcUs: qpcUs, id: id, x: x, y: y, path: path);
+    }
+  }
+
   /// Прерывает показ: таймеры сняты, `run` вернёт «прервано».
   void cancel() {
     if (_cancelled) {
@@ -193,7 +224,7 @@ abstract class EyeTargetsRun extends ChangeNotifier {
       return;
     }
     final Offset at = p.at(screen.size);
-    _link.target(phase: p.phase.wire, qpcUs: qpc, id: p.id, x: at.dx, y: at.dy);
+    _send(phase: p.phase.wire, qpcUs: qpc, id: p.id, x: at.dx, y: at.dy);
     await _pause(time);
     done++;
   }
@@ -202,7 +233,7 @@ abstract class EyeTargetsRun extends ChangeNotifier {
     if (_cancelled) {
       return;
     }
-    _link.target(phase: 'off', qpcUs: _qpc.nowUs());
+    _send(phase: 'off', qpcUs: _qpc.nowUs());
   }
 
   @override
@@ -256,7 +287,7 @@ class EyeCalibrationRun extends EyeTargetsRun {
 
   void _headTarget(int qpc) {
     final Offset at = kHeadPoint.at(screen.size);
-    _link.target(
+    _send(
       phase: EyeTargetPhase.head.wire,
       qpcUs: qpc,
       id: kHeadPoint.id,
@@ -396,7 +427,7 @@ class EyeCalibrationRun extends EyeTargetsRun {
       if (_cancelled) {
         return const EyeAttemptOutcome.cancelled();
       }
-      _link.target(
+      _send(
         phase: EyeTargetPhase.pursuit.wire,
         qpcUs: qpc,
         id: 'pursuit',
@@ -469,7 +500,11 @@ class EyeCheckRun extends EyeTargetsRun {
     required super.frameShown,
     required this.n,
     required this.seed,
+    this.intro = kCheckIntro,
   });
+
+  /// Подсказка перед точками.
+  final String intro;
 
   /// Номер проверки.
   final int n;
@@ -481,7 +516,7 @@ class EyeCheckRun extends EyeTargetsRun {
   Future<EyeCheckOutcome> run() async {
     try {
       await _link.check(n);
-      _show(hint: kCheckIntro);
+      _show(hint: intro);
       await _pause(kIntroTime);
       for (final EyeTargetPoint p in checkSequence(seed, n)) {
         await _point(p, kValidationPointTime);

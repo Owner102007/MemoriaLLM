@@ -6,6 +6,7 @@ import '../clt/load_test.dart';
 import '../clt/results.dart';
 import '../clt/test_screens.dart';
 import '../hold_button.dart';
+import 'gaze_line.dart';
 import 'journal_check.dart';
 import 'records.dart';
 import 'records_screen.dart';
@@ -194,6 +195,10 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
   String? _layoutCheck;
   bool _layoutIntact = true;
 
+  /// Строка «Взгляд: …» (SNO-F-EYE-02, SNO-F-EYE-06); `null` — у записи
+  /// нет айтрекера.
+  String? _gaze;
+
   /// Завершена ли сессия: экран показывает архив, а не код.
   bool _finished = false;
 
@@ -254,6 +259,7 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
     _events = session.events;
     _failed = session.writeFailed;
     _away = describeAway(state.away);
+    _gaze = describeGaze(session.infoPartNow('eye_tracker'));
     if (session.checked.value) {
       final JournalCheck? check = session.check;
       _check = describeJournalCheck(check);
@@ -714,6 +720,11 @@ class _SessionFinishScreenState extends State<SessionFinishScreen> {
             key: const Key('sno-finish-layout'),
             style: _layoutIntact ? small : wrong,
           ),
+        ),
+      if (_gaze case final String gaze)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(gaze, key: const Key('sno-finish-gaze'), style: small),
         ),
       if (away != null)
         Padding(

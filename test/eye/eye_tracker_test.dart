@@ -432,11 +432,17 @@ void main() {
                 as Map<String, Object?>;
         expect(block, <String, Object?>{
           'present': false,
+          // С шага 32: почему взгляда нет и откуда он был бы.
+          'reason': 'not_configured',
+          'source': 'webcam',
           'configured': false,
           'unavailable': 'not_configured',
           'restarts': 0,
           'gave_up': false,
         });
+        // SNO-F-EYE-01: без места записи изучение начинается сразу.
+        expect(kit.session.studyPending, isFalse);
+        expect(kit.store.types(kit.folder), contains('study.start'));
       },
     );
 

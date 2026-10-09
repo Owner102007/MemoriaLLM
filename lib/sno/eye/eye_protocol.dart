@@ -997,3 +997,42 @@ class EyeGaze {
   /// Она же, сглаженная для глаза.
   final (double, double)? smooth;
 }
+
+/// Строка сторожа лица `{face: lost|back, t, …}` (SNO-F-EYE-02): пока
+/// идёт поток взгляда записи, лица нет в кадре дольше секунды — или оно
+/// вернулось.
+class EyeFace {
+  /// Создаёт строку.
+  const EyeFace({required this.lost, required this.qpcUs, this.sinceUs, this.ms});
+
+  /// Строка из сообщения спутника; `null` — сообщение не о лице.
+  static EyeFace? fromMessage(Map<String, Object?> message) {
+    final Object? face = message['face'];
+    final Object? t = message['t'];
+    if ((face != 'lost' && face != 'back') ||
+        t is! int ||
+        message.containsKey('hb')) {
+      return null;
+    }
+    final Object? since = message['since'];
+    final Object? ms = message['ms'];
+    return EyeFace(
+      lost: face == 'lost',
+      qpcUs: t,
+      sinceUs: since is int ? since : null,
+      ms: ms is int ? ms : null,
+    );
+  }
+
+  /// Лица нет (`true`) или оно вернулось (`false`).
+  final bool lost;
+
+  /// QPC кадра, на котором это стало известно, мкс.
+  final int qpcUs;
+
+  /// С какого кадра лица нет, QPC; только у «потеряно».
+  final int? sinceUs;
+
+  /// Сколько лица не было, мс; только у «вернулось».
+  final int? ms;
+}

@@ -95,6 +95,16 @@ abstract interface class RecordingStore {
   /// поток строк читать: журнал событий либо поток ввода.
   Future<List<int>?> journalBytes(String folder, {String name = kEventsFile});
 
+  /// Путь подпапки [sub] записи [folder] на диске (SNO-F-REC-04): в неё
+  /// пишет сам спутник взгляда — отдельная программа, которой нужен
+  /// путь, а не хранилище. Подпапка может ещё не существовать.
+  Future<String> pathOf(String folder, String sub);
+
+  /// Убирает подпапку [sub] записи [folder] со всем, что в ней лежит
+  /// (SNO-F-EYE-01: «Без взгляда» — подпапки `eye/` в архиве нет). Нет
+  /// подпапки — не делает ничего.
+  Future<void> removeSub(String folder, String sub);
+
   /// Убирает папку незавершённой записи, которая так и не началась.
   Future<void> discard(String folder);
 

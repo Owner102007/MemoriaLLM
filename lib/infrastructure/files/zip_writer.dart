@@ -121,11 +121,15 @@ class ZipWriter {
   /// Имя — с путём через `/`, без `\`, без `..` и не от корня: такие
   /// имена распаковщики читают по-разному. [modified] — время файла в
   /// оглавлении. Содержимое читается потоком и в памяти целиком не
-  /// лежит.
+  /// лежит. [level] — сила сжатия Deflate от 0 до 9: ноль кладёт
+  /// содержимое как есть, блоками без сжатия, — для файлов, которые
+  /// уже сжаты (полоса глаз, признаки кадров, SNO-F-REC-04); способ
+  /// записи и читатель те же.
   Future<ZipWritten> add(
     String name,
     Stream<List<int>> content, {
     DateTime? modified,
+    int level = 6,
   }) async {
     if (_closed) {
       throw ZipWriteException('архив уже закрыт', entry: name);
@@ -160,7 +164,10 @@ class ZipWriter {
     await _write(_localHeader(entry));
 
     final Crc32 crc = Crc32();
-    final RawZLibFilter deflate = RawZLibFilter.deflateFilter(raw: true);
+    final RawZLibFilter deflate = RawZLibFilter.deflateFilter(
+      raw: true,
+      level: level,
+    );
     int size = 0;
     int packed = 0;
     // Пока поток идёт, сжатое забирается без сброса; сброс — в конце.

@@ -12,6 +12,10 @@
 /// «Проверить точность» (BUG-60) и проверка в конце свободного просмотра
 /// идут на экране проверки: слой ставит его на навигатор, как только
 /// проверка из живого взгляда начинает показывать точки.
+///
+/// Он же ставит экран айтрекера записи (шаг 32, SNO-F-EYE-01,
+/// SNO-F-EYE-06): калибровку участника — сразу после «Код записан», и
+/// проверку в конце — над экраном завершения, когда тот уже встал.
 library;
 
 import 'dart:async';
@@ -20,9 +24,12 @@ import 'package:flutter/material.dart';
 
 import 'eye_calibration.dart';
 import 'eye_process.dart';
+import '../recording/session.dart';
 import 'eye_protocol.dart';
+import 'eye_recording.dart';
 import 'eye_tracker.dart';
 import 'eye_trial.dart';
+import 'recording_screen.dart';
 import 'trial_screen.dart';
 
 /// Поперечник точки живого взгляда.
@@ -66,11 +73,23 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
   EyeTrialPhase? _phase;
   bool _screenUp = false;
 
+  /// Айтрекер записи, за которым следит слой, и стоит ли его экран.
+  EyeRecordingView? _recording;
+  bool _recordingUp = false;
+  bool _recordingSoon = false;
+
+  /// Экран завершения сессии — над ним встаёт проверка в конце.
+  RecordingSession? _session;
+
   @override
   void initState() {
     super.initState();
     widget.eye.trial.addListener(_trialChanged);
+    widget.eye.recording.addListener(_recordingChanged);
+    _session = widget.eye.session;
+    _session?.finishOpen.addListener(_recordingScreen);
     _trialChanged();
+    _recordingChanged();
   }
 
   @override
@@ -79,8 +98,79 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
     if (!identical(oldWidget.eye, widget.eye)) {
       oldWidget.eye.trial.removeListener(_trialChanged);
       widget.eye.trial.addListener(_trialChanged);
+      oldWidget.eye.recording.removeListener(_recordingChanged);
+      widget.eye.recording.addListener(_recordingChanged);
+      _session?.finishOpen.removeListener(_recordingScreen);
+      _session = widget.eye.session;
+      _session?.finishOpen.addListener(_recordingScreen);
       _trialChanged();
+      _recordingChanged();
     }
+  }
+
+  void _recordingChanged() {
+    final EyeRecordingView? next = widget.eye.recording.value;
+    if (!identical(next, _recording)) {
+      _recording?.removeListener(_recordingScreen);
+      _recording = next;
+      next?.addListener(_recordingScreen);
+    }
+    _recordingScreen();
+  }
+
+  /// Ставит экран айтрекера записи, когда ему есть что показать: точки
+  /// и итог калибровки — сразу, проверку в конце — когда под ней уже
+  /// стоит экран завершения сессии (его ставит слой записи, снимая
+  /// всё, что было открыто). Уходит экран сам.
+  /// Нужен ли экран айтрекера записи [view] сейчас: калибровка — пока
+  /// идёт запись, проверка в конце — после её остановки.
+  bool _wants(EyeRecordingView? view) {
+    if (view == null || !eyeRecordingWantsScreen(view.phase)) {
+      return false;
+    }
+    final bool recording = _session?.recording ?? false;
+    return view.phase == EyeRecordingPhase.endCheck ? !recording : recording;
+  }
+
+  void _recordingScreen() {
+    final EyeRecordingView? view = _recording;
+    if (view == null || !_wants(view)) {
+      _recordingUp = false;
+      return;
+    }
+    if (_recordingUp || _recordingSoon || !mounted) {
+      return;
+    }
+    if (view.phase == EyeRecordingPhase.endCheck &&
+        !(_session?.finishOpen.value ?? false)) {
+      return;
+    }
+    // После кадра: слой записи мог в этот же миг снимать экраны.
+    _recordingSoon = true;
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      _recordingSoon = false;
+      final EyeRecordingView? now = _recording;
+      final NavigatorState? nav = widget.navigator.currentState;
+      if (!mounted || _recordingUp || nav == null || !_wants(now)) {
+        return;
+      }
+      if (now!.phase == EyeRecordingPhase.endCheck &&
+          !(_session?.finishOpen.value ?? false)) {
+        return;
+      }
+      _recordingUp = true;
+      unawaited(
+        showEyeRecordingScreen(nav, now, widget.eye.qpc).whenComplete(() {
+          _recordingUp = false;
+          // Экран сняли (остановка записи сняла всё), а показывать ещё
+          // есть что — например, проверку в конце.
+          if (mounted) {
+            _recordingScreen();
+          }
+        }),
+      );
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _trialChanged() {
@@ -135,6 +225,9 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
   void dispose() {
     widget.eye.trial.removeListener(_trialChanged);
     _trial?.removeListener(_changed);
+    widget.eye.recording.removeListener(_recordingChanged);
+    _recording?.removeListener(_recordingScreen);
+    _session?.finishOpen.removeListener(_recordingScreen);
     super.dispose();
   }
 
