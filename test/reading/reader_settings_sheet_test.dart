@@ -49,6 +49,7 @@ void main() {
   Future<void> pumpSheet(
     WidgetTester tester, {
     VoidCallback? onEditCrop,
+    bool canChooseFlow = true,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -65,6 +66,7 @@ void main() {
               unawaited(controller.setDisplayMode(mode));
             },
             onEditCrop: onEditCrop ?? () {},
+            canChooseFlow: canChooseFlow,
           ),
         ),
       ),
@@ -361,6 +363,23 @@ void main() {
     await tapKey(tester, 'reader-flow-continuous');
 
     expect(pickedFlow, PageFlow.continuous);
+  });
+
+  testWidgets('SNO-F-READ-02: без ленты способа листания в шторке нет', (
+    WidgetTester tester,
+  ) async {
+    // В сборке ветви СНО2026 книга листается только листами: в ленте
+    // выделение не попадает в журнал записи.
+    build();
+    await pumpSheet(tester, canChooseFlow: false);
+
+    expect(find.byKey(const Key('reader-flow-continuous')), findsNothing);
+    expect(find.byKey(const Key('reader-flow-paged')), findsNothing);
+    expect(find.text('Листание'), findsNothing);
+    // Остальное в шторке на месте: режим, полоса, фильтры.
+    expect(find.byKey(const Key('reader-mode-full')), findsOneWidget);
+    expect(find.byKey(const Key('reader-strip-fit')), findsOneWidget);
+    expect(pickedFlow, isNull);
   });
 
   testWidgets('BUG-36: выбранной становится нажатая кнопка листания', (

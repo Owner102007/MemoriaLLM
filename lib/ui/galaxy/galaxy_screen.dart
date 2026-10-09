@@ -57,6 +57,7 @@ class GalaxyScreen extends StatefulWidget {
     this.onReading,
     this.canRelink = true,
     this.models = true,
+    this.ribbon = true,
     super.key,
   });
 
@@ -77,6 +78,9 @@ class GalaxyScreen extends StatefulWidget {
 
   /// Есть ли в сборке модель: промпты над выделенным текстом.
   final bool models;
+
+  /// Есть ли у экрана чтения способ листания «Лента» (SNO-F-READ-02).
+  final bool ribbon;
 
   @override
   State<GalaxyScreen> createState() => _GalaxyScreenState();
@@ -255,6 +259,8 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
             services: widget.services,
             canRelink: widget.canRelink,
             models: widget.models,
+            // SNO-F-READ-02: в ветви ленты нет.
+            ribbon: widget.ribbon,
             // SNO-F-REC-02: журнал записи пишет, каким путём открыли.
             openedVia: 'galaxy',
           ),

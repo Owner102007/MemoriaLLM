@@ -7,7 +7,14 @@
   "properties": {
     "schema": {"const": "sno2026-recording/1"},
     "branch": {"enum": ["I", "II"]},
-    "app": {"type": "object"},
+    "app": {
+      "description": "Сборка: version, commit, flags. С шага 33 (SNO-F-CFG-06) — ещё study_tag (тег сборки исследования sno2026-N, null у проверочной сборки) и built (день сборки по UTC, null у локальной); без смены версии.",
+      "type": "object",
+      "properties": {
+        "study_tag": {"type": ["string", "null"], "pattern": "^sno2026-[1-9][0-9]*([.][1-9][0-9]*)?$"},
+        "built": {"type": ["string", "null"]}
+      }
+    },
     "device": {
       "type": "object",
       "required": ["node_id", "code"],

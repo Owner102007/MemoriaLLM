@@ -104,6 +104,8 @@ void main() {
       final LibraryScreen shelf = tester.widget(find.byType(LibraryScreen));
       expect(shelf.titleSearch, isFalse);
       expect(shelf.models, isTrue);
+      // SNO-F-READ-02: в основном приложении лента есть.
+      expect(shelf.ribbon, isTrue);
       expect(shelf.locked, isFalse);
       expect(find.byKey(const Key('library-search')), findsNothing);
 
@@ -453,6 +455,8 @@ void main() {
       // SNO-F-READ-01: модели в ветви нет — над выделением не будет
       // промптов. SNO-F-LIB-02: замок закрывает запись, а её ещё нет.
       expect(shelf.models, isFalse);
+      // SNO-F-READ-02: ленты в ветви нет — книга листается листами.
+      expect(shelf.ribbon, isFalse);
       expect(shelf.locked, isFalse);
 
       await tester.tap(find.byKey(const Key('library-search')));

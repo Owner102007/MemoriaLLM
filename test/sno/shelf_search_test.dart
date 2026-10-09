@@ -30,6 +30,7 @@ void main() {
     AppServices services, {
     bool titleSearch = true,
     bool models = true,
+    bool ribbon = true,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -38,6 +39,7 @@ void main() {
           canAddBooks: false,
           titleSearch: titleSearch,
           models: models,
+          ribbon: ribbon,
         ),
       ),
     );
@@ -646,6 +648,42 @@ void main() {
         }
       });
     }
+  });
+
+  group('SNO-F-READ-02: полка передаёт чтению, есть ли лента', () {
+    testWidgets('SNO-F-READ-02: без ленты книга открывается без неё', (
+      WidgetTester tester,
+    ) async {
+      await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      await data.library.save(testBook());
+      await pumpShelf(tester, testServices(data: data), ribbon: false);
+
+      await tester.tap(find.byKey(const Key('library-book-book-1')));
+      await tester.pumpAndSettle();
+      final ReaderScreen reader = tester.widget(find.byType(ReaderScreen));
+      expect(reader.ribbon, isFalse);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
+
+    testWidgets('SNO-F-READ-02: с лентой — как прежде', (
+      WidgetTester tester,
+    ) async {
+      await data.settings.write(SettingsKeys.tapZoneHintSeen, 'true');
+      await data.library.save(testBook());
+      await pumpShelf(tester, testServices(data: data));
+
+      await tester.tap(find.byKey(const Key('library-book-book-1')));
+      await tester.pumpAndSettle();
+      final ReaderScreen reader = tester.widget(find.byType(ReaderScreen));
+      expect(reader.ribbon, isTrue);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await unmount(tester);
+    });
   });
 
   group('SNO-F-READ-01: полка передаёт чтению, есть ли модель', () {

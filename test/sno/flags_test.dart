@@ -183,6 +183,8 @@ void main() {
       expect(Sno.literature, Sno.flags.literature);
       expect(Sno.galaxy, Sno.flags.galaxy);
       expect(Sno.palimpsest, Sno.flags.palimpsest);
+      // SNO-F-READ-02: ленты нет ровно в ветвях.
+      expect(Sno.ribbon, !Sno.enabled);
     });
 
     test('SNO-F-CFG-01: в сборке без SNO_BRANCH флаги ветви выключены', () {

@@ -44,6 +44,7 @@ class LibraryScreen extends StatefulWidget {
     this.titleSearch = false,
     this.locked = false,
     this.models = true,
+    this.ribbon = true,
     this.visible = true,
     super.key,
   });
@@ -112,6 +113,12 @@ class LibraryScreen extends StatefulWidget {
   /// В сборках ветвей СНО2026 — нет (SNO-F-READ-01): экран чтения
   /// показывает над выделением четыре действия без промптов.
   final bool models;
+
+  /// Есть ли у экрана чтения способ листания «Лента».
+  ///
+  /// В сборках ветвей СНО2026 — нет (SNO-F-READ-02): книга листается
+  /// только листами.
+  final bool ribbon;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -764,6 +771,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             canRelink: widget.canAddBooks,
             // SNO-F-READ-01: без модели над выделением нет промптов.
             models: widget.models,
+            // SNO-F-READ-02: в ветви ленты нет.
+            ribbon: widget.ribbon,
             // SNO-F-REC-02: журнал записи пишет, каким путём открыли.
             openedVia: via,
           ),

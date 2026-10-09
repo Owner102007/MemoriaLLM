@@ -554,6 +554,48 @@ void main() {
         (files['eye/gaze.jsonl']! as Map<String, Object?>)['lines'],
         lines.length,
       );
+
+      // SNO-F-RES-01: «Проверка записи» — тем же встраиваемым Python, что
+      // у организатора, на архиве с настоящим потоком взгляда и путём с
+      // кириллицей. Сборка в тесте проверочная — это оговорка, а не
+      // порча.
+      final ProcessResult checked = await Process.run(
+        // Папка спутника; `folder` здесь — имя папки записи.
+        '${Platform.environment['SNO_EYE_DIR']}${sep}python.exe',
+        <String>[
+          '-I',
+          '-m',
+          'sno_eye',
+          'check',
+          archive.path,
+          '--json',
+          '--no-csv',
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      final String out = '${checked.stdout}';
+      expect(out.trimLeft(), startsWith('['), reason: '${checked.stderr}');
+      final Map<String, Object?> report =
+          (jsonDecode(out) as List<Object?>).single! as Map<String, Object?>;
+      expect(report['problems'], isEmpty);
+      expect(report['verdict'], isNot('bad'));
+      expect(report['gaze'], isTrue);
+      final Map<String, Object?> listed =
+          report['files']! as Map<String, Object?>;
+      expect(listed['intact'], listed['listed']);
+      final Map<String, Object?> streams =
+          report['streams']! as Map<String, Object?>;
+      expect(
+        (streams['eye/gaze.jsonl']! as Map<String, Object?>)['lines'],
+        lines.length,
+      );
+      stdout.writeln(
+        'ЗАМЕР SNO-F-RES-01 | «Проверка записи» на архиве со взглядом | '
+        '${report['verdict_text']} | годных ${report['valid_share']} | '
+        'кадров в секунду ${report['fps']} | точность '
+        '${report['start_deg']}° / ${report['end_deg']}°',
+      );
       eye.dispose();
       session.dispose();
       await window.dispose();

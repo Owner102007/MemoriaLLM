@@ -237,6 +237,8 @@ class TestingScreen extends StatefulWidget {
     this.visible = true,
     this.onStateReset,
     this.onRecordingStarted,
+    this.studyTag = appStudyTag,
+    this.built = appBuilt,
     super.key,
   });
 
@@ -245,6 +247,15 @@ class TestingScreen extends StatefulWidget {
 
   /// Флаги сборки — для строки «О ветви».
   final BranchFlags flags;
+
+  /// Тег сборки исследования (SNO-F-CFG-06); пусто — проверочная сборка.
+  ///
+  /// Параметром, а не константой: в одном прогоне тестов сборка одна, а
+  /// раздел проверяется и в той, и в другой.
+  final String studyTag;
+
+  /// День сборки по UTC, `2026-10-10`; пусто у локальной сборки.
+  final String built;
 
   /// Распаковка архива; `null` — настоящая.
   final ArchiveUnpack? unpack;
@@ -1282,6 +1293,21 @@ class _TestingScreenState extends State<TestingScreen>
     ]);
   }
 
+  /// «О ветви»: строка сборки и под ней — чья это сборка и когда
+  /// собрана (SNO-F-CFG-06).
+  String _about() {
+    final String label = buildLabelFor(
+      version: appVersion,
+      commit: appCommit,
+      flags: widget.flags,
+    );
+    final String study = studyBuildLine(
+      studyTag: widget.studyTag,
+      built: widget.built,
+    );
+    return '$label\n$study';
+  }
+
   /// Запись сессии: старт, ход, завершение (SNO-F-REC-01).
   ///
   /// Что здесь стоит, зависит от того, что с записью: «Старт записи»,
@@ -1302,6 +1328,20 @@ class _TestingScreenState extends State<TestingScreen>
           subtitle: Text(participant.display),
         ),
       if (session.phase == RecordingPhase.idle) ...<Widget>[
+        // SNO-F-CFG-06: участников записывают только на сборке
+        // исследования. Старт на проверочной не запрещён — на ней же
+        // организатор проверяет запись, — но сказано об этом над кнопкой.
+        if (!isStudyTag(widget.studyTag))
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Text(
+              kTrialBuildNote,
+              key: const Key('sno-trial-build'),
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: FilledButton.icon(
@@ -1463,13 +1503,9 @@ class _TestingScreenState extends State<TestingScreen>
               ListTile(
                 key: const Key('sno-about'),
                 title: const Text('О ветви'),
-                subtitle: Text(
-                  buildLabelFor(
-                    version: appVersion,
-                    commit: appCommit,
-                    flags: widget.flags,
-                  ),
-                ),
+                // SNO-F-CFG-06: чья это сборка — исследования или
+                // проверочная — и когда собрана.
+                subtitle: Text(_about()),
               ),
             ],
           ),

@@ -36,7 +36,8 @@ EYE = Path(__file__).resolve().parent.parent
 BUDGET_MB = 400
 COPY = ["sno_eye", "thresholds.json", "model_version.txt", "python_version.txt",
         "requirements.lock", "THIRD_PARTY_NOTICES.txt", "README.md",
-        "Проверка камеры.cmd", "Проверка камеры (40 минут).cmd"]
+        "Проверка камеры.cmd", "Проверка камеры (40 минут).cmd",
+        "Проверка записи.cmd", "Инструкция организатора.txt"]
 
 
 def read_kv(path: Path) -> dict[str, str]:

@@ -6,8 +6,20 @@ on:
     # `report`). Без этого исключения запись отчёта запускала бы новый
     # прогон, который писал бы отчёт, и так до бесконечности.
     branches-ignore: [ci-report]
+    # Сборка исследования СНО2026 (SNO-F-CFG-06, шаг 33): тег
+    # `sno2026-N` собирает те же шесть сборок, а работа `study`
+    # выкладывает четыре сборки ветвей отдельным релизом. Теги этапов
+    # `v*` сюда не идут — их собирает release.yml.
+    tags: ['sno2026-*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      study_rehearsal:
+        description: >-
+          Репетиция сборки исследования СНО2026: собрать и сложить файлы
+          релиза, но не публиковать
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -417,12 +429,37 @@ jobs:
           elif [ -n "${SNO_BRANCH:-}" ]; then
             echo "::warning title=Тест нагрузки::секрета SNO_CLT_PASSWORD нет — сборка ветви $SNO_BRANCH выходит без теста нагрузки"
           fi
+          # SNO-F-CFG-06: сборка исследования — только по тегу sno2026-N
+          # и только у ветви. Тег и день сборки зашиваются в приложение:
+          # «О ветви» называет их, а запись кладёт в манифест. Сборка
+          # исследования без пароля теста и без постоянного ключа подписи
+          # не выходит вовсе: на ней записывают участников.
+          study=()
+          if [ -n "${SNO_BRANCH:-}" ] && [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+            if ! printf '%s' "$GITHUB_REF_NAME" \
+              | grep -Eq '^sno2026-[1-9][0-9]*([.][1-9][0-9]*)?$'; then
+              echo "::error title=Сборка исследования::тег $GITHUB_REF_NAME — не sno2026-N и не sno2026-N.M"
+              exit 1
+            fi
+            if [ -z "${SNO_CLT_PASSWORD:-}" ]; then
+              echo "::error title=Сборка исследования::секрета SNO_CLT_PASSWORD нет — сборка исследования без теста нагрузки не выходит"
+              exit 1
+            fi
+            if [ -z "${SNO_KEYSTORE_BASE64:-}" ]; then
+              echo "::error title=Сборка исследования::секретов ключа подписи нет — сборка исследования не встанет поверх прежней"
+              exit 1
+            fi
+            study=(--dart-define=APP_STUDY_TAG="$GITHUB_REF_NAME")
+          fi
+          built=$(date -u +%F)
           flutter build apk --release \
             --flavor "$FLAVOR" \
             --dart-define=SNO_BRANCH="${SNO_BRANCH:-}" \
             --dart-define=APP_VERSION="$version-$SUFFIX" \
             --dart-define=APP_COMMIT="$GITHUB_SHA" \
-            ${clt[@]+"${clt[@]}"}
+            --dart-define=APP_BUILT="$built" \
+            ${clt[@]+"${clt[@]}"} \
+            ${study[@]+"${study[@]}"}
           rm -f "$RUNNER_TEMP/sno.jks"
           mkdir -p out
           cp "build/app/outputs/flutter-apk/app-$FLAVOR-release.apk" "out/$FILE"
@@ -886,11 +923,32 @@ jobs:
           elif [ -n "${SNO_BRANCH:-}" ]; then
             echo "::warning title=Тест нагрузки::секрета SNO_CLT_PASSWORD нет — сборка ветви $SNO_BRANCH выходит без теста нагрузки"
           fi
+          # SNO-F-CFG-06: сборка исследования — только по тегу sno2026-N
+          # и только у ветви. Тег и день сборки зашиваются в приложение:
+          # «О ветви» называет их, а запись кладёт в манифест. Сборка
+          # исследования без пароля теста не выходит вовсе: на ней
+          # записывают участников.
+          study=()
+          if [ -n "${SNO_BRANCH:-}" ] && [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+            if ! printf '%s' "$GITHUB_REF_NAME" \
+              | grep -Eq '^sno2026-[1-9][0-9]*([.][1-9][0-9]*)?$'; then
+              echo "::error title=Сборка исследования::тег $GITHUB_REF_NAME — не sno2026-N и не sno2026-N.M"
+              exit 1
+            fi
+            if [ -z "${SNO_CLT_PASSWORD:-}" ]; then
+              echo "::error title=Сборка исследования::секрета SNO_CLT_PASSWORD нет — сборка исследования без теста нагрузки не выходит"
+              exit 1
+            fi
+            study=(--dart-define=APP_STUDY_TAG="$GITHUB_REF_NAME")
+          fi
+          built=$(date -u +%F)
           flutter build windows --release \
             --dart-define=SNO_BRANCH="${SNO_BRANCH:-}" \
             --dart-define=APP_VERSION="$version-$SUFFIX" \
             --dart-define=APP_COMMIT="$GITHUB_SHA" \
-            ${clt[@]+"${clt[@]}"}
+            --dart-define=APP_BUILT="$built" \
+            ${clt[@]+"${clt[@]}"} \
+            ${study[@]+"${study[@]}"}
 
       # Заголовок окна — строка внутри memoria.exe, в UTF-16 и с нулевым
       # знаком в конце. У сборки ветви он свой, у основной — прежний, и
@@ -946,7 +1004,7 @@ jobs:
         run: |
           $eye = 'build/windows/x64/runner/Release/eye'
           if ($env:SNO_BRANCH) {
-            foreach ($f in @('python.exe', 'sno_eye/__main__.py', 'models/face_landmarker.task', 'Проверка камеры.cmd')) {
+            foreach ($f in @('python.exe', 'sno_eye/__main__.py', 'sno_eye/record_check.py', 'models/face_landmarker.task', 'Проверка камеры.cmd', 'Проверка записи.cmd', 'Инструкция организатора.txt')) {
               if (-not (Test-Path (Join-Path $eye $f))) {
                 Write-Output "::error title=Спутник взгляда::в сборке ветви нет eye/$f"
                 exit 1
@@ -1075,6 +1133,125 @@ jobs:
             "https://x-access-token:${{ github.token }}@github.com/$GITHUB_REPOSITORY.git" \
             ci-report
 
+  # SNO-F-CFG-06 (шаг 33): сборка исследования СНО2026. Тег `sno2026-N`
+  # (патч — `sno2026-N.M`) собирает те же сборки, что любой прогон, но
+  # ветвям зашиваются тег и день сборки; здесь четыре сборки ветвей
+  # ложатся отдельным предварительным релизом с постоянными именами
+  # файлов. На этих сборках записывают участников, и они не меняются
+  # всё время сбора данных; `latest` живёт дальше для проверок.
+  # Репетиция — запуск по кнопке с `study_rehearsal`: файлы собираются
+  # и сверяются, но релиз не публикуется.
+  study:
+    name: Сборка исследования СНО2026
+    needs: [android, windows, eye-tests]
+    if: >-
+      (github.event_name == 'push'
+        && startsWith(github.ref, 'refs/tags/sno2026-'))
+      || (github.event_name == 'workflow_dispatch'
+        && inputs.study_rehearsal)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Забрать сборки ветвей
+        uses: actions/download-artifact@v8
+        with:
+          pattern: memoria-sno2026-*
+          path: dist
+
+      - name: Файлы релиза
+        id: files
+        run: |
+          set -eu
+          mkdir -p out
+          take() {
+            file=$(find dist -name "$1" | head -1)
+            if [ -z "$file" ]; then
+              echo "::error title=Сборка исследования::в артефактах прогона нет $1"
+              exit 1
+            fi
+            cp "$file" "out/$1"
+          }
+          for branch in I II; do
+            take "memoria-sno2026-$branch.apk"
+            take "memoria-sno2026-$branch-windows.zip"
+          done
+          (cd out && sha256sum memoria-* > SHA256SUMS.txt)
+          cat out/SHA256SUMS.txt
+          # Сборке исследования нужны «Проверка записи» и инструкция
+          # организатора — они лежат в eye\ каждого ZIP.
+          for branch in I II; do
+            listing=$(unzip -Z1 "out/memoria-sno2026-$branch-windows.zip")
+            for need in 'eye/Проверка записи.cmd' \
+                'eye/Инструкция организатора.txt' \
+                'eye/sno_eye/record_check.py'; do
+              if ! printf '%s\n' "$listing" | grep -qxF "$need"; then
+                echo "::error title=Сборка исследования::в ZIP ветви $branch нет $need"
+                exit 1
+              fi
+            done
+          done
+          number="${GITHUB_REF_NAME#sno2026-}"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      # Тег зашит в каждую сборку ветви: строка константы лежит в
+      # снимке кода Dart — libapp.so у APK, data/app.so у Windows. Не
+      # нашлась — замечание, а не отказ: как снимок хранит строки,
+      # решает компилятор, а не мы.
+      - name: Тег внутри сборок
+        if: startsWith(github.ref, 'refs/tags/sno2026-')
+        run: |
+          set -eu
+          for branch in I II; do
+            if unzip -p "out/memoria-sno2026-$branch.apk" \
+                'lib/arm64-v8a/libapp.so' | grep -aqF "$GITHUB_REF_NAME"; then
+              echo "APK ветви $branch: тег $GITHUB_REF_NAME на месте"
+            else
+              echo "::warning title=Сборка исследования::в APK ветви $branch строки $GITHUB_REF_NAME не нашлось — проверьте «О ветви» на устройстве"
+            fi
+            if unzip -p "out/memoria-sno2026-$branch-windows.zip" \
+                'data/app.so' | grep -aqF "$GITHUB_REF_NAME"; then
+              echo "ZIP ветви $branch: тег $GITHUB_REF_NAME на месте"
+            else
+              echo "::warning title=Сборка исследования::в ZIP ветви $branch строки $GITHUB_REF_NAME не нашлось — проверьте «О ветви» на ПК"
+            fi
+          done
+
+      - name: Опубликовать релиз исследования
+        if: startsWith(github.ref, 'refs/tags/sno2026-')
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: СНО2026 · сборка ${{ steps.files.outputs.number }}
+          prerelease: true
+          make_latest: false
+          files: out/*
+          body: |
+            Сборка исследования СНО2026 — та, на которой записывают
+            участников. Она не меняется всё время сбора данных;
+            исправления выходят патчами `sno2026-N.M` и только за то, что
+            срывает сессию.
+
+            - Телефон: `memoria-sno2026-I.apk`, `memoria-sno2026-II.apk`
+            - ПК: `memoria-sno2026-I-windows.zip`,
+              `memoria-sno2026-II-windows.zip` — в папке `eye\` лежат
+              «Проверка записи.cmd» и «Инструкция организатора.txt»
+
+            В приложении: «Тестирование» → «О ветви» — «Сборка
+            исследования ${{ github.ref_name }}». Суммы файлов —
+            `SHA256SUMS.txt`.
+
+            Литературы в сборках нет — она приходит архивом. Сборки для
+            проверок по-прежнему лежат в `latest`.
+
+            Коммит: ${{ github.sha }}
+
+      - name: Репетиция — без публикации
+        if: "!startsWith(github.ref, 'refs/tags/sno2026-')"
+        run: |
+          echo "::notice title=Сборка исследования::репетиция: файлы собраны и сверены, релиз не публикуется"
+          ls -l out
+
   latest:
     name: Свежая сборка из main
     needs: [android, windows, eye-tests]
@@ -1097,8 +1274,9 @@ jobs:
       #
       # Рядом с основным приложением лежат проверочные сборки ветвей
       # СНО2026 (SNO-F-CFG-01): владелец ставит их тем же скриптом, что
-      # и основное. Литературы и пароля теста в них нет — прятать
-      # нечего. Сборки для участников сюда не попадают.
+      # и основное. Литературы в них нет; пароль теста есть (шаг 24,
+      # SNO-DIV-06). Сборки для участников сюда не попадают — они
+      # выходят релизом исследования по тегу sno2026-N (работа `study`).
       - name: Постоянные имена файлов
         run: |
           set -eu

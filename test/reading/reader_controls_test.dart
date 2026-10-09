@@ -50,6 +50,7 @@ void main() {
     WidgetTester tester, {
     Map<String, String> settings = const <String, String>{},
     bool hasWindow = false,
+    bool ribbon = true,
   }) async {
     for (final MapEntry<String, String> entry in settings.entries) {
       await data.settings.write(entry.key, entry.value);
@@ -67,6 +68,7 @@ void main() {
             ),
             window: hasWindow ? window : const NoFullScreenWindow(),
           ),
+          ribbon: ribbon,
         ),
       ),
     );
@@ -302,6 +304,66 @@ void main() {
       // остальные кнопки панели остаются.
       expect(find.byKey(const Key('reader-settings-button')), findsOneWidget);
       expect(find.byKey(const Key('reader-search-button')), findsOneWidget);
+
+      await unmount(tester);
+    });
+  });
+
+  group('SNO-F-READ-02: в сборке ветви ленты нет', () {
+    final Finder half = find.byKey(const Key('reader-mode-half-button'));
+
+    testWidgets('сохранённая лента книгу лентой не открывает', (
+      WidgetTester tester,
+    ) async {
+      // Лента осталась в настройках устройства от прежней сборки.
+      await pumpReader(
+        tester,
+        settings: <String, String>{
+          SettingsKeys.pageFlow: PageFlow.continuous.name,
+          SettingsKeys.tapZoneHintSeen: 'true',
+        },
+        ribbon: false,
+      );
+      await showChrome(tester);
+
+      // Книга листается листами: дроби в панели есть — в ленте их нет.
+      expect(half, findsOneWidget);
+      expect(label(tester), '1 / 6');
+
+      await unmount(tester);
+    });
+
+    testWidgets('в шторке нет способа листания', (WidgetTester tester) async {
+      await pumpReader(
+        tester,
+        settings: <String, String>{SettingsKeys.tapZoneHintSeen: 'true'},
+        ribbon: false,
+      );
+      await showChrome(tester);
+
+      await tester.tap(find.byKey(const Key('reader-settings-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('reader-flow-continuous')), findsNothing);
+      expect(find.text('Листание'), findsNothing);
+      // Настройка устройства не тронута: шторка ничего не писала.
+      expect(await data.settings.read(SettingsKeys.pageFlow), isNull);
+
+      await unmount(tester);
+    });
+
+    testWidgets('основное приложение ленту по-прежнему открывает', (
+      WidgetTester tester,
+    ) async {
+      await pumpReader(
+        tester,
+        settings: <String, String>{
+          SettingsKeys.pageFlow: PageFlow.continuous.name,
+        },
+      );
+      await showChrome(tester);
+
+      expect(half, findsNothing);
 
       await unmount(tester);
     });

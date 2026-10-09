@@ -441,6 +441,8 @@ class _HomeShellState extends State<HomeShell> {
           titleSearch: Sno.enabled,
           // SNO-F-READ-01: без модели над выделением нет промптов.
           models: Sno.models,
+          // SNO-F-READ-02: в ветви книга листается только листами.
+          ribbon: Sno.ribbon,
           // SNO-F-LIB-02: пока сессия записи не завершена, полка стоит
           // на месте.
           locked: _session?.locked ?? false,
@@ -479,6 +481,8 @@ class _HomeShellState extends State<HomeShell> {
             canRelink: Sno.scanner,
             // SNO-F-READ-01: без модели над выделением нет промптов.
             models: Sno.models,
+            // SNO-F-READ-02: в ветви книга листается только листами.
+            ribbon: Sno.ribbon,
           );
         }
         return const SizedBox.shrink();

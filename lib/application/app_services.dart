@@ -311,6 +311,10 @@ class AppServices {
         'version': appVersion,
         'commit': appCommit,
         'flags': Sno.flags.enabledNames,
+        // SNO-F-CFG-06: записи со сборки исследования и с проверочной
+        // различимы при разборе — по тегу и дню сборки.
+        'study_tag': isStudyBuild ? appStudyTag : null,
+        'built': appBuilt.isEmpty ? null : appBuilt,
       },
       // SNO-F-CLT-03: итог теста нагрузки в сведениях записи — только
       // там, где тест есть.

@@ -71,6 +71,7 @@ class ReaderScreen extends StatefulWidget {
     required this.services,
     this.canRelink = true,
     this.models = true,
+    this.ribbon = true,
     this.openedVia = 'shelf',
     super.key,
   });
@@ -103,6 +104,15 @@ class ReaderScreen extends StatefulWidget {
   /// некому задать. Над выделением тогда четыре действия — «В цитаты»,
   /// «Заметка», «Копировать», «Найти в книге» — и ни одного промпта.
   final bool models;
+
+  /// Есть ли способ листания «Лента».
+  ///
+  /// В сборках ветвей СНО2026 — нет (SNO-F-READ-02, решение владельца
+  /// Ш2 (б) от 05.10.2026): в ленте выделение ведёт сам просмотрщик и в
+  /// журнал записи не попадает, а показы страниц шли бы с другой
+  /// причиной. Переключателя в шторке нет, и лента, сохранённая в
+  /// настройках устройства прежней сборкой, книгу лентой не открывает.
+  final bool ribbon;
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -866,7 +876,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _rotation = rotation == ScreenOrientation.landscape.name
           ? ScreenOrientation.landscape
           : ScreenOrientation.portrait;
-      _flowNow.value = flow == PageFlow.continuous.name
+      // SNO-F-READ-02: без ленты сохранённая лента не применяется.
+      _flowNow.value = widget.ribbon && flow == PageFlow.continuous.name
           ? PageFlow.continuous
           : PageFlow.paged;
       _controller?.setSheetModes(enabled: _flow == PageFlow.paged);
@@ -1045,7 +1056,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _setFlow(PageFlow flow) async {
-    if (flow == _flow) {
+    // SNO-F-READ-02: в сборке ветви книга листается только листами.
+    if (flow == _flow || (!widget.ribbon && flow != PageFlow.paged)) {
       return;
     }
     // В ленте разворота нет: лист там — одна страница, и подпись со
@@ -2085,6 +2097,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             controller: controller,
             flow: _flowNow,
             onFlow: (PageFlow value) => unawaited(_setFlow(value)),
+            canChooseFlow: widget.ribbon,
             onDisplayMode: (PageDisplayMode mode) =>
                 unawaited(_setDisplayMode(mode)),
             onEditCrop: () {

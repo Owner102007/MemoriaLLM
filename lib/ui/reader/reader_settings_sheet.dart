@@ -19,6 +19,7 @@ class ReaderSettingsSheet extends StatelessWidget {
     required this.onFlow,
     required this.onDisplayMode,
     required this.onEditCrop,
+    this.canChooseFlow = true,
     super.key,
   });
 
@@ -43,6 +44,12 @@ class ReaderSettingsSheet extends StatelessWidget {
 
   /// Открыть ручную правку рамки.
   final VoidCallback onEditCrop;
+
+  /// Есть ли выбор способа листания.
+  ///
+  /// В сборках ветвей СНО2026 — нет (SNO-F-READ-02): книга листается
+  /// только листами, и переключателя «Лента» в шторке нет вовсе.
+  final bool canChooseFlow;
 
   @override
   Widget build(BuildContext context) {
@@ -97,24 +104,27 @@ class ReaderSettingsSheet extends StatelessWidget {
                     // было неправдой.
                     const SizedBox(height: 16),
                   ],
-                  const _Title(text: 'Листание'),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: <Widget>[
-                      for (final PageFlow value in PageFlow.values)
-                        ChoiceChip(
-                          key: Key('reader-flow-${value.name}'),
-                          label: Text(pageFlowName(value)),
-                          selected: current == value,
-                          onSelected: (bool selected) {
-                            if (selected) {
-                              onFlow(value);
-                            }
-                          },
-                        ),
-                    ],
-                  ),
+                  // SNO-F-READ-02: в сборке ветви способа листания нет.
+                  if (canChooseFlow) ...<Widget>[
+                    const _Title(text: 'Листание'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: <Widget>[
+                        for (final PageFlow value in PageFlow.values)
+                          ChoiceChip(
+                            key: Key('reader-flow-${value.name}'),
+                            label: Text(pageFlowName(value)),
+                            selected: current == value,
+                            onSelected: (bool selected) {
+                              if (selected) {
+                                onFlow(value);
+                              }
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
                   if (paged) ...<Widget>[
                     const SizedBox(height: 16),
                     const _Title(text: 'Полоса на экране'),

@@ -2,6 +2,8 @@
 
 * `serve` — обмен с приложением строками JSON (SNO-ALG-EYE-03);
 * `bench` — стенд «Проверка камеры» (ворота Г1);
+* `check [архив или папка …]` — «Проверка записи»: годна ли запись
+  сессии (SNO-F-RES-01, шаг 33); без имён — записи на этом ПК;
 * `--selftest` — пробный запуск собранной папки (CI и организатор).
 
 `--source synthetic[:вариант]` подменяет камеру и распознавание
@@ -36,7 +38,14 @@ def _utf8_stdio() -> None:
 def main(argv: list[str] | None = None) -> int:
     _utf8_stdio()
     ap = argparse.ArgumentParser(prog="sno_eye")
-    ap.add_argument("command", nargs="?", choices=("serve", "bench"))
+    ap.add_argument("command", nargs="?", choices=("serve", "bench", "check"))
+    ap.add_argument("paths", nargs="*",
+                    help="check: архивы записей или папки с ними")
+    ap.add_argument("--json", action="store_true",
+                    help="check: итог строкой JSON")
+    ap.add_argument("--csv", help="check: куда положить сводную таблицу")
+    ap.add_argument("--no-csv", action="store_true",
+                    help="check: без сводной таблицы")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--linger", type=float, default=0.0)
     ap.add_argument("--source", default="camera")
@@ -67,6 +76,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         ap.print_help()
         return 2
+
+    if args.paths and args.command != "check":
+        ap.error("имена файлов принимает только check")
+
+    # «Проверка записи» камеры не трогает и может идти рядом с
+    # приложением и спутником — без замка единственного экземпляра.
+    if args.command == "check":
+        from .record_check import main as check
+        return check(args.paths, as_json=args.json, csv_path=args.csv,
+                     write_table=not args.no_csv)
 
     from .runtime import Runtime, SingleInstance
 
