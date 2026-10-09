@@ -32,6 +32,11 @@ void main() {
     for (final Object? item in value! as List<Object?>) number(item),
   ];
 
+  List<Map<String, Object?>> maps(Object? value) => <Map<String, Object?>>[
+    for (final Object? item in value! as List<Object?>)
+      item! as Map<String, Object?>,
+  ];
+
   SheetBox box(Object? value) {
     final List<double> v = numbers(value);
     return SheetBox(v[0], v[1], v[2], v[3]);
@@ -43,9 +48,9 @@ void main() {
     final Map<String, Object?> place = input['place']! as Map<String, Object?>;
     return sheetGeometry(
       pages: <({int page, double width, double height})>[
-        for (final Object? page in sheet['pages']! as List<Object?>)
+        for (final Map<String, Object?> page in maps(sheet['pages']))
           (
-            page: (page! as Map<String, Object?>)['page']! as int,
+            page: page['page']! as int,
             width: number(page['width']),
             height: number(page['height']),
           ),
@@ -61,9 +66,9 @@ void main() {
       stripIndex: sheet['strip_index']! as int,
       strips: sheet['strips']! as int,
       neighbours: <LayoutNeighbour>[
-        for (final Object? neighbour in sheet['neighbours']! as List<Object?>)
+        for (final Map<String, Object?> neighbour in maps(sheet['neighbours']))
           LayoutNeighbour(
-            after: (neighbour! as Map<String, Object?>)['side'] == 'after',
+            after: neighbour['side'] == 'after',
             rect: LayoutRect.fromJson(neighbour['rect'])!,
           ),
       ],

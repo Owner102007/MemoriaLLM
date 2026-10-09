@@ -11,6 +11,7 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter/rendering.dart' show RenderExcludeSemantics;
 import 'package:flutter/widgets.dart';
 
 import 'layout_frames.dart';
@@ -188,7 +189,7 @@ class LayoutScope extends InheritedWidget {
 
   /// Доска над [context]; `null` — записи в сборке нет.
   static LayoutBoard? maybeOf(BuildContext context) {
-    return context.getInheritedWidgetOfExactType<LayoutScope>()?.board;
+    return context.dependOnInheritedWidgetOfExactType<LayoutScope>()?.board;
   }
 
   @override
@@ -336,6 +337,11 @@ class LayoutLayer {
   final RenderBox? Function() _root;
   final LayoutViewport Function() _viewport;
   final LayoutPacer _pacer = LayoutPacer();
+
+  /// Когда по часам записи случилось последнее изменение: устоявшийся
+  /// кадр помечен им, а не мигом, когда отсчитанная тишина кончилась, —
+  /// раскладка такой стала тогда.
+  int? _changedAt;
   bool _attached = false;
   bool _armed = false;
   Timer? _settle;
@@ -400,6 +406,7 @@ class LayoutLayer {
       tracker.frame(moving, t: _session.layoutNow, moving: true);
     }
     if (_pacer.changed) {
+      _changedAt = _session.layoutNow;
       _settle?.cancel();
       _settle = Timer(kLayoutSettle, _flush);
     }
@@ -418,8 +425,10 @@ class LayoutLayer {
     _settle?.cancel();
     _settle = null;
     final LayoutSnapshot? settled = _pacer.settle();
+    final int at = _changedAt ?? _session.layoutNow;
+    _changedAt = null;
     if (settled != null) {
-      tracker.frame(settled, t: _session.layoutNow, moving: false);
+      tracker.frame(settled, t: at, moving: false);
     }
   }
 }

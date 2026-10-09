@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/prompts/selection_prompt.dart';
@@ -310,12 +312,14 @@ void main() {
       final NavigatorState navigator = tester.state<NavigatorState>(
         find.byType(Navigator),
       );
-      navigator.push(
-        MaterialPageRoute<void>(
-          builder: (BuildContext context) => const LayoutProbe(
-            kind: LayoutKind.screen,
-            id: 'второй',
-            child: Scaffold(body: SizedBox.expand()),
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) => const LayoutProbe(
+              kind: LayoutKind.screen,
+              id: 'второй',
+              child: Scaffold(body: SizedBox.expand()),
+            ),
           ),
         ),
       );
