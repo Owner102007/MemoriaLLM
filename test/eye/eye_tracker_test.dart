@@ -410,6 +410,75 @@ void main() {
       fresh.dispose();
       again.session.dispose();
     });
+
+    test('SNO-F-EYE-06: приложение упало посреди проверки в конце — после '
+        'перезапуска она названа незавершённой и не повторяется, поток '
+        'взгляда сверен с диска', () async {
+      await started();
+      final String folder = kit.folder;
+      await kit.session.stop(StopReason.experimenter);
+      await settle();
+      // Сведения такие, какими их оставил сбой: изучение шло со
+      // взглядом, проверка в конце начата и не кончена.
+      final Map<String, Object?> stored =
+          jsonDecode(kit.settings.values[SnoSettingsKeys.eyeRun]!)
+              as Map<String, Object?>;
+      await kit.settings.write(
+        SnoSettingsKeys.eyeRun,
+        jsonEncode(<String, Object?>{
+          ...stored,
+          'block': <String, Object?>{
+            for (final MapEntry<String, Object?> e
+                in (stored['block']! as Map<String, Object?>).entries)
+              if (e.key != 'reason') e.key: e.value,
+            'present': true,
+            'end_check': <String, Object?>{'started': true, 'done': false},
+          },
+        }),
+      );
+      kit.store.files[folder]![kGazeFile] = <String>[
+        for (int i = 1; i <= 4; i++)
+          jsonEncode(<String, Object?>{'n': i, 'ok': i != 2, 'seg': 0}),
+        // Хвост, который сбой оборвал.
+        '{"n":5,"o',
+      ].join('\n');
+      final int launched = launcher.started.length;
+
+      final SessionKit again = SessionKit(
+        settings: kit.settings,
+        store: kit.store,
+        time: kit.time,
+      );
+      final EyeTracker fresh = EyeTracker(
+        settings: kit.settings,
+        launch: launcher.launch,
+        qpc: qpc,
+        window: window,
+      )..attach(again.session);
+      await settle();
+      await again.session.restore();
+      await settle();
+      await again.session.finish();
+      await settle();
+
+      final Map<String, Object?> block =
+          kit.store.json(folder, kRecordingFile)['eye_tracker']!
+              as Map<String, Object?>;
+      expect(block['end_check'], <String, Object?>{
+        'done': false,
+        'error': 'crash',
+      });
+      final Map<String, Object?> check =
+          block['check']! as Map<String, Object?>;
+      expect(check['lines'], 4);
+      expect(check['torn'], isTrue);
+      expect(check['late'], isTrue);
+      expect(block['valid_share'], 0.75);
+      // Спутник не поднимали: проверка не повторена.
+      expect(launcher.started, hasLength(launched));
+      fresh.dispose();
+      again.session.dispose();
+    });
   });
 
   group('SNO-F-EYE-04: без взгляда', () {

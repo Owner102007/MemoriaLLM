@@ -415,7 +415,15 @@ void main() {
       ],
       'measures': <String, Object?>{'camera': 'camera_busy'},
     };
-    await started(tester);
+    // Экран айтрекера встаёт на самопроверку и уходит с её итогом —
+    // ждать его незачем.
+    await pumpApp(tester);
+    expect(await kit.session.start(code), isTrue);
+    await runUntil(
+      tester,
+      () => !kit.session.studyPending,
+      limit: const Duration(seconds: 5),
+    );
     await settle(tester);
     expect(sent('open'), isEmpty);
     expect(kit.session.studyPending, isFalse);

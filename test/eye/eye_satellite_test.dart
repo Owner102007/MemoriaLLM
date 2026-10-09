@@ -486,6 +486,8 @@ void main() {
         () => eye.recording.value == null,
         const Duration(seconds: 90),
       );
+      // Спутник пишет сырьё с открытия камеры до закрытия.
+      final int writingMs = total.elapsedMilliseconds;
       final String folder = session.state!.folder;
       final String eyeDir = (await session.folderPath(kEyeFolder))!;
       final List<String> lines = File('$eyeDir${sep}gaze.jsonl')
@@ -509,6 +511,15 @@ void main() {
       }
       expect(window.locked, isFalse);
 
+      // Вес сырья взгляда за секунду работы спутника — прикидка на сорок
+      // минут (критерий шага: не больше 300 МБ).
+      int eyeBytes = 0;
+      for (final FileSystemEntity f in Directory(eyeDir).listSync()) {
+        if (f is File) {
+          eyeBytes += f.lengthSync();
+        }
+      }
+      final double perSecond = eyeBytes / (writingMs / 1000);
       await session.finish();
       final Stopwatch packing = Stopwatch()..start();
       final File archive = await packRecording(
@@ -517,7 +528,9 @@ void main() {
       stdout.writeln(
         'ЗАМЕР SNO-F-REC-04 | архив записи со взглядом | '
         '${archive.lengthSync() ~/ 1024} КБ | упаковка '
-        '${packing.elapsedMilliseconds} мс',
+        '${packing.elapsedMilliseconds} мс | eye/ ${eyeBytes ~/ 1024} КБ за '
+        '$writingMs мс работы спутника | на 40 мин '
+        '~${(perSecond * 2400 / 1e6).toStringAsFixed(0)} МБ',
       );
       final ArchiveCheck check = await checkArchive(archive);
       expect(check.intact, isTrue);
