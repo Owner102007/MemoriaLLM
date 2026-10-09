@@ -777,55 +777,166 @@ class HeadModel:
                          d.get("label", "geometry"), d.get("w"))
 
 
+REST_AXES = ("turn", "tilt", "roll")
+
+
+def head_limits(geo: Geometry, points: np.ndarray, head_point, max_deg: float) -> dict:
+    """Насколько можно повернуть и наклонить голову, глядя на точку фазы
+    движения головы `head_point`, чтобы глаз в голове остался в том
+    размахе, на каком его калибровали (BUG-62).
+
+    Размах глаза — углы точек калибровки `points` (пиксели окна) от
+    опорных глаз. Голова повернулась на θ — глаз, чтобы смотреть на ту же
+    точку, поворачивается в голове на столько же в другую сторону; дальше
+    размаха калибровки модель глаз не училась, и её оценка там — догадка
+    (у владельца при наклоне на 12° на экране высотой 20 см — на 15 см
+    мимо). Сверх того — не дальше `max_deg`. Градусы, как у
+    `Geometry.relative`: поворот к правому краю, наклон вниз."""
+    z0 = geo.screen.distance_mm
+    m = geo._mm(np.atleast_2d(np.asarray(points, dtype=np.float64)))
+    c = geo._mm(np.atleast_2d(np.asarray(head_point, dtype=np.float64)))[0]
+    ax = np.degrees(np.arctan2(m[:, 0] - geo.ex, z0))
+    ay = np.degrees(np.arctan2(m[:, 1] - geo.ey, z0))
+    cx = math.degrees(math.atan2(c[0] - geo.ex, z0))
+    cy = math.degrees(math.atan2(c[1] - geo.ey, z0))
+    lim = float(max_deg)
+    return {"turn": (round(max(-lim, cx - float(ax.max())), 2),
+                     round(min(lim, cx - float(ax.min())), 2)),
+            "tilt": (round(max(-lim, cy - float(ay.max())), 2),
+                     round(min(lim, cy - float(ay.min())), 2))}
+
+
+def _inside(rel: dict, limits: dict | None) -> np.ndarray:
+    n = len(rel["turn"])
+    if not limits:
+        return np.ones(n, dtype=bool)
+    ok = np.ones(n, dtype=bool)
+    for axis in ("turn", "tilt"):
+        lo, hi = limits[axis]
+        ok &= (rel[axis] >= lo) & (rel[axis] <= hi)
+    return ok
+
+
 def fit_head_rest(model: HeadModel, x: np.ndarray, target: np.ndarray, screen: Screen,
-                  t: dict) -> tuple[np.ndarray | None, dict]:
-    """Остаток поправки на голову по фазе движения головы: человек смотрит
-    на неподвижную точку `target` и водит головой. Чего геометрия не
-    знает — то, как ошибка зависит от отклонений головы, — линейно, с
-    гребнем к нулю (к геометрии). Выборки, где оценка дальше
-    `max_err_deg` от точки, — взгляд ушёл с точки; после первого прохода
-    выбросы дальше `mad_k` MAD — тоже прочь. Голова почти не двигалась —
-    остатка нет."""
+                  t: dict, qpc: np.ndarray | None = None,
+                  limits: dict | None = None) -> tuple[np.ndarray | None, dict]:
+    """Остаток поправки на голову по фазе движения головы (BUG-60, BUG-62):
+    человек смотрит на неподвижную точку `target` и водит головой. Чего
+    геометрия не знает — то, как ошибка зависит от поворотов головы, —
+    линейно, через ноль (на опоре геометрия и есть модель глаз), с гребнем
+    к нулю.
+
+    Остаток берётся, только если он сам себя доказал (BUG-62): у владельца
+    половину фазы голова стояла, а взгляд был на подсказке, потом голова
+    ушла на 30° — туда, где глаз в голове выходит из размаха калибровки, —
+    и остаток, выученный по таким кадрам, уводил точку на 3 см при
+    повороте на 5°. Поэтому:
+
+    * кадры, где голова за пределами `limits` (`head_limits`), — прочь;
+    * голова стоит (оба угла меньше `still_deg`), а оценка дальше
+      `still_err_deg` от точки, — человек смотрит не на неё, прочь;
+    * оценка дальше `max_err_deg` — прочь; выбросы дальше `mad_k` MAD —
+      прочь;
+    * ось учится, только если голова ходила по ней в обе стороны — не
+      меньше `min_side_frames` кадров дальше `side_deg` по каждую сторону:
+      по одной стороне прямая продолжилась бы на другую наугад;
+    * остаток учится на одних секундах фазы (`fold_s`, через одну) и
+      мерится на других, и наоборот; берётся, только если на кадрах,
+      которых он не видел, он точнее геометрии хотя бы на
+      `prove_min_deg` и на долю `prove_share`.
+
+    Не доказал — остатка нет, и способ `phase` совпадает с `geometry`.
+    Сведения — в `info`: сколько кадров, на сколько ходила голова, какие
+    оси, точность геометрии и остатка на отложенных кадрах, причина."""
     x = np.atleast_2d(np.asarray(x, dtype=np.float64))
     info: dict = {"frames": int(len(x)), "used": 0, "moved": False,
-                  "turn_deg": None, "tilt_deg": None}
+                  "turn_deg": None, "tilt_deg": None, "axes": [],
+                  "accepted": False, "reason": "no_frames"}
+    if limits is not None:
+        info["limits"] = {k: list(v) for k, v in limits.items()}
     if len(x) == 0:
         return None, info
-    rel = model.geo.relative(x)
+    geo = model.geo
+    rel = geo.relative(x)
     turn = float(np.percentile(rel["turn"], 95) - np.percentile(rel["turn"], 5))
     tilt = float(np.percentile(rel["tilt"], 95) - np.percentile(rel["tilt"], 5))
     info["turn_deg"], info["tilt_deg"] = round(turn, 2), round(tilt, 2)
+    info["moved"] = bool(max(turn, tilt) >= float(t.get("min_range_deg", 2.0)))
     pred = model.predict(x)
     tgt = np.broadcast_to(np.asarray(target, dtype=np.float64), pred.shape)
     err = np.array([screen.angle_deg(tuple(a), tuple(b)) for a, b in zip(pred, tgt)])
-    keep = err <= float(t.get("max_err_deg", 8.0))
-    info["moved"] = bool(max(turn, tilt) >= float(t.get("min_range_deg", 2.0)))
-    if not info["moved"] or keep.sum() < int(t.get("min_frames", 90)):
-        info["used"] = int(keep.sum())
-        return None, info
-    d = model.geo.deltas(x)[keep]
-    r = (tgt - pred)[keep]
-    alpha = float(t.get("alpha", 0.1))
+    still_deg = float(t.get("still_deg", 2.0))
+    still = (np.abs(rel["turn"]) < still_deg) & (np.abs(rel["tilt"]) < still_deg)
+    keep = (_inside(rel, limits) & (err <= float(t.get("max_err_deg", 8.0)))
+            & ~(still & (err > float(t.get("still_err_deg", 5.0)))))
+    info["used"] = int(keep.sum())
     min_frames = int(t.get("min_frames", 90))
+    if not info["moved"]:
+        info["reason"] = "not_moved"
+        return None, info
+    if keep.sum() < min_frames:
+        info["reason"] = "few_frames"
+        return None, info
+    side = float(t.get("side_deg", 3.0))
+    need_side = int(t.get("min_side_frames", 15))
+    cols = [k for k, axis in enumerate(REST_AXES)
+            if np.sum(keep & (rel[axis] <= -side)) >= need_side
+            and np.sum(keep & (rel[axis] >= side)) >= need_side]
+    info["axes"] = [REST_AXES[k] for k in cols]
+    if not cols:
+        info["reason"] = "one_side"
+        return None, info
+    d_all = geo.deltas(x)[:, cols]
+    r_all = tgt - pred
+    alpha = float(t.get("alpha", 0.1))
+    mad_k = float(t.get("mad_k", 3.0))
 
-    def solve(d, r):
-        dc = d - d.mean(axis=0)
-        rc = r - r.mean(axis=0)
-        w = np.linalg.solve(dc.T @ dc + alpha * len(dc) * np.eye(dc.shape[1]), dc.T @ rc)
-        return w, np.hypot(*(rc - dc @ w).T)
+    def solve(mask: np.ndarray) -> np.ndarray | None:
+        d, r = d_all[mask], r_all[mask]
+        if len(d) < max(len(cols) * 10, min_frames // 3):
+            return None
+        eye = alpha * len(d) * np.eye(len(cols))
+        w = np.linalg.solve(d.T @ d + eye, d.T @ r)
+        # Выбросы — один раз, и остаток считается заново по тому, что
+        # осталось.
+        res = np.hypot(*(r - d @ w).T)
+        med = float(np.median(res))
+        mad = 1.4826 * float(np.median(np.abs(res - med)))
+        ok = res <= med + mad_k * max(mad, 1e-6)
+        if not ok.all() and ok.sum() >= len(cols) * 10:
+            d, r = d[ok], r[ok]
+            w = np.linalg.solve(d.T @ d + alpha * len(d) * np.eye(len(cols)), d.T @ r)
+        return w
 
-    w, res = solve(d, r)
-    # Выбросы — один раз, и остаток считается заново по тому, что осталось.
-    med = float(np.median(res))
-    mad = 1.4826 * float(np.median(np.abs(res - med)))
-    ok = res <= med + float(t.get("mad_k", 3.0)) * max(mad, 1e-6)
-    if not ok.all():
-        d, r = d[ok], r[ok]
-        if len(d) < min_frames:
-            info["used"] = int(len(d))
+    # Проверка на отложенных кадрах: секунды фазы через одну.
+    if qpc is None:
+        qpc = np.arange(len(x)) * 33_333
+    qpc = np.asarray(qpc, dtype=np.int64)
+    fold = ((qpc - qpc.min()) // int(float(t.get("fold_s", 1.0)) * 1e6)) % 2
+    geo_e, rest_e = [], []
+    for f in (0, 1):
+        w = solve(keep & (fold != f))
+        test = keep & (fold == f)
+        if w is None or not test.any():
+            info["reason"] = "few_frames"
             return None, info
-        w, _ = solve(d, r)
-    info["used"] = int(len(d))
+        p = pred[test] + d_all[test] @ w
+        rest_e += [screen.angle_deg(tuple(a), tuple(b)) for a, b in zip(p, tgt[test])]
+        geo_e += list(err[test])
+    g, r = float(np.mean(geo_e)), float(np.mean(rest_e))
+    info["proof"] = {"geometry_deg": round(g, 3), "rest_deg": round(r, 3)}
+    margin = max(float(t.get("prove_min_deg", 0.1)), float(t.get("prove_share", 0.1)) * g)
+    if r > g - margin:
+        info["reason"] = "no_gain"
+        return None, info
+    w_cols = solve(keep)
+    if w_cols is None:
+        info["reason"] = "few_frames"
+        return None, info
+    w = np.zeros((HEAD_REST_COLUMNS, 2))
+    w[cols] = w_cols
+    info["accepted"] = True
+    info["reason"] = None
     info["w"] = np.round(w, 3).tolist()
     return w, info
 
@@ -967,9 +1078,9 @@ class Calibration:
         self.screen = screen
         self.t = dict(thresholds.get("calibration", {}))
         self.h = dict(thresholds.get("head", {}))
-        self.head_model = self.h.get("model", "phase")
+        self.head_model = self.h.get("model", "geometry")
         if self.head_model not in HEAD_MODELS:
-            self.head_model = "phase"
+            self.head_model = "geometry"
         self.frame = frame
         self._lock = threading.Lock()
         self._frames: deque[Sample] = deque(maxlen=BUFFER_FRAMES)
@@ -982,6 +1093,9 @@ class Calibration:
         self.noise_px: tuple[float, float] = (40.0, 40.0)
         self.model_info: dict | None = None
         self.scale_ref: float | None = None
+        # Опора и пределы головы для подсказки в фазе движения головы
+        # (BUG-61): считаются один раз на попытку, по её точкам.
+        self._live_head: tuple[Attempt, tuple | None] | None = None
 
     # кадры
     def add(self, qpc_us: int, feat: np.ndarray | None, ok: bool) -> None:
@@ -1013,6 +1127,7 @@ class Calibration:
         a = Attempt(n=n, kind=kind, started_us=now_us)
         self.attempts.append(a)
         self._current = a
+        self._live_head = None
         return a
 
     def begin_check(self, n: int, now_us: int) -> Check:
@@ -1061,12 +1176,14 @@ class Calibration:
                         if len(good) else np.zeros(0)}
         return out
 
-    def _phase_frames(self, a, phase: str, drop_s: float) -> tuple[np.ndarray, np.ndarray]:
+    def _phase_frames(self, a, phase: str, drop_s: float,
+                      with_qpc: bool = False) -> tuple[np.ndarray, ...]:
         """Все годные кадры фазы без первых `drop_s` у каждой точки — без
         отбора выбросов: в фазе движения головы признаки и должны ходить.
-        Возвращает признаки и точку каждого кадра."""
+        Возвращает признаки и точку каждого кадра (и его QPC, если
+        `with_qpc`)."""
         drop = int(drop_s * 1e6)
-        feats, tgts = [], []
+        feats, tgts, qpcs = [], [], []
         for k, t in enumerate(a.targets[:-1]):
             if t.phase != phase:
                 continue
@@ -1074,9 +1191,12 @@ class Calibration:
                 if f.ok and f.feat is not None:
                     feats.append(f.feat)
                     tgts.append((t.x, t.y))
+                    qpcs.append(f.qpc_us)
         if not feats:
-            return np.zeros((0, len(fp.FEATURE_NAMES))), np.zeros((0, 2))
-        return np.array(feats, dtype=np.float64), np.array(tgts, dtype=np.float64)
+            out = (np.zeros((0, len(fp.FEATURE_NAMES))), np.zeros((0, 2)))
+            return (*out, np.zeros(0, dtype=np.int64)) if with_qpc else out
+        out = (np.array(feats, dtype=np.float64), np.array(tgts, dtype=np.float64))
+        return (*out, np.array(qpcs, dtype=np.int64)) if with_qpc else out
 
     def samples(self, phase: str = "calib") -> dict:
         """Сколько годных кадров набрала каждая точка фазы и какую долю
@@ -1109,6 +1229,41 @@ class Calibration:
         if not frames:
             return None
         return sum(1 for f in frames if f.feat is not None) / len(frames)
+
+    # фаза движения головы: где голова сейчас (BUG-61)
+    def head_live(self, feat: np.ndarray | None) -> dict | None:
+        """Где голова на кадре против опоры, пока идёт фаза движения
+        головы, — для подсказки на экране: поворот к правому краю и наклон
+        вниз (градусы) и `far` — голова дальше пределов (`head_limits`),
+        такие кадры остаток не учат. Опора — медианы головы на точках
+        калибровки этой попытки, как у модели. Не фаза головы, кадра без
+        лица или точек калибровки нет — `None`. Поток распознавания."""
+        a = self._current
+        if (feat is None or not isinstance(a, Attempt) or not a.targets
+                or a.targets[-1].phase != "head"):
+            return None
+        live = self._live_head
+        if live is None or live[0] is not a:
+            live = (a, self._head_rest(a))
+            self._live_head = live
+        if live[1] is None:
+            return None
+        geo, limits = live[1]
+        x = np.asarray(feat, dtype=np.float64)[USED_IDX][None, :]
+        rel = geo.relative(x)
+        return {"turn": float(rel["turn"][0]), "tilt": float(rel["tilt"][0]),
+                "far": not bool(_inside(rel, limits)[0])}
+
+    def _head_rest(self, a: Attempt) -> tuple[Geometry, dict | None] | None:
+        if self.screen is None:
+            return None
+        pts = self._point_samples(a, "calib")
+        used = {tid: p for tid, p in pts.items() if p["used"] >= 3}
+        if len(used) < 5:
+            return None
+        feats = np.concatenate([p["feats"] for p in used.values()])
+        geo = Geometry.fit(feats[:, USED_IDX], self.screen, self.setup())
+        return geo, self._head_limits(geo, used, a)
 
     # слежение
     def _pursuit(self, a: Attempt) -> list[tuple[Sample, Target]]:
@@ -1187,9 +1342,11 @@ class Calibration:
         eye_ts = TrainSet(geo.freeze(ts.x), geo.inverse(ts.y, ts.x), ts.group)
         eye, info_eye = select_model(eye_ts, screen, kinds=kinds)
         geometry = HeadModel(eye, geo, "geometry")
-        hx, htgt = self._phase_frames(a, "head", float(self.h.get("drop_s", 0.5)))
+        hx, htgt, hq = self._phase_frames(a, "head", float(self.h.get("drop_s", 0.5)),
+                                          with_qpc=True)
+        limits = self._head_limits(geo, used, a)
         w, head_info = fit_head_rest(geometry, hx[:, USED_IDX] if len(hx) else hx,
-                                     htgt, screen, self.h)
+                                     htgt, screen, self.h, qpc=hq, limits=limits)
         phase = HeadModel(eye, geo, "phase", w)
         self.geo = geo
         self.models = {"learned": learned, "geometry": geometry, "phase": phase}
@@ -1219,6 +1376,16 @@ class Calibration:
             "head_model": self.head_model, "variants": variants, "head": head_info,
         }
         return dict(a.fit)
+
+    def _head_limits(self, geo: Geometry, used: dict, a) -> dict | None:
+        """Пределы поворота и наклона головы в фазе движения головы
+        (`head_limits`): по точкам калибровки и точке фазы попытки `a`."""
+        head = [(t.x, t.y) for t in a.targets if t.phase == "head"]
+        if not used:
+            return None
+        points = np.array([(p["x"], p["y"]) for p in used.values()], dtype=np.float64)
+        centre = head[0] if head else (self.screen.w / 2, self.screen.h / 2)
+        return head_limits(geo, points, centre, float(self.h.get("max_deg", 15.0)))
 
     @staticmethod
     def _noise(model, used: dict) -> tuple[float, float]:

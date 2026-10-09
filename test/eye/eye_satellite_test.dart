@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/sno/eye/eye_calibration.dart';
@@ -203,7 +204,9 @@ void main() {
       expect(samples.short, isEmpty);
       expect(samples.face, 1.0);
       // BUG-60: фаза движения головы — участник водит головой, глядя в
-      // середину.
+      // середину; BUG-61: спутник говорит, где голова.
+      final List<EyeHeadPose> heads = <EyeHeadPose>[];
+      link.onHead = heads.add;
       link.target(
         phase: 'head',
         qpcUs: qpc.nowUs(),
@@ -215,11 +218,19 @@ void main() {
       link.target(phase: 'off', qpcUs: qpc.nowUs());
       final EyeSamples head = await link.samples(phase: 'head');
       expect(head.face, 1.0);
+      link.onHead = null;
+      expect(heads.length, greaterThan(100));
+      final Iterable<double> turns = heads.map((EyeHeadPose p) => p.turnDeg);
+      expect(turns.reduce(math.max), greaterThan(6));
+      expect(turns.reduce(math.min), lessThan(-6));
+      expect(heads.every((EyeHeadPose p) => !p.far), isTrue);
       final EyeFit fit = await link.fit();
       expect(fit.model, 'ridge');
       expect(fit.points, 9);
-      expect(fit.headModel, 'phase');
+      // BUG-62: главный способ — геометрия.
+      expect(fit.headModel, 'geometry');
       expect(fit.headPhase?.moved, isTrue);
+      expect(fit.headPhase?.accepted, isNotNull);
       await show('validate', 'v');
       final EyeValidation v = await link.validate();
       await link.check(1);

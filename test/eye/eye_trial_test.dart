@@ -126,6 +126,23 @@ void main() {
     }
   }
 
+  /// Двигает время шагами по [step], пока не выполнится [done], но не
+  /// дольше [limit]; сколько прошло.
+  Future<Duration> runUntil(
+    WidgetTester tester,
+    bool Function() done, {
+    Duration limit = const Duration(seconds: 30),
+    Duration step = const Duration(milliseconds: 100),
+  }) async {
+    Duration gone = Duration.zero;
+    while (!done() && gone < limit) {
+      await tester.pump(step);
+      gone += step;
+    }
+    expect(done(), isTrue, reason: 'не дождались за $limit');
+    return gone;
+  }
+
   /// Даёт договорить связи и спутнику: отписки от потоков отвечают
   /// обещаниями корневой зоны, и продолжение кода ложится в очередь
   /// теста только на следующем кадре. Ждать их `await` в теле теста
@@ -210,8 +227,9 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    // BUG-60: за точками — фаза движения головы: точка в середине и
-    // подсказка, сначала влево-вправо.
+    // BUG-60, BUG-61: за точками — фаза движения головы: точка в
+    // середине, кольцо вокруг неё, голова-значок и подсказка под точкой,
+    // сначала влево-вправо.
     await runFor(tester, const Duration(seconds: 2));
     expect(
       sat().targetIds.where((Object? id) => '$id'.startsWith('q')),
@@ -219,12 +237,15 @@ void main() {
     );
     expect(sat().targetIds.last, 'head');
     expect(find.text(kHeadHintTurn), findsOneWidget);
-    expect(find.byKey(const Key('eye-targets-point')), findsOneWidget);
+    expect(find.byKey(const Key('eye-head-ring')), findsOneWidget);
+    expect(find.byKey(const Key('eye-head-glyph')), findsOneWidget);
     final Map<String, Object?> head = sat().targets.firstWhere(
       (Map<String, Object?> t) => t['phase'] == 'head',
     );
     expect(head['x'], 960);
     expect(head['y'], 540);
+    // Голова ходит по обе стороны — ось набирается, и подсказка меняется
+    // на вверх-вниз.
     await runFor(tester, const Duration(seconds: 6));
     expect(find.text(kHeadHintNod), findsOneWidget);
     // Новая подсказка — точка уходит спутнику заново: он отбросит первые
@@ -356,11 +377,15 @@ void main() {
       hasLength(13),
     );
     expect(sat().names, contains('samples'));
-    // BUG-60: фаза движения головы — 1,5 с подсказки и 12 с точки.
+    // BUG-60: фаза движения головы — 1,5 с подсказки, потом точка, пока
+    // голова не наберёт своё по обеим осям (BUG-61).
     expect(find.text(kHeadIntro), findsOneWidget);
-    await runFor(tester, const Duration(seconds: 14));
+    final Duration headTime = await runUntil(
+      tester,
+      () => find.text('Теперь следите глазами за точкой').evaluate().isNotEmpty,
+    );
+    expect(headTime, lessThan(const Duration(seconds: 14)));
     expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(2));
-    expect(find.text('Теперь следите глазами за точкой'), findsOneWidget);
     // Слежение — 20 с, путь уходит спутнику один раз.
     await runFor(tester, const Duration(seconds: 2));
     final Map<String, Object?> pursuit = sat().targets.firstWhere(
@@ -729,6 +754,80 @@ void main() {
       find.text('Движение головы не записалось — поправка только по геометрии'),
       findsOneWidget,
     );
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  /// Быстрая калибровка до точки фазы движения головы.
+  Future<void> toHeadPhase(WidgetTester tester) async {
+    await pumpApp(tester);
+    instantFrames();
+    await tester.tap(find.byKey(const Key('eye-trial-quick')));
+    await runUntil(tester, () => sat().targetIds.contains('head'));
+  }
+
+  testWidgets('BUG-61: подсказка под точкой; голова не пошла — крупнее '
+      'через 5 с, через 10 с фаза кончается без движения головы', (
+    WidgetTester tester,
+  ) async {
+    launcher = FakeEyeLauncher(
+      make: (int n) => FakeEyeProcess(clock: qpc, headMotion: false),
+    );
+    eye.dispose();
+    eye = tracker();
+    await eye.savePlace(place);
+    await toHeadPhase(tester);
+    await tester.pump();
+    expect(find.text(kHeadHintTurn), findsOneWidget);
+    // Подсказка — под точкой, а не над ней: взгляд уходит недалеко.
+    expect(tester.getCenter(find.text(kHeadHintTurn)).dy, greaterThan(540));
+    expect(
+      tester.getTopLeft(find.text(kHeadHintTurn)).dy - 540,
+      lessThan(160),
+    );
+    expect(find.byKey(const Key('eye-head-glyph')), findsOneWidget);
+    const Duration tenth = Duration(milliseconds: 100);
+    await runFor(tester, const Duration(milliseconds: 4800), step: tenth);
+    expect(find.text(kHeadNudgeTurn), findsNothing);
+    await runFor(tester, const Duration(milliseconds: 400), step: tenth);
+    expect(find.text(kHeadNudgeTurn), findsOneWidget);
+    expect(sat().headLines, greaterThan(100));
+    await runFor(tester, const Duration(seconds: 5));
+    await settle(tester);
+    // Голова так и не пошла — второй оси нет, фаза кончилась.
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(1));
+    expect(
+      <Object?>[
+        for (final Map<String, Object?> c in sent('samples')) c['phase'],
+      ],
+      <Object?>['calib', 'head'],
+    );
+    expect(sat().names, contains('fit'));
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets('BUG-61: голова дальше пределов — «Не так сильно», кольцо '
+      'стоит; вернулась — набирается, вторая ось — вверх-вниз', (
+    WidgetTester tester,
+  ) async {
+    await toHeadPhase(tester);
+    sat().headFar = true;
+    await runFor(tester, const Duration(seconds: 2));
+    expect(find.text(kHeadTooFar), findsOneWidget);
+    double progress() => eye.trial.value?.run?.head?.progress ?? -1;
+    expect(progress(), 0);
+    sat().headFar = false;
+    await runFor(tester, const Duration(seconds: 2));
+    expect(find.text(kHeadHintTurn), findsOneWidget);
+    expect(progress(), greaterThan(0));
+    expect(progress(), lessThan(0.5));
+    await runUntil(tester, () => find.text(kHeadHintNod).evaluate().isNotEmpty);
+    // Обе стороны поворота набраны — стрелки вверх-вниз.
+    expect(find.text('↑'), findsOneWidget);
+    expect(find.text('↓'), findsOneWidget);
+    expect(progress(), greaterThanOrEqualTo(0.5));
+    await runUntil(tester, () => sent('samples').length == 2);
+    expect(sat().targetIds.where((Object? id) => id == 'head'), hasLength(2));
+    await settle(tester);
     await unmount(tester);
   }, timeout: const Timeout(Duration(minutes: 3)));
 

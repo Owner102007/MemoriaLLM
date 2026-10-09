@@ -13,6 +13,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -235,8 +236,8 @@ class _EyeTrialScreenState extends State<EyeTrialScreen> {
       ),
       const SizedBox(height: 8),
       Text(
-        'Полная — то, что пройдёт участник: 13 точек, 12 секунд движения '
-        'головы, слежение за точкой и 9 точек проверки, потом живой взгляд, '
+        'Полная — то, что пройдёт участник: 13 точек, движение головы, '
+        'слежение за точкой и 9 точек проверки, потом живой взгляд, '
         'две минуты свободного просмотра и проверка точности в конце. '
         'Из живого взгляда точность можно проверить в любой миг — посидите, '
         'откиньтесь, повернитесь и нажмите «Проверить точность». Файлы '
@@ -469,6 +470,16 @@ class _EyeTargetsViewState extends State<EyeTargetsView>
     final EyeTargetPoint? point = run.point;
     final PursuitPath? path = run.pursuit;
     final String? hint = run.hint;
+    final HeadSweep? head = run is EyeCalibrationRun ? run.head : null;
+    if (head != null && point != null) {
+      return _headView(
+        theme,
+        head,
+        point.at(size),
+        hint,
+        big: run is EyeCalibrationRun && run.headNudge,
+      );
+    }
     Offset? at;
     if (point != null) {
       at = point.at(size);
@@ -509,6 +520,195 @@ class _EyeTargetsViewState extends State<EyeTargetsView>
       ],
     );
   }
+
+  /// Фаза движения головы (BUG-61, кадр SNO-SCR-07.1): точка в середине
+  /// и кольцо набранного вокруг неё; под точкой — голова-значок вслед за
+  /// головой человека, стрелки сторон и подсказка. Подсказка — под
+  /// точкой и близко: взгляд уходит с точки на неё недалеко.
+  Widget _headView(
+    ThemeData theme,
+    HeadSweep head,
+    Offset at,
+    String? hint, {
+    required bool big,
+  }) {
+    final ColorScheme c = theme.colorScheme;
+    final bool turn = head.axis == HeadAxis.turn;
+    final EyeHeadPose? pose = head.pose;
+    final double angle = pose == null ? 0.0 : head.angleOf(pose);
+    TextStyle? side(bool done) => theme.textTheme.titleLarge?.copyWith(
+      color: done ? c.primary : c.onSurfaceVariant,
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        CustomPaint(
+          key: const Key('eye-head-ring'),
+          painter: _HeadRingPainter(
+            at: at,
+            progress: head.progress,
+            color: c.primary,
+            track: c.outlineVariant,
+            dot: c.onSurface,
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          top: at.dy + kTargetRing / 2 + 12,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  Text(
+                    turn ? '←' : '↑',
+                    key: const Key('eye-head-minus'),
+                    style: side(head.minusDone),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: CustomPaint(
+                      key: const Key('eye-head-glyph'),
+                      painter: _HeadGlyphPainter(
+                        turn: turn,
+                        angle: angle,
+                        far: head.far,
+                        color: c.onSurface,
+                        warn: c.error,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    turn ? '→' : '↓',
+                    key: const Key('eye-head-plus'),
+                    style: side(head.plusDone),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (hint != null)
+                Text(
+                  hint,
+                  key: const Key('eye-targets-hint'),
+                  style:
+                      (big
+                              ? theme.textTheme.headlineSmall
+                              : theme.textTheme.titleMedium)
+                          ?.copyWith(color: head.far ? c.error : null),
+                  textAlign: TextAlign.center,
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Точка фазы движения головы и кольцо набранного вокруг неё (BUG-61).
+class _HeadRingPainter extends CustomPainter {
+  _HeadRingPainter({
+    required this.at,
+    required this.progress,
+    required this.color,
+    required this.track,
+    required this.dot,
+  });
+
+  final Offset at;
+  final double progress;
+  final Color color;
+  final Color track;
+  final Color dot;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double r = kTargetRing / 2;
+    canvas.drawCircle(
+      at,
+      r,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..color = track,
+    );
+    if (progress > 0) {
+      canvas.drawArc(
+        Rect.fromCircle(center: at, radius: r),
+        -math.pi / 2,
+        2 * math.pi * progress.clamp(0.0, 1.0),
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4
+          ..strokeCap = StrokeCap.round
+          ..color = color,
+      );
+    }
+    canvas.drawCircle(at, kTargetDot / 2, Paint()..color = color);
+    canvas.drawCircle(at, 2, Paint()..color = dot);
+  }
+
+  @override
+  bool shouldRepaint(_HeadRingPainter old) =>
+      old.at != at ||
+      old.progress != progress ||
+      old.color != color ||
+      old.track != track ||
+      old.dot != dot;
+}
+
+/// Голова-значок: лицо, глаза и нос сдвигаются вслед за поворотом
+/// ([turn]) или наклоном головы на [angle] градусов — как в зеркале.
+class _HeadGlyphPainter extends CustomPainter {
+  _HeadGlyphPainter({
+    required this.turn,
+    required this.angle,
+    required this.far,
+    required this.color,
+    required this.warn,
+  });
+
+  final bool turn;
+  final double angle;
+  final bool far;
+  final Color color;
+  final Color warn;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Offset c = size.center(Offset.zero);
+    final double r = size.shortestSide / 2 - 2;
+    final Color ink = far ? warn : color;
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = ink,
+    );
+    // Сдвиг черт лица: на 15° — на половину радиуса.
+    final double k = (angle / 15).clamp(-1.2, 1.2).toDouble() * r * 0.5;
+    final Offset shift = turn ? Offset(k, 0) : Offset(0, k);
+    final Paint fill = Paint()..color = ink;
+    canvas.drawCircle(c + shift + Offset(-r * 0.35, -r * 0.2), 2.2, fill);
+    canvas.drawCircle(c + shift + Offset(r * 0.35, -r * 0.2), 2.2, fill);
+    canvas.drawCircle(c + shift * 1.3 + Offset(0, r * 0.2), 2.6, fill);
+  }
+
+  @override
+  bool shouldRepaint(_HeadGlyphPainter old) =>
+      old.turn != turn ||
+      old.angle != angle ||
+      old.far != far ||
+      old.color != color ||
+      old.warn != warn;
 }
 
 class _TargetPainter extends CustomPainter {

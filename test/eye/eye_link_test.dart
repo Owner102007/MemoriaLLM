@@ -40,6 +40,38 @@ void main() {
     expect(process.killed, isFalse);
   });
 
+  test('BUG-61: строки положения головы — своему слушателю, не живой '
+      'точке', () async {
+    final (EyeLink link, FakeEyeProcess process) = await open();
+    final List<EyeHeadPose> heads = <EyeHeadPose>[];
+    final List<EyeGaze> gaze = <EyeGaze>[];
+    link.onHead = heads.add;
+    link.onGaze = gaze.add;
+    process.emit(<String, Object?>{
+      'hm': <double>[6.5, -2.0],
+      'far': false,
+      't': 1000,
+    });
+    process.gaze(400, 300, t: 2000);
+    await pumpEventQueue();
+    expect(heads, hasLength(1));
+    expect(heads.single.turnDeg, 6.5);
+    expect(heads.single.tiltDeg, -2.0);
+    expect(heads.single.far, isFalse);
+    expect(gaze, hasLength(1));
+    // Без слушателя строка просто пропадает.
+    link.onHead = null;
+    process.emit(<String, Object?>{
+      'hm': <double>[1, 1],
+      'far': true,
+      't': 3000,
+    });
+    await pumpEventQueue();
+    expect(heads, hasLength(1));
+    expect(link.garbageInRow, 0);
+    await link.close();
+  });
+
   test('SNO-F-EYE-04: спутник другой версии — отказ', () async {
     final (EyeLink link, _) = await open(
       () => FakeEyeProcess(clock: qpc, protocol: 2),

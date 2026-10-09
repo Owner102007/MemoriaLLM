@@ -8,6 +8,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:memoria/sno/eye/eye_process.dart';
 import 'package:memoria/sno/eye/eye_protocol.dart';
@@ -53,8 +54,46 @@ class FakeEyeProcess implements EyeProcess {
     this.fitError,
     this.fitHead,
     this.checkedError,
+    this.headMotion = true,
     List<Map<String, Object?>>? validateReplies,
   }) : validateReplies = validateReplies ?? <Map<String, Object?>>[];
+
+  /// Водит ли «участник» головой в фазе движения головы (BUG-61): пока
+  /// последняя точка — фазы `head`, спутник раз в 33 мс шлёт положение
+  /// головы — поворот ±8° и наклон ±6° с периодом 2 с. `false` — голова
+  /// стоит: строки идут, но у нуля.
+  bool headMotion;
+
+  /// Голова дальше пределов: в строках положения — `far: true`.
+  bool headFar = false;
+
+  Timer? _headTimer;
+  int _headTicks = 0;
+
+  /// Сколько строк положения головы спутник прислал.
+  int headLines = 0;
+
+  void _headPhase({required bool on}) {
+    _headTimer?.cancel();
+    _headTimer = null;
+    if (!on) {
+      return;
+    }
+    _headTimer = Timer.periodic(const Duration(milliseconds: 33), (Timer _) {
+      _headTicks++;
+      final double s = _headTicks * 0.033;
+      final double w = 2 * math.pi * s / 2;
+      headLines++;
+      emit(<String, Object?>{
+        'hm': <double>[
+          headMotion ? 8 * math.sin(w) : 0.0,
+          headMotion ? 6 * math.cos(w) : 0.0,
+        ],
+        'far': headFar,
+        't': 1000000 + _headTicks * 33333,
+      });
+    });
+  }
 
   /// Часы спутника.
   final FakeQpc clock;
@@ -196,6 +235,7 @@ class FakeEyeProcess implements EyeProcess {
 
   /// Спутник выходит сам с кодом [code].
   void exit(int code) {
+    _headPhase(on: false);
     if (exited) {
       return;
     }
@@ -336,6 +376,7 @@ class FakeEyeProcess implements EyeProcess {
           'frame': <int>[1920, 1080],
         });
       case 'close':
+        _headPhase(on: false);
         cameraOpen = false;
         liveOn = false;
         _fitted = false;
@@ -363,7 +404,7 @@ class FakeEyeProcess implements EyeProcess {
           'kind': command['kind'],
         });
       case 'target':
-        break;
+        _headPhase(on: command['phase'] == 'head');
       case 'samples':
         if (command['phase'] == 'head') {
           final List<Map<String, Object?>>? queue = headSamples;

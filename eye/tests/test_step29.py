@@ -46,8 +46,13 @@ class Sim:
     головы."""
 
     def __init__(self, noise=0.3, seed=1, artifact=3.0, pose_gain=1.0, sweep=True,
-                 pivot=None):
-        self.cal = calib.Calibration(SCREEN, T, frame=(W, H))
+                 pivot=None, motion=None, thresholds=None):
+        self.cal = calib.Calibration(SCREEN, thresholds or T, frame=(W, H))
+        # Как человек ведёт себя в фазе движения головы (BUG-61, BUG-62):
+        # `motion(секунды от точки фазы)` → словарь с добавками к позе
+        # (`yaw`, `pitch`), сдвигом взгляда с точки (`look`, мм) и ошибкой
+        # признаков глаз (`err`, градусы по осям). `None` — `head_sweep`.
+        self.motion = motion
         # Голова поворачивается вокруг шеи: центр поворота — `pivot` мм от
         # глаз (x вправо, y вниз, z к экрану), и глаза при повороте
         # сдвигаются. `None` — глаза стоят на месте.
@@ -75,10 +80,17 @@ class Sim:
         # На точках голова почти не двигается — как у владельца, ±0,6°.
         yaw = p["yaw"] + 0.6 * math.sin(sec * 0.31)
         pitch = p["pitch"] + 0.6 * math.sin(sec * 0.23)
-        if cur is not None and cur.phase == "head" and self.sweep:
+        err = (0.0, 0.0)
+        if cur is not None and cur.phase == "head" and self.motion is not None:
+            m = self.motion((self.t - cur.qpc_us) / 1e6)
+            yaw, pitch = yaw + m.get("yaw", 0.0), pitch + m.get("pitch", 0.0)
+            lx, ly = m.get("look", (0.0, 0.0))
+            xm, ym = xm + lx, ym + ly
+            err = m.get("err", (0.0, 0.0))
+        elif cur is not None and cur.phase == "head" and self.sweep:
             sy, sp = synthetic.head_sweep((self.t - cur.qpc_us) / 1e6)
             yaw, pitch = yaw + sy, pitch + sp
-        noise = tuple(self.rng.normal(0, self.noise, 2))
+        noise = tuple(self.rng.normal(0, self.noise, 2) + np.asarray(err))
         shift = (-self.artifact * xm / (SCREEN.w_mm / 2),
                  self.artifact * ym / (SCREEN.h_mm / 2))
         eye = p["eye"]
@@ -175,9 +187,10 @@ def test_bug_60_geometry_and_phase_hold_when_the_head_moves(sim, move):
     r = sim.check(**MOVES[move])
     assert acc(r, "geometry") <= 1.0 + sim.noise, r["variants"]
     assert acc(r, "phase") <= 1.0 + sim.noise, r["variants"]
-    # Главные числа итога — у способа из порогов.
-    assert r["head_model"] == T["head"]["model"] == "phase"
-    assert r["accuracy_deg"] == acc(r, "phase")
+    # Главные числа итога — у способа из порогов: с правки v0.35.1
+    # (BUG-62) это геометрия.
+    assert r["head_model"] == T["head"]["model"] == "geometry"
+    assert r["accuracy_deg"] == acc(r, "geometry")
 
 
 def test_bug_60_still_head_all_three_are_good(sim):
@@ -213,9 +226,13 @@ def test_bug_60_head_phase_is_reported_in_fit():
     head = fit["head"]
     assert head["moved"] and head["used"] >= 200
     assert head["turn_deg"] > 12 and head["tilt_deg"] > 9
-    assert fit["head_model"] == "phase" and fit["variants"]["phase"]["rest"]
+    # Голова ходила в обе стороны по обеим осям — обе учатся, и проверка
+    # остатка на отложенных секундах записана.
+    assert head["axes"] == ["turn", "tilt"]
+    assert set(head["proof"]) == {"geometry_deg", "rest_deg"}
+    assert fit["head_model"] == "geometry"
     # Живая точка — по способу из порогов.
-    assert s.cal.model is s.cal.models["phase"]
+    assert s.cal.model is s.cal.models["geometry"]
 
 
 def test_bug_60_without_head_movement_rest_is_geometry():
@@ -295,8 +312,8 @@ def test_bug_60_geometry_round_trip():
 def test_bug_60_model_survives_json(sim):
     sim.check()
     data = json.loads(json.dumps(sim.cal.to_json()))
-    assert data["head_model"] == "phase" and set(data["variants"]) == set(calib.HEAD_MODELS)
-    assert data["model"]["kind"] == "head" and data["model"]["label"] == "phase"
+    assert data["head_model"] == "geometry" and set(data["variants"]) == set(calib.HEAD_MODELS)
+    assert data["model"]["kind"] == "head" and data["model"]["label"] == "geometry"
     assert data["setup"] == {"frame": [W, H], "iod_mm": 90.0, "camera_above_mm": 8.0}
     assert data["schema"] == "sno2026-eyecal/2"
     assert data["checks"] and data["checks"][-1]["result"]["n"] == 1
@@ -374,7 +391,7 @@ def test_bug_60_head_phase_and_check_through_the_exchange(follower, tmp_path):
     assert s["counts"]["head"] >= 150
     sat.send({"cmd": "fit"})
     fit = sat.reply("fit", timeout=30)
-    assert fit["head_model"] == "phase" and fit["head"]["moved"] is True
+    assert fit["head_model"] == "geometry" and fit["head"]["moved"] is True
     assert set(fit["variants"]) == {"learned", "geometry", "phase"}
 
     sat.send({"cmd": "check", "n": 1})
@@ -384,7 +401,7 @@ def test_bug_60_head_phase_and_check_through_the_exchange(follower, tmp_path):
     r = sat.reply("checked", timeout=30)
     assert r["n"] == 1 and len(r["points"]) == 9
     assert set(r["variants"]) == {"learned", "geometry", "phase"}
-    assert r["accuracy_deg"] == r["variants"]["phase"]["accuracy_deg"] < 3.0
+    assert r["accuracy_deg"] == r["variants"]["geometry"]["accuracy_deg"] < 3.0
     assert set(r["head"]) == {"turn_deg", "tilt_deg", "roll_deg", "dx_mm", "dy_mm", "dz_pct"}
     assert r["start_deg"] is None   # проверки сразу после калибровки не было
     checks = json.loads((folder / "checks.json").read_text(encoding="utf-8"))

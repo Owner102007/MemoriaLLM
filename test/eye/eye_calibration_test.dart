@@ -243,7 +243,8 @@ void main() {
     expect(kHeadPoint.at(const Size(1920, 1080)), const Offset(960, 540));
     expect(EyeTargetPhase.head.wire, 'head');
     expect(EyeTargetPhase.check.wire, 'check');
-    expect(kHeadPhaseTime, const Duration(seconds: 12));
+    expect(kHeadSideTime, const Duration(milliseconds: 1500));
+    expect(kHeadSideDeg, 3);
   });
 
   test('BUG-60: голова на проверке словами', () {
@@ -362,5 +363,165 @@ void main() {
       headPhaseLine(fit(<String, Object?>{'frames': 0, 'moved': false})),
       'Движение головы не записалось — поправка только по геометрии',
     );
+  });
+
+  test('BUG-62: остаток поправки принят или нет — словами в итоге', () {
+    EyeFit fit(Map<String, Object?> head) => EyeFit.fromMessage(
+      <String, Object?>{
+        'model': 'ridge',
+        'cv_deg': 1.2,
+        'points': 9,
+        'head_model': 'geometry',
+        'head': <String, Object?>{
+          'frames': 330,
+          'moved': true,
+          'turn_deg': 17.3,
+          'tilt_deg': 13.4,
+          ...head,
+        },
+      },
+    );
+    const String range = 'Движение головы: влево-вправо 17°, вверх-вниз 13°';
+    expect(fit(<String, Object?>{}).headModel, 'geometry');
+    expect(
+      fit(<String, Object?>{'accepted': true, 'reason': null}).headPhase
+          ?.accepted,
+      isTrue,
+    );
+    expect(
+      headPhaseLine(fit(<String, Object?>{'accepted': true})),
+      '$range · поправка по движению выучена',
+    );
+    expect(
+      headPhaseLine(
+        fit(<String, Object?>{'accepted': false, 'reason': 'one_side'}),
+      ),
+      '$range · голова ходила в одну сторону — поправка по геометрии',
+    );
+    expect(
+      headPhaseLine(
+        fit(<String, Object?>{'accepted': false, 'reason': 'no_gain'}),
+      ),
+      '$range · поправка по движению не точнее — по геометрии',
+    );
+    expect(
+      headPhaseLine(
+        fit(<String, Object?>{'accepted': false, 'reason': 'few_frames'}),
+      ),
+      '$range · годных кадров мало — поправка по геометрии',
+    );
+    // Спутник прежней версии о приёме не говорит — только размах.
+    expect(headPhaseLine(fit(<String, Object?>{})), range);
+  });
+
+  group('BUG-61: ход фазы движения головы', () {
+    const Duration tick = kHeadTick;
+    EyeHeadPose pose(double turn, double tilt, {bool far = false}) =>
+        EyeHeadPose(turnDeg: turn, tiltDeg: tilt, far: far);
+
+    test('строка положения головы', () {
+      final EyeHeadPose? p = EyeHeadPose.fromMessage(<String, Object?>{
+        'hm': <Object?>[5.2, -1],
+        'far': true,
+        't': 123,
+      });
+      expect(p?.turnDeg, 5.2);
+      expect(p?.tiltDeg, -1.0);
+      expect(p?.far, isTrue);
+      expect(p?.qpcUs, 123);
+      expect(EyeHeadPose.fromMessage(<String, Object?>{'g': null}), isNull);
+      expect(
+        EyeHeadPose.fromMessage(<String, Object?>{
+          'hm': <Object?>['a', 1],
+        }),
+        isNull,
+      );
+    });
+
+    test('сторона набирается, пока голова за порогом; без строк — нет', () {
+      final HeadSweep s = HeadSweep()..begin(HeadAxis.turn);
+      expect(s.hint, kHeadHintTurn);
+      expect(s.progress, 0);
+      // Голова у опоры — не в счёт; срок без строк — тоже.
+      s.tick(pose(2.9, 0), tick);
+      s.tick(null, tick);
+      expect(s.moved, isFalse);
+      expect(s.waited, tick * 2);
+      for (int i = 0; i < 15; i++) {
+        s.tick(pose(-6, 0), tick);
+      }
+      expect(s.minusDone, isTrue);
+      expect(s.plusDone, isFalse);
+      expect(s.full, isFalse);
+      expect(s.progress, closeTo(0.25, 1e-9));
+      // Наклон по оси поворота не в счёт.
+      s.tick(pose(0, 9), tick);
+      expect(s.plus, Duration.zero);
+      for (int i = 0; i < 15; i++) {
+        s.tick(pose(5, 0), tick);
+      }
+      expect(s.full, isTrue);
+      expect(s.over, isTrue);
+      expect(s.progress, closeTo(0.5, 1e-9));
+      // Вторая ось — всё заново, кольцо — вторая половина.
+      s.begin(HeadAxis.tilt);
+      expect(s.hint, kHeadHintNod);
+      expect(s.over, isFalse);
+      expect(s.progress, closeTo(0.5, 1e-9));
+      for (int i = 0; i < 15; i++) {
+        s.tick(pose(0, -4), tick);
+        s.tick(pose(0, 4), tick);
+      }
+      expect(s.full, isTrue);
+      expect(s.progress, closeTo(1, 1e-9));
+    });
+
+    test('дальше пределов — «Не так сильно», и это не в счёт', () {
+      final HeadSweep s = HeadSweep()..begin(HeadAxis.turn);
+      s.tick(pose(-25, 0, far: true), tick);
+      expect(s.far, isTrue);
+      expect(s.hint, kHeadTooFar);
+      expect(s.minus, Duration.zero);
+      expect(s.angleOf(s.pose!), -25);
+      s.tick(pose(-6, 0), tick);
+      expect(s.far, isFalse);
+      expect(s.minus, tick);
+      expect(s.hint, kHeadHintTurn);
+    });
+
+    test('голова не пошла — крупнее через 5 с, без неё через 10 с; '
+        'ось не дольше 12 с', () {
+      final HeadSweep s = HeadSweep()..begin(HeadAxis.turn);
+      for (int i = 0; i < 49; i++) {
+        s.tick(pose(0.5, 0), tick);
+      }
+      expect(s.nudge, isFalse);
+      s.tick(pose(0.5, 0), tick);
+      expect(s.nudge, isTrue);
+      expect(s.hint, kHeadNudgeTurn);
+      for (int i = 0; i < 50; i++) {
+        s.tick(null, tick);
+      }
+      expect(s.gaveUp, isTrue);
+      expect(s.over, isTrue);
+      expect(s.moved, isFalse);
+      // Пошла — не бросается, но и не длится больше 12 с.
+      s.begin(HeadAxis.tilt);
+      expect(s.hint, kHeadHintNod);
+      for (int i = 0; i < 60; i++) {
+        s.tick(pose(0, 0), tick);
+      }
+      expect(s.hint, kHeadNudgeNod);
+      s.tick(pose(0, 5), tick);
+      for (int i = 0; i < 58; i++) {
+        s.tick(pose(0, 5), tick);
+      }
+      expect(s.nudge, isFalse);
+      expect(s.over, isFalse);
+      s.tick(pose(0, 5), tick);
+      expect(s.waited, kHeadAxisLimit);
+      expect(s.over, isTrue);
+      expect(s.full, isFalse);
+    });
   });
 }

@@ -68,24 +68,158 @@ const Duration kValidationPointTime = Duration(milliseconds: 1500);
 /// Сколько идёт слежение за движущейся точкой.
 const Duration kPursuitTime = Duration(seconds: 20);
 
-/// Сколько идёт фаза движения головы (BUG-60): точка в середине, человек
-/// водит головой, глядя на неё, — первые [kHeadTurnTime] влево-вправо,
-/// остальное вверх-вниз.
-const Duration kHeadPhaseTime = Duration(seconds: 12);
+/// Фаза движения головы (BUG-60, BUG-61): точка стоит в середине, человек
+/// смотрит на неё и водит головой — сначала влево-вправо, потом
+/// вверх-вниз. Длины у неё нет: ось кончается, когда голова побыла по
+/// каждую сторону [kHeadSideTime] дальше [kHeadSideDeg], — так кадры
+/// ложатся по обе стороны, как нужно поправке (BUG-62). Попытка смотрит
+/// на голову раз в [kHeadTick].
+const Duration kHeadTick = Duration(milliseconds: 100);
 
-/// Сколько из фазы движения головы — влево-вправо.
-const Duration kHeadTurnTime = Duration(seconds: 6);
+/// С какого поворота или наклона голова считается ушедшей в сторону,
+/// градусов. У спутника тот же порог (`side_deg` в `eye/thresholds.json`).
+const double kHeadSideDeg = 3;
+
+/// Сколько голове пробыть по каждую сторону оси.
+const Duration kHeadSideTime = Duration(milliseconds: 1500);
+
+/// Голова не пошла за столько с начала оси — подсказка крупнее.
+const Duration kHeadNudgeTime = Duration(seconds: 5);
+
+/// Голова не пошла и за столько — фаза идёт без движения головы.
+const Duration kHeadGiveUpTime = Duration(seconds: 10);
+
+/// Дольше этого ось не идёт, даже если голова набрала не всё.
+const Duration kHeadAxisLimit = Duration(seconds: 12);
 
 /// Подсказка перед фазой движения головы.
-const String kHeadIntro = 'Теперь смотрите на точку и медленно водите головой';
+const String kHeadIntro = 'Теперь точка стоит на месте — двигать нужно голову';
 
-/// Подсказка первой половины фазы движения головы.
+/// Подсказка первой оси фазы движения головы.
 const String kHeadHintTurn =
-    'Смотрите на точку и медленно поворачивайте голову\n← влево-вправо →';
+    'Не двигайте глазами — смотрите на точку\n'
+    'и поворачивайте голову влево и вправо';
 
-/// Подсказка второй половины.
+/// Подсказка второй оси.
 const String kHeadHintNod =
-    'Смотрите на точку и медленно наклоняйте голову\n↑ вверх-вниз ↓';
+    'Не двигайте глазами — смотрите на точку\n'
+    'и наклоняйте голову вверх и вниз';
+
+/// Голова не пошла за [kHeadNudgeTime] — влево-вправо.
+const String kHeadNudgeTurn = 'Поверните голову — точка не сдвинется';
+
+/// Голова не пошла за [kHeadNudgeTime] — вверх-вниз.
+const String kHeadNudgeNod = 'Наклоните голову — точка не сдвинется';
+
+/// Голова ушла дальше, чем поправка может выучить (BUG-62).
+const String kHeadTooFar = 'Не так сильно — верните голову немного назад';
+
+/// Ось фазы движения головы.
+enum HeadAxis {
+  /// Влево-вправо.
+  turn,
+
+  /// Вверх-вниз.
+  tilt,
+}
+
+/// Ход фазы движения головы (BUG-61): сколько голова пробыла по каждую
+/// сторону оси, пока человек смотрел на точку. Чистое правило: его кормит
+/// попытка калибровки раз в [kHeadTick] последним положением головы,
+/// пришедшим от спутника за этот срок.
+class HeadSweep {
+  /// Ось, которая идёт сейчас.
+  HeadAxis axis = HeadAxis.turn;
+
+  /// Сколько голова пробыла влево (вверх).
+  Duration minus = Duration.zero;
+
+  /// Сколько голова пробыла вправо (вниз).
+  Duration plus = Duration.zero;
+
+  /// Сколько идёт ось.
+  Duration waited = Duration.zero;
+
+  /// Последнее положение головы; `null` — его ещё не было.
+  EyeHeadPose? pose;
+
+  /// Голова сейчас дальше того, что поправка может выучить.
+  bool far = false;
+
+  /// Начинает ось [next]: всё, что набрано, — заново.
+  void begin(HeadAxis next) {
+    axis = next;
+    minus = Duration.zero;
+    plus = Duration.zero;
+    waited = Duration.zero;
+    far = false;
+  }
+
+  /// Прошёл срок [dt]; [fresh] — последнее положение за него или `null`,
+  /// если спутник за это время о голове не сказал (такой срок не в счёт).
+  void tick(EyeHeadPose? fresh, Duration dt) {
+    waited += dt;
+    if (fresh == null) {
+      return;
+    }
+    pose = fresh;
+    far = fresh.far;
+    if (far) {
+      return;
+    }
+    final double a = angleOf(fresh);
+    if (a <= -kHeadSideDeg) {
+      minus += dt;
+    } else if (a >= kHeadSideDeg) {
+      plus += dt;
+    }
+  }
+
+  /// Угол [p] по оси, которая идёт: поворот или наклон.
+  double angleOf(EyeHeadPose p) =>
+      axis == HeadAxis.turn ? p.turnDeg : p.tiltDeg;
+
+  /// Голова уже ходила по этой оси.
+  bool get moved => minus > Duration.zero || plus > Duration.zero;
+
+  /// Влево (вверх) набрано.
+  bool get minusDone => minus >= kHeadSideTime;
+
+  /// Вправо (вниз) набрано.
+  bool get plusDone => plus >= kHeadSideTime;
+
+  /// Ось набрана по обе стороны.
+  bool get full => minusDone && plusDone;
+
+  /// Голова не пошла за [kHeadNudgeTime]: подсказка крупнее.
+  bool get nudge => !moved && waited >= kHeadNudgeTime;
+
+  /// Голова не пошла и за [kHeadGiveUpTime]: фаза — без движения головы.
+  bool get gaveUp => !moved && waited >= kHeadGiveUpTime;
+
+  /// Ось кончилась: набрана, брошена или вышел её срок.
+  bool get over => full || gaveUp || waited >= kHeadAxisLimit;
+
+  /// Доля набранного по всей фазе, 0…1: первая половина — влево-вправо,
+  /// вторая — вверх-вниз.
+  double get progress {
+    final int need = kHeadSideTime.inMicroseconds;
+    double side(Duration d) => math.min(d.inMicroseconds, need) / need;
+    final double axisPart = (side(minus) + side(plus)) / 2;
+    return ((axis == HeadAxis.turn ? 0 : 1) + axisPart) / 2;
+  }
+
+  /// Подсказка под точкой.
+  String get hint {
+    if (far) {
+      return kHeadTooFar;
+    }
+    if (nudge) {
+      return axis == HeadAxis.turn ? kHeadNudgeTurn : kHeadNudgeNod;
+    }
+    return axis == HeadAxis.turn ? kHeadHintTurn : kHeadHintNod;
+  }
+}
 
 /// Подсказка перед точками проверки точности без новой калибровки.
 const String kCheckIntro = 'Смотрите на точки — проверка точности';
@@ -440,7 +574,8 @@ String? variantsLine(EyeAccuracy a) {
 }
 
 /// Как прошла фаза движения головы (итог калибровки, кадр SNO-SCR-07.2);
-/// `null` — спутник о ней не сказал.
+/// `null` — спутник о ней не сказал. Остаток поправки, который себя не
+/// доказал (BUG-62), назван: поправка тогда только по геометрии.
 String? headPhaseLine(EyeFit fit) {
   final EyeHeadPhase? h = fit.headPhase;
   if (h == null) {
@@ -452,6 +587,16 @@ String? headPhaseLine(EyeFit fit) {
   if (!h.moved) {
     return 'Голова почти не двигалась — поправка только по геометрии';
   }
-  return 'Движение головы: влево-вправо ${(h.turnDeg ?? 0).round()}°, '
+  final String range =
+      'Движение головы: влево-вправо ${(h.turnDeg ?? 0).round()}°, '
       'вверх-вниз ${(h.tiltDeg ?? 0).round()}°';
+  return switch ((h.accepted, h.reason)) {
+    (true, _) => '$range · поправка по движению выучена',
+    (false, 'one_side') =>
+      '$range · голова ходила в одну сторону — поправка по геометрии',
+    (false, 'no_gain') =>
+      '$range · поправка по движению не точнее — по геометрии',
+    (false, _) => '$range · годных кадров мало — поправка по геометрии',
+    _ => range,
+  };
 }

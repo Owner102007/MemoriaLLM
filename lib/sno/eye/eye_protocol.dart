@@ -655,8 +655,8 @@ class EyeFit {
   final Map<String, Object?> raw;
 }
 
-/// Фаза движения головы в итоге `fit` (BUG-60): сколько кадров, на
-/// сколько ходила голова и выучен ли по ней остаток поправки.
+/// Фаза движения головы в итоге `fit` (BUG-60, BUG-62): сколько кадров,
+/// на сколько ходила голова и выучен ли по ней остаток поправки.
 class EyeHeadPhase {
   /// Создаёт сведения.
   const EyeHeadPhase({
@@ -664,18 +664,33 @@ class EyeHeadPhase {
     required this.moved,
     this.turnDeg,
     this.tiltDeg,
+    this.accepted,
+    this.reason,
   });
 
   /// Сведения из поля `head`.
   factory EyeHeadPhase.fromJson(Map<String, Object?> json) {
     final Object? frames = json['frames'];
+    final Object? accepted = json['accepted'];
+    final Object? reason = json['reason'];
     return EyeHeadPhase(
       frames: frames is int ? frames : 0,
       moved: json['moved'] == true,
       turnDeg: _num(json['turn_deg']),
       tiltDeg: _num(json['tilt_deg']),
+      accepted: accepted is bool ? accepted : null,
+      reason: reason is String ? reason : null,
     );
   }
+
+  /// Принят ли остаток поправки (BUG-62): он доказал, что точнее
+  /// геометрии на секундах фазы, которых не видел; `null` — спутник
+  /// прежней версии.
+  final bool? accepted;
+
+  /// Почему остатка нет: `not_moved`, `few_frames`, `one_side`,
+  /// `no_gain`; `null` — он есть или спутник не сказал.
+  final String? reason;
 
   /// Кадров с лицом в фазе.
   final int frames;
@@ -897,6 +912,51 @@ class EyeValidation {
 
   /// Ответ как есть — для файлов и журнала.
   final Map<String, Object?> raw;
+}
+
+/// Строка фазы движения головы `{hm: [turn, tilt], far, t}` (BUG-61): где
+/// голова против опоры калибровки, пока точка фазы на экране.
+class EyeHeadPose {
+  /// Создаёт положение.
+  const EyeHeadPose({
+    required this.turnDeg,
+    required this.tiltDeg,
+    this.far = false,
+    this.qpcUs = 0,
+  });
+
+  /// Положение из строки спутника; `null` — строка не о нём.
+  static EyeHeadPose? fromMessage(Map<String, Object?> message) {
+    final Object? hm = message['hm'];
+    if (hm is! List<Object?> || hm.length != 2) {
+      return null;
+    }
+    final Object? turn = hm[0];
+    final Object? tilt = hm[1];
+    if (turn is! num || tilt is! num) {
+      return null;
+    }
+    final Object? t = message['t'];
+    return EyeHeadPose(
+      turnDeg: turn.toDouble(),
+      tiltDeg: tilt.toDouble(),
+      far: message['far'] == true,
+      qpcUs: t is int ? t : 0,
+    );
+  }
+
+  /// Поворот к правому краю экрана, градусов.
+  final double turnDeg;
+
+  /// Наклон вниз, градусов.
+  final double tiltDeg;
+
+  /// Голова дальше того, что поправка может выучить (BUG-62): глаз в
+  /// голове вышел из размаха калибровки.
+  final bool far;
+
+  /// QPC кадра, мкс.
+  final int qpcUs;
 }
 
 /// Строка живой точки `{g, s, ok, t}`: оценка взгляда на кадре.

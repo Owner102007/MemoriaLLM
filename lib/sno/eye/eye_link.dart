@@ -91,6 +91,10 @@ class EyeLink {
   /// Живая точка взгляда — по строке на кадр, пока включена (`live`).
   void Function(EyeGaze gaze)? onGaze;
 
+  /// Где голова — по строке на кадр, пока на экране точка фазы движения
+  /// головы (BUG-61).
+  void Function(EyeHeadPose pose)? onHead;
+
   /// Код выхода спутника, когда он вышел.
   Future<int> get exitCode => _exited.future;
 
@@ -139,6 +143,11 @@ class EyeLink {
     final EyeHeartbeat? beat = EyeHeartbeat.fromMessage(message);
     if (beat != null) {
       onHeartbeat?.call(beat);
+      return;
+    }
+    final EyeHeadPose? head = EyeHeadPose.fromMessage(message);
+    if (head != null) {
+      onHead?.call(head);
       return;
     }
     final EyeGaze? gaze = EyeGaze.fromMessage(message);

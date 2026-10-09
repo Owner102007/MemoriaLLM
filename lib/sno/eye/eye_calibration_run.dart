@@ -1,5 +1,6 @@
 /// Одна попытка калибровки (SNO-F-EYE-01, SNO-ALG-EYE-02): точки по
-/// одной, повтор точек без кадров, фаза движения головы, слежение,
+/// одной, повтор точек без кадров, фаза движения головы (BUG-61: пока
+/// голова не набрала своё по обе стороны), слежение,
 /// модель, точки проверки. И проверка точности без новой калибровки
 /// (BUG-60, SNO-F-EYE-03) — девять точек той моделью, что есть.
 ///
@@ -264,44 +265,89 @@ class EyeCalibrationRun extends EyeTargetsRun {
     );
   }
 
-  /// Фаза движения головы (BUG-60): точка в середине, человек водит
-  /// головой, глядя на неё, — по ней спутник учит поправку на голову.
-  /// Лица мало — фаза повторяется один раз; мало и после повтора —
-  /// калибровка идёт без неё, и поправка остаётся по геометрии.
+  /// Ход фазы движения головы (BUG-61); `null` — фазы сейчас нет.
+  HeadSweep? head;
+
+  /// Последнее положение головы от спутника, ещё не учтённое.
+  EyeHeadPose? _fresh;
+
+  void _onHeadPose(EyeHeadPose pose) {
+    _fresh = pose;
+  }
+
+  /// Подсказка фазы головы крупнее обычной: голова не пошла.
+  bool get headNudge => head?.nudge ?? false;
+
+  /// Одна ось фазы движения головы: раз в [kHeadTick] — последнее
+  /// положение головы в счёт, пока ось не кончилась. Ходила ли голова.
+  Future<bool> _headAxis(HeadSweep sweep) async {
+    while (!_cancelled && !sweep.over) {
+      await _pause(kHeadTick);
+      if (_cancelled) {
+        return false;
+      }
+      sweep.tick(_fresh, kHeadTick);
+      _fresh = null;
+      _hint(sweep.hint);
+    }
+    return sweep.moved;
+  }
+
+  /// Фаза движения головы (BUG-60, BUG-61): точка в середине, человек
+  /// водит головой, глядя на неё, — по ней спутник учит поправку на
+  /// голову. Кольцо вокруг точки заполняется, пока голова ходит по обе
+  /// стороны оси; сначала влево-вправо, потом вверх-вниз. Голова не пошла
+  /// за [kHeadGiveUpTime] — фаза кончается, поправка остаётся по
+  /// геометрии. Лица мало — фаза повторяется один раз; мало и после
+  /// повтора — калибровка идёт без неё.
   Future<void> _headPhase() async {
-    for (int round = 0; round < 2; round++) {
-      _show(hint: kHeadIntro);
-      await _pause(kIntroTime);
-      if (_cancelled) {
-        return;
+    try {
+      for (int round = 0; round < 2; round++) {
+        head = null;
+        _show(hint: kHeadIntro);
+        await _pause(kIntroTime);
+        if (_cancelled) {
+          return;
+        }
+        final HeadSweep sweep = HeadSweep()..begin(HeadAxis.turn);
+        head = sweep;
+        _fresh = null;
+        _link.onHead = _onHeadPose;
+        _show(hint: sweep.hint, point: kHeadPoint);
+        final int qpc = await _onScreen();
+        if (_cancelled) {
+          return;
+        }
+        _headTarget(qpc);
+        if (await _headAxis(sweep)) {
+          sweep.begin(HeadAxis.tilt);
+          _hint(sweep.hint);
+          // Новую подсказку читают — точка уходит спутнику заново, и он
+          // отбросит первые полсекунды после неё, как после новой точки.
+          final int read = await _onScreen();
+          if (_cancelled) {
+            return;
+          }
+          _headTarget(read);
+          await _headAxis(sweep);
+        }
+        _off();
+        if (_cancelled) {
+          return;
+        }
+        final EyeSamples samples = await _link.samples(
+          phase: EyeTargetPhase.head.wire,
+        );
+        final double? face = samples.face;
+        if (face == null || face >= kFaceMinShare) {
+          return;
+        }
       }
-      _show(hint: kHeadHintTurn, point: kHeadPoint);
-      final int qpc = await _onScreen();
-      if (_cancelled) {
-        return;
+    } finally {
+      if (_link.onHead == _onHeadPose) {
+        _link.onHead = null;
       }
-      _headTarget(qpc);
-      await _pause(kHeadTurnTime);
-      _hint(kHeadHintNod);
-      // Новую подсказку читают — точка уходит спутнику заново, и он
-      // отбросит первые полсекунды после неё, как после новой точки.
-      final int read = await _onScreen();
-      if (_cancelled) {
-        return;
-      }
-      _headTarget(read);
-      await _pause(kHeadPhaseTime - kHeadTurnTime);
-      _off();
-      if (_cancelled) {
-        return;
-      }
-      final EyeSamples samples = await _link.samples(
-        phase: EyeTargetPhase.head.wire,
-      );
-      final double? face = samples.face;
-      if (face == null || face >= kFaceMinShare) {
-        return;
-      }
+      head = null;
     }
   }
 

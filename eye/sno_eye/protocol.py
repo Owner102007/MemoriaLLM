@@ -46,8 +46,14 @@
 
 Поправка на голову (шаг 29, BUG-60): у `target` фаза `head` — точка в
 середине, человек водит головой, глядя на неё (её кадры учат остаток
-поправки); `samples {phase: head}` — сколько кадров и доля лица. Проверка
-точности без новой калибровки:
+поправки); `samples {phase: head}` — сколько кадров и доля лица. Пока
+последняя точка — фазы `head`, спутник шлёт по строке на кадр с лицом
+`{hm: [turn, tilt], far, t}` (правка `v0.35.1`, BUG-61): поворот головы к
+правому краю экрана и наклон вниз против опоры калибровки (градусы),
+`far` — голова дальше того, что остаток может выучить, `t` — QPC кадра.
+По ним приложение ведёт подсказку и кольцо фазы. Эти строки
+выбрасываются первыми, как строки живой точки. Проверка точности без
+новой калибровки:
 
 * `check {n}` → `{reply: check, n}` — начата проверка `n`; точки — `target`
   с фазой `check`;
@@ -474,6 +480,13 @@ class Server:
               and (frame.blink_score is None or frame.blink_score <= BLINK_SCORE))
         qpc = frame.grabbed.qpc_us
         cal.add(qpc, frame.feat, ok)
+        if not flags & featfile.NO_FACE:
+            # Фаза движения головы (BUG-61): где голова — приложению на
+            # подсказку; моргание позе не мешает.
+            head = cal.head_live(frame.feat)
+            if head is not None:
+                self.out.send({"hm": [round(head["turn"], 1), round(head["tilt"], 1)],
+                               "far": head["far"], "t": qpc}, droppable=True)
         if not self.live:
             return
         g = cal.predict(frame.feat) if ok else None
