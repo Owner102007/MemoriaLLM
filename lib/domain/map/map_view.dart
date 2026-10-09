@@ -517,3 +517,41 @@ List<LabelBox> pickLabels(
   }
   return placed;
 }
+
+/// Сколько звёзд карты ложится в кадр раскладки записи (SNO-F-REC-03,
+/// шаг 31): у исследования книг меньше, а кадр не должен расти с
+/// библиотекой.
+const int kLayoutStarLimit = 100;
+
+/// Какие звёзды идут в кадр раскладки записи (SNO-F-REC-03,
+/// SNO-ALG-REC-02, шаг 3; шаг 31).
+///
+/// Звезда с серединой ([xs], [ys]) на карте и радиусом [radii] на
+/// экране идёт, если её круг задевает окно [view]; крупные — первыми,
+/// при равном радиусе — по порядку карты; не больше [limit]. Ответ —
+/// номера звёзд. Та же выборка — во второй реализации эталона кадра
+/// (`tool/make_layout_goldens.py`).
+List<int> layoutStars({
+  required MapViewport view,
+  required List<double> xs,
+  required List<double> ys,
+  required List<double> radii,
+  int limit = kLayoutStarLimit,
+}) {
+  final List<int> seen = <int>[];
+  final int count = math.min(xs.length, math.min(ys.length, radii.length));
+  for (int i = 0; i < count; i++) {
+    final double x = view.screenX(xs[i]);
+    final double y = view.screenY(ys[i]);
+    final double r = radii[i];
+    if (x + r < 0 || x - r > view.width || y + r < 0 || y - r > view.height) {
+      continue;
+    }
+    seen.add(i);
+  }
+  seen.sort((int a, int b) {
+    final int bySize = radii[b].compareTo(radii[a]);
+    return bySize != 0 ? bySize : a.compareTo(b);
+  });
+  return seen.length > limit ? seen.sublist(0, limit) : seen;
+}

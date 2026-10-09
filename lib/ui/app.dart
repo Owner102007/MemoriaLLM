@@ -12,6 +12,8 @@ import '../sno/eye/eye_tracker.dart';
 import '../sno/eye/live_layer.dart';
 import '../sno/flags.dart';
 import '../sno/recording/event.dart';
+import '../sno/recording/layout_frames.dart';
+import '../sno/recording/layout_probe.dart';
 import '../sno/recording/logged_settings.dart';
 import '../sno/recording/recording_overlay.dart';
 import '../sno/recording/session.dart';
@@ -449,14 +451,18 @@ class _HomeShellState extends State<HomeShell> {
         if (!_deviceOpened) {
           return const SizedBox.shrink();
         }
-        return DeviceBooksScreen(
-          services: widget.services,
-          section: true,
-          visible: _section == AppSection.device,
-          paused: _reading,
-          categoryId: _targetCategory,
-          onClearCategory: () => setState(() => _targetCategory = null),
-          onAdded: _booksAdded,
+        return LayoutProbe(
+          kind: LayoutKind.screen,
+          id: 'device',
+          child: DeviceBooksScreen(
+            services: widget.services,
+            section: true,
+            visible: _section == AppSection.device,
+            paused: _reading,
+            categoryId: _targetCategory,
+            onClearCategory: () => setState(() => _targetCategory = null),
+            onAdded: _booksAdded,
+          ),
         );
       case AppSection.galaxy:
         // SNO-F-MAP-01. Условие — константа сборки: в основное
@@ -490,9 +496,15 @@ class _HomeShellState extends State<HomeShell> {
         }
         return const SizedBox.shrink();
       case AppSection.settings:
-        return SettingsScreen(
-          themeController: widget.themeController,
-          settings: _screenSettings,
+        // SNO-F-REC-03: раздел — зона кадра раскладки (полка, карта и
+        // «Тестирование» называют себя сами).
+        return LayoutProbe(
+          kind: LayoutKind.screen,
+          id: 'settings',
+          child: SettingsScreen(
+            themeController: widget.themeController,
+            settings: _screenSettings,
+          ),
         );
     }
   }
@@ -538,18 +550,28 @@ class _BottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return NavigationBar(
-      selectedIndex: sections.indexOf(current),
-      onDestinationSelected: (int value) => onOpen(sections[value]),
-      destinations: <Widget>[
-        for (final AppSection section in sections)
-          NavigationDestination(
-            key: _keyOf(section),
-            icon: Icon(_iconOf(section, selected: false)),
-            selectedIcon: Icon(_iconOf(section, selected: true)),
-            label: sectionTitle(section),
-          ),
-      ],
+    // SNO-F-REC-03: полоса и каждый раздел в ней — зоны кадра раскладки.
+    return LayoutProbe(
+      kind: LayoutKind.nav,
+      id: 'bottom',
+      info: () => <String, Object?>{'current': current.name},
+      child: NavigationBar(
+        selectedIndex: sections.indexOf(current),
+        onDestinationSelected: (int value) => onOpen(sections[value]),
+        destinations: <Widget>[
+          for (final AppSection section in sections)
+            LayoutProbe(
+              kind: LayoutKind.nav,
+              id: section.name,
+              child: NavigationDestination(
+                key: _keyOf(section),
+                icon: Icon(_iconOf(section, selected: false)),
+                selectedIcon: Icon(_iconOf(section, selected: true)),
+                label: sectionTitle(section),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -575,30 +597,36 @@ class _TopNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surface,
-      child: SafeArea(
-        bottom: false,
-        child: SizedBox(
-          height: 44,
-          child: Row(
-            children: <Widget>[
-              const SizedBox(width: 8),
-              for (final AppSection section in sections)
-                if (section != AppSection.settings)
-                  _TopNavButton(
-                    section: section,
-                    selected: section == current,
-                    onOpen: onOpen,
-                  ),
-              const Spacer(),
-              _TopNavButton(
-                section: AppSection.settings,
-                selected: current == AppSection.settings,
-                onOpen: onOpen,
-              ),
-              const SizedBox(width: 8),
-            ],
+    // SNO-F-REC-03: полоса и каждый раздел в ней — зоны кадра раскладки.
+    return LayoutProbe(
+      kind: LayoutKind.nav,
+      id: 'top',
+      info: () => <String, Object?>{'current': current.name},
+      child: Material(
+        color: theme.colorScheme.surface,
+        child: SafeArea(
+          bottom: false,
+          child: SizedBox(
+            height: 44,
+            child: Row(
+              children: <Widget>[
+                const SizedBox(width: 8),
+                for (final AppSection section in sections)
+                  if (section != AppSection.settings)
+                    _TopNavButton(
+                      section: section,
+                      selected: section == current,
+                      onOpen: onOpen,
+                    ),
+                const Spacer(),
+                _TopNavButton(
+                  section: AppSection.settings,
+                  selected: current == AppSection.settings,
+                  onOpen: onOpen,
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
           ),
         ),
       ),
@@ -625,39 +653,43 @@ class _TopNavButton extends StatelessWidget {
     // акцентом; остальные — вторичным. Одним цветом раздел не отмечен:
     // под ночной красной темой оттенки сходятся в один, а черта остаётся.
     final Color colour = Color(selected ? palette.text : palette.textSecondary);
-    return Semantics(
-      selected: selected,
-      button: true,
-      child: InkWell(
-        key: _keyOf(section),
-        onTap: () => onOpen(section),
-        child: Container(
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                width: 2,
-                color: selected
-                    ? theme.colorScheme.primary
-                    : Colors.transparent,
+    return LayoutProbe(
+      kind: LayoutKind.nav,
+      id: section.name,
+      child: Semantics(
+        selected: selected,
+        button: true,
+        child: InkWell(
+          key: _keyOf(section),
+          onTap: () => onOpen(section),
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  width: 2,
+                  color: selected
+                      ? theme.colorScheme.primary
+                      : Colors.transparent,
+                ),
               ),
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                _iconOf(section, selected: selected),
-                size: 18,
-                color: colour,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                sectionTitle(section),
-                style: theme.textTheme.labelLarge?.copyWith(color: colour),
-              ),
-            ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  _iconOf(section, selected: selected),
+                  size: 18,
+                  color: colour,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  sectionTitle(section),
+                  style: theme.textTheme.labelLarge?.copyWith(color: colour),
+                ),
+              ],
+            ),
           ),
         ),
       ),

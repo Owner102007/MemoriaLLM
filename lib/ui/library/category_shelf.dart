@@ -5,6 +5,8 @@ import '../../domain/library/book.dart';
 import '../../domain/library/category_style.dart';
 import '../../domain/library/shelf.dart';
 import '../../domain/theme/app_palette.dart';
+import '../../sno/recording/layout_frames.dart';
+import '../../sno/recording/layout_probe.dart';
 import '../theme/palette_scope.dart';
 import 'book_card.dart';
 import 'book_drag.dart';
@@ -20,6 +22,10 @@ import 'shelf_pattern.dart';
 ///
 /// Книги переставляются руками: блок можно взять и положить между любыми
 /// двумя книгами — своей категории или чужой.
+///
+/// SNO-F-REC-03 (шаг 31): под записью шапка и участок категории — зоны
+/// кадра раскладки с её названием, блок книги — зона с отпечатком книги
+/// и категорией.
 class CategoryShelf extends StatelessWidget {
   /// Создаёт участок.
   const CategoryShelf({
@@ -111,11 +117,16 @@ class CategoryShelf extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _Header(
-            section: section,
-            onRename: onRename,
-            onDelete: onDelete,
-            marker: marker,
+          LayoutProbe(
+            kind: LayoutKind.shelfCategory,
+            id: section.title,
+            info: () => const <String, Object?>{'part': 'header'},
+            child: _Header(
+              section: section,
+              onRename: onRename,
+              onDelete: onDelete,
+              marker: marker,
+            ),
           ),
           const SizedBox(height: 8),
           LayoutBuilder(
@@ -127,7 +138,7 @@ class CategoryShelf extends StatelessWidget {
               final double block = (inner - gap * (columns - 1)) / columns;
               final Size blockSize = Size(block, block * kShelfBlockAspect);
               final double patternStep = patternStepFor(block);
-              return ClipRRect(
+              final Widget area = ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: CustomPaint(
                   painter: ShelfPatternPainter(
@@ -175,12 +186,19 @@ class CategoryShelf extends StatelessWidget {
                         }
                         final Book book = section.books[index];
                         final void Function(Book book)? menu = onMenu;
-                        final Widget card = BookCard(
-                          book: book,
-                          covers: covers,
-                          progress: progress[book.id] ?? 0,
-                          onOpen: () => onOpen(book),
-                          onMenu: menu == null ? null : () => menu(book),
+                        final Widget card = LayoutProbe(
+                          kind: LayoutKind.shelfBook,
+                          id: book.fileHash,
+                          info: () => <String, Object?>{
+                            'category': section.title,
+                          },
+                          child: BookCard(
+                            book: book,
+                            covers: covers,
+                            progress: progress[book.id] ?? 0,
+                            onOpen: () => onOpen(book),
+                            onMenu: menu == null ? null : () => menu(book),
+                          ),
                         );
                         return _BookSlot(
                           section: section,
@@ -205,6 +223,12 @@ class CategoryShelf extends StatelessWidget {
                     ),
                   ),
                 ),
+              );
+              return LayoutProbe(
+                kind: LayoutKind.shelfCategory,
+                id: section.title,
+                info: () => const <String, Object?>{'part': 'area'},
+                child: area,
               );
             },
           ),

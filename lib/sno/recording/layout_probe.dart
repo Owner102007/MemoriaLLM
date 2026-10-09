@@ -7,11 +7,17 @@
 /// зон в координатах окна и решает правилами [LayoutPacer], писать ли
 /// кадр. Вне записи слой не заведён, а обёртки — пустые: в основном
 /// приложении над ними нет [LayoutScope], и они ничего не делают.
+///
+/// Шаг 31 (ET-05): зона, которую прячет край прокрутки, ложится в кадр
+/// только видимой частью и с пометкой `clip`, а целиком спрятанная — не
+/// ложится вовсе; обёртка отдаёт ещё сведения о зоне (`info`) и точки
+/// внутри неё (`marks`) — звёзды карты.
 library;
 
 import 'dart:async';
 
-import 'package:flutter/rendering.dart' show RenderExcludeSemantics;
+import 'package:flutter/rendering.dart'
+    show RenderAbstractViewport, RenderExcludeSemantics;
 import 'package:flutter/widgets.dart';
 
 import 'layout_frames.dart';
@@ -41,7 +47,7 @@ class LayoutBoard {
         continue;
       }
       final RenderBox? box = probe.box;
-      final ({LayoutRect rect, List<int> path})? seen = _seen(box, root);
+      final _Seen? seen = _seen(box, root);
       if (seen == null || !seen.rect.overlaps(window)) {
         continue;
       }
@@ -51,6 +57,9 @@ class LayoutBoard {
           kind: probe.widget.kind,
           id: probe.widget.id,
           rect: seen.rect.rounded,
+          clipped: seen.clipped,
+          info: _info(probe),
+          marks: _marks(probe, seen),
         ),
       ));
     }
@@ -58,13 +67,7 @@ class LayoutBoard {
     // выше. Он же порядок обхода дерева.
     found.sort((a, b) => _comparePaths(a.path, b.path));
     final List<LayoutRegion> regions = <LayoutRegion>[
-      for (int i = 0; i < found.length; i++)
-        LayoutRegion(
-          kind: found[i].region.kind,
-          id: found[i].region.id,
-          rect: found[i].region.rect,
-          z: i,
-        ),
+      for (int i = 0; i < found.length; i++) found[i].region.atZ(i),
     ];
     SheetGeometry? sheet;
     for (final _SheetProbeState probe in _sheets) {
@@ -82,6 +85,48 @@ class LayoutBoard {
     return LayoutSnapshot(viewport: viewport, regions: regions, sheet: sheet);
   }
 
+  /// Сведения зоны; не посчитались — зона без них, а не упавший кадр.
+  static Map<String, Object?> _info(_ProbeState probe) {
+    final Map<String, Object?> Function()? info = probe.widget.info;
+    if (info == null) {
+      return const <String, Object?>{};
+    }
+    try {
+      return info();
+    } on Object {
+      return const <String, Object?>{};
+    }
+  }
+
+  /// Точки зоны в окне: тем же переводом, что место зоны. Точка, чей
+  /// круг не задевает видимую часть зоны, в кадр не идёт.
+  static List<LayoutMark> _marks(_ProbeState probe, _Seen seen) {
+    final List<LayoutMark> Function()? marks = probe.widget.marks;
+    if (marks == null) {
+      return const <LayoutMark>[];
+    }
+    final List<LayoutMark> local;
+    try {
+      local = marks();
+    } on Object {
+      return const <LayoutMark>[];
+    }
+    final LayoutRect rect = seen.rect;
+    final List<LayoutMark> placed = <LayoutMark>[];
+    for (final LayoutMark mark in local) {
+      final (double x, double y) = seen.place.point(mark.x, mark.y);
+      final double r = mark.r * seen.place.scale;
+      if (x + r < rect.left ||
+          x - r > rect.right ||
+          y + r < rect.top ||
+          y - r > rect.bottom) {
+        continue;
+      }
+      placed.add(LayoutMark(id: mark.id, x: x, y: y, r: r));
+    }
+    return placed;
+  }
+
   static SheetGeometry? _geometry(_SheetProbeState probe) {
     try {
       return probe.widget.geometry();
@@ -93,19 +138,27 @@ class LayoutBoard {
 
   /// Где [box] в окне [root] и его путь в дереве; `null` — его не
   /// видно.
-  static ({LayoutRect rect, List<int> path})? _seen(
-    RenderBox? box,
-    RenderBox root,
-  ) {
+  ///
+  /// Шаг 31: список держит строки и за своим краем — запас прокрутки, —
+  /// и служба доступности их обходит. Поэтому место зоны обрезается
+  /// каждой прокруткой, через которую она видна; ничего не осталось —
+  /// зоны не видно.
+  static _Seen? _seen(RenderBox? box, RenderBox root) {
     if (box == null || !box.attached || !box.hasSize) {
       return null;
     }
     final List<int> path = <int>[];
+    final List<RenderBox> scrolls = <RenderBox>[];
     RenderObject child = box;
     RenderObject? parent = child.parent;
     while (parent != null && !identical(child, root)) {
       if (!_onStage(parent, child)) {
         return null;
+      }
+      if (parent is RenderBox &&
+          parent is RenderAbstractViewport &&
+          parent.hasSize) {
+        scrolls.add(parent);
       }
       path.add(_indexOf(parent, child));
       child = parent;
@@ -116,10 +169,43 @@ class LayoutBoard {
       return null;
     }
     final Matrix4 matrix = box.getTransformTo(root);
-    final Rect rect = MatrixUtils.transformRect(matrix, Offset.zero & box.size);
-    return (
-      rect: LayoutRect(rect.left, rect.top, rect.width, rect.height),
+    final Rect drawn = MatrixUtils.transformRect(
+      matrix,
+      Offset.zero & box.size,
+    );
+    LayoutRect rect = LayoutRect(
+      drawn.left,
+      drawn.top,
+      drawn.width,
+      drawn.height,
+    );
+    bool clipped = false;
+    for (final RenderBox scroll in scrolls) {
+      final Rect edge = MatrixUtils.transformRect(
+        scroll.getTransformTo(root),
+        Offset.zero & scroll.size,
+      );
+      final LayoutRect? inside = rect.intersect(
+        LayoutRect(edge.left, edge.top, edge.width, edge.height),
+      );
+      if (inside == null) {
+        return null;
+      }
+      // Сравнение с допуском: общая часть, посчитанная заново, может
+      // разойтись с целым прямоугольником в последнем знаке.
+      if (inside.left > rect.left + 0.05 ||
+          inside.top > rect.top + 0.05 ||
+          inside.right < rect.right - 0.05 ||
+          inside.bottom < rect.bottom - 0.05) {
+        clipped = true;
+        rect = inside;
+      }
+    }
+    return _Seen(
+      rect: rect,
       path: path.reversed.toList(),
+      clipped: clipped,
+      place: _placeOf(box, root),
     );
   }
 
@@ -179,6 +265,22 @@ class LayoutBoard {
   }
 }
 
+/// Что слой увидел у одной зоны: место в окне (видимая часть), путь в
+/// дереве, подрезана ли она прокруткой и перевод её точек в окно.
+class _Seen {
+  const _Seen({
+    required this.rect,
+    required this.path,
+    required this.clipped,
+    required this.place,
+  });
+
+  final LayoutRect rect;
+  final List<int> path;
+  final bool clipped;
+  final LayoutPlace place;
+}
+
 /// Доска зон над приложением: её ставит слой записи.
 class LayoutScope extends InheritedWidget {
   /// Создаёт область.
@@ -202,6 +304,7 @@ class LayoutScope extends InheritedWidget {
 ///
 /// Обёртка ничего не рисует и нажатий не ловит. Вне записи — и в
 /// основном приложении, где над ней нет [LayoutScope], — она пустая.
+/// [info] и [marks] спрашиваются, только когда слой снимает кадр.
 class LayoutProbe extends StatefulWidget {
   /// Создаёт зону.
   const LayoutProbe({
@@ -209,8 +312,18 @@ class LayoutProbe extends StatefulWidget {
     required this.child,
     this.id = '',
     this.active = true,
+    this.info,
+    this.marks,
     super.key,
   });
+
+  /// Что ещё известно о зоне — значения, которые ложатся в JSON
+  /// (шаг 31): категория книги, сдвиг полки, камера карты.
+  final Map<String, Object?> Function()? info;
+
+  /// Точки внутри зоны в её собственных координатах (шаг 31): звёзды
+  /// карты, которые рисует художник, а не виджеты.
+  final List<LayoutMark> Function()? marks;
 
   /// Вид.
   final LayoutKind kind;

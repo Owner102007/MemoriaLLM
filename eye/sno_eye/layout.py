@@ -17,10 +17,43 @@
 
 import json
 
+# Сколько логических пикселей от метки ещё считается попаданием в неё,
+# если сама метка меньше (шаг 31): столько же ловит нажатие звезда на
+# карте в приложении (`kHitRadius`, `kLayoutMarkReach`).
+MARK_REACH = 24.0
+
 
 def _inside(rect, x, y):
     left, top, width, height = rect
     return left <= x <= left + width and top <= y <= top + height
+
+
+def mark_at(region, x, y):
+    """Метка зоны `region` под точкой (`x`, `y`): ближайшая из тех, до
+    чьей середины не дальше её радиуса или `MARK_REACH`; при равном
+    расстоянии — первая. `None` — мимо всех (шаг 31: звёзды карты)."""
+    best = None
+    best_square = None
+    for mark in region.get('marks', []):
+        dx = mark['x'] - x
+        dy = mark['y'] - y
+        square = dx * dx + dy * dy
+        reach = max(mark['r'], MARK_REACH)
+        if square <= reach * reach and (best_square is None or
+                                        square < best_square):
+            best, best_square = mark, square
+    return None if best is None else best['id']
+
+
+def _zone(region, x, y):
+    """Ответ для зоны поверх страницы или кадра без листа: вид, имя,
+    сведения зоны и, если у неё есть метки, метка под точкой."""
+    hit = {'zone': region['kind'], 'id': region.get('id', '')}
+    if region.get('info'):
+        hit['info'] = region['info']
+    if region.get('marks'):
+        hit['mark'] = mark_at(region, x, y)
+    return hit
 
 
 def locate(frame, x, y):
@@ -30,7 +63,11 @@ def locate(frame, x, y):
     листа ещё `neighbour` — соседний лист, `background` — фон вокруг
     листа, `outside` — мимо окна, `screen` — кадр без зон и без листа;
     `id` — имя зоны; на странице — `page`, `x_pt`, `y_pt` и `dimmed`
-    (точка на странице, но вне читаемой полосы).
+    (точка на странице, но вне читаемой полосы). С шага 31 у зоны вне
+    страницы ещё `info` — что о ней известно (категория книги полки,
+    место строки найденного, камера карты), — а у зоны с метками
+    (полотно карты) `mark` — отпечаток книги звезды под точкой или
+    `None`.
 
     Зона поверх страницы важнее страницы: берётся верхняя по `z`.
     """
@@ -42,13 +79,11 @@ def locate(frame, x, y):
         if _inside(region['rect'], x, y) and (top is None or
                                                region['z'] > top['z']):
             top = region
-    if top is not None and top['kind'] != 'page':
-        return {'zone': top['kind'], 'id': top.get('id', '')}
     sheet = frame.get('sheet')
+    if top is not None and (top['kind'] != 'page' or sheet is None):
+        return _zone(top, x, y)
     if sheet is None:
-        if top is None:
-            return {'zone': 'screen'}
-        return {'zone': top['kind'], 'id': top.get('id', '')}
+        return {'zone': 'screen'}
     scale = sheet['scale']
     for page in sheet['pages']:
         x_pt = (x - page['x']) / scale

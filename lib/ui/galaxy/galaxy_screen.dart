@@ -18,6 +18,8 @@ import '../../sno/index/shelf_reading.dart';
 import '../../sno/index/shelf_reading_view.dart';
 import '../../sno/recording/action_log.dart';
 import '../../sno/recording/event.dart';
+import '../../sno/recording/layout_frames.dart';
+import '../../sno/recording/layout_probe.dart';
 import '../../sno/recording/thinning.dart';
 import '../reader/reader_screen.dart';
 import '../theme/palette_scope.dart';
@@ -277,10 +279,38 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(sectionTitle(AppSection.galaxy))),
-      body: _body(context),
+    // SNO-F-REC-03: раздел — зона кадра раскладки; что в нём сейчас
+    // показано вместо карты или вместе с ней — в её сведениях.
+    return LayoutProbe(
+      kind: LayoutKind.screen,
+      id: 'galaxy',
+      info: () => <String, Object?>{'shows': _shows},
+      child: Scaffold(
+        appBar: AppBar(title: Text(sectionTitle(AppSection.galaxy))),
+        body: _body(context),
+      ),
     );
+  }
+
+  /// Что раздел показывает: карту или слова вместо неё — то же
+  /// ветвление, что в [_body].
+  String get _shows {
+    final ShelfReadingProgress? progress = _reading?.progress;
+    if (progress != null && progress.busy) {
+      return 'preparing';
+    }
+    if (_failed) {
+      return 'failed';
+    }
+    final Galaxy? galaxy = _galaxy;
+    if (galaxy == null) {
+      return 'loading';
+    }
+    return switch (galaxy.status) {
+      GalaxyStatus.tooFew => 'too_few',
+      GalaxyStatus.noMap => 'no_map',
+      GalaxyStatus.ready => 'map',
+    };
   }
 
   Widget _body(BuildContext context) {
@@ -725,6 +755,50 @@ class GalaxyMapState extends State<GalaxyMap> {
     );
   }
 
+  /// SNO-F-REC-03, шаг 31: камера карты для кадра раскладки — по ней
+  /// точка зоны переводится в координаты карты:
+  /// `x = cx + (точка.x − left − w / 2) / unit`, где `left` и `w` —
+  /// место зоны в кадре.
+  Map<String, Object?> _layoutInfo() {
+    final MapViewport view = _scene?.viewport ?? viewport;
+    return <String, Object?>{
+      'map': <String, Object?>{
+        'scale': layoutFine(view.camera.scale),
+        'cx': layoutFine(view.camera.cx),
+        'cy': layoutFine(view.camera.cy),
+        'unit': layoutFine(view.unit),
+      },
+      'stars': widget.stars.length,
+    };
+  }
+
+  /// SNO-F-REC-03, SNO-ALG-REC-02, шаг 31: звёзды для кадра раскладки
+  /// — видимые, крупные первыми, не больше [kLayoutStarLimit]; места —
+  /// на полотне, в окно их переводит слой записи.
+  List<LayoutMark> _layoutMarks() {
+    final GalaxyScene? scene = _scene;
+    if (scene == null) {
+      return const <LayoutMark>[];
+    }
+    final MapViewport view = scene.viewport;
+    final List<GalaxyStar> stars = widget.stars;
+    final List<int> chosen = layoutStars(
+      view: view,
+      xs: <double>[for (final GalaxyStar star in stars) star.x],
+      ys: <double>[for (final GalaxyStar star in stars) star.y],
+      radii: scene.radii,
+    );
+    return <LayoutMark>[
+      for (final int i in chosen)
+        LayoutMark(
+          id: stars[i].book.fileHash,
+          x: view.screenX(stars[i].x),
+          y: view.screenY(stars[i].y),
+          r: scene.radii[i],
+        ),
+    ];
+  }
+
   /// Отпечаток книги [id] — им книга названа во всём журнале записи.
   static String? _hashOf(List<GalaxyStar> stars, String id) {
     for (final GalaxyStar star in stars) {
@@ -938,21 +1012,28 @@ class GalaxyMapState extends State<GalaxyMap> {
           child: Stack(
             children: <Widget>[
               Positioned.fill(
-                child: Listener(
-                  onPointerSignal: _signal,
-                  child: GestureDetector(
-                    key: const Key('galaxy-map'),
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (TapUpDetails details) =>
-                        _tap(details.localPosition),
-                    onScaleStart: _scaleStart,
-                    onScaleUpdate: _scaleUpdate,
-                    onScaleEnd: _scaleEnd,
-                    child: Semantics(
-                      label: 'Карта книг: ${widget.stars.length}',
-                      child: CustomPaint(
-                        painter: GalaxyPainter(scene),
-                        size: Size.infinite,
+                // SNO-F-REC-03: полотно — зона кадра раскладки с камерой
+                // и звёздами.
+                child: LayoutProbe(
+                  kind: LayoutKind.galaxyMap,
+                  info: _layoutInfo,
+                  marks: _layoutMarks,
+                  child: Listener(
+                    onPointerSignal: _signal,
+                    child: GestureDetector(
+                      key: const Key('galaxy-map'),
+                      behavior: HitTestBehavior.opaque,
+                      onTapUp: (TapUpDetails details) =>
+                          _tap(details.localPosition),
+                      onScaleStart: _scaleStart,
+                      onScaleUpdate: _scaleUpdate,
+                      onScaleEnd: _scaleEnd,
+                      child: Semantics(
+                        label: 'Карта книг: ${widget.stars.length}',
+                        child: CustomPaint(
+                          painter: GalaxyPainter(scene),
+                          size: Size.infinite,
+                        ),
                       ),
                     ),
                   ),
@@ -972,19 +1053,24 @@ class GalaxyMapState extends State<GalaxyMap> {
   /// точкой, с той стороны, где есть место (кадр SCR-04.3).
   Widget _placeCard(GalaxyScene scene, int selected, Size size) {
     final GalaxyStar star = widget.stars[selected];
-    final Widget card = GalaxyBookCard(
-      key: Key('galaxy-card-${star.book.id}'),
-      star: star,
-      covers: widget.covers,
-      progress: _progress,
-      onRead: () => widget.onOpen(star.book),
-      onClose: () {
-        _sayCard(widget.stars, star.book.id, open: false, by: 'button');
-        setState(() {
-          _selectedId = null;
-          _progress = null;
-        });
-      },
+    // SNO-F-REC-03: карточка — зона кадра раскладки поверх карты.
+    final Widget card = LayoutProbe(
+      kind: LayoutKind.galaxyCard,
+      id: star.book.fileHash,
+      child: GalaxyBookCard(
+        key: Key('galaxy-card-${star.book.id}'),
+        star: star,
+        covers: widget.covers,
+        progress: _progress,
+        onRead: () => widget.onOpen(star.book),
+        onClose: () {
+          _sayCard(widget.stars, star.book.id, open: false, by: 'button');
+          setState(() {
+            _selectedId = null;
+            _progress = null;
+          });
+        },
+      ),
     );
     if (navPlacementFor(size.width) == NavPlacement.bottom) {
       return Positioned(left: 8, right: 8, bottom: 8, child: card);

@@ -514,5 +514,788 @@
     }
    ]
   }
+ ],
+ "screens": [
+  {
+   "name": "полка на телефоне, прокручена и подрезана краем списка",
+   "frame": {
+    "viewport": {
+     "w": 411.4,
+     "h": 914.3,
+     "dpr": 2.625
+    },
+    "regions": [
+     {
+      "kind": "screen",
+      "id": "shelf",
+      "rect": [
+       0.0,
+       0.0,
+       411.4,
+       834.3
+      ],
+      "z": 0,
+      "info": {
+       "scroll": 412.5
+      }
+     },
+     {
+      "kind": "shelf_category",
+      "id": "Анатомия",
+      "rect": [
+       12.0,
+       64.0,
+       387.4,
+       290.0
+      ],
+      "z": 1,
+      "clip": true,
+      "info": {
+       "part": "area"
+      }
+     },
+     {
+      "kind": "shelf_book",
+      "id": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+      "rect": [
+       22.0,
+       64.0,
+       115.8,
+       140.0
+      ],
+      "z": 2,
+      "clip": true,
+      "info": {
+       "category": "Анатомия"
+      }
+     },
+     {
+      "kind": "shelf_book",
+      "id": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8",
+      "rect": [
+       147.8,
+       64.0,
+       115.8,
+       140.0
+      ],
+      "z": 3,
+      "clip": true,
+      "info": {
+       "category": "Анатомия"
+      }
+     },
+     {
+      "kind": "shelf_category",
+      "id": "Гистология",
+      "rect": [
+       12.0,
+       382.0,
+       387.4,
+       40.0
+      ],
+      "z": 4,
+      "info": {
+       "part": "header"
+      }
+     },
+     {
+      "kind": "shelf_category",
+      "id": "Гистология",
+      "rect": [
+       12.0,
+       430.0,
+       387.4,
+       200.0
+      ],
+      "z": 5,
+      "info": {
+       "part": "area"
+      }
+     },
+     {
+      "kind": "shelf_book",
+      "id": "0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f",
+      "rect": [
+       22.0,
+       440.0,
+       115.8,
+       180.0
+      ],
+      "z": 6,
+      "info": {
+       "category": "Гистология"
+      }
+     },
+     {
+      "kind": "nav",
+      "id": "bottom",
+      "rect": [
+       0.0,
+       834.3,
+       411.4,
+       80.0
+      ],
+      "z": 7,
+      "info": {
+       "current": "shelf"
+      }
+     },
+     {
+      "kind": "nav",
+      "id": "shelf",
+      "rect": [
+       0.0,
+       834.3,
+       102.9,
+       80.0
+      ],
+      "z": 8
+     },
+     {
+      "kind": "nav",
+      "id": "galaxy",
+      "rect": [
+       102.9,
+       834.3,
+       102.8,
+       80.0
+      ],
+      "z": 9
+     },
+     {
+      "kind": "recording_dot",
+      "id": "",
+      "rect": [
+       371.4,
+       24.0,
+       40.0,
+       40.0
+      ],
+      "z": 10
+     }
+    ]
+   },
+   "points": [
+    {
+     "x": 80,
+     "y": 120,
+     "expect": {
+      "zone": "shelf_book",
+      "id": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+      "info": {
+       "category": "Анатомия"
+      }
+     }
+    },
+    {
+     "x": 200,
+     "y": 70,
+     "expect": {
+      "zone": "shelf_book",
+      "id": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8",
+      "info": {
+       "category": "Анатомия"
+      }
+     }
+    },
+    {
+     "x": 300,
+     "y": 300,
+     "expect": {
+      "zone": "shelf_category",
+      "id": "Анатомия",
+      "info": {
+       "part": "area"
+      }
+     }
+    },
+    {
+     "x": 200,
+     "y": 400,
+     "expect": {
+      "zone": "shelf_category",
+      "id": "Гистология",
+      "info": {
+       "part": "header"
+      }
+     }
+    },
+    {
+     "x": 80,
+     "y": 500,
+     "expect": {
+      "zone": "shelf_book",
+      "id": "0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f",
+      "info": {
+       "category": "Гистология"
+      }
+     }
+    },
+    {
+     "x": 300,
+     "y": 600,
+     "expect": {
+      "zone": "shelf_category",
+      "id": "Гистология",
+      "info": {
+       "part": "area"
+      }
+     }
+    },
+    {
+     "x": 200,
+     "y": 20,
+     "expect": {
+      "zone": "screen",
+      "id": "shelf",
+      "info": {
+       "scroll": 412.5
+      }
+     }
+    },
+    {
+     "x": 150,
+     "y": 870,
+     "expect": {
+      "zone": "nav",
+      "id": "galaxy"
+     }
+    },
+    {
+     "x": 380,
+     "y": 870,
+     "expect": {
+      "zone": "nav",
+      "id": "bottom",
+      "info": {
+       "current": "shelf"
+      }
+     }
+    },
+    {
+     "x": 390,
+     "y": 40,
+     "expect": {
+      "zone": "recording_dot",
+      "id": ""
+     }
+    },
+    {
+     "x": 420,
+     "y": 10,
+     "expect": {
+      "zone": "outside"
+     }
+    }
+   ]
+  },
+  {
+   "name": "поиск по названию на широком окне, полка затемнена",
+   "frame": {
+    "viewport": {
+     "w": 1280,
+     "h": 800,
+     "dpr": 2.0
+    },
+    "regions": [
+     {
+      "kind": "nav",
+      "id": "top",
+      "rect": [
+       0.0,
+       0.0,
+       1280.0,
+       44.0
+      ],
+      "z": 0,
+      "info": {
+       "current": "shelf"
+      }
+     },
+     {
+      "kind": "nav",
+      "id": "shelf",
+      "rect": [
+       8.0,
+       0.0,
+       110.0,
+       44.0
+      ],
+      "z": 1
+     },
+     {
+      "kind": "screen",
+      "id": "shelf",
+      "rect": [
+       0.0,
+       44.0,
+       1280.0,
+       756.0
+      ],
+      "z": 2,
+      "info": {
+       "scroll": 0.0,
+       "searching": true
+      }
+     },
+     {
+      "kind": "shelf_category",
+      "id": "Анатомия",
+      "rect": [
+       12.0,
+       156.0,
+       1256.0,
+       300.0
+      ],
+      "z": 3,
+      "info": {
+       "part": "area"
+      }
+     },
+     {
+      "kind": "shelf_book",
+      "id": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+      "rect": [
+       22.0,
+       166.0,
+       120.0,
+       170.0
+      ],
+      "z": 4,
+      "info": {
+       "category": "Анатомия"
+      }
+     },
+     {
+      "kind": "dialog",
+      "id": "shelf_search_scrim",
+      "rect": [
+       0.0,
+       100.0,
+       1280.0,
+       700.0
+      ],
+      "z": 5
+     },
+     {
+      "kind": "shelf_results",
+      "id": "",
+      "rect": [
+       112.0,
+       100.0,
+       420.0,
+       152.0
+      ],
+      "z": 6,
+      "info": {
+       "hits": 2
+      }
+     },
+     {
+      "kind": "shelf_book",
+      "id": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8",
+      "rect": [
+       112.0,
+       104.0,
+       420.0,
+       72.0
+      ],
+      "z": 7,
+      "info": {
+       "category": "Анатомия",
+       "in": "results",
+       "rank": 1
+      }
+     },
+     {
+      "kind": "shelf_book",
+      "id": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+      "rect": [
+       112.0,
+       176.0,
+       420.0,
+       72.0
+      ],
+      "z": 8,
+      "info": {
+       "category": "Анатомия",
+       "in": "results",
+       "rank": 2
+      }
+     },
+     {
+      "kind": "shelf_search",
+      "id": "",
+      "rect": [
+       112.0,
+       50.0,
+       420.0,
+       44.0
+      ],
+      "z": 9
+     }
+    ]
+   },
+   "points": [
+    {
+     "x": 300,
+     "y": 70,
+     "expect": {
+      "zone": "shelf_search",
+      "id": ""
+     }
+    },
+    {
+     "x": 300,
+     "y": 140,
+     "expect": {
+      "zone": "shelf_book",
+      "id": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8",
+      "info": {
+       "category": "Анатомия",
+       "in": "results",
+       "rank": 1
+      }
+     }
+    },
+    {
+     "x": 300,
+     "y": 200,
+     "expect": {
+      "zone": "shelf_book",
+      "id": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+      "info": {
+       "category": "Анатомия",
+       "in": "results",
+       "rank": 2
+      }
+     }
+    },
+    {
+     "x": 300,
+     "y": 250,
+     "expect": {
+      "zone": "shelf_results",
+      "id": "",
+      "info": {
+       "hits": 2
+      }
+     }
+    },
+    {
+     "x": 60,
+     "y": 200,
+     "expect": {
+      "zone": "dialog",
+      "id": "shelf_search_scrim"
+     }
+    },
+    {
+     "x": 700,
+     "y": 500,
+     "expect": {
+      "zone": "dialog",
+      "id": "shelf_search_scrim"
+     }
+    },
+    {
+     "x": 50,
+     "y": 20,
+     "expect": {
+      "zone": "nav",
+      "id": "shelf"
+     }
+    },
+    {
+     "x": 600,
+     "y": 20,
+     "expect": {
+      "zone": "nav",
+      "id": "top",
+      "info": {
+       "current": "shelf"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "карта «Галактика» на ПК, карточка книги поверх",
+   "frame": {
+    "viewport": {
+     "w": 1280,
+     "h": 800,
+     "dpr": 1.25
+    },
+    "regions": [
+     {
+      "kind": "nav",
+      "id": "top",
+      "rect": [
+       0.0,
+       0.0,
+       1280.0,
+       44.0
+      ],
+      "z": 0,
+      "info": {
+       "current": "galaxy"
+      }
+     },
+     {
+      "kind": "screen",
+      "id": "galaxy",
+      "rect": [
+       0.0,
+       44.0,
+       1280.0,
+       756.0
+      ],
+      "z": 1,
+      "info": {
+       "shows": "map"
+      }
+     },
+     {
+      "kind": "galaxy_map",
+      "id": "",
+      "rect": [
+       0.0,
+       100.0,
+       1280.0,
+       700.0
+      ],
+      "z": 2,
+      "info": {
+       "map": {
+        "scale": 2.5,
+        "cx": 0.3,
+        "cy": 0.1,
+        "unit": 700.0
+       },
+       "stars": 5
+      },
+      "marks": [
+       {
+        "id": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8",
+        "x": 724.0,
+        "y": 485.0,
+        "r": 12.0
+       },
+       {
+        "id": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+        "x": 640.0,
+        "y": 450.0,
+        "r": 4.5
+       },
+       {
+        "id": "9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d",
+        "x": 570.0,
+        "y": 240.0,
+        "r": 4.5
+       },
+       {
+        "id": "5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b",
+        "x": 682.0,
+        "y": 450.0,
+        "r": 4.5
+       }
+      ]
+     },
+     {
+      "kind": "galaxy_card",
+      "id": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8",
+      "rect": [
+       900.0,
+       380.0,
+       320.0,
+       150.0
+      ],
+      "z": 3
+     }
+    ]
+   },
+   "points": [
+    {
+     "x": 640.0,
+     "y": 450.0,
+     "expect": {
+      "zone": "galaxy_map",
+      "id": "",
+      "info": {
+       "map": {
+        "scale": 2.5,
+        "cx": 0.3,
+        "cy": 0.1,
+        "unit": 700.0
+       },
+       "stars": 5
+      },
+      "mark": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+     }
+    },
+    {
+     "x": 733.0,
+     "y": 482.0,
+     "expect": {
+      "zone": "galaxy_map",
+      "id": "",
+      "info": {
+       "map": {
+        "scale": 2.5,
+        "cx": 0.3,
+        "cy": 0.1,
+        "unit": 700.0
+       },
+       "stars": 5
+      },
+      "mark": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8"
+     }
+    },
+    {
+     "x": 640.0,
+     "y": 470.0,
+     "expect": {
+      "zone": "galaxy_map",
+      "id": "",
+      "info": {
+       "map": {
+        "scale": 2.5,
+        "cx": 0.3,
+        "cy": 0.1,
+        "unit": 700.0
+       },
+       "stars": 5
+      },
+      "mark": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4"
+     }
+    },
+    {
+     "x": 570.0,
+     "y": 270.0,
+     "expect": {
+      "zone": "galaxy_map",
+      "id": "",
+      "info": {
+       "map": {
+        "scale": 2.5,
+        "cx": 0.3,
+        "cy": 0.1,
+        "unit": 700.0
+       },
+       "stars": 5
+      },
+      "mark": null
+     }
+    },
+    {
+     "x": 668.0,
+     "y": 450.0,
+     "expect": {
+      "zone": "galaxy_map",
+      "id": "",
+      "info": {
+       "map": {
+        "scale": 2.5,
+        "cx": 0.3,
+        "cy": 0.1,
+        "unit": 700.0
+       },
+       "stars": 5
+      },
+      "mark": "5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b"
+     }
+    },
+    {
+     "x": 1000,
+     "y": 450,
+     "expect": {
+      "zone": "galaxy_card",
+      "id": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8"
+     }
+    },
+    {
+     "x": 50,
+     "y": 70,
+     "expect": {
+      "zone": "screen",
+      "id": "galaxy",
+      "info": {
+       "shows": "map"
+      }
+     }
+    },
+    {
+     "x": 100,
+     "y": 700,
+     "expect": {
+      "zone": "galaxy_map",
+      "id": "",
+      "info": {
+       "map": {
+        "scale": 2.5,
+        "cx": 0.3,
+        "cy": 0.1,
+        "unit": 700.0
+       },
+       "stars": 5
+      },
+      "mark": null
+     }
+    }
+   ],
+   "map": {
+    "rect": [
+     0,
+     100,
+     1280,
+     700
+    ],
+    "extent": {
+     "cx": 0.1,
+     "cy": -0.05,
+     "half_width": 1.2,
+     "half_height": 0.9
+    },
+    "camera": {
+     "scale": 2.5,
+     "cx": 0.3,
+     "cy": 0.1
+    },
+    "stars": [
+     {
+      "book": "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
+      "x": 0.3,
+      "y": 0.1,
+      "r": 4.5
+     },
+     {
+      "book": "e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8",
+      "x": 0.42,
+      "y": 0.15,
+      "r": 12.0
+     },
+     {
+      "book": "0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f0c1d2e3f",
+      "x": -1.1,
+      "y": 0.8,
+      "r": 7.0
+     },
+     {
+      "book": "9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d9a8b7c6d",
+      "x": 0.2,
+      "y": -0.2,
+      "r": 4.5
+     },
+     {
+      "book": "5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b5e4f3a2b",
+      "x": 0.36,
+      "y": 0.1,
+      "r": 4.5
+     }
+    ],
+    "unit": 700.0
+   }
+  }
  ]
 }

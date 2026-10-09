@@ -22,6 +22,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../recording/layout_frames.dart';
+import '../recording/layout_probe.dart';
 import 'eye_link.dart';
 import 'eye_place.dart';
 import 'eye_process.dart';
@@ -860,6 +862,15 @@ class _EyePlaceScreenState extends State<EyePlaceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // SNO-F-REC-03: экран места записи — зона кадра раскладки.
+    return LayoutProbe(
+      kind: LayoutKind.screen,
+      id: 'eye_place',
+      child: _view(context),
+    );
+  }
+
+  Widget _view(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final String? saveError = _saveError;
     return Scaffold(

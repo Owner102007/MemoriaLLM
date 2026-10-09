@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memoria/domain/map/map_view.dart';
 import 'package:memoria/sno/recording/journal_check.dart';
 import 'package:memoria/sno/recording/layout_frames.dart';
 
@@ -434,6 +435,283 @@ void main() {
       );
       expect(bytes, lessThan(1500));
       expect(total, lessThan(2 * 1024 * 1024));
+    });
+  });
+
+  group('SNO-ALG-REC-02: экраны без листа — по эталону (шаг 31)', () {
+    List<Map<String, Object?>> screens() {
+      final Map<String, Object?> golden =
+          jsonDecode(File(goldenPath).readAsStringSync())
+              as Map<String, Object?>;
+      return <Map<String, Object?>>[
+        for (final Object? item in golden['screens']! as List<Object?>)
+          item! as Map<String, Object?>,
+      ];
+    }
+
+    for (final Map<String, Object?> golden in screens()) {
+      final String name = golden['name']! as String;
+      test('SNO-ALG-REC-02: точка экрана — верхняя зона, её сведения и '
+          'звезда под точкой ($name)', () {
+        final LayoutFrame frame = LayoutFrame.fromJson(
+          golden['frame']! as Map<String, Object?>,
+        )!;
+        for (final Object? item in golden['points']! as List<Object?>) {
+          final Map<String, Object?> point = item! as Map<String, Object?>;
+          final Map<String, Object?> expected =
+              point['expect']! as Map<String, Object?>;
+          final LayoutHit hit = frame.locate(
+            number(point['x']),
+            number(point['y']),
+          );
+          expect(hit.zone, expected['zone'], reason: '$point');
+          if (expected.containsKey('id')) {
+            expect(hit.id, expected['id'], reason: '$point');
+          }
+          expect(
+            hit.info,
+            expected['info'] ?? const <String, Object?>{},
+            reason: '$point',
+          );
+          expect(hit.mark, expected['mark'], reason: '$point');
+        }
+      });
+    }
+
+    test('SNO-ALG-REC-02: звёзды карты в кадре — те же места и та же '
+        'выборка, что у второй реализации', () {
+      final Map<String, Object?> golden = screens().firstWhere(
+        (Map<String, Object?> item) => item.containsKey('map'),
+      );
+      final Map<String, Object?> map = golden['map']! as Map<String, Object?>;
+      final List<double> rect = numbers(map['rect']);
+      final Map<String, Object?> extent =
+          map['extent']! as Map<String, Object?>;
+      final Map<String, Object?> camera =
+          map['camera']! as Map<String, Object?>;
+      final MapViewport view = MapViewport(
+        width: rect[2],
+        height: rect[3],
+        extent: MapExtent(
+          cx: number(extent['cx']),
+          cy: number(extent['cy']),
+          halfWidth: number(extent['half_width']),
+          halfHeight: number(extent['half_height']),
+        ),
+        camera: MapCamera(
+          scale: number(camera['scale']),
+          cx: number(camera['cx']),
+          cy: number(camera['cy']),
+        ),
+      );
+      expect(view.unit, closeTo(number(map['unit']), 1e-9));
+      final List<Map<String, Object?>> stars = maps(map['stars']);
+      final List<int> chosen = layoutStars(
+        view: view,
+        xs: <double>[
+          for (final Map<String, Object?> s in stars) number(s['x']),
+        ],
+        ys: <double>[
+          for (final Map<String, Object?> s in stars) number(s['y']),
+        ],
+        radii: <double>[
+          for (final Map<String, Object?> s in stars) number(s['r']),
+        ],
+      );
+      final Map<String, Object?> frame =
+          golden['frame']! as Map<String, Object?>;
+      final Map<String, Object?> region = maps(frame['regions']).firstWhere(
+        (Map<String, Object?> item) => item['kind'] == 'galaxy_map',
+      );
+      final List<Map<String, Object?>> marks = maps(region['marks']);
+      expect(chosen, hasLength(marks.length));
+      for (int i = 0; i < chosen.length; i++) {
+        final Map<String, Object?> star = stars[chosen[i]];
+        expect(star['book'], marks[i]['id'], reason: 'звезда $i');
+        sameNumbers(
+          <double>[
+            rect[0] + view.screenX(number(star['x'])),
+            rect[1] + view.screenY(number(star['y'])),
+            number(star['r']),
+          ],
+          <Object?>[marks[i]['x'], marks[i]['y'], marks[i]['r']],
+          'звезда $i',
+        );
+      }
+    });
+
+    test('SNO-ALG-REC-02: в кадр — не больше ста звёзд, крупные первыми, '
+        'при равном радиусе — по порядку карты', () {
+      const MapViewport view = MapViewport(
+        width: 400,
+        height: 400,
+        extent: MapExtent(cx: 0, cy: 0, halfWidth: 1, halfHeight: 1),
+        camera: MapCamera(scale: 1, cx: 0, cy: 0),
+      );
+      final List<double> xs = <double>[for (int i = 0; i < 150; i++) 0];
+      final List<double> ys = <double>[for (int i = 0; i < 150; i++) 0];
+      final List<double> radii = <double>[
+        for (int i = 0; i < 150; i++) i == 120 ? 9 : 3,
+      ];
+      final List<int> chosen = layoutStars(
+        view: view,
+        xs: xs,
+        ys: ys,
+        radii: radii,
+      );
+      expect(chosen, hasLength(kLayoutStarLimit));
+      expect(chosen.first, 120);
+      expect(chosen.skip(1).take(3), <int>[0, 1, 2]);
+      // Звезда далеко за краем окна в кадр не идёт.
+      expect(
+        layoutStars(
+          view: view,
+          xs: const <double>[50],
+          ys: const <double>[0],
+          radii: const <double>[3],
+        ),
+        isEmpty,
+      );
+    });
+
+    test('SNO-ALG-REC-02: подрезанная зона, сведения и метки читаются из '
+        'строки потока теми же, какими писались', () {
+      final LayoutSnapshot snapshot = LayoutSnapshot(
+        viewport: const LayoutViewport(width: 1280, height: 800, dpr: 1),
+        regions: const <LayoutRegion>[
+          LayoutRegion(
+            kind: LayoutKind.shelfBook,
+            id: 'hash-1',
+            rect: LayoutRect(10, 56, 120, 40),
+            clipped: true,
+            info: <String, Object?>{'category': 'Анатомия'},
+          ),
+          LayoutRegion(
+            kind: LayoutKind.galaxyMap,
+            rect: LayoutRect(0, 100, 1280, 700),
+            z: 1,
+            marks: <LayoutMark>[
+              LayoutMark(id: 'hash-2', x: 640.04, y: 450, r: 4.5),
+            ],
+          ),
+        ],
+      );
+      final Map<String, Object?> line =
+          jsonDecode(jsonEncode(snapshot.toJson(moving: false)))
+              as Map<String, Object?>;
+      final List<Map<String, Object?>> written = maps(line['regions']);
+      expect(written.first['clip'], isTrue);
+      expect(written.last.containsKey('clip'), isFalse);
+      expect(written.last.containsKey('info'), isFalse);
+      expect(written.first.containsKey('marks'), isFalse);
+      final LayoutFrame read = LayoutFrame.fromJson(line)!;
+      expect(read.regions.first.clipped, isTrue);
+      expect(read.regions.first.info, <String, Object?>{
+        'category': 'Анатомия',
+      });
+      expect(read.regions.last.marks.single.id, 'hash-2');
+      expect(read.regions.last.marks.single.x, 640);
+      expect(read.regions, snapshot.regions);
+      expect(read.locate(20, 60).info['category'], 'Анатомия');
+      expect(read.locate(20, 60).mark, isNull);
+      expect(read.locate(660, 450).mark, 'hash-2');
+      expect(read.locate(670, 450).mark, isNull);
+    });
+
+    test('SNO-F-REC-03: ЗАМЕР — сколько весит кадр полки и кадр карты', () {
+      final String hash = 'f' * 64;
+      final LayoutSnapshot shelf = LayoutSnapshot(
+        viewport: const LayoutViewport(width: 1280, height: 800, dpr: 2),
+        regions: <LayoutRegion>[
+          const LayoutRegion(
+            kind: LayoutKind.screen,
+            id: 'shelf',
+            rect: LayoutRect(0, 44, 1280, 756),
+            info: <String, Object?>{'scroll': 1234.5},
+          ),
+          for (int c = 0; c < 4; c++) ...<LayoutRegion>[
+            LayoutRegion(
+              kind: LayoutKind.shelfCategory,
+              id: 'Категория номер $c',
+              rect: LayoutRect(12, 100.0 + c * 300, 1256, 40),
+              info: const <String, Object?>{'part': 'header'},
+            ),
+            LayoutRegion(
+              kind: LayoutKind.shelfCategory,
+              id: 'Категория номер $c',
+              rect: LayoutRect(12, 148.0 + c * 300, 1256, 240),
+              info: const <String, Object?>{'part': 'area'},
+            ),
+            for (int b = 0; b < 12; b++)
+              LayoutRegion(
+                kind: LayoutKind.shelfBook,
+                id: hash,
+                rect: LayoutRect(
+                  22.5 + b * 104.3,
+                  158.5 + c * 300,
+                  94.3,
+                  141.4,
+                ),
+                info: <String, Object?>{'category': 'Категория номер $c'},
+              ),
+          ],
+          const LayoutRegion(
+            kind: LayoutKind.nav,
+            id: 'top',
+            rect: LayoutRect(0, 0, 1280, 44),
+            info: <String, Object?>{'current': 'shelf'},
+          ),
+        ],
+      );
+      final LayoutSnapshot galaxy = LayoutSnapshot(
+        viewport: const LayoutViewport(width: 1280, height: 800, dpr: 2),
+        regions: <LayoutRegion>[
+          LayoutRegion(
+            kind: LayoutKind.galaxyMap,
+            rect: const LayoutRect(0, 100, 1280, 700),
+            info: const <String, Object?>{
+              'map': <String, Object?>{
+                'scale': 2.123456,
+                'cx': 0.123456,
+                'cy': -0.654321,
+                'unit': 612.345678,
+              },
+              'stars': 60,
+            },
+            marks: <LayoutMark>[
+              for (int i = 0; i < 60; i++)
+                LayoutMark(id: hash, x: 100.5 + i * 15, y: 300.5, r: 6.5),
+            ],
+          ),
+        ],
+      );
+      int bytesOf(LayoutSnapshot snapshot) {
+        return utf8
+                .encode(
+                  jsonEncode(<String, Object?>{
+                    'n': 1234,
+                    't': 1234567,
+                    'screen': 'shelf',
+                    ...snapshot.toJson(moving: false),
+                  }),
+                )
+                .length +
+            1;
+      }
+
+      final int shelfBytes = bytesOf(shelf);
+      final int galaxyBytes = bytesOf(galaxy);
+      // Минута прокрутки полки — триста кадров «в движении» и
+      // устоявшихся вперемешку: пять в секунду, не чаще.
+      final int minute = shelfBytes * 300;
+      // ignore: avoid_print
+      print(
+        'ЗАМЕР SNO-F-REC-03: кадр полки (48 книг) $shelfBytes байт, '
+        'минута прокрутки ~${minute ~/ 1024} КБ; кадр карты (60 звёзд) '
+        '$galaxyBytes байт',
+      );
+      expect(shelfBytes, lessThan(16 * 1024));
+      expect(galaxyBytes, lessThan(8 * 1024));
     });
   });
 }

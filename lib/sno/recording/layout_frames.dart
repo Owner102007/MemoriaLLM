@@ -21,6 +21,7 @@
 /// лежит и как его читать — проверяются на придуманных числах.
 library;
 
+import 'dart:convert';
 import 'dart:math' as math;
 
 /// Вид зоны — закрытый перечень (SNO-ALG-REC-02, 08.10.2026).
@@ -94,6 +95,15 @@ double layoutRound(double value) {
   return (value * 10).roundToDouble() / 10;
 }
 
+/// Число карты — шесть знаков после запятой (шаг 31): координаты
+/// карты малы, и десятой доли им мало.
+double layoutFine(double value) {
+  if (!value.isFinite) {
+    return 0;
+  }
+  return (value * 1000000).roundToDouble() / 1000000;
+}
+
 /// Масштаб — пять знаков после запятой: на странице в тысячу пунктов
 /// это сотая доля пикселя.
 double _roundScale(double value) {
@@ -152,6 +162,19 @@ class LayoutRect {
         other.left < right &&
         top < other.bottom &&
         other.top < bottom;
+  }
+
+  /// Общая часть с [other]; `null` — общего нет.
+  LayoutRect? intersect(LayoutRect other) {
+    if (!overlaps(other)) {
+      return null;
+    }
+    return LayoutRect.fromLTRB(
+      math.max(left, other.left),
+      math.max(top, other.top),
+      math.min(right, other.right),
+      math.min(bottom, other.bottom),
+    );
   }
 
   /// Тот же прямоугольник, округлённый, как он ляжет в поток.
@@ -466,7 +489,54 @@ SheetGeometry sheetGeometry({
   );
 }
 
+/// Сколько логических пикселей от метки ещё считается попаданием в
+/// неё, если сама метка меньше (SNO-ALG-REC-02, шаг 3; шаг 31).
+///
+/// Столько же ловит нажатие звезда на карте (`kHitRadius`, ALG-MAP-13):
+/// по кадру касание звезды узнаётся так же, как его узнало приложение.
+const double kLayoutMarkReach = 24;
+
+/// Метка внутри зоны: точка с радиусом — звезда на карте (шаг 31).
+///
+/// Места меток рисует не дерево виджетов, а художник полотна, поэтому
+/// их отдаёт сама зона ([LayoutRegion.marks]), а в окно переводит слой
+/// записи — тем же переводом, что и место зоны.
+class LayoutMark {
+  /// Создаёт метку.
+  const LayoutMark({
+    required this.id,
+    required this.x,
+    required this.y,
+    required this.r,
+  });
+
+  /// Чья метка: у звезды — отпечаток книги.
+  final String id;
+
+  /// Середина, пиксели окна.
+  final double x;
+
+  /// Середина, пиксели окна.
+  final double y;
+
+  /// Радиус, пиксели окна.
+  final double r;
+
+  /// Для потока.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'x': layoutRound(x),
+    'y': layoutRound(y),
+    'r': layoutRound(r),
+  };
+}
+
 /// Зона в кадре: вид, имя, место в окне, порядок наложения.
+///
+/// С шага 31 (ET-05) у зоны бывают ещё [clipped] — часть зоны спрятана
+/// краем прокрутки, и в кадре только видимая часть, — [info] — что ещё
+/// известно о зоне (категория книги, сдвиг полки, камера карты) — и
+/// [marks] — точки внутри неё (звёзды карты).
 class LayoutRegion {
   /// Создаёт зону.
   const LayoutRegion({
@@ -474,6 +544,9 @@ class LayoutRegion {
     required this.rect,
     this.id = '',
     this.z = 0,
+    this.clipped = false,
+    this.info = const <String, Object?>{},
+    this.marks = const <LayoutMark>[],
   });
 
   /// Вид.
@@ -488,25 +561,69 @@ class LayoutRegion {
   /// Порядок наложения: больше — выше; зоны кадра — 0, 1, 2…
   final int z;
 
+  /// Зона видна не вся: её подрезал край прокрутки, и [rect] — видимая
+  /// часть.
+  final bool clipped;
+
+  /// Что ещё известно о зоне; значения — то, что ложится в JSON.
+  final Map<String, Object?> info;
+
+  /// Точки внутри зоны.
+  final List<LayoutMark> marks;
+
+  /// Та же зона на месте [z] порядка наложения.
+  LayoutRegion atZ(int z) {
+    return LayoutRegion(
+      kind: kind,
+      rect: rect,
+      id: id,
+      z: z,
+      clipped: clipped,
+      info: info,
+      marks: marks,
+    );
+  }
+
   /// Для потока.
   Map<String, Object?> toJson() => <String, Object?>{
     'kind': kind.wire,
     'id': id,
     'rect': rect.toJson(),
     'z': z,
+    if (clipped) 'clip': true,
+    if (info.isNotEmpty) 'info': info,
+    if (marks.isNotEmpty)
+      'marks': <Object?>[for (final LayoutMark mark in marks) mark.toJson()],
   };
 
   @override
   bool operator ==(Object other) {
     return other is LayoutRegion &&
-        other.kind == kind &&
-        other.id == id &&
-        other.rect == rect &&
-        other.z == z;
+        jsonEncode(other.toJson()) == jsonEncode(toJson());
   }
 
   @override
-  int get hashCode => Object.hash(kind, id, rect, z);
+  int get hashCode => jsonEncode(toJson()).hashCode;
+}
+
+/// Метка зоны [region], в которую попала точка ([x], [y]): ближайшая
+/// из тех, до чьей середины не дальше её радиуса или
+/// [kLayoutMarkReach]; при равном расстоянии — первая. `null` — мимо
+/// всех (SNO-ALG-REC-02, шаг 5; шаг 31).
+LayoutMark? layoutMarkAt(LayoutRegion region, double x, double y) {
+  LayoutMark? best;
+  double bestSquare = double.infinity;
+  for (final LayoutMark mark in region.marks) {
+    final double dx = mark.x - x;
+    final double dy = mark.y - y;
+    final double square = dx * dx + dy * dy;
+    final double reach = math.max(mark.r, kLayoutMarkReach);
+    if (square <= reach * reach && square < bestSquare) {
+      best = mark;
+      bestSquare = square;
+    }
+  }
+  return best;
 }
 
 /// Окно в кадре: размер в логических пикселях, их плотность и
@@ -742,6 +859,8 @@ class LayoutHit {
     this.xPt,
     this.yPt,
     this.dimmed = false,
+    this.info = const <String, Object?>{},
+    this.mark,
   });
 
   /// Вид зоны ([LayoutKind.wire]); для листа ещё `neighbour` — соседний
@@ -762,12 +881,21 @@ class LayoutHit {
 
   /// Точка на странице, но вне читаемой полосы — в затемнении.
   final bool dimmed;
+
+  /// Что ещё известно о зоне ([LayoutRegion.info]): у книги полки —
+  /// категория, у строки найденного — её место в списке.
+  final Map<String, Object?> info;
+
+  /// Метка зоны, в которую попала точка ([layoutMarkAt]): у карты —
+  /// отпечаток книги звезды; `null` — мимо меток или их нет.
+  final String? mark;
 }
 
 /// Где в кадре точка ([x], [y]) окна (SNO-ALG-REC-02, шаг 5).
 ///
 /// Зона поверх страницы важнее страницы: из зон, в которые точка
-/// попала, берётся верхняя ([LayoutRegion.z]). Если верхняя — место
+/// попала, берётся верхняя ([LayoutRegion.z]); ответ несёт её [info] и
+/// метку под точкой ([layoutMarkAt]) — звезду карты. Если верхняя — место
 /// под страницу и лист есть, точка переводится в страницу: на странице
 /// — `page` с точкой в пунктах (в затемнении — `dimmed`), на соседнем
 /// листе — `neighbour`, рядом — `background`. Та же формула — в
@@ -789,13 +917,16 @@ LayoutHit locateInFrame({
       top = region;
     }
   }
-  if (top != null && top.kind != LayoutKind.page) {
-    return LayoutHit(zone: top.kind.wire, id: top.id);
+  if (top != null && (top.kind != LayoutKind.page || sheet == null)) {
+    return LayoutHit(
+      zone: top.kind.wire,
+      id: top.id,
+      info: top.info,
+      mark: layoutMarkAt(top, x, y)?.id,
+    );
   }
   if (sheet == null) {
-    return top == null
-        ? const LayoutHit(zone: 'screen')
-        : LayoutHit(zone: top.kind.wire, id: top.id);
+    return const LayoutHit(zone: 'screen');
   }
   for (final LayoutPage page in sheet.pages) {
     final double xPt = (x - page.x) / sheet.scale;
@@ -887,12 +1018,18 @@ class LayoutFrame {
         }
         final Object? z = zone['z'];
         final Object? id = zone['id'];
+        final Object? info = zone['info'];
         regions.add(
           LayoutRegion(
             kind: _kind(zone['kind']),
             id: id is String ? id : '',
             rect: rect,
             z: z is int ? z : 0,
+            clipped: zone['clip'] == true,
+            info: info is Map<String, Object?>
+                ? info
+                : const <String, Object?>{},
+            marks: _marks(zone['marks']),
           ),
         );
       }
@@ -915,6 +1052,26 @@ class LayoutFrame {
 
   static double? _number(Object? value) {
     return value is num ? value.toDouble() : null;
+  }
+
+  static List<LayoutMark> _marks(Object? raw) {
+    if (raw is! List<Object?>) {
+      return const <LayoutMark>[];
+    }
+    final List<LayoutMark> marks = <LayoutMark>[];
+    for (final Object? item in raw) {
+      if (item is! Map<String, Object?>) {
+        continue;
+      }
+      final Object? id = item['id'];
+      final double? x = _number(item['x']);
+      final double? y = _number(item['y']);
+      final double? r = _number(item['r']);
+      if (id is String && x != null && y != null && r != null) {
+        marks.add(LayoutMark(id: id, x: x, y: y, r: r));
+      }
+    }
+    return marks;
   }
 
   /// Незнакомый вид — экран целиком.

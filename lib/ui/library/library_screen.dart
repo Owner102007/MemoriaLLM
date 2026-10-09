@@ -16,6 +16,8 @@ import '../../sno/index/shelf_reading.dart';
 import '../../sno/index/shelf_reading_view.dart';
 import '../../sno/recording/action_log.dart';
 import '../../sno/recording/event.dart';
+import '../../sno/recording/layout_frames.dart';
+import '../../sno/recording/layout_probe.dart';
 import '../../sno/recording/thinning.dart';
 import '../reader/reader_screen.dart';
 import 'book_drag.dart';
@@ -801,7 +803,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
           _dragOver(event.position);
         }
       },
-      child: _scaffold(context),
+      // SNO-F-REC-03: полка — зона кадра раскладки; сдвиг прокрутки — в
+      // её сведениях, по нему разбор сверяет кадр с журналом.
+      child: LayoutProbe(
+        kind: LayoutKind.screen,
+        id: 'shelf',
+        info: _layoutInfo,
+        child: _scaffold(context),
+      ),
     );
   }
 
@@ -886,6 +895,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
     );
+  }
+
+  /// SNO-F-REC-03, шаг 31: сведения полки для кадра раскладки — где
+  /// стоит прокрутка и идёт ли поиск по названию.
+  Map<String, Object?> _layoutInfo() {
+    return <String, Object?>{
+      if (_shelf.hasClients) 'scroll': layoutRound(_shelf.position.pixels),
+      if (_query.trim().isNotEmpty) 'searching': true,
+    };
   }
 
   /// Кладёт над полкой полоску подготовки книг (SNO-F-IDX-04).
@@ -1109,12 +1127,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
         shelf,
         if (searching)
           Positioned.fill(
-            child: GestureDetector(
-              key: const Key('shelf-search-scrim'),
-              behavior: HitTestBehavior.opaque,
-              onTap: _closeSearch,
-              child: ColoredBox(
-                color: theme.colorScheme.scrim.withValues(alpha: 0.6),
+            // SNO-F-REC-03: затемнённая полка под найденным — зона поверх
+            // полки: нажатие по ней закрывает поиск, а не открывает книгу.
+            child: LayoutProbe(
+              kind: LayoutKind.dialog,
+              id: 'shelf_search_scrim',
+              child: GestureDetector(
+                key: const Key('shelf-search-scrim'),
+                behavior: HitTestBehavior.opaque,
+                onTap: _closeSearch,
+                child: ColoredBox(
+                  color: theme.colorScheme.scrim.withValues(alpha: 0.6),
+                ),
               ),
             ),
           ),

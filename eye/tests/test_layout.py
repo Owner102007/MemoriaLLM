@@ -91,3 +91,38 @@ def test_sno_alg_rec_02_symbol_near_the_point_on_its_line():
     assert layout.symbol_at(symbols, 1, 27, 15) == 'б'
     assert layout.symbol_at(symbols, 1, 20, 40) is None
     assert layout.symbol_at(symbols, 2, 12, 15) is None
+
+
+def screens():
+    return json.loads(GOLDEN.read_text(encoding='utf-8'))['screens']
+
+
+@pytest.mark.parametrize('case', screens(), ids=lambda case: case['name'])
+def test_sno_alg_rec_02_screen_point_names_zone_info_and_star(case):
+    """Шаг 31, SNO-ALG-REC-02: на экранах без листа — полка, поиск по
+    названию, карта — точка относится к верхней зоне; ответ несёт
+    сведения зоны (категория книги, место строки найденного) и звезду
+    карты под точкой — ближайшую в пределах её радиуса или 24 пикселей."""
+    for point in case['points']:
+        expect = point['expect']
+        hit = layout.locate(case['frame'], point['x'], point['y'])
+        assert hit['zone'] == expect['zone'], point
+        if 'id' in expect:
+            assert hit.get('id', '') == expect['id'], point
+        assert hit.get('info') == expect.get('info'), point
+        assert hit.get('mark') == expect.get('mark'), point
+        assert ('mark' in hit) == ('mark' in expect), point
+
+
+def test_sno_alg_rec_02_clipped_zone_keeps_its_name():
+    """Шаг 31: зона, подрезанная краем прокрутки, остаётся той же зоной
+    — пометка `clip` на ответ не влияет."""
+    frame = {
+        'viewport': {'w': 400, 'h': 800},
+        'regions': [
+            {'kind': 'shelf_book', 'id': 'h', 'rect': [0, 60, 100, 40],
+             'z': 0, 'clip': True, 'info': {'category': 'А'}},
+        ],
+    }
+    assert layout.locate(frame, 50, 70) == {
+        'zone': 'shelf_book', 'id': 'h', 'info': {'category': 'А'}}

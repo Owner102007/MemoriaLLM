@@ -20,6 +20,14 @@
 (`eye/tests/test_layout.py`) — обратный перевод разбора. Расхождение
 значит, что одна из трёх реализаций ошиблась.
 
+С шага 31 (ET-05) здесь же — экраны без листа (раздел `screens`):
+полка, прокрученная и подрезанная краем списка, поиск по названию
+поверх затемнённой полки и карта «Галактика». У карты прямая формула
+своя — места звёзд на экране по камере карты и выборка звёзд для кадра
+(видимые, крупные первыми, не больше ста; в приложении —
+`layoutStars`); для всех трёх — что лежит в точке: зона, её сведения и
+звезда под точкой (`mark`).
+
 Запуск: `python3 tool/make_layout_goldens.py` — переписывает
 `test/goldens/layout_frame.json`. Правится осознанно, вместе с кодом.
 """
@@ -216,8 +224,234 @@ CASES = [
 ]
 
 
+# Поля карты и сколько звёзд идёт в кадр — как в приложении
+# (`kMapMargin`, `kLayoutStarLimit` в `lib/domain/map/map_view.dart`).
+MAP_MARGIN = 0.14
+STAR_LIMIT = 100
+# Сколько пикселей от звезды ещё попадание в неё (`kLayoutMarkReach`).
+MARK_REACH = 24.0
+
+
+def star_marks(case):
+    """Звёзды карты в кадре — прямая формула: место на экране по камере
+    и выборка видимых, крупные первыми."""
+    m = case['map']
+    left, top, w, h = m['rect']
+    ext = m['extent']
+    cam = m['camera']
+    usable = 1 - 2 * MAP_MARGIN
+    base = min(w * usable / (2 * ext['half_width']),
+               h * usable / (2 * ext['half_height']))
+    unit = base * cam['scale']
+    seen = []
+    for i, star in enumerate(m['stars']):
+        x = w / 2 + (star['x'] - cam['cx']) * unit
+        y = h / 2 + (star['y'] - cam['cy']) * unit
+        r = star['r']
+        if x + r < 0 or x - r > w or y + r < 0 or y - r > h:
+            continue
+        seen.append((i, x, y, r))
+    seen.sort(key=lambda item: (-item[3], item[0]))
+    seen = seen[:STAR_LIMIT]
+    marks = [{'id': m['stars'][i]['book'], 'x': left + x, 'y': top + y,
+              'r': r} for i, x, y, r in seen]
+    return marks, unit
+
+
+def mark_at(marks, x, y):
+    best = None
+    best_square = None
+    for mark in marks:
+        square = (mark['x'] - x) ** 2 + (mark['y'] - y) ** 2
+        reach = max(mark['r'], MARK_REACH)
+        if square <= reach * reach and (best_square is None or
+                                        square < best_square):
+            best, best_square = mark, square
+    return None if best is None else best['id']
+
+
+def screen_expect(regions, viewport, x, y):
+    """Что лежит в точке кадра без листа — по точным (не округлённым)
+    меткам."""
+    if x < 0 or y < 0 or x > viewport['w'] or y > viewport['h']:
+        return {'zone': 'outside'}
+    top = None
+    for region in regions:
+        if inside(region['rect'], x, y) and (top is None or
+                                              region['z'] > top['z']):
+            top = region
+    if top is None:
+        return {'zone': 'screen'}
+    hit = {'zone': top['kind'], 'id': top['id']}
+    if top.get('info'):
+        hit['info'] = top['info']
+    if top.get('marks'):
+        hit['mark'] = mark_at(top['marks'], x, y)
+    return hit
+
+
+def rounded_region(region):
+    out = {'kind': region['kind'], 'id': region['id'],
+           'rect': [r1(v) for v in region['rect']], 'z': region['z']}
+    if region.get('clip'):
+        out['clip'] = True
+    if region.get('info'):
+        out['info'] = region['info']
+    if region.get('marks'):
+        out['marks'] = [{'id': mk['id'], 'x': r1(mk['x']), 'y': r1(mk['y']),
+                         'r': r1(mk['r'])} for mk in region['marks']]
+    return out
+
+
+H = {name: name * 8 for name in ('a1b2c3d4', 'e5f6a7b8', '0c1d2e3f',
+                                  '9a8b7c6d', '5e4f3a2b')}
+HA, HB, HC, HD, HE = (H['a1b2c3d4'], H['e5f6a7b8'], H['0c1d2e3f'],
+                      H['9a8b7c6d'], H['5e4f3a2b'])
+
+SCREENS = [
+    {
+        'name': 'полка на телефоне, прокручена и подрезана краем списка',
+        'viewport': {'w': 411.4, 'h': 914.3, 'dpr': 2.625},
+        'regions': [
+            {'kind': 'screen', 'id': 'shelf', 'rect': [0, 0, 411.4, 834.3],
+             'z': 0, 'info': {'scroll': 412.5}},
+            {'kind': 'shelf_category', 'id': 'Анатомия',
+             'rect': [12, 64, 387.4, 290], 'z': 1, 'clip': True,
+             'info': {'part': 'area'}},
+            {'kind': 'shelf_book', 'id': HA, 'rect': [22, 64, 115.8, 140],
+             'z': 2, 'clip': True, 'info': {'category': 'Анатомия'}},
+            {'kind': 'shelf_book', 'id': HB, 'rect': [147.8, 64, 115.8, 140],
+             'z': 3, 'clip': True, 'info': {'category': 'Анатомия'}},
+            {'kind': 'shelf_category', 'id': 'Гистология',
+             'rect': [12, 382, 387.4, 40], 'z': 4,
+             'info': {'part': 'header'}},
+            {'kind': 'shelf_category', 'id': 'Гистология',
+             'rect': [12, 430, 387.4, 200], 'z': 5,
+             'info': {'part': 'area'}},
+            {'kind': 'shelf_book', 'id': HC, 'rect': [22, 440, 115.8, 180],
+             'z': 6, 'info': {'category': 'Гистология'}},
+            {'kind': 'nav', 'id': 'bottom', 'rect': [0, 834.3, 411.4, 80],
+             'z': 7, 'info': {'current': 'shelf'}},
+            {'kind': 'nav', 'id': 'shelf', 'rect': [0, 834.3, 102.9, 80],
+             'z': 8},
+            {'kind': 'nav', 'id': 'galaxy',
+             'rect': [102.9, 834.3, 102.8, 80], 'z': 9},
+            {'kind': 'recording_dot', 'id': '', 'rect': [371.4, 24, 40, 40],
+             'z': 10},
+        ],
+        'points': [[80, 120], [200, 70], [300, 300], [200, 400], [80, 500],
+                   [300, 600], [200, 20], [150, 870], [380, 870],
+                   [390, 40], [420, 10]],
+    },
+    {
+        'name': 'поиск по названию на широком окне, полка затемнена',
+        'viewport': {'w': 1280, 'h': 800, 'dpr': 2.0},
+        'regions': [
+            {'kind': 'nav', 'id': 'top', 'rect': [0, 0, 1280, 44], 'z': 0,
+             'info': {'current': 'shelf'}},
+            {'kind': 'nav', 'id': 'shelf', 'rect': [8, 0, 110, 44], 'z': 1},
+            {'kind': 'screen', 'id': 'shelf', 'rect': [0, 44, 1280, 756],
+             'z': 2, 'info': {'scroll': 0.0, 'searching': True}},
+            {'kind': 'shelf_category', 'id': 'Анатомия',
+             'rect': [12, 156, 1256, 300], 'z': 3, 'info': {'part': 'area'}},
+            {'kind': 'shelf_book', 'id': HA, 'rect': [22, 166, 120, 170],
+             'z': 4, 'info': {'category': 'Анатомия'}},
+            {'kind': 'dialog', 'id': 'shelf_search_scrim',
+             'rect': [0, 100, 1280, 700], 'z': 5},
+            {'kind': 'shelf_results', 'id': '', 'rect': [112, 100, 420, 152],
+             'z': 6, 'info': {'hits': 2}},
+            {'kind': 'shelf_book', 'id': HB, 'rect': [112, 104, 420, 72],
+             'z': 7, 'info': {'category': 'Анатомия', 'in': 'results',
+                              'rank': 1}},
+            {'kind': 'shelf_book', 'id': HA, 'rect': [112, 176, 420, 72],
+             'z': 8, 'info': {'category': 'Анатомия', 'in': 'results',
+                              'rank': 2}},
+            {'kind': 'shelf_search', 'id': '', 'rect': [112, 50, 420, 44],
+             'z': 9},
+        ],
+        'points': [[300, 70], [300, 140], [300, 200], [300, 250],
+                   [60, 200], [700, 500], [50, 20], [600, 20]],
+    },
+    {
+        'name': 'карта «Галактика» на ПК, карточка книги поверх',
+        'viewport': {'w': 1280, 'h': 800, 'dpr': 1.25},
+        'map': {
+            'rect': [0, 100, 1280, 700],
+            'extent': {'cx': 0.1, 'cy': -0.05, 'half_width': 1.2,
+                       'half_height': 0.9},
+            'camera': {'scale': 2.5, 'cx': 0.3, 'cy': 0.1},
+            'stars': [
+                {'book': HA, 'x': 0.3, 'y': 0.1, 'r': 4.5},
+                {'book': HB, 'x': 0.42, 'y': 0.15, 'r': 12.0},
+                {'book': HC, 'x': -1.1, 'y': 0.8, 'r': 7.0},
+                {'book': HD, 'x': 0.2, 'y': -0.2, 'r': 4.5},
+                {'book': HE, 'x': 0.36, 'y': 0.1, 'r': 4.5},
+            ],
+        },
+        'regions': [
+            {'kind': 'nav', 'id': 'top', 'rect': [0, 0, 1280, 44], 'z': 0,
+             'info': {'current': 'galaxy'}},
+            {'kind': 'screen', 'id': 'galaxy', 'rect': [0, 44, 1280, 756],
+             'z': 1, 'info': {'shows': 'map'}},
+            {'kind': 'galaxy_map', 'id': '', 'rect': [0, 100, 1280, 700],
+             'z': 2},
+            {'kind': 'galaxy_card', 'id': HB, 'rect': [900, 380, 320, 150],
+             'z': 3},
+        ],
+        # Точки — в долях от мест звёзд: `[номер звезды, dx, dy]` — точка
+        # рядом со звездой; `[x, y]` — точка окна.
+        'star_points': [[0, 0, 0], [1, 9, -3], [0, 0, 20], [3, 0, 30],
+                        [4, -14, 0]],
+        'points': [[1000, 450], [50, 70], [100, 700]],
+    },
+]
+
+
+def screen_case(case):
+    regions = [dict(region) for region in case['regions']]
+    marks = None
+    unit = None
+    if 'map' in case:
+        marks, unit = star_marks(case)
+        for region in regions:
+            if region['kind'] == 'galaxy_map':
+                cam = case['map']['camera']
+                region['info'] = {
+                    'map': {'scale': cam['scale'], 'cx': cam['cx'],
+                            'cy': cam['cy'], 'unit': round(unit, 6)},
+                    'stars': len(case['map']['stars']),
+                }
+                region['marks'] = marks
+    points = []
+    if marks is not None:
+        by_id = {mk['id']: mk for mk in marks}
+        for index, dx, dy in case['star_points']:
+            mk = by_id[case['map']['stars'][index]['book']]
+            x, y = round(mk['x'] + dx, 3), round(mk['y'] + dy, 3)
+            points.append({'x': x, 'y': y,
+                           'expect': screen_expect(regions, case['viewport'],
+                                                   x, y)})
+    for x, y in case['points']:
+        points.append({'x': x, 'y': y,
+                       'expect': screen_expect(regions, case['viewport'],
+                                               x, y)})
+    out = {
+        'name': case['name'],
+        'frame': {
+            'viewport': case['viewport'],
+            'regions': [rounded_region(region) for region in regions],
+        },
+        'points': points,
+    }
+    if 'map' in case:
+        out['map'] = {k: case['map'][k] for k in
+                      ('rect', 'extent', 'camera', 'stars')}
+        out['map']['unit'] = unit
+    return out
+
+
 def main():
-    out = {'schema': 'sno2026-layout-golden/1', 'cases': []}
+    out = {'schema': 'sno2026-layout-golden/1', 'cases': [], 'screens': []}
     for case in CASES:
         geometry = forward(case)
         points = []
@@ -239,6 +473,8 @@ def main():
             },
             'points': points,
         })
+    for case in SCREENS:
+        out['screens'].append(screen_case(case))
     with open(OUT, 'w', encoding='utf-8') as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
         f.write('\n')

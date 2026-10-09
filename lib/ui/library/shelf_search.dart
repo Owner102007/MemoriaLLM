@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../../application/library/cover_service.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/shelf_title_search.dart';
+import '../../sno/recording/layout_frames.dart';
+import '../../sno/recording/layout_probe.dart';
 
 /// Ширина поля поиска в шапке полки на широком окне — и списка
 /// найденного под ним.
@@ -80,37 +82,41 @@ class ShelfSearchField extends StatelessWidget {
             onPressed: onClose,
           )
         : null;
+    // SNO-F-REC-03: поле — зона кадра раскладки.
     return Focus(
       onKeyEvent: _onKey,
-      child: TextField(
-        key: const Key('shelf-search-field'),
-        controller: controller,
-        focusNode: focusNode,
-        textInputAction: TextInputAction.search,
-        // На широком окне `Enter` указатель ввода из поля не уводит:
-        // список уже на экране, а без указателя `Esc` перестал бы
-        // закрывать поиск. Экранная клавиатура — другое дело: её кнопка
-        // «Найти» клавиатуру прячет, на телефоне и на планшете, — так
-        // список виден целиком. Высота клавиатуры спрашивается у окна:
-        // под `Scaffold` оболочки нижний отступ уже снят и равен нулю.
-        onEditingComplete: framed
-            ? () {
-                final MediaQueryData window = MediaQueryData.fromView(
-                  View.of(context),
-                );
-                if (window.viewInsets.bottom > 0) {
-                  focusNode.unfocus();
+      child: LayoutProbe(
+        kind: LayoutKind.shelfSearch,
+        child: TextField(
+          key: const Key('shelf-search-field'),
+          controller: controller,
+          focusNode: focusNode,
+          textInputAction: TextInputAction.search,
+          // На широком окне `Enter` указатель ввода из поля не уводит:
+          // список уже на экране, а без указателя `Esc` перестал бы
+          // закрывать поиск. Экранная клавиатура — другое дело: её кнопка
+          // «Найти» клавиатуру прячет, на телефоне и на планшете, — так
+          // список виден целиком. Высота клавиатуры спрашивается у окна:
+          // под `Scaffold` оболочки нижний отступ уже снят и равен нулю.
+          onEditingComplete: framed
+              ? () {
+                  final MediaQueryData window = MediaQueryData.fromView(
+                    View.of(context),
+                  );
+                  if (window.viewInsets.bottom > 0) {
+                    focusNode.unfocus();
+                  }
                 }
-              }
-            : null,
-        decoration: InputDecoration(
-          hintText: 'Название книги',
-          isDense: true,
-          border: framed ? const OutlineInputBorder() : InputBorder.none,
-          prefixIcon: framed ? const Icon(Icons.search, size: 20) : null,
-          suffixIcon: close,
+              : null,
+          decoration: InputDecoration(
+            hintText: 'Название книги',
+            isDense: true,
+            border: framed ? const OutlineInputBorder() : InputBorder.none,
+            prefixIcon: framed ? const Icon(Icons.search, size: 20) : null,
+            suffixIcon: close,
+          ),
+          onChanged: onChanged,
         ),
-        onChanged: onChanged,
       ),
     );
   }
@@ -121,6 +127,9 @@ class ShelfSearchField extends StatelessWidget {
 ///
 /// Под названием стоит категория книги — то место, где она стоит на
 /// полке. Нажатие открывает книгу; ни меню, ни переноса здесь нет.
+///
+/// SNO-F-REC-03 (шаг 31): список — зона кадра раскладки, каждая строка
+/// — зона книги с отпечатком, категорией и местом в списке.
 class ShelfSearchResults extends StatelessWidget {
   /// Создаёт список.
   const ShelfSearchResults({
@@ -150,6 +159,14 @@ class ShelfSearchResults extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutProbe(
+      kind: LayoutKind.shelfResults,
+      info: () => <String, Object?>{'hits': hits.length},
+      child: _list(context),
+    );
+  }
+
+  Widget _list(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     if (hits.isEmpty) {
       final Widget empty = Padding(
@@ -184,24 +201,42 @@ class ShelfSearchResults extends StatelessWidget {
         final ShelfTitleHit hit = hits[index];
         final Book book = hit.book;
         final String? category = categories[book.id];
-        return ListTile(
-          key: Key('shelf-search-hit-${book.id}'),
-          leading: SizedBox(
-            width: 36,
-            height: 50,
-            child: _ResultCover(book: book, covers: covers),
-          ),
-          title: Text.rich(
-            highlightedTitle(book.title, hit.spans, mark),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: category == null
-              ? null
-              : Text(category, maxLines: 1, overflow: TextOverflow.ellipsis),
-          onTap: () => onOpen(book),
+        return LayoutProbe(
+          kind: LayoutKind.shelfBook,
+          id: book.fileHash,
+          info: () => <String, Object?>{
+            'category': ?category,
+            'in': 'results',
+            'rank': index + 1,
+          },
+          child: _hitTile(book, hit, category, mark),
         );
       },
+    );
+  }
+
+  Widget _hitTile(
+    Book book,
+    ShelfTitleHit hit,
+    String? category,
+    TextStyle mark,
+  ) {
+    return ListTile(
+      key: Key('shelf-search-hit-${book.id}'),
+      leading: SizedBox(
+        width: 36,
+        height: 50,
+        child: _ResultCover(book: book, covers: covers),
+      ),
+      title: Text.rich(
+        highlightedTitle(book.title, hit.spans, mark),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: category == null
+          ? null
+          : Text(category, maxLines: 1, overflow: TextOverflow.ellipsis),
+      onTap: () => onOpen(book),
     );
   }
 }

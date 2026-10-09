@@ -27,6 +27,8 @@ import 'index/shelf_reading_view.dart';
 import 'literature_archive.dart';
 import 'participant_code.dart';
 import 'recording/code_screen.dart';
+import 'recording/layout_frames.dart';
+import 'recording/layout_probe.dart';
 import 'recording/records.dart';
 import 'recording/records_screen.dart';
 import 'recording/session.dart';
@@ -1381,6 +1383,15 @@ class _TestingScreenState extends State<TestingScreen>
 
   @override
   Widget build(BuildContext context) {
+    // SNO-F-REC-03: раздел — зона кадра раскладки.
+    return LayoutProbe(
+      kind: LayoutKind.screen,
+      id: 'testing',
+      child: _view(context),
+    );
+  }
+
+  Widget _view(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final String device = deviceCodeOf(widget.services.data.clock.nodeId);
     final RecordingSession? session = _session;

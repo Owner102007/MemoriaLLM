@@ -19,6 +19,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import '../recording/layout_frames.dart';
+import '../recording/layout_probe.dart';
 import 'eye_calibration.dart';
 import 'eye_calibration_run.dart';
 import 'eye_protocol.dart';
@@ -464,6 +466,16 @@ class _EyeTargetsViewState extends State<EyeTargetsView>
 
   @override
   Widget build(BuildContext context) {
+    // SNO-F-REC-03: точки калибровки и проверки — экран целиком; в запись
+    // он войдёт с калибровкой внутри записи (ET-06).
+    return LayoutProbe(
+      kind: LayoutKind.screen,
+      id: 'calibration',
+      child: _view(context),
+    );
+  }
+
+  Widget _view(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final EyeTargetsRun run = widget.run;
     final Size size = MediaQuery.sizeOf(context);
