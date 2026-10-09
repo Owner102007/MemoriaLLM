@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 from . import faceparts as fp
@@ -44,6 +45,12 @@ FLUSH_US = 1_000_000
 _TAIL_BLOCK = 64 * 1024
 
 _I = {name: i for i, name in enumerate(fp.FEATURE_NAMES)}
+
+
+def _num(value, digits: int) -> float | None:
+    """Число строки потока, округлённое; не число — `null` (BUG-63)."""
+    value = float(value)
+    return round(value, digits) if math.isfinite(value) else None
 
 
 def repair_tail(path: Path) -> int:
@@ -126,19 +133,27 @@ class GazeWriter:
         if self.closed:
             return -1
         face = feat is not None
+        # BUG-63: оценка или признак не числом (NaN, бесконечность) —
+        # не годны: `json.dumps` записал бы `NaN`, а такую строку Dart не
+        # читает, и самопроверка приложения считала бы её потерянной.
+        if g is not None and not (math.isfinite(float(g[0]))
+                                  and math.isfinite(float(g[1]))):
+            g = None
+        good = bool(ok and g is not None)
         line = {
             "n": self.n,
             "t": self.t_of(qpc_us),
-            "x": round(float(g[0]), 1) if ok and g is not None else None,
-            "y": round(float(g[1]), 1) if ok and g is not None else None,
-            "ok": bool(ok and g is not None),
-            "conf": (round(max(0.0, 1.0 - float(blink or 0.0)), 2) if face else 0.0),
-            "dist": round(float(dist), 3) if face and dist is not None else None,
-            "yaw": round(float(feat[_I["yaw"]]), 1) if face else None,
-            "pitch": round(float(feat[_I["pitch"]]), 1) if face else None,
-            "roll": round(float(feat[_I["roll"]]), 1) if face else None,
-            "open_l": round(float(feat[_I["open_l"]]), 3) if face else None,
-            "open_r": round(float(feat[_I["open_r"]]), 3) if face else None,
+            "x": _num(g[0], 1) if good else None,
+            "y": _num(g[1], 1) if good else None,
+            "ok": good,
+            "conf": (_num(max(0.0, 1.0 - float(blink or 0.0)), 2) if face
+                     else 0.0),
+            "dist": _num(dist, 3) if face and dist is not None else None,
+            "yaw": _num(feat[_I["yaw"]], 1) if face else None,
+            "pitch": _num(feat[_I["pitch"]], 1) if face else None,
+            "roll": _num(feat[_I["roll"]], 1) if face else None,
+            "open_l": _num(feat[_I["open_l"]], 3) if face else None,
+            "open_r": _num(feat[_I["open_r"]], 3) if face else None,
             "seg": self.seg,
         }
         self._buf.append(json.dumps(line, separators=(",", ":")).encode("utf-8") + b"\n")

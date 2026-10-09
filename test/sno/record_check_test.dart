@@ -179,12 +179,10 @@ void main() {
       await target.writeAsString(file.value, flush: true);
     }
     // Полоса глаз и признаки кадров: двоичные, лежат без сжатия.
-    await File(
-      p.join(folder.path, 'eye', 'eyes.mp4'),
-    ).writeAsBytes(List<int>.generate(20000, (int i) => i % 251));
-    await File(
-      p.join(folder.path, 'eye', 'features.bin'),
-    ).writeAsBytes(List<int>.generate(8000, (int i) => (i * 7) % 256));
+    await File(p.join(folder.path, 'eye', 'eyes.mp4'))
+        .writeAsBytes(List<int>.generate(20000, (int i) => i % 251));
+    await File(p.join(folder.path, 'eye', 'features.bin'))
+        .writeAsBytes(List<int>.generate(8000, (int i) => (i * 7) % 256));
     return packRecording(folder, now: () => DateTime(2026, 10, 10, 0, 20));
   }
 

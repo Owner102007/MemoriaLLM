@@ -57,9 +57,8 @@ String studyBuildLine({required String studyTag, required String built}) {
   if (built.isEmpty) {
     return who;
   }
-  final RegExpMatch? day = RegExp(
-    r'^(\d{4})-(\d{2})-(\d{2})$',
-  ).firstMatch(built);
+  final RegExpMatch? day = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$')
+      .firstMatch(built);
   final String date = day == null
       ? built
       : '${day.group(3)}.${day.group(2)}.${day.group(1)}';

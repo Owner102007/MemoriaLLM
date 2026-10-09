@@ -485,3 +485,42 @@ def test_sno_f_cfg_06_organizer_guide_goes_into_the_zip():
     text = (EYE / "Инструкция организатора.txt").read_text(encoding="utf-8-sig")
     assert "eye\\Проверка записи.cmd" in text
     assert "sno2026-N" in text
+
+
+# --- BUG-63: строка взгляда без NaN ----------------------------------
+
+def test_bug_63_gaze_line_never_carries_nan(tmp_path):
+    """BUG-63: оценка взгляда не числом — кадр негоден, а признак не
+    числом — `null`: `json.dumps` записал бы `NaN`, такую строку Dart не
+    читает, и самопроверка приложения считала бы её потерянной."""
+    from sno_eye import faceparts as fp
+    from sno_eye.gaze import GazeWriter
+
+    feat = [0.0] * len(fp.FEATURE_NAMES)
+    feat[fp.FEATURE_NAMES.index("yaw")] = float("nan")
+    w = GazeWriter(tmp_path, seg=0, qpc0_us=0, t0=0)
+    w.add(1_000, (float("nan"), 200.0), True, feat=feat, blink=0.0, dist=1.0)
+    w.add(34_000, (100.0, float("inf")), True, feat=feat, blink=0.0,
+          dist=float("nan"))
+    w.add(67_000, (100.0, 200.0), True, feat=feat, blink=0.0, dist=1.0)
+    summary = w.close()
+    data = (tmp_path / "gaze.jsonl").read_bytes()
+    assert b"NaN" not in data and b"Infinity" not in data
+    rows = [json.loads(line) for line in data.splitlines()]
+    assert [r["ok"] for r in rows] == [False, False, True]
+    assert rows[0]["x"] is None and rows[1]["y"] is None
+    assert rows[0]["yaw"] is None and rows[1]["dist"] is None
+    assert summary["ok"] == 1
+    # Строгое правило сверки (как у приложения) видит все три строки.
+    assert rc.check_stream(data, "n") == {
+        "lines": 3, "gaps": 0, "torn": False, "junk": 0, "highest": 3}
+
+
+def test_sno_f_res_01_nan_line_is_junk_like_in_the_app():
+    """SNO-F-RES-01: строка с `NaN` для приложения — мусор (Dart
+    `jsonDecode` её не читает); разбор считает так же. Перевод строки
+    `\\r` делит строки, как `LineSplitter`."""
+    data = b'{"n": 1}\n{"n": 2, "x": NaN}\n{"n": 3}\r{"n": 4}\n'
+    result = rc.check_stream(data, "n")
+    assert (result["lines"], result["junk"], result["gaps"]) == (4, 1, 1)
+    assert rc.check_stream(b'{"n": 9223372036854775808}\n', "n")["junk"] == 1

@@ -33,8 +33,8 @@ import glob
 import hashlib
 import json
 import os
+import re
 import zipfile
-import zlib
 from pathlib import Path
 
 # Схема манифеста, которую проверка понимает.
@@ -106,6 +106,18 @@ def thresholds(path: Path | None = None) -> dict:
     return values
 
 
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+
+# Наибольшее целое Dart на устройстве: номер больше — уже не `int`.
+_INT64_MAX = 2**63 - 1
+
+
+def _strict_constant(name: str):
+    """`NaN` и `Infinity` — не JSON: Dart `jsonDecode` их не читает, и
+    строка с ними для приложения — мусор. Здесь — так же."""
+    raise ValueError(f"не JSON: {name}")
+
+
 def check_stream(data: bytes, key: str, expected: int | None = None) -> dict:
     """Сверяет поток строк JSON с самим собой — вторая реализация
     `checkJournal` приложения.
@@ -123,16 +135,18 @@ def check_stream(data: bytes, key: str, expected: int | None = None) -> dict:
     junk = 0
     if end >= 0:
         text = data[:end].decode("utf-8", errors="replace")
-        for line in text.split("\n"):
+        # Как `LineSplitter` в Dart: строку кончают `\r\n`, `\n` и `\r`.
+        for line in _LINE_BREAK.split(text):
             if not line.strip():
                 continue
             lines += 1
             number = None
             try:
-                raw = json.loads(line)
+                raw = json.loads(line, parse_constant=_strict_constant)
                 if isinstance(raw, dict):
                     value = raw.get(key)
-                    if isinstance(value, int) and not isinstance(value, bool):
+                    if isinstance(value, int) and not isinstance(value, bool) \
+                            and value <= _INT64_MAX:
                         number = value
             except ValueError:
                 pass
@@ -163,11 +177,11 @@ def _dict(value) -> dict:
 
 
 def _jsonl(data: bytes):
-    for line in data.decode("utf-8", errors="replace").split("\n"):
+    for line in _LINE_BREAK.split(data.decode("utf-8", errors="replace")):
         if not line.strip():
             continue
         try:
-            raw = json.loads(line)
+            raw = json.loads(line, parse_constant=_strict_constant)
         except ValueError:
             continue
         if isinstance(raw, dict):
@@ -242,10 +256,14 @@ def check_archive(path: Path, limits: dict | None = None) -> dict:
         report["verdict_text"] = VERDICT_TEXT[report["verdict"]]
         return report
 
+    # Испорченный ZIP отвечает чем угодно: BadZipFile, zlib.error,
+    # NotImplementedError на «методе сжатия» из порченого байта,
+    # RuntimeError на «зашифрованном» файле. Любая из них — «не годна»,
+    # а не падение разбора посреди пачки архивов.
     try:
         report["bytes"] = path.stat().st_size
         archive = zipfile.ZipFile(path)
-    except (OSError, zipfile.BadZipFile) as e:
+    except Exception as e:  # noqa: BLE001
         problems.append(f"архив не открывается: {e}")
         return finish()
 
@@ -253,7 +271,7 @@ def check_archive(path: Path, limits: dict | None = None) -> dict:
         names = set(archive.namelist())
         try:
             broken = archive.testzip()
-        except (OSError, zipfile.BadZipFile, EOFError, zlib.error) as e:
+        except Exception as e:  # noqa: BLE001
             broken = f"(не распаковывается: {e})"
         if broken is not None:
             problems.append(f"в архиве испорчен файл {broken}")
@@ -263,7 +281,7 @@ def check_archive(path: Path, limits: dict | None = None) -> dict:
                 return None
             try:
                 return archive.read(name)
-            except (OSError, zipfile.BadZipFile, EOFError, zlib.error):
+            except Exception:  # noqa: BLE001
                 message = f"файл {name} не читается"
                 if message not in problems:
                     problems.append(message)
@@ -696,7 +714,7 @@ def main(paths: list[str], *, as_json: bool = False,
               "архив sno2026_….zip или папку с архивами.")
         return 3
     limits = thresholds()
-    reports = [check_archive(path, limits) for path in archives]
+    reports = [_checked(path, limits) for path in archives]
     if as_json:
         print(json.dumps(reports, ensure_ascii=False, indent=1))
     else:
@@ -721,6 +739,18 @@ def main(paths: list[str], *, as_json: bool = False,
     if any(r["verdict"] == BAD for r in reports):
         return 2
     return 1 if any(r["verdict"] == WARN for r in reports) else 0
+
+
+def _checked(path: Path, limits: dict) -> dict:
+    """[check_archive], который не роняет пачку: что бы ни случилось с
+    одним архивом, остальные проверяются, а этот — «не годна»."""
+    try:
+        return check_archive(path, limits)
+    except Exception as e:  # noqa: BLE001
+        return {"archive": path.name, "path": str(path), "bytes": None,
+                "verdict": BAD, "verdict_text": VERDICT_TEXT[BAD],
+                "problems": [f"разбор архива упал: {e!r}"], "notes": [],
+                "info": []}
 
 
 def _table_place(paths: list[str], archives: list[Path]) -> Path:

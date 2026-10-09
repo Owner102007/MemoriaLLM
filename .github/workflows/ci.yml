@@ -435,7 +435,8 @@ jobs:
           # исследования без пароля теста и без постоянного ключа подписи
           # не выходит вовсе: на ней записывают участников.
           study=()
-          if [ -n "${SNO_BRANCH:-}" ] && [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+          if [ -n "${SNO_BRANCH:-}" ] && [ "${GITHUB_EVENT_NAME:-}" = push ] \
+            && [ "${GITHUB_REF_TYPE:-}" = tag ]; then
             if ! printf '%s' "$GITHUB_REF_NAME" \
               | grep -Eq '^sno2026-[1-9][0-9]*([.][1-9][0-9]*)?$'; then
               echo "::error title=Сборка исследования::тег $GITHUB_REF_NAME — не sno2026-N и не sno2026-N.M"
@@ -929,7 +930,8 @@ jobs:
           # исследования без пароля теста не выходит вовсе: на ней
           # записывают участников.
           study=()
-          if [ -n "${SNO_BRANCH:-}" ] && [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+          if [ -n "${SNO_BRANCH:-}" ] && [ "${GITHUB_EVENT_NAME:-}" = push ] \
+            && [ "${GITHUB_REF_TYPE:-}" = tag ]; then
             if ! printf '%s' "$GITHUB_REF_NAME" \
               | grep -Eq '^sno2026-[1-9][0-9]*([.][1-9][0-9]*)?$'; then
               echo "::error title=Сборка исследования::тег $GITHUB_REF_NAME — не sno2026-N и не sno2026-N.M"
@@ -1179,18 +1181,25 @@ jobs:
           (cd out && sha256sum memoria-* > SHA256SUMS.txt)
           cat out/SHA256SUMS.txt
           # Сборке исследования нужны «Проверка записи» и инструкция
-          # организатора — они лежат в eye\ каждого ZIP.
-          for branch in I II; do
-            listing=$(unzip -Z1 "out/memoria-sno2026-$branch-windows.zip")
-            for need in 'eye/Проверка записи.cmd' \
-                'eye/Инструкция организатора.txt' \
-                'eye/sno_eye/record_check.py'; do
-              if ! printf '%s\n' "$listing" | grep -qxF "$need"; then
-                echo "::error title=Сборка исследования::в ZIP ветви $branch нет $need"
-                exit 1
-              fi
-            done
-          done
+          # организатора — они лежат в eye\ каждого ZIP. Имена читает
+          # zipfile из Python: `unzip -Z1` в локали без UTF-8 экранирует
+          # кириллицу, и сверка не нашла бы ничего.
+          python3 - <<'PY'
+          import sys
+          import zipfile
+
+          need = ['eye/Проверка записи.cmd', 'eye/Инструкция организатора.txt',
+                  'eye/sno_eye/record_check.py']
+          bad = False
+          for branch in ('I', 'II'):
+              path = f'out/memoria-sno2026-{branch}-windows.zip'
+              names = {n.replace('\\', '/') for n in zipfile.ZipFile(path).namelist()}
+              for name in need:
+                  if name not in names:
+                      print(f'::error title=Сборка исследования::в ZIP ветви {branch} нет {name}')
+                      bad = True
+          sys.exit(1 if bad else 0)
+          PY
           number="${GITHUB_REF_NAME#sno2026-}"
           echo "number=$number" >> "$GITHUB_OUTPUT"
 
@@ -1199,7 +1208,9 @@ jobs:
       # нашлась — замечание, а не отказ: как снимок хранит строки,
       # решает компилятор, а не мы.
       - name: Тег внутри сборок
-        if: startsWith(github.ref, 'refs/tags/sno2026-')
+        if: >-
+          github.event_name == 'push'
+          && startsWith(github.ref, 'refs/tags/sno2026-')
         run: |
           set -eu
           for branch in I II; do
@@ -1217,8 +1228,12 @@ jobs:
             fi
           done
 
+      # Публикует только push тега: репетиция по кнопке — даже на теге —
+      # релиза не трогает.
       - name: Опубликовать релиз исследования
-        if: startsWith(github.ref, 'refs/tags/sno2026-')
+        if: >-
+          github.event_name == 'push'
+          && startsWith(github.ref, 'refs/tags/sno2026-')
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
@@ -1247,7 +1262,7 @@ jobs:
             Коммит: ${{ github.sha }}
 
       - name: Репетиция — без публикации
-        if: "!startsWith(github.ref, 'refs/tags/sno2026-')"
+        if: github.event_name != 'push'
         run: |
           echo "::notice title=Сборка исследования::репетиция: файлы собраны и сверены, релиз не публикуется"
           ls -l out
