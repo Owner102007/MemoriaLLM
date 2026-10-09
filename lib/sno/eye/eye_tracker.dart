@@ -483,6 +483,14 @@ class EyeTracker extends ChangeNotifier {
       fixed['end_check'] = <String, Object?>{'done': false, 'error': 'crash'};
       changed = true;
     }
+    if (fixed['present'] != true &&
+        fixed['configured'] == true &&
+        fixed['reason'] == null) {
+      // Приложение упало до начала изучения (во время калибровки):
+      // взгляда нет, потому что запись кончилась раньше.
+      fixed['reason'] = 'stopped';
+      changed = true;
+    }
     if (fixed['present'] == true && fixed['check'] == null) {
       final List<int>? bytes = await session.streamBytes(kGazeFile);
       if (bytes != null) {
@@ -639,11 +647,39 @@ class EyeTracker extends ChangeNotifier {
     if (run == null) {
       return;
     }
+    // Остановка сначала дописывает журнал и сверяет его с диском:
+    // строки проверки в конце идут после неё, и сверка не должна застать
+    // их недописанными.
+    final RecordingSession? session = _session;
+    if (session != null) {
+      await _journalChecked(session);
+    }
     // SNO-F-EYE-06: изучение шло со взглядом — проверка точности в конце,
     // потом спутник дописывает файлы.
     await run.finish();
     _drop(run);
     await _store();
+  }
+
+  /// Ждёт, пока остановленная запись сверит журнал с диском
+  /// ([RecordingSession.checked]), — но не дольше [kStopCheckWait].
+  static Future<void> _journalChecked(RecordingSession session) {
+    if (session.checked.value || session.phase != RecordingPhase.stopped) {
+      return Future<void>.value();
+    }
+    final Completer<void> done = Completer<void>();
+    void heard() {
+      if ((session.checked.value ||
+              session.phase != RecordingPhase.stopped) &&
+          !done.isCompleted) {
+        done.complete();
+      }
+    }
+
+    session.checked.addListener(heard);
+    return done.future
+        .timeout(kStopCheckWait, onTimeout: () {})
+        .whenComplete(() => session.checked.removeListener(heard));
   }
 
   /// Идёт ли сейчас спутник записи.
@@ -678,6 +714,10 @@ class EyeTracker extends ChangeNotifier {
 /// Папка стенда в папке данных приложения (SNO-F-EYE-03).
 const String kStandFolder = 'Стенд';
 
+/// Сколько проверка в конце ждёт, пока остановка сверит журнал с диском
+/// (SNO-F-EYE-06).
+const Duration kStopCheckWait = Duration(seconds: 10);
+
 /// Спутник одной записи: от старта записи до закрытия после проверки в
 /// конце (SNO-F-EYE-01, SNO-F-EYE-02, SNO-F-EYE-04, SNO-F-EYE-06).
 ///
@@ -706,6 +746,23 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   /// Номер сегмента файлов взгляда: растёт с каждым подъёмом спутника
   /// заново (SNO-F-REC-04).
   int _segment = 0;
+
+  /// Легли ли в сегмент [_segment] файлы: камеру в нём открывали.
+  /// Сегмент, в который не легло ничего, занимается заново — номера на
+  /// диске идут подряд.
+  bool _segmentUsed = false;
+
+  /// Спутник больше не нужен до конца записи: изучение пошло без
+  /// взгляда. Подъём заново, если он шёл, не продолжается.
+  bool _aside = false;
+
+  /// Идущий подъём спутника заново: остановка записи ждёт его, прежде
+  /// чем решать о проверке в конце.
+  Future<void>? _restarting;
+
+  /// Номер самопроверки перед калибровкой: начатая на упавшем спутнике
+  /// уступает начатой на поднятом заново.
+  int _prepares = 0;
 
   // --- калибровка, изучение и проверка в конце (шаг 32) -----------------
 
@@ -899,7 +956,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
       return;
     }
     if (raised == _Raised.failed) {
-      await _restart();
+      await _restart(resume: false);
       if (_stopped || _link == null) {
         return;
       }
@@ -911,10 +968,15 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   /// Самопроверка места и камера перед калибровкой (SNO-F-EYE-01): ждёт,
   /// пока встанет экран, — по нему считается окно.
   Future<void> _prepare() async {
+    final int my = ++_prepares;
     await _screenUp.future;
     final EyeLink? link = _link;
     final EyePlace? place = _place;
-    if (_stopped || link == null || place == null) {
+    if (_stopped ||
+        _aside ||
+        my != _prepares ||
+        link == null ||
+        place == null) {
       return;
     }
     _set(EyeRecordingPhase.starting, stage: 'Самопроверка…');
@@ -928,7 +990,10 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
         dir: _eyeDir,
       );
     } on EyeError catch (e) {
-      if (_stopped || !identical(link, _link)) {
+      // Спутник упал посреди самопроверки — его поднимут заново, и
+      // поднятый пройдёт её сначала: вывод мог закрыться раньше, чем
+      // пришёл код выхода.
+      if (_stopped || !identical(link, _link) || e.code == 'exit') {
         return;
       }
       _log(SnoEventType.eyeCheck, <String, Object?>{
@@ -1011,7 +1076,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
             : null,
       );
     } on EyeError catch (e) {
-      if (_stopped || !identical(link, _link)) {
+      if (_stopped || !identical(link, _link) || e.code == 'exit') {
         return false;
       }
       if (first) {
@@ -1025,6 +1090,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
       return false;
     }
     _cameraOpen = true;
+    _segmentUsed = true;
     _stale = false;
     info.segments = _segment + 1;
     return true;
@@ -1043,7 +1109,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
         // Не закрылась — откроется всё равно: спутник сам закроет прежнюю.
       }
       _cameraOpen = false;
-      _segment++;
+      _nextSegment();
       if (!await _openCamera(first: false)) {
         _problem = 'Камера не открылась заново — повторите';
         _set(EyeRecordingPhase.result);
@@ -1179,12 +1245,15 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     if (_phase != EyeRecordingPhase.result || _acting) {
       return;
     }
+    // Модели нет (спутник поднимали заново после итога) — писать нечем:
+    // кнопки «Писать с пометкой» экран тогда не показывает.
+    final bool writing = write && _outcome?.fit != null;
     _log(SnoEventType.eyeSkip, <String, Object?>{
       'by': 'experimenter',
-      'write': write,
+      'write': writing,
       'failures': _failures,
     });
-    if (write && _outcome?.fit != null) {
+    if (writing) {
       await _study('low');
       return;
     }
@@ -1213,7 +1282,9 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
       return;
     }
     _acting = false;
-    if (_stopped) {
+    // Запись остановили, пока поток включался: изучения не было, а
+    // остановка уже решила, что взгляда нет; поток закроет закрытие.
+    if (_stopped || !session.recording) {
       return;
     }
     _gazeOn = true;
@@ -1238,6 +1309,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   /// остаётся под замком до конца записи.
   Future<void> _without(String reason, {bool drop = false}) async {
     info.reason = reason;
+    _aside = true;
     _run?.cancel();
     _gazeOn = false;
     final EyeLink? link = _link;
@@ -1333,11 +1405,22 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     }
     final EyeLink link = opened.$1;
     final EyeHello hello = opened.$2;
-    if (_stopped) {
+    if (_stopped || _aside) {
       await link.close();
       return _Raised.failed;
     }
     _link = link;
+    // Остановка или изучение без взгляда застали подъём: поднятый не
+    // нужен. Сигнал о потере его, может быть, уже снял — закрыть ещё раз
+    // не вредно.
+    Future<_Raised> abandon() async {
+      if (identical(_link, link)) {
+        _link = null;
+      }
+      await link.close();
+      return _Raised.failed;
+    }
+
     info.hello = hello;
     link
       ..onHeartbeat = (EyeHeartbeat beat) {
@@ -1356,12 +1439,23 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
         }
       }
       ..onError = (EyeError error) {
-        // Камера пропала, диск отказал посреди записи взгляда.
-        if (generation == _generation && _gazeOn) {
-          _log(SnoEventType.eyeLost, <String, Object?>{
-            'reason': error.code == 'camera_lost' ? 'camera' : error.code,
-            'text': describeEyeError(error),
-          });
+        if (generation != _generation) {
+          return;
+        }
+        // Камера пропала или диск отказал: запись файлов у спутника
+        // мертва. Во время изучения — как потеря спутника: поднятый
+        // заново откроет камеру в следующий сегмент той же моделью
+        // (SNO-F-EYE-02). До изучения следующая попытка калибровки
+        // откроет камеру заново.
+        if (_gazeOn) {
+          unawaited(
+            _lost(
+              error.code == 'camera_lost' ? 'camera' : error.code,
+              kill: true,
+            ),
+          );
+        } else if (_cameraOpen) {
+          _stale = true;
         }
       };
     unawaited(
@@ -1386,13 +1480,13 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     } else {
       _log(SnoEventType.eyeRestart, <String, Object?>{
         'n': info.restarts,
-        'seg': ++_segment,
+        'seg': _nextSegment(),
         'start_ms': tracker._monotonicMs() - startedMs,
       });
     }
     await _sync(kSyncRoundsOpen, force: true);
-    if (_stopped || generation != _generation) {
-      return _Raised.failed;
+    if (_stopped || _aside || generation != _generation) {
+      return abandon();
     }
     if (link.exited || link.garbageInRow >= kEyeGarbageInRow) {
       // Спутник умер или сломался, пока поднимался: сигнал о потере
@@ -1414,8 +1508,8 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
       // моделью — в следующий сегмент файлов.
       _cameraOpen = false;
       final bool again = await _openCamera(first: false, restore: _gazeOn);
-      if (_stopped || generation != _generation) {
-        return _Raised.failed;
+      if (_stopped || _aside || generation != _generation) {
+        return abandon();
       }
       if (!again) {
         _link = null;
@@ -1433,8 +1527,8 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
             'restart': true,
           });
         } on EyeError catch (e) {
-          if (_stopped || generation != _generation) {
-            return _Raised.failed;
+          if (_stopped || _aside || generation != _generation) {
+            return abandon();
           }
           _link = null;
           _generation++;
@@ -1548,14 +1642,19 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     if (kill) {
       await link.kill();
     }
-    await _restart();
+    final Future<void> restarting = _restart();
+    _restarting = restarting;
+    await restarting;
+    if (identical(_restarting, restarting)) {
+      _restarting = null;
+    }
   }
 
   /// Поднимает спутник заново, пока он не поднимется или не кончатся
   /// попытки: после [kEyeRestarts] — `eye.gaveup`, и запись идёт без
   /// взгляда.
-  Future<void> _restart() async {
-    while (!_stopped) {
+  Future<void> _restart({bool resume = true}) async {
+    while (!_stopped && !_aside) {
       if (info.restarts >= kEyeRestarts) {
         info.gaveUp = true;
         _log(SnoEventType.eyeGaveUp, <String, Object?>{
@@ -1579,10 +1678,26 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
         if (_phase == EyeRecordingPhase.calibrating) {
           // Попытка шла на прежнем спутнике — её итог «прервана».
           _changed();
+        } else if (resume &&
+            _phase == EyeRecordingPhase.starting &&
+            !_cameraOpen) {
+          // Спутник упал на самопроверке или на открытии камеры —
+          // поднятый заново проходит их сначала.
+          unawaited(_prepare());
         }
         return;
       }
     }
+  }
+
+  /// Номер сегмента для следующего открытия камеры (SNO-F-REC-04):
+  /// следующий, если в нынешний легли файлы, иначе — тот же.
+  int _nextSegment() {
+    if (_segmentUsed) {
+      _segment++;
+      _segmentUsed = false;
+    }
+    return _segment;
   }
 
   void _stopTimers() {
@@ -1605,14 +1720,17 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
       'write': false,
     });
     info.reason = 'limit';
+    _aside = true;
     _run?.cancel();
     final EyeLink? link = _link;
     _link = null;
+    _watch = null;
     _generation++;
     _stopTimers();
     if (link != null) {
       await link.close();
     }
+    _cameraOpen = false;
     _set(EyeRecordingPhase.done);
     unawaited(tracker._store());
   }
@@ -1626,6 +1744,15 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     }
     // Калибровка, которую застала остановка, — прервана.
     _run?.cancel();
+    // Спутник поднимается заново (SNO-F-EYE-02): проверка в конце — на
+    // поднятом, с открытой камерой и той же моделью.
+    final Future<void>? restarting = _restarting;
+    if (restarting != null) {
+      await restarting;
+    }
+    if (_stopped) {
+      return;
+    }
     final EyeLink? link = _link;
     final EyeScreen? screen = _screen;
     if (_gazeOn && link != null && !link.exited && screen != null) {
@@ -1682,6 +1809,9 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
       };
     }
     info.endCheck = data;
+    // Итог — в сохранённые сведения сразу: сбой при закрытии спутника
+    // не должен назвать проверку незавершённой.
+    unawaited(tracker._store());
     await session.logAfter(SnoEventType.eyeEndcheckResult, data: data);
   }
 

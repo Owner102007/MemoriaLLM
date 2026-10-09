@@ -172,6 +172,18 @@ def _mode(cmd: dict, rt: Runtime) -> tuple[int, int]:
     return int(value[0]), int(value[1])
 
 
+def _calibration_frame(data: dict) -> tuple[int, int] | None:
+    """Размер кадра камеры, на котором шла калибровка (`setup.frame` в
+    `calibration.json`); `None` — не записан."""
+    setup = data.get("setup") if isinstance(data, dict) else None
+    frame = setup.get("frame") if isinstance(setup, dict) else None
+    if (isinstance(frame, list) and len(frame) == 2
+            and all(isinstance(v, int) and not isinstance(v, bool) and v > 0
+                    for v in frame)):
+        return int(frame[0]), int(frame[1])
+    return None
+
+
 def _camera(cmd: dict) -> dict | None:
     value = cmd.get("camera")
     if value is not None and not isinstance(value, dict):
@@ -187,7 +199,8 @@ class Session:
     закрывает её как обычно, а новый `open` убирает её сам.
     """
 
-    def __init__(self, rt: Runtime, cmd: dict, on_fail, on_frame=None):
+    def __init__(self, rt: Runtime, cmd: dict, on_fail, on_frame=None,
+                 expect_frame: tuple[int, int] | None = None):
         write = cmd.get("write", True)
         if not isinstance(write, bool):
             raise CommandError("bad_command", "«write» — true или false")
@@ -206,6 +219,17 @@ class Session:
         if self.dir is not None:
             self.dir.mkdir(parents=True, exist_ok=True)
         self.capture = rt.open_capture(mode, camera)
+        if expect_frame is not None:
+            got = (int(self.capture.source.width), int(self.capture.source.height))
+            if got != tuple(expect_frame):
+                # Признаки кадра зависят от его размера: модель, выученная
+                # на другом, ошибалась бы на градусы (SNO-F-EYE-02).
+                self.capture.stop()
+                raise CommandError(
+                    "mode_changed",
+                    f"Камера отдаёт кадр {got[0]}×{got[1]}, а калибровка была "
+                    f"на {expect_frame[0]}×{expect_frame[1]} — модель к нему "
+                    "не подходит")
         self.recorder: Recorder | None = None
         if write:
             try:
@@ -453,6 +477,7 @@ class Server:
                 self._close_session(send=False)
             screen = calib.Screen.from_open(cmd.get("screen"), cmd.get("distance_mm"))
             source = cmd.get("calibration")
+            expect_frame: tuple[int, int] | None = None
             if source is not None:
                 # Спутник поднят заново посреди записи (SNO-F-EYE-02): та же
                 # модель, что принята в начале, — до камеры: не читается
@@ -469,13 +494,24 @@ class Server:
                         data, screen, selfcheck.load_thresholds())
                 except calib.CalibrationError as e:
                     raise CommandError(e.code, e.text) from None
+                # Камера — в том размере кадра, в каком шла калибровка:
+                # самопроверки у поднятого заново спутника не было, и сам
+                # он его не знает.
+                expect_frame = _calibration_frame(data)
+                if expect_frame is not None and cmd.get("mode") is None:
+                    cmd = {**cmd, "mode": list(expect_frame)}
             else:
                 self.calib = calib.Calibration(screen, selfcheck.load_thresholds())
             self.live = False
             self._smoother = calib.Smoother()
             self.rt.observe_screen(screen)
-            self.session = Session(self.rt, cmd, self._on_session_fail,
-                                   on_frame=self._on_frame)
+            try:
+                self.session = Session(self.rt, cmd, self._on_session_fail,
+                                       on_frame=self._on_frame,
+                                       expect_frame=expect_frame)
+            except BaseException:
+                self.calib = None
+                raise
             # Геометрии головы нужен размер кадра камеры (BUG-60).
             src = self.session.capture.source
             self.calib.frame = (int(src.width), int(src.height))

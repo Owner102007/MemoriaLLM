@@ -189,6 +189,7 @@ class SessionState {
     this.layoutCheck,
     this.studyHeld = false,
     this.studyT,
+    this.studyGap = 0,
   });
 
   /// Идентификатор записи.
@@ -283,12 +284,27 @@ class SessionState {
   /// `study.start`); `null` — не началось или не ждало ([studyHeld]).
   final int? studyT;
 
-  /// С какого мига записи идут сорок минут: начало изучения, у записи
-  /// без калибровки — ноль. `null` — изучение ещё ждёт калибровки.
-  int? get studyFrom => studyHeld ? studyT : 0;
+  /// На сколько миллисекунд настенный счёт от старта записи обогнал
+  /// монотонный к началу изучения (сон устройства, перевод часов во
+  /// время калибровки). Сорок минут идут по большему из двух счётов, и
+  /// без этой поправки всё, что настенные часы ушли вперёд до начала
+  /// изучения, вычлось бы из него.
+  final int studyGap;
 
-  /// То же состояние с началом изучения в миг [t] (SNO-F-EYE-01).
-  SessionState withStudy(int t) {
+  /// С какого мига записи идут сорок минут — по большему из настенного
+  /// и монотонного счёта: начало изучения, у записи без калибровки —
+  /// ноль. `null` — изучение ещё ждёт калибровки.
+  int? get studyFrom {
+    if (!studyHeld) {
+      return 0;
+    }
+    final int? t = studyT;
+    return t == null ? null : t + studyGap;
+  }
+
+  /// То же состояние с началом изучения в миг [t] (SNO-F-EYE-01); [gap] —
+  /// [studyGap].
+  SessionState withStudy(int t, {int gap = 0}) {
     return SessionState(
       id: id,
       folder: folder,
@@ -313,6 +329,7 @@ class SessionState {
       layoutCheck: layoutCheck,
       studyHeld: studyHeld,
       studyT: t,
+      studyGap: gap,
     );
   }
 
@@ -342,6 +359,7 @@ class SessionState {
       layoutCheck: check,
       studyHeld: studyHeld,
       studyT: studyT,
+      studyGap: studyGap,
     );
   }
 
@@ -371,6 +389,7 @@ class SessionState {
       layoutCheck: layoutCheck,
       studyHeld: studyHeld,
       studyT: studyT,
+      studyGap: studyGap,
     );
   }
 
@@ -400,6 +419,7 @@ class SessionState {
       layoutCheck: layoutCheck,
       studyHeld: studyHeld,
       studyT: studyT,
+      studyGap: studyGap,
     );
   }
 
@@ -429,6 +449,7 @@ class SessionState {
       layoutCheck: layoutCheck,
       studyHeld: studyHeld,
       studyT: studyT,
+      studyGap: studyGap,
     );
   }
 
@@ -470,6 +491,7 @@ class SessionState {
       layoutCheck: layoutCheck,
       studyHeld: studyHeld,
       studyT: studyT,
+      studyGap: studyGap,
     );
   }
 
@@ -499,6 +521,7 @@ class SessionState {
       'layout_check': layoutCheck?.toJson(),
       'study_held': studyHeld,
       'study_t': studyT,
+      'study_gap': studyGap,
     });
   }
 
@@ -526,6 +549,7 @@ class SessionState {
       final Object? inputs = raw['inputs'];
       final Object? layouts = raw['layouts'];
       final Object? studyT = raw['study_t'];
+      final Object? studyGap = raw['study_gap'];
       final ParticipantCode? participant = ParticipantCode.fromJson(
         raw['participant'],
       );
@@ -570,6 +594,7 @@ class SessionState {
         layoutCheck: JournalCheck.fromJson(raw['layout_check']),
         studyHeld: raw['study_held'] == true,
         studyT: studyT is int ? studyT : null,
+        studyGap: studyGap is int && studyGap > 0 ? studyGap : 0,
       );
     } on FormatException {
       return null;
@@ -1064,7 +1089,13 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     }
     final int t = _tNow();
     _write(SnoEventType.studyStart, at: t, data: data);
-    final SessionState started = state.withStudy(t);
+    // Сорок минут — по большему из двух счётов от этого мига: что
+    // настенные часы ушли вперёд до него, изучению не засчитывается.
+    final int passed = _passedMs(state);
+    final SessionState started = state.withStudy(
+      t,
+      gap: passed > t ? passed - t : 0,
+    );
     _state = started;
     unawaited(_saveState(started));
     _notify();
@@ -2922,7 +2953,11 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
         // SNO-F-EYE-01: у записи с калибровкой — сколько длилось само
         // изучение.
         if (state.studyHeld)
-          'study_ms': state.studyT == null ? 0 : duration - state.studyT!,
+          'study_ms': state.studyFrom == null
+              ? 0
+              : duration > state.studyFrom!
+              ? duration - state.studyFrom!
+              : 0,
       },
     );
     final SessionState stopped = state.stopped(

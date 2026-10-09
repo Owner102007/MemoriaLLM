@@ -61,15 +61,21 @@ void main() {
   late List<Map<String, Object?>> validations;
   Map<String, Object?>? checkReply;
 
+  /// На какой команде падает спутник по номеру запуска; `null` — ни на
+  /// какой.
+  String? Function(int n)? exitFor;
+
   setUp(() async {
     kit = SessionKit();
     qpc = FakeQpc();
     validations = <Map<String, Object?>>[];
     checkReply = null;
+    exitFor = null;
     launcher = FakeEyeLauncher(
       make: (int n) => FakeEyeProcess(
         clock: qpc,
         check: checkReply,
+        exitOn: exitFor?.call(n),
         validateReplies: List<Map<String, Object?>>.of(validations),
       ),
     );
@@ -438,6 +444,97 @@ void main() {
     expect(eye.info.reason, 'selfcheck_failed');
     await unmount(tester);
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  testWidgets('SNO-F-EYE-04, SNO-F-EYE-01: спутник упал на самопроверке — '
+      'поднят заново, самопроверка и калибровка идут на нём', (
+    WidgetTester tester,
+  ) async {
+    exitFor = (int n) => n == 0 ? 'selfcheck' : null;
+    await started(tester);
+    await calibrated(tester);
+    expect(launcher.started, hasLength(2));
+    expect(launcher.started.first.names, contains('selfcheck'));
+    expect(launcher.started.first.names, isNot(contains('open')));
+    expect(
+      sat().names.where((Object? n) => n != 'sync'),
+      containsAllInOrder(<Object?>['hello', 'selfcheck', 'open', 'calibrate']),
+    );
+    // Камеру открыли впервые: сегмент — первый.
+    expect(sent('open').single['seg'], 0);
+    expect(view()!.outcome?.validation?.accepted, isTrue);
+    final List<Map<String, Object?>> events = await journal(tester);
+    expect(one(events, 'eye.lost'), <String, Object?>{
+      'reason': 'exit',
+      'code': 1,
+    });
+    expect(one(events, 'eye.restart')['seg'], 0);
+    expect(one(events, 'eye.check')['verdict'], 'good');
+    expect(eye.info.reason, isNull);
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets('SNO-F-EYE-01: после второй неудачи спутник перезапустился — '
+      'модели нет, и писать взгляд организатору не предлагается', (
+    WidgetTester tester,
+  ) async {
+    validations = <Map<String, Object?>>[
+      kRejectedValidation,
+      kRejectedValidation,
+    ];
+    await started(tester);
+    await calibrated(tester);
+    await tester.tap(find.byKey(const Key('eye-recording-retry')));
+    await settle(tester);
+    await calibrated(tester);
+    expect(find.byKey(const Key('eye-recording-write')), findsOneWidget);
+    launcher.last.exit(1);
+    await settle(tester);
+    expect(launcher.started, hasLength(2));
+    expect(view()!.mustChoose, isTrue);
+    expect(view()!.outcome, isNull);
+    expect(find.byKey(const Key('eye-recording-problem')), findsOneWidget);
+    expect(find.byKey(const Key('eye-recording-write')), findsNothing);
+    // Новая камера — в следующий сегмент: в прежний легли файлы.
+    expect(sent('open').single['seg'], 1);
+    await holdOn(tester, 'eye-recording-without');
+    final List<Map<String, Object?>> events = await journal(tester);
+    expect(one(events, 'eye.skip')['write'], isFalse);
+    expect(eye.info.reason, 'skipped');
+    expect(kit.session.studyPending, isFalse);
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 4)));
+
+  testWidgets('SNO-F-EYE-02: камера пропала во время изучения — спутник '
+      'поднят заново и пишет в следующий сегмент той же моделью', (
+    WidgetTester tester,
+  ) async {
+    await started(tester);
+    await calibrated(tester);
+    await tester.tap(find.byKey(const Key('eye-recording-begin')));
+    await settle(tester);
+    final FakeEyeProcess first = sat();
+    first.emit(<String, Object?>{
+      'error': 'camera_lost',
+      'text': 'Камера пропала',
+      'cmd': 'record',
+    });
+    await settle(tester);
+    expect(first.killed, isTrue);
+    expect(launcher.started, hasLength(2));
+    final Map<String, Object?> again = sent('open').single;
+    expect(again['seg'], 1);
+    expect(
+      again['calibration'],
+      '/records/.current/${kit.folder}/eye/calibration.json',
+    );
+    expect(sat().gazeOn, isTrue);
+    final List<Map<String, Object?>> events = await journal(tester);
+    expect(one(events, 'eye.lost'), <String, Object?>{'reason': 'camera'});
+    expect(one(events, 'eye.restart')['seg'], 1);
+    expect(eye.info.restarts, 1);
+    expect(eye.info.present, isTrue);
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('SNO-F-EYE-02, SNO-F-EYE-06: изучение — лицо потерялось и '
       'вернулось, спутник поднят заново той же моделью; остановка — '

@@ -238,7 +238,9 @@ void main() {
       ]);
       expect(eyeEvents()[4].$2, <String, Object?>{'reason': 'exit', 'code': 1});
       expect(eyeEvents()[5].$2['n'], 1);
-      expect(eyeEvents()[5].$2['seg'], 1);
+      // Камеру ещё не открывали (экрана калибровки здесь нет): в сегмент
+      // не легло ничего, и поднятый спутник занимает тот же (шаг 32).
+      expect(eyeEvents()[5].$2['seg'], 0);
       expect(eye.running, isTrue);
     });
 
@@ -411,6 +413,55 @@ void main() {
       again.session.dispose();
     });
 
+    test('SNO-F-EYE-01: приложение упало во время калибровки — после '
+        'перезапуска причина названа: запись кончилась до изучения', () async {
+      await started();
+      final String folder = kit.folder;
+      await kit.session.stop(StopReason.experimenter);
+      await settle();
+      // Сведения такие, какими их оставил сбой во время калибровки:
+      // взгляда нет, и причины ещё никто не назвал.
+      final Map<String, Object?> stored = jsonDecode(
+        kit.settings.values[SnoSettingsKeys.eyeRun]!,
+      ) as Map<String, Object?>;
+      await kit.settings.write(
+        SnoSettingsKeys.eyeRun,
+        jsonEncode(<String, Object?>{
+          ...stored,
+          'block': <String, Object?>{
+            for (final MapEntry<String, Object?> e
+                in (stored['block']! as Map<String, Object?>).entries)
+              if (e.key != 'reason') e.key: e.value,
+          },
+        }),
+      );
+
+      final SessionKit again = SessionKit(
+        settings: kit.settings,
+        store: kit.store,
+        time: kit.time,
+      );
+      final EyeTracker fresh = EyeTracker(
+        settings: kit.settings,
+        launch: launcher.launch,
+        qpc: qpc,
+        window: window,
+      )..attach(again.session);
+      await settle();
+      await again.session.restore();
+      await settle();
+      await again.session.finish();
+      await settle();
+
+      final Map<String, Object?> block =
+          kit.store.json(folder, kRecordingFile)['eye_tracker']!
+              as Map<String, Object?>;
+      expect(block['present'], isFalse);
+      expect(block['reason'], 'stopped');
+      fresh.dispose();
+      again.session.dispose();
+    });
+
     test('SNO-F-EYE-06: приложение упало посреди проверки в конце — после '
         'перезапуска она названа незавершённой и не повторяется, поток '
         'взгляда сверен с диска', () async {
@@ -420,9 +471,9 @@ void main() {
       await settle();
       // Сведения такие, какими их оставил сбой: изучение шло со
       // взглядом, проверка в конце начата и не кончена.
-      final Map<String, Object?> stored =
-          jsonDecode(kit.settings.values[SnoSettingsKeys.eyeRun]!)
-              as Map<String, Object?>;
+      final Map<String, Object?> stored = jsonDecode(
+        kit.settings.values[SnoSettingsKeys.eyeRun]!,
+      ) as Map<String, Object?>;
       await kit.settings.write(
         SnoSettingsKeys.eyeRun,
         jsonEncode(<String, Object?>{

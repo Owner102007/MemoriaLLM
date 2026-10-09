@@ -100,6 +100,45 @@ void main() {
     kit.session.dispose();
   });
 
+  test('SNO-F-EYE-01: устройство спало во время калибровки — изучению '
+      'всё равно сорок минут: сон до study.start в него не входит', () async {
+    final SessionKit kit = SessionKit();
+    kit.session.holdStudy = true;
+    expect(await kit.session.start(code), isTrue);
+    kit.run(60);
+    kit.session.appLeft('paused');
+    kit.time.sleep(const Duration(minutes: 10));
+    kit.session.appReturned();
+    kit.run(60);
+    await kit.settle();
+    expect(kit.session.studyPending, isTrue);
+    expect(
+      kit.session.beginStudy(const <String, Object?>{'gaze': true}),
+      isTrue,
+    );
+    expect(kit.session.elapsedMs, 0);
+    expect(kit.session.remainingMs, kRecordingLength.inMilliseconds);
+    await kit.settle();
+    // Поправка помнится в отметке сессии.
+    expect(
+      SessionState.decode(
+        kit.settings.values[SnoSettingsKeys.session],
+      )!.studyFrom,
+      12 * 60 * 1000,
+    );
+    kit.run(40 * 60 - 1);
+    expect(kit.session.recording, isTrue);
+    expect(kit.session.elapsedMs, 40 * 60 * 1000 - 1000);
+    kit.run(1);
+    await kit.settle();
+    await kit.settle();
+    expect(kit.session.recording, isFalse);
+    final Map<String, Object?> stop = dataOf(only(kit, 'recording.stop'));
+    expect(stop['stopped_by'], 'auto');
+    expect(stop['study_ms'], 40 * 60 * 1000);
+    kit.session.dispose();
+  });
+
   test('SNO-F-EYE-01: остановлена во время калибровки — ничто не '
       'ограничивает, изучения ноль', () async {
     final SessionKit kit = SessionKit();

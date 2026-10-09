@@ -303,13 +303,19 @@ class _EyeRecordingScreenState extends State<EyeRecordingScreen> {
           'Решает организатор — удерживайте кнопку:',
           style: theme.textTheme.bodyMedium,
         ),
-        const SizedBox(height: 8),
-        HoldToConfirmButton(
-          key: const Key('eye-recording-write'),
-          label: 'Писать с пометкой (по умолчанию)',
-          hold: kEyeChoiceHold,
-          onConfirmed: busy ? null : () => unawaited(_view.choose(write: true)),
-        ),
+        // Модели нет (айтрекер перезапускался после итога) — писать
+        // взгляд нечем.
+        if (outcome?.fit != null) ...<Widget>[
+          const SizedBox(height: 8),
+          HoldToConfirmButton(
+            key: const Key('eye-recording-write'),
+            label: 'Писать с пометкой (по умолчанию)',
+            hold: kEyeChoiceHold,
+            onConfirmed: busy
+                ? null
+                : () => unawaited(_view.choose(write: true)),
+          ),
+        ],
         const SizedBox(height: 8),
         HoldToConfirmButton(
           key: const Key('eye-recording-without'),

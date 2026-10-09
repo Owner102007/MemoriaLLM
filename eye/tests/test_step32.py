@@ -212,11 +212,13 @@ def test_sno_f_rec_04_gaze_all_recording_and_restart_with_the_same_model(
     sat.stop()
     sat2 = Sat(instance_name, source="synthetic:follow")
     try:
+        # Размер кадра не назван: поднятый заново спутник берёт его из
+        # файла калибровки.
         sat2.send({"cmd": "open", "dir": str(folder), "screen": SCREEN,
-                   "distance_mm": 600, "strip": False, "mode": [1280, 720], "seg": 1,
+                   "distance_mm": 600, "strip": False, "seg": 1,
                    "qpc0_us": q0, "t0": 5000,
                    "calibration": str(folder / "calibration.json")})
-        sat2.reply("open")
+        assert sat2.reply("open")["frame"] == [1280, 720]
         # Участник смотрит в другую точку — её показывает проверка: точки
         # принимаются только в начатую калибровку или проверку.
         sat2.send({"cmd": "check", "n": 1})
@@ -288,3 +290,37 @@ def test_sno_f_eye_06_end_check_on_restored_model_knows_start_accuracy(follower,
     sat.reply("closed")
     checks = json.loads((folder / "checks.json").read_text(encoding="utf-8"))
     assert checks[-1]["accuracy_deg"] == res["accuracy_deg"]
+
+
+def test_sno_f_eye_02_restored_model_refuses_another_frame_size(follower, tmp_path):
+    """Признаки кадра зависят от его размера: модель, выученная на 720p,
+    на кадре 1080p ошибалась бы на градусы — спутник отказывает словами, а
+    камера остаётся свободной."""
+    sat = follower
+    folder = tmp_path / "eye"
+    sat.send({"cmd": "open", "dir": str(folder), "screen": SCREEN, "distance_mm": 600,
+              "strip": False, "mode": [1280, 720]})
+    assert sat.reply("open")["frame"] == [1280, 720]
+    sat.send({"cmd": "calibrate", "attempt": 1, "kind": "quick"})
+    sat.reply("calibrate")
+    show_points(sat, "calib", "c", 1.2)
+    sat.send({"cmd": "fit"})
+    sat.reply("fit", timeout=30)
+    sat.send({"cmd": "close"})
+    sat.reply("closed")
+    saved = json.loads((folder / "calibration.json").read_text(encoding="utf-8"))
+    assert saved["setup"]["frame"] == [1280, 720]
+
+    sat.send({"cmd": "open", "dir": str(folder), "screen": SCREEN, "distance_mm": 600,
+              "strip": False, "mode": [1920, 1080], "seg": 1,
+              "calibration": str(folder / "calibration.json")})
+    err = sat.wait(lambda m: m.get("cmd") == "open")
+    assert err["error"] == "mode_changed", err
+    assert "1920×1080" in err["text"] and "1280×720" in err["text"]
+    assert not (folder / "features.1.bin").exists()
+    # Камера свободна — открывается обычным open.
+    sat.send({"cmd": "open", "write": False, "screen": SCREEN, "distance_mm": 600,
+              "mode": [1920, 1080]})
+    assert sat.reply("open")["frame"] == [1920, 1080]
+    sat.send({"cmd": "close"})
+    sat.reply("closed")
