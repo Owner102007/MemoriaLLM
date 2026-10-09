@@ -306,9 +306,7 @@ class _SheetProbeState extends State<LayoutSheetProbe> {
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: SizedBox.expand(key: _target),
-    );
+    return IgnorePointer(child: SizedBox.expand(key: _target));
   }
 }
 

@@ -601,7 +601,9 @@ class LayoutSnapshot {
     'moving': moving,
     'viewport': viewport.toJson(),
     'sheet': ?sheet?.toJson(),
-    'regions': <Object?>[for (final LayoutRegion region in regions) region.toJson()],
+    'regions': <Object?>[
+      for (final LayoutRegion region in regions) region.toJson(),
+    ],
   };
 
   @override
@@ -811,7 +813,10 @@ LayoutHit locateInFrame({
   }
   for (final LayoutNeighbour neighbour in sheet.neighbours) {
     if (neighbour.rect.contains(x, y)) {
-      return LayoutHit(zone: 'neighbour', id: neighbour.after ? 'after' : 'before');
+      return LayoutHit(
+        zone: 'neighbour',
+        id: neighbour.after ? 'after' : 'before',
+      );
     }
   }
   return const LayoutHit(zone: 'background');

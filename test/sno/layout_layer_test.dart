@@ -353,9 +353,7 @@ void main() {
 
       kit.session.tick();
       await tester.pump();
-      final List<Map<String, Object?>> taps = kit.store.inputLines(
-        kit.folder,
-      );
+      final List<Map<String, Object?>> taps = kit.store.inputLines(kit.folder);
       expect(taps, hasLength(2));
       final LayoutFrame frame = last(await frames(tester));
       final LayoutHit onPage = frame.locate(
@@ -409,7 +407,9 @@ void main() {
       final LayoutRegion panel = frame.regions.firstWhere(
         (LayoutRegion region) => region.kind == LayoutKind.selectionPanel,
       );
-      final Rect drawn = tester.getRect(find.byKey(const Key('selection-panel')));
+      final Rect drawn = tester.getRect(
+        find.byKey(const Key('selection-panel')),
+      );
       expect(panel.rect.left, closeTo(drawn.left, 0.06));
       expect(panel.rect.top, closeTo(drawn.top, 0.06));
       expect(panel.rect.width, closeTo(drawn.width, 0.06));

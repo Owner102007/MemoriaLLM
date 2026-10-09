@@ -698,18 +698,18 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
           drawer: LayoutProbe(
             kind: LayoutKind.toc,
             child: OutlinePanel(
-            controller: controller,
-            onSelect: (int page) async {
-              Navigator.of(context).pop();
-              widget.onTurnCause?.call('toc');
-              widget.log?.log(
-                SnoEventType.tocJump,
-                data: <String, Object?>{'from': controller.page, 'to': page},
-              );
-              await _goTo(page);
-              hideChrome();
-            },
-          ),
+              controller: controller,
+              onSelect: (int page) async {
+                Navigator.of(context).pop();
+                widget.onTurnCause?.call('toc');
+                widget.log?.log(
+                  SnoEventType.tocJump,
+                  data: <String, Object?>{'from': controller.page, 'to': page},
+                );
+                await _goTo(page);
+                hideChrome();
+              },
+            ),
           ),
           body: LayoutBuilder(
             builder: (BuildContext context, BoxConstraints limits) {
@@ -860,21 +860,21 @@ class ReaderScaffoldState extends State<ReaderScaffold> {
       kind: LayoutKind.searchDock,
       id: edged ? 'beside' : 'strip',
       child: SearchPanel(
-      key: _searchKey,
-      search: widget.search,
-      current: _hit,
-      browsing: browsing,
-      translucent: translucent,
-      edged: edged,
-      fieldFocus: _searchField,
-      seed: _seed,
-      onSelect: (SearchHit hit) => unawaited(_selectHit(hit)),
-      onStep: (int step) => unawaited(stepHit(step)),
-      onEdit: openSearch,
-      // `Esc` закрывает поиск, но в поле его разбирает сама панель: пока
-      // курсор стоит в поле, клавиши чтения молчат вовсе, и до нас
-      // событие не дошло бы.
-      onClose: closeSearch,
+        key: _searchKey,
+        search: widget.search,
+        current: _hit,
+        browsing: browsing,
+        translucent: translucent,
+        edged: edged,
+        fieldFocus: _searchField,
+        seed: _seed,
+        onSelect: (SearchHit hit) => unawaited(_selectHit(hit)),
+        onStep: (int step) => unawaited(stepHit(step)),
+        onEdit: openSearch,
+        // `Esc` закрывает поиск, но в поле его разбирает сама панель: пока
+        // курсор стоит в поле, клавиши чтения молчат вовсе, и до нас
+        // событие не дошло бы.
+        onClose: closeSearch,
       ),
     );
   }
@@ -923,48 +923,48 @@ class _TopBar extends StatelessWidget {
           kind: LayoutKind.panelTop,
           active: visible,
           child: Material(
-          color: theme.colorScheme.surface.withValues(alpha: 0.96),
-          child: SafeArea(
-            bottom: false,
-            child: Row(
-              children: <Widget>[
-                IconButton(
-                  key: const Key('reader-back'),
-                  icon: const Icon(Icons.arrow_back),
-                  tooltip: 'Закрыть книгу',
-                  onPressed: onBack,
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall,
-                      ),
-                      Text(
-                        subtitle,
-                        key: const Key('reader-page-label'),
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ],
+            color: theme.colorScheme.surface.withValues(alpha: 0.96),
+            child: SafeArea(
+              bottom: false,
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    key: const Key('reader-back'),
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Закрыть книгу',
+                    onPressed: onBack,
                   ),
-                ),
-                IconButton(
-                  key: const Key('reader-search-button'),
-                  icon: const Icon(Icons.search),
-                  tooltip: 'Поиск по книге (Ctrl+F)',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onSearch,
-                ),
-                ...extraActions,
-              ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall,
+                        ),
+                        Text(
+                          subtitle,
+                          key: const Key('reader-page-label'),
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('reader-search-button'),
+                    icon: const Icon(Icons.search),
+                    tooltip: 'Поиск по книге (Ctrl+F)',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onSearch,
+                  ),
+                  ...extraActions,
+                ],
+              ),
             ),
           ),
-        ),
         ),
       ),
     );
@@ -1017,61 +1017,63 @@ class _BottomBar extends StatelessWidget {
           kind: LayoutKind.panelBottom,
           active: visible,
           child: Material(
-          color: theme.colorScheme.surface.withValues(alpha: 0.96),
-          child: SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-              child: Row(
-                children: <Widget>[
-                  IconButton(
-                    key: const Key('reader-prev-page'),
-                    icon: const Icon(Icons.chevron_left),
-                    tooltip: 'Предыдущая страница',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: canGoBack ? () => onStep(forward: false) : null,
-                  ),
-                  Expanded(
-                    // Ползунок нужен только там, где есть куда его тянуть:
-                    // на книге в одну страницу Slider с min == max падает.
-                    child: pageCount > 1
-                        ? _PageSlider(
-                            page: page,
-                            pageCount: pageCount,
-                            onPage: onPage,
-                          )
-                        : const SizedBox(height: 48),
-                  ),
-                  IconButton(
-                    key: const Key('reader-next-page'),
-                    icon: const Icon(Icons.chevron_right),
-                    tooltip: 'Следующая страница',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: canGoForward
-                        ? () => onStep(forward: true)
-                        : null,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${progressPercent(progress)}%',
-                    key: const Key('reader-progress-percent'),
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  // Оглавление живёт рядом со шкалой прогресса: оба
-                  // отвечают на вопрос «где я в книге». Поиск уехал
-                  // отсюда наверх — его там искали и не нашли.
-                  IconButton(
-                    key: const Key('reader-outline-button'),
-                    icon: const Icon(Icons.list_alt_outlined),
-                    tooltip: 'Оглавление',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onOutline,
-                  ),
-                ],
+            color: theme.colorScheme.surface.withValues(alpha: 0.96),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                child: Row(
+                  children: <Widget>[
+                    IconButton(
+                      key: const Key('reader-prev-page'),
+                      icon: const Icon(Icons.chevron_left),
+                      tooltip: 'Предыдущая страница',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: canGoBack
+                          ? () => onStep(forward: false)
+                          : null,
+                    ),
+                    Expanded(
+                      // Ползунок нужен только там, где есть куда его тянуть:
+                      // на книге в одну страницу Slider с min == max падает.
+                      child: pageCount > 1
+                          ? _PageSlider(
+                              page: page,
+                              pageCount: pageCount,
+                              onPage: onPage,
+                            )
+                          : const SizedBox(height: 48),
+                    ),
+                    IconButton(
+                      key: const Key('reader-next-page'),
+                      icon: const Icon(Icons.chevron_right),
+                      tooltip: 'Следующая страница',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: canGoForward
+                          ? () => onStep(forward: true)
+                          : null,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${progressPercent(progress)}%',
+                      key: const Key('reader-progress-percent'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    // Оглавление живёт рядом со шкалой прогресса: оба
+                    // отвечают на вопрос «где я в книге». Поиск уехал
+                    // отсюда наверх — его там искали и не нашли.
+                    IconButton(
+                      key: const Key('reader-outline-button'),
+                      icon: const Icon(Icons.list_alt_outlined),
+                      tooltip: 'Оглавление',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onOutline,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
         ),
       ),
     );

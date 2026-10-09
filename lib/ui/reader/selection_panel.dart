@@ -108,81 +108,81 @@ class SelectionPanel extends StatelessWidget {
       child: LayoutProbe(
         kind: LayoutKind.selectionPanel,
         child: Material(
-        key: const Key('selection-panel'),
-        color: theme.colorScheme.surface,
-        elevation: 6,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if (prompts.prompts.isNotEmpty)
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      for (final SelectionPrompt prompt in prompts.prompts)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 2),
-                          child: TextButton(
-                            key: Key('selection-prompt-${prompt.id}'),
-                            onPressed: () => onPrompt(prompt),
-                            style: TextButton.styleFrom(
-                              visualDensity: VisualDensity.compact,
-                              foregroundColor: prompt.isPrimary
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurface,
+          key: const Key('selection-panel'),
+          color: theme.colorScheme.surface,
+          elevation: 6,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                if (prompts.prompts.isNotEmpty)
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        for (final SelectionPrompt prompt in prompts.prompts)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: TextButton(
+                              key: Key('selection-prompt-${prompt.id}'),
+                              onPressed: () => onPrompt(prompt),
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                foregroundColor: prompt.isPrimary
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.onSurface,
+                              ),
+                              child: Text(prompt.name),
                             ),
-                            child: Text(prompt.name),
                           ),
-                        ),
-                    ],
-                  ),
-                ),
-              // Три подписи в ряд не помещаются в телефон в портрете:
-              // «Копировать» уезжало за край экрана, и до него
-              // приходилось бы доскроллить. Подписей у действий поэтому
-              // нет — только значки и всплывающие подсказки. Имена
-              // остаются там, где они и есть смысл: на кнопках промптов,
-              // которые читатель назвал сам.
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  _Action(
-                    id: 'quote',
-                    icon: Icons.format_quote,
-                    label: 'В цитаты',
-                    onPressed: onQuote,
-                  ),
-                  _Action(
-                    id: 'note',
-                    icon: Icons.edit_note,
-                    label: 'Заметка',
-                    onPressed: onNote,
-                  ),
-                  _Action(
-                    id: 'copy',
-                    icon: Icons.copy_all_outlined,
-                    label: 'Копировать',
-                    onPressed: onCopy,
-                  ),
-                  // Прежние три стоят как стояли; новое — последним.
-                  if (onFind case final VoidCallback find)
-                    _Action(
-                      id: 'find',
-                      icon: Icons.manage_search,
-                      label: 'Найти в книге',
-                      onPressed: find,
+                      ],
                     ),
-                ],
-              ),
-            ],
+                  ),
+                // Три подписи в ряд не помещаются в телефон в портрете:
+                // «Копировать» уезжало за край экрана, и до него
+                // приходилось бы доскроллить. Подписей у действий поэтому
+                // нет — только значки и всплывающие подсказки. Имена
+                // остаются там, где они и есть смысл: на кнопках промптов,
+                // которые читатель назвал сам.
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    _Action(
+                      id: 'quote',
+                      icon: Icons.format_quote,
+                      label: 'В цитаты',
+                      onPressed: onQuote,
+                    ),
+                    _Action(
+                      id: 'note',
+                      icon: Icons.edit_note,
+                      label: 'Заметка',
+                      onPressed: onNote,
+                    ),
+                    _Action(
+                      id: 'copy',
+                      icon: Icons.copy_all_outlined,
+                      label: 'Копировать',
+                      onPressed: onCopy,
+                    ),
+                    // Прежние три стоят как стояли; новое — последним.
+                    if (onFind case final VoidCallback find)
+                      _Action(
+                        id: 'find',
+                        icon: Icons.manage_search,
+                        label: 'Найти в книге',
+                        onPressed: find,
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }

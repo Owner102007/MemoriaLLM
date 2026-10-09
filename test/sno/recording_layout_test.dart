@@ -43,11 +43,7 @@ void main() {
 
   /// Слой записи снял кадр.
   void frame(SessionKit kit, {bool moving = false}) {
-    kit.session.layout!.frame(
-      shot,
-      t: kit.session.layoutNow,
-      moving: moving,
-    );
+    kit.session.layout!.frame(shot, t: kit.session.layoutNow, moving: moving);
   }
 
   Map<String, Object?> infoOf(SessionKit kit, String folder) {
@@ -132,26 +128,28 @@ void main() {
   });
 
   group('SNO-F-REC-03: поток в сведениях записи', () {
-    test('SNO-F-REC-03: после остановки — сколько кадров и цел ли поток',
-        () async {
-      final SessionKit kit = SessionKit();
-      await kit.session.start(code);
-      for (int i = 0; i < 4; i++) {
-        frame(kit);
-      }
-      await kit.session.stop(StopReason.experimenter);
+    test(
+      'SNO-F-REC-03: после остановки — сколько кадров и цел ли поток',
+      () async {
+        final SessionKit kit = SessionKit();
+        await kit.session.start(code);
+        for (int i = 0; i < 4; i++) {
+          frame(kit);
+        }
+        await kit.session.stop(StopReason.experimenter);
 
-      expect(kit.session.layouts, 4);
-      expect(kit.session.layoutCheck!.intact, isTrue);
-      expect(infoOf(kit, kit.folder)['layout'], <String, Object?>{
-        'file': kLayoutFile,
-        'lines': 4,
-        'check': <String, Object?>{'lines': 4, 'gaps': 0, 'torn': false},
-        'units': 'logical_px',
-      });
-      expect(kit.session.check!.intact, isTrue);
-      kit.session.dispose();
-    });
+        expect(kit.session.layouts, 4);
+        expect(kit.session.layoutCheck!.intact, isTrue);
+        expect(infoOf(kit, kit.folder)['layout'], <String, Object?>{
+          'file': kLayoutFile,
+          'lines': 4,
+          'check': <String, Object?>{'lines': 4, 'gaps': 0, 'torn': false},
+          'units': 'logical_px',
+        });
+        expect(kit.session.check!.intact, isTrue);
+        kit.session.dispose();
+      },
+    );
 
     test('SNO-F-REC-03: кадры не легли на диск — поток неполон, и запись '
         'помечена', () async {

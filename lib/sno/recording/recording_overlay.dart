@@ -329,43 +329,43 @@ class _RecordingOverlayState extends State<RecordingOverlay>
     return LayoutScope(
       board: _board,
       child: Stack(
-      key: _root,
-      fit: StackFit.expand,
-      children: <Widget>[
-        widget.child,
-        if (session.recording)
-          Positioned(
-            top: safe.top,
-            // Телефон — левый верхний угол, окно ПК — правый: там точка
-            // не ложится на разделы навигации.
-            left: wide ? null : safe.left,
-            right: wide ? safe.right : null,
-            // SNO-F-REC-03: точка — зона экспериментатора.
-            child: LayoutProbe(
-              kind: LayoutKind.recordingDot,
-              child: RecordingDot(
-                key: const Key('sno-recording-dot'),
-                onHeld: () => unawaited(_askStop()),
-                // SNO-F-REC-11: удержание точки — экспериментатор; в
-                // потоке ввода это касание помечено.
-                onClaimed: (int pointer) => _input?.claimedByDot(pointer),
+        key: _root,
+        fit: StackFit.expand,
+        children: <Widget>[
+          widget.child,
+          if (session.recording)
+            Positioned(
+              top: safe.top,
+              // Телефон — левый верхний угол, окно ПК — правый: там точка
+              // не ложится на разделы навигации.
+              left: wide ? null : safe.left,
+              right: wide ? safe.right : null,
+              // SNO-F-REC-03: точка — зона экспериментатора.
+              child: LayoutProbe(
+                kind: LayoutKind.recordingDot,
+                child: RecordingDot(
+                  key: const Key('sno-recording-dot'),
+                  onHeld: () => unawaited(_askStop()),
+                  // SNO-F-REC-11: удержание точки — экспериментатор; в
+                  // потоке ввода это касание помечено.
+                  onClaimed: (int pointer) => _input?.claimedByDot(pointer),
+                ),
               ),
             ),
-          ),
-        if (session.phase == RecordingPhase.stopped)
-          ValueListenableBuilder<bool>(
-            valueListenable: session.finishOpen,
-            builder: (BuildContext context, bool open, Widget? child) {
-              if (open) {
-                return const SizedBox.shrink();
-              }
-              // SNO-F-REC-16: экран завершения ещё не встал — приложение
-              // под глухим слоем, и встать ему назначено за этим кадром.
-              _closeAppSoon();
-              return const _ClosedCover();
-            },
-          ),
-      ],
+          if (session.phase == RecordingPhase.stopped)
+            ValueListenableBuilder<bool>(
+              valueListenable: session.finishOpen,
+              builder: (BuildContext context, bool open, Widget? child) {
+                if (open) {
+                  return const SizedBox.shrink();
+                }
+                // SNO-F-REC-16: экран завершения ещё не встал — приложение
+                // под глухим слоем, и встать ему назначено за этим кадром.
+                _closeAppSoon();
+                return const _ClosedCover();
+              },
+            ),
+        ],
       ),
     );
   }

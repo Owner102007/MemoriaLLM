@@ -268,10 +268,7 @@ class SessionState {
   final JournalCheck? layoutCheck;
 
   /// То же состояние с итогом потока кадров раскладки (SNO-F-REC-03).
-  SessionState withLayout({
-    required int? lines,
-    required JournalCheck? check,
-  }) {
+  SessionState withLayout({required int? lines, required JournalCheck? check}) {
     return SessionState(
       id: id,
       folder: folder,

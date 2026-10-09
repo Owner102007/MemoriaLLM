@@ -18,8 +18,7 @@ void main() {
 
   List<Map<String, Object?>> cases() {
     final Map<String, Object?> golden =
-        jsonDecode(File(goldenPath).readAsStringSync())
-            as Map<String, Object?>;
+        jsonDecode(File(goldenPath).readAsStringSync()) as Map<String, Object?>;
     return <Map<String, Object?>>[
       for (final Object? item in golden['cases']! as List<Object?>)
         item! as Map<String, Object?>,
@@ -132,15 +131,13 @@ void main() {
       final Map<String, Object?> frame =
           golden['frame']! as Map<String, Object?>;
 
-      test('SNO-ALG-REC-02: лист в кадре — как у второй реализации ($name)',
-          () {
-        final Map<String, Object?> sheet = geometryOf(input).toJson();
-        sameNumbers(
-          jsonDecode(jsonEncode(sheet)),
-          frame['sheet'],
-          'sheet',
-        );
-      });
+      test(
+        'SNO-ALG-REC-02: лист в кадре — как у второй реализации ($name)',
+        () {
+          final Map<String, Object?> sheet = geometryOf(input).toJson();
+          sameNumbers(jsonDecode(jsonEncode(sheet)), frame['sheet'], 'sheet');
+        },
+      );
 
       test('SNO-ALG-REC-02: точка на символе → пиксели → обратно в тот же '
           'символ; зона поверх страницы важнее страницы ($name)', () {
@@ -189,15 +186,13 @@ void main() {
         ],
         sheet: sheet,
       );
-      final Map<String, Object?> line =
-          jsonDecode(
-                jsonEncode(<String, Object?>{
-                  'n': 7,
-                  't': 1200,
-                  ...snapshot.toJson(moving: true),
-                }),
-              )
-              as Map<String, Object?>;
+      final Map<String, Object?> line = jsonDecode(
+        jsonEncode(<String, Object?>{
+          'n': 7,
+          't': 1200,
+          ...snapshot.toJson(moving: true),
+        }),
+      ) as Map<String, Object?>;
       final LayoutFrame read = LayoutFrame.fromJson(line)!;
       expect(read.n, 7);
       expect(read.t, 1200);
@@ -319,10 +314,7 @@ void main() {
         ..frame(shot(), t: 110, moving: false);
 
       expect(tracker.count, 2);
-      expect(lines.map((Map<String, Object?> line) => line['n']), <int>[
-        1,
-        2,
-      ]);
+      expect(lines.map((Map<String, Object?> line) => line['n']), <int>[1, 2]);
       expect(lines.first['t'], 10);
       expect(lines.first['moving'], isTrue);
       expect(lines.last['moving'], isFalse);
@@ -364,9 +356,7 @@ void main() {
         'Кадры раскладки целы: 96 кадров, пропусков нет',
       );
       expect(
-        describeLayoutCheck(
-          const JournalCheck(lines: 21, gaps: 2, torn: true),
-        ),
+        describeLayoutCheck(const JournalCheck(lines: 21, gaps: 2, torn: true)),
         'Кадры раскладки неполны: 21 кадр, пропущено кадров 2, последний '
         'оборван',
       );
@@ -378,8 +368,7 @@ void main() {
       );
     });
 
-    test('SNO-F-REC-03: ЗАМЕР — сколько весит поток за сорок минут чтения',
-        () {
+    test('SNO-F-REC-03: ЗАМЕР — сколько весит поток за сорок минут чтения', () {
       // Кадр чтения с листом, панелями и точкой записи — как на
       // телефоне посреди книги.
       final LayoutSnapshot reading = LayoutSnapshot(
