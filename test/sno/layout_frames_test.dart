@@ -440,9 +440,9 @@ void main() {
 
   group('SNO-ALG-REC-02: экраны без листа — по эталону (шаг 31)', () {
     List<Map<String, Object?>> screens() {
-      final Map<String, Object?> golden =
-          jsonDecode(File(goldenPath).readAsStringSync())
-              as Map<String, Object?>;
+      final Map<String, Object?> golden = jsonDecode(
+        File(goldenPath).readAsStringSync(),
+      ) as Map<String, Object?>;
       return <Map<String, Object?>>[
         for (final Object? item in golden['screens']! as List<Object?>)
           item! as Map<String, Object?>,
@@ -520,9 +520,9 @@ void main() {
       );
       final Map<String, Object?> frame =
           golden['frame']! as Map<String, Object?>;
-      final Map<String, Object?> region = maps(frame['regions']).firstWhere(
-        (Map<String, Object?> item) => item['kind'] == 'galaxy_map',
-      );
+      final Map<String, Object?> region = maps(
+        frame['regions'],
+      ).firstWhere((Map<String, Object?> item) => item['kind'] == 'galaxy_map');
       final List<Map<String, Object?>> marks = maps(region['marks']);
       expect(chosen, hasLength(marks.length));
       for (int i = 0; i < chosen.length; i++) {
@@ -596,9 +596,9 @@ void main() {
           ),
         ],
       );
-      final Map<String, Object?> line =
-          jsonDecode(jsonEncode(snapshot.toJson(moving: false)))
-              as Map<String, Object?>;
+      final Map<String, Object?> line = jsonDecode(
+        jsonEncode(snapshot.toJson(moving: false)),
+      ) as Map<String, Object?>;
       final List<Map<String, Object?>> written = maps(line['regions']);
       expect(written.first['clip'], isTrue);
       expect(written.last.containsKey('clip'), isFalse);

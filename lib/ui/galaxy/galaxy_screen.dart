@@ -781,7 +781,8 @@ class GalaxyMapState extends State<GalaxyMap> {
       return const <LayoutMark>[];
     }
     final MapViewport view = scene.viewport;
-    final List<GalaxyStar> stars = widget.stars;
+    // Звёзды — того же кадра, что и радиусы: номера у них общие.
+    final List<GalaxyStar> stars = scene.stars;
     final List<int> chosen = layoutStars(
       view: view,
       xs: <double>[for (final GalaxyStar star in stars) star.x],

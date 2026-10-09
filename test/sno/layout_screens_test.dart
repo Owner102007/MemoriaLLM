@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/app_services.dart';
@@ -105,10 +106,7 @@ void main() {
     kit.session.tick();
     await tester.pump();
     final Map<String, Object?> tap = kit.store.inputLines(kit.folder).last;
-    return Offset(
-      (tap['x']! as num).toDouble(),
-      (tap['y']! as num).toDouble(),
-    );
+    return Offset((tap['x']! as num).toDouble(), (tap['y']! as num).toDouble());
   }
 
   group('SNO-F-REC-03: зона за краем прокрутки', () {
@@ -177,9 +175,9 @@ void main() {
       await finger.up();
       await tester.pump(const Duration(milliseconds: 150));
 
-      final List<Map<String, Object?>> lines = (await frames(
-        tester,
-      )).skip(before).toList();
+      final List<Map<String, Object?>> lines = (await frames(tester))
+          .skip(before)
+          .toList();
       final List<Map<String, Object?>> moving = <Map<String, Object?>>[
         for (final Map<String, Object?> line in lines)
           if (line['moving'] == true) line,
@@ -260,10 +258,7 @@ void main() {
       final LayoutRegion screen = of(frame, LayoutKind.screen).single;
       expect(screen.id, 'shelf');
       expect(screen.info['scroll'], 0);
-      final List<LayoutRegion> categories = of(
-        frame,
-        LayoutKind.shelfCategory,
-      );
+      final List<LayoutRegion> categories = of(frame, LayoutKind.shelfCategory);
       expect(categories.first.id, 'Раздел 0');
       expect(categories.first.info, <String, Object?>{'part': 'header'});
       expect(categories[1].id, 'Раздел 0');
@@ -295,11 +290,7 @@ void main() {
           lessThanOrEqualTo(1400.05),
           reason: region.id,
         );
-        expect(
-          region.rect.top,
-          greaterThanOrEqualTo(55.95),
-          reason: region.id,
-        );
+        expect(region.rect.top, greaterThanOrEqualTo(55.95), reason: region.id);
       }
 
       await unmount(tester);
@@ -334,8 +325,7 @@ void main() {
           .pixels;
       expect(scroll, greaterThan(0));
       expect(
-        (of(after, LayoutKind.screen).single.info['scroll']! as num)
-            .toDouble(),
+        (of(after, LayoutKind.screen).single.info['scroll']! as num).toDouble(),
         closeTo(scroll, 0.06),
       );
       final LayoutRegion moved = of(after, LayoutKind.shelfBook).firstWhere(
@@ -346,8 +336,7 @@ void main() {
       // шапкой.
       expect(identical(moved, book0), isFalse);
       expect(
-        moved.clipped ||
-            (book0.rect.top - moved.rect.top - scroll).abs() < 0.2,
+        moved.clipped || (book0.rect.top - moved.rect.top - scroll).abs() < 0.2,
         isTrue,
       );
 
@@ -419,7 +408,10 @@ void main() {
       expect(of(frame, LayoutKind.screen).single.info['searching'], isTrue);
 
       // Касание строки — по кадру в строке с тем же местом.
-      await tester.tapAt(rows[1].rect.center);
+      final LayoutRect row = rows[1].rect;
+      await tester.tapAt(
+        Offset(row.left + row.width / 2, row.top + row.height / 2),
+      );
       await tester.pumpAndSettle();
       final Offset tap = await lastTap(tester);
       final LayoutHit hit = frame.locate(tap.dx, tap.dy);
@@ -503,18 +495,24 @@ void main() {
       final LayoutFrame after = await lastFrame(tester);
       final LayoutRegion card = of(after, LayoutKind.galaxyCard).single;
       expect(card.id, hashOfStar('a2'));
-      expect(
-        card.z,
-        greaterThan(of(after, LayoutKind.galaxyMap).single.z),
-      );
+      expect(card.z, greaterThan(of(after, LayoutKind.galaxyMap).single.z));
 
       await unmount(tester);
     });
 
-    testWidgets('SNO-F-REC-03: перенос карты — кадры «в движении» и один '
-        'устоявшийся с новой камерой', (WidgetTester tester) async {
+    testWidgets('SNO-F-REC-03: перенос приближенной карты — кадры «в '
+        'движении» и один устоявшийся с новой камерой', (
+      WidgetTester tester,
+    ) async {
       await pumpGalaxy(tester);
       await startRecording(tester);
+      // При наименьшем масштабе карта стоит на месте: сначала её
+      // приближают колесом посередине — там есть куда вести.
+      final TestPointer mouse = TestPointer(1, PointerDeviceKind.mouse);
+      mouse.hover(tester.getCenter(find.byKey(const Key('galaxy-map'))));
+      await tester.sendEventToBinding(mouse.scroll(const Offset(0, -300)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
       final int before = (await frames(tester)).length;
       final LayoutFrame start = await lastFrame(tester);
 
@@ -529,27 +527,24 @@ void main() {
       await finger.up();
       await tester.pump(const Duration(milliseconds: 150));
 
-      final List<Map<String, Object?>> lines = (await frames(
-        tester,
-      )).skip(before).toList();
+      final List<Map<String, Object?>> lines = (await frames(tester))
+          .skip(before)
+          .toList();
       expect(
         lines.where((Map<String, Object?> line) => line['moving'] == true),
         isNotEmpty,
       );
       expect(lines.last['moving'], isFalse);
       final LayoutFrame end = LayoutFrame.fromJson(lines.last)!;
-      final LayoutMark a1Before = of(
-        start,
-        LayoutKind.galaxyMap,
-      ).single.marks.firstWhere((LayoutMark m) => m.id == hashOfStar('a1'));
-      final LayoutMark a1After = of(
-        end,
-        LayoutKind.galaxyMap,
-      ).single.marks.firstWhere(
-        (LayoutMark m) => m.id == hashOfStar('a1'),
-        orElse: () => a1Before,
-      );
-      expect(a1After.x, isNot(closeTo(a1Before.x, 1)));
+      double cameraX(LayoutFrame frame) {
+        final Map<String, Object?> map =
+            of(frame, LayoutKind.galaxyMap).single.info['map']!
+                as Map<String, Object?>;
+        return (map['cx']! as num).toDouble();
+      }
+
+      // Карту повели вправо — середина экрана ушла на карте влево.
+      expect(cameraX(end), lessThan(cameraX(start)));
 
       await unmount(tester);
     });

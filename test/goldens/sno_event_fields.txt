@@ -34,7 +34,7 @@ recording.json: recording | away,blocks,check,clock_anchor,duration_ms,duration_
 recording.json: device | code,node_id |
 recording.json: input | blind,check,file,lines |
 recording.json: layout | check,file,lines,units |
-layout.jsonl | book,mode,moving,n,page,regions,screen,strip,t,viewport | page,recording_dot
+layout.jsonl | book,mode,moving,n,page,regions,screen,strip,t,viewport | nav,page,recording_dot,screen,shelf_book,shelf_category
 recording.json: clt | checks_flags,files,final,final_answers,final_items |
 clt/scores.json | checks,final,participant,rule,scenario,schema,version |
 clt/scores.json: checks | fast_answers,flags,items,longest_same,rule,verdict |
