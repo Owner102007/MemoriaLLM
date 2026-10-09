@@ -22,9 +22,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../recording/session.dart';
 import 'eye_calibration.dart';
 import 'eye_process.dart';
-import '../recording/session.dart';
 import 'eye_protocol.dart';
 import 'eye_recording.dart';
 import 'eye_tracker.dart';
@@ -118,10 +118,6 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
     _recordingScreen();
   }
 
-  /// Ставит экран айтрекера записи, когда ему есть что показать: точки
-  /// и итог калибровки — сразу, проверку в конце — когда под ней уже
-  /// стоит экран завершения сессии (его ставит слой записи, снимая
-  /// всё, что было открыто). Уходит экран сам.
   /// Нужен ли экран айтрекера записи [view] сейчас: калибровка — пока
   /// идёт запись, проверка в конце — после её остановки.
   bool _wants(EyeRecordingView? view) {
@@ -132,6 +128,10 @@ class _EyeLiveLayerState extends State<EyeLiveLayer> {
     return view.phase == EyeRecordingPhase.endCheck ? !recording : recording;
   }
 
+  /// Ставит экран айтрекера записи, когда ему есть что показать: точки
+  /// и итог калибровки — сразу, проверку в конце — когда под ней уже
+  /// стоит экран завершения сессии (его ставит слой записи, снимая
+  /// всё, что было открыто). Уходит экран сам.
   void _recordingScreen() {
     final EyeRecordingView? view = _recording;
     if (view == null || !_wants(view)) {

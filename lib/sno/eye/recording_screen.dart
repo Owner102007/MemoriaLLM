@@ -18,7 +18,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 
 import '../hold_button.dart';
 import '../recording/layout_frames.dart';
@@ -43,12 +42,11 @@ Future<void> showEyeRecordingScreen(
   return navigator.push(
     PageRouteBuilder<void>(
       settings: const RouteSettings(name: kEyeRecordingRoute),
-      pageBuilder:
-          (
-            BuildContext context,
-            Animation<double> animation,
-            Animation<double> secondary,
-          ) => EyeRecordingScreen(view: view, qpc: qpc),
+      pageBuilder: (
+        BuildContext context,
+        Animation<double> animation,
+        Animation<double> secondary,
+      ) => EyeRecordingScreen(view: view, qpc: qpc),
       transitionDuration: Duration.zero,
       reverseTransitionDuration: Duration.zero,
     ),
@@ -175,8 +173,7 @@ class _EyeRecordingScreenState extends State<EyeRecordingScreen> {
       child: Focus(
         focusNode: _focus,
         autofocus: true,
-        onKeyEvent: (FocusNode node, KeyEvent event) =>
-            KeyEventResult.handled,
+        onKeyEvent: (FocusNode node, KeyEvent event) => KeyEventResult.handled,
         child: Scaffold(
           backgroundColor: theme.colorScheme.surface,
           body: SafeArea(child: body),
@@ -259,10 +256,7 @@ class _EyeRecordingScreenState extends State<EyeRecordingScreen> {
     final bool busy = _view.busy;
     final String? problem = _view.problem;
     return _page(theme, <Widget>[
-      Text(
-        'Калибровка айтрекера',
-        style: theme.textTheme.headlineSmall,
-      ),
+      Text('Калибровка айтрекера', style: theme.textTheme.headlineSmall),
       const SizedBox(height: 12),
       if (problem != null)
         Text(
@@ -295,10 +289,7 @@ class _EyeRecordingScreenState extends State<EyeRecordingScreen> {
       if (busy && !accepted)
         const Padding(
           padding: EdgeInsets.only(top: 8),
-          child: Text(
-            'Айтрекер готовится…',
-            key: Key('eye-recording-busy'),
-          ),
+          child: Text('Айтрекер готовится…', key: Key('eye-recording-busy')),
         ),
       const SizedBox(height: 20),
       if (accepted)
@@ -317,9 +308,7 @@ class _EyeRecordingScreenState extends State<EyeRecordingScreen> {
           key: const Key('eye-recording-write'),
           label: 'Писать с пометкой (по умолчанию)',
           hold: kEyeChoiceHold,
-          onConfirmed: busy
-              ? null
-              : () => unawaited(_view.choose(write: true)),
+          onConfirmed: busy ? null : () => unawaited(_view.choose(write: true)),
         ),
         const SizedBox(height: 8),
         HoldToConfirmButton(

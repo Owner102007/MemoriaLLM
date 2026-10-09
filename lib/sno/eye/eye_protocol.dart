@@ -1003,7 +1003,12 @@ class EyeGaze {
 /// вернулось.
 class EyeFace {
   /// Создаёт строку.
-  const EyeFace({required this.lost, required this.qpcUs, this.sinceUs, this.ms});
+  const EyeFace({
+    required this.lost,
+    required this.qpcUs,
+    this.sinceUs,
+    this.ms,
+  });
 
   /// Строка из сообщения спутника; `null` — сообщение не о лице.
   static EyeFace? fromMessage(Map<String, Object?> message) {

@@ -73,8 +73,7 @@ void main() {
     await kit.settle();
     // Начало изучения помнится в отметке сессии.
     expect(
-      SessionState.decode(kit.settings.values[SnoSettingsKeys.session])!
-          .studyT,
+      SessionState.decode(kit.settings.values[SnoSettingsKeys.session])!.studyT,
       180000,
     );
     kit.run(40 * 60 - 1);

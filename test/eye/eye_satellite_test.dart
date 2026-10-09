@@ -290,7 +290,8 @@ void main() {
     () async {
       final QpcClock qpc = WindowsQpcClock.open()!;
       final String sep = Platform.pathSeparator;
-      final String folder = '${temp.path}${sep}Записи$sep.current${sep}запись${sep}eye';
+      final String folder =
+          '${temp.path}$sepЗаписи$sep.current$sepзапись${sep}eye';
       const EyeScreen screen = EyeScreen(
         width: 1920,
         height: 1080,
@@ -330,7 +331,8 @@ void main() {
       await Future<void>.delayed(const Duration(seconds: 3));
       final Map<String, Object?>? first = await link.closeCamera();
       await link.close();
-      final Map<String, Object?> gaze1 = first!['gaze']! as Map<String, Object?>;
+      final Map<String, Object?> gaze1 =
+          first!['gaze']! as Map<String, Object?>;
       final int lines1 = gaze1['lines']! as int;
       stdout.writeln(
         'ЗАМЕР SNO-F-REC-04 | поток взгляда | строк за 3 с: $lines1 | '
@@ -367,7 +369,10 @@ void main() {
         rows.map((Map<String, Object?> r) => r['n']),
         List<int>.generate(rows.length, (int i) => i + 1),
       );
-      expect(rows.map((Map<String, Object?> r) => r['seg']).toSet(), <int>{0, 1});
+      expect(rows.map((Map<String, Object?> r) => r['seg']).toSet(), <int>{
+        0,
+        1,
+      });
       final List<int> times = <int>[
         for (final Map<String, Object?> r in rows) r['t']! as int,
       ];
@@ -395,7 +400,7 @@ void main() {
     () async {
       final QpcClock qpc = WindowsQpcClock.open()!;
       final String sep = Platform.pathSeparator;
-      final Directory records = Directory('${temp.path}${sep}Записи');
+      final Directory records = Directory('${temp.path}$sepЗаписи');
       final MemorySettings settings = MemorySettings();
       final RecordingSession session = RecordingSession(
         settings: settings,
@@ -454,9 +459,9 @@ void main() {
         const Duration(seconds: 60),
       );
       // Экрана в этом тесте нет: окно и миг показа точки называет тест.
-      final EyeRecordingView view = eye.recording.value!
-        ..windowSize = () => const Size(1920, 1080)
-        ..frameShown = () async => qpc.nowUs();
+      final EyeRecordingView view = eye.recording.value!;
+      view.windowSize = () => const Size(1920, 1080);
+      view.frameShown = () async => qpc.nowUs();
       await waitFor(
         () => view.phase == EyeRecordingPhase.result,
         const Duration(minutes: 3),
@@ -483,9 +488,8 @@ void main() {
       );
       final String folder = session.state!.folder;
       final String eyeDir = (await session.folderPath(kEyeFolder))!;
-      final List<String> lines = File(
-        '$eyeDir${sep}gaze.jsonl',
-      ).readAsLinesSync();
+      final List<String> lines = File('$eyeDir${sep}gaze.jsonl')
+          .readAsLinesSync();
       stdout.writeln(
         'ЗАМЕР SNO-F-EYE-02 | запись со взглядом на синтетике | строк '
         '${lines.length} | годных ${eye.info.validShare} | в конце '
@@ -524,12 +528,15 @@ void main() {
       expect(block['file'], 'eye/gaze.jsonl');
       final Map<String, Object?> files =
           manifest['files']! as Map<String, Object?>;
-      expect(files.keys, containsAll(<String>[
-        'eye/gaze.jsonl',
-        'eye/features.bin',
-        'eye/eyes.mp4',
-        'eye/calibration.json',
-      ]));
+      expect(
+        files.keys,
+        containsAll(<String>[
+          'eye/gaze.jsonl',
+          'eye/features.bin',
+          'eye/eyes.mp4',
+          'eye/calibration.json',
+        ]),
+      );
       expect(
         (files['eye/gaze.jsonl']! as Map<String, Object?>)['lines'],
         lines.length,

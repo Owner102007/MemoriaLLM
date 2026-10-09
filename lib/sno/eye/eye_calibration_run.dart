@@ -28,15 +28,14 @@ typedef EyeFrameShown = Future<int> Function();
 
 /// Точка ушла спутнику: фаза, имя, место в окне, QPC мига и путь у
 /// движущейся — журналу записи (SNO-F-EYE-01: `eye.target`).
-typedef EyeTargetSent =
-    void Function({
-      required String phase,
-      required int qpcUs,
-      String? id,
-      double? x,
-      double? y,
-      Map<String, Object?>? path,
-    });
+typedef EyeTargetSent = void Function({
+  required String phase,
+  required int qpcUs,
+  String? id,
+  double? x,
+  double? y,
+  Map<String, Object?>? path,
+});
 
 /// Сколько ждать отрисовки кадра, прежде чем взять QPC без неё: экран
 /// калибровки могли закрыть, а попытка не должна висеть.
@@ -144,7 +143,14 @@ abstract class EyeTargetsRun extends ChangeNotifier {
   }) {
     _link.target(phase: phase, qpcUs: qpcUs, id: id, x: x, y: y, path: path);
     if (phase != 'off') {
-      onTarget?.call(phase: phase, qpcUs: qpcUs, id: id, x: x, y: y, path: path);
+      onTarget?.call(
+        phase: phase,
+        qpcUs: qpcUs,
+        id: id,
+        x: x,
+        y: y,
+        path: path,
+      );
     }
   }
 

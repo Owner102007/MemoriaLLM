@@ -665,6 +665,8 @@ class EyeTracker extends ChangeNotifier {
     _run = null;
     if (run != null) {
       // Приложение уходит: без проверки в конце, спутник закрывается.
+      // Экрана айтрекера уже нет — оповещать некого.
+      run._quiet = true;
       unawaited(run.stop());
     }
     trial.dispose();
@@ -777,9 +779,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   }
 
   void _screenAttached() {
-    if (_frameShown != null &&
-        _windowSize != null &&
-        !_screenUp.isCompleted) {
+    if (_frameShown != null && _windowSize != null && !_screenUp.isCompleted) {
       _screenUp.complete();
     }
   }
@@ -1707,7 +1707,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     _stopTimers();
     _run?.cancel();
     _checkRun?.cancel();
-    await _windowChanges?.cancel();
+    unawaited(_windowChanges?.cancel());
     _windowChanges = null;
     _link = null;
     await Future.wait<void>(<Future<void>>[
@@ -1767,7 +1767,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     _stopTimers();
     _run?.cancel();
     _checkRun?.cancel();
-    await _windowChanges?.cancel();
+    unawaited(_windowChanges?.cancel());
     _windowChanges = null;
     final EyeLink? link = _link;
     _link = null;

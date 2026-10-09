@@ -162,7 +162,9 @@ void main() {
       (event['data'] as Map<String, Object?>?) ?? const <String, Object?>{};
 
   Map<String, Object?> one(List<Map<String, Object?>> events, String type) {
-    return dataOf(events.singleWhere((Map<String, Object?> e) => e['type'] == type));
+    return dataOf(
+      events.singleWhere((Map<String, Object?> e) => e['type'] == type),
+    );
   }
 
   Future<void> holdOn(WidgetTester tester, String key) async {
@@ -205,7 +207,9 @@ void main() {
     expect(window.locks, <String>[r'\\.\DISPLAY1']);
 
     await calibrated(tester);
-    final List<Object?> names = sat().names.where((Object? n) => n != 'sync').toList();
+    final List<Object?> names = sat().names
+        .where((Object? n) => n != 'sync')
+        .toList();
     expect(names.take(4), <Object?>['hello', 'selfcheck', 'open', 'calibrate']);
     final Map<String, Object?> check = sent('selfcheck').single;
     expect(check['dir'], '/records/.current/${kit.folder}/eye');
@@ -244,19 +248,22 @@ void main() {
 
     final List<Map<String, Object?>> events = await journal(tester);
     final List<String> types = typesOf(events);
-    expect(types, containsAllInOrder(<String>[
-      'recording.start',
-      'eye.window',
-      'eye.ready',
-      'eye.clock',
-      'eye.sync',
-      'eye.check',
-      'eye.calibration.start',
-      'eye.target',
-      'eye.calibration.result',
-      'eye.gaze',
-      'study.start',
-    ]));
+    expect(
+      types,
+      containsAllInOrder(<String>[
+        'recording.start',
+        'eye.window',
+        'eye.ready',
+        'eye.clock',
+        'eye.sync',
+        'eye.check',
+        'eye.calibration.start',
+        'eye.target',
+        'eye.calibration.result',
+        'eye.gaze',
+        'study.start',
+      ]),
+    );
     expect(one(events, 'eye.check')['verdict'], 'good');
     expect(one(events, 'eye.calibration.start'), <String, Object?>{
       'attempt': 1,
@@ -272,9 +279,18 @@ void main() {
         if (e['type'] == 'eye.target') dataOf(e),
     ];
     // 13 точек, фаза головы, слежение и 9 точек проверки.
-    expect(targets.where((Map<String, Object?> t) => t['phase'] == 'calib'), hasLength(13));
-    expect(targets.where((Map<String, Object?> t) => t['phase'] == 'validate'), hasLength(9));
-    expect(targets.where((Map<String, Object?> t) => t['phase'] == 'pursuit'), hasLength(1));
+    expect(
+      targets.where((Map<String, Object?> t) => t['phase'] == 'calib'),
+      hasLength(13),
+    );
+    expect(
+      targets.where((Map<String, Object?> t) => t['phase'] == 'validate'),
+      hasLength(9),
+    );
+    expect(
+      targets.where((Map<String, Object?> t) => t['phase'] == 'pursuit'),
+      hasLength(1),
+    );
     expect(targets.first['qpc_us'], isA<int>());
     expect(one(events, 'eye.gaze'), <String, Object?>{
       'seg': 0,
@@ -314,7 +330,10 @@ void main() {
     expect(view()!.mustChoose, isTrue);
     expect(find.byKey(const Key('eye-recording-retry')), findsNothing);
     expect(find.byType(HoldToConfirmButton), findsNWidgets(2));
-    expect(sent('calibrate').map((Map<String, Object?> c) => c['attempt']), <Object?>[1, 2]);
+    expect(
+      sent('calibrate').map((Map<String, Object?> c) => c['attempt']),
+      <Object?>[1, 2],
+    );
 
     await holdOn(tester, 'eye-recording-write');
     expect(sat().gazeOn, isTrue);
@@ -326,7 +345,11 @@ void main() {
       'failures': 2,
     });
     expect(
-      dataOf(events.singleWhere((Map<String, Object?> e) => e['type'] == 'study.start')),
+      dataOf(
+        events.singleWhere(
+          (Map<String, Object?> e) => e['type'] == 'study.start',
+        ),
+      ),
       <String, Object?>{'gaze': true, 'quality': 'low'},
     );
     expect(eye.info.quality, 'low');
@@ -354,7 +377,11 @@ void main() {
     final List<Map<String, Object?>> events = await journal(tester);
     expect(one(events, 'eye.skip')['write'], isFalse);
     expect(
-      dataOf(events.singleWhere((Map<String, Object?> e) => e['type'] == 'study.start')),
+      dataOf(
+        events.singleWhere(
+          (Map<String, Object?> e) => e['type'] == 'study.start',
+        ),
+      ),
       <String, Object?>{'gaze': false},
     );
     // Окно остаётся под замком до конца записи.
@@ -367,7 +394,10 @@ void main() {
             as Map<String, Object?>;
     expect(block['present'], isFalse);
     expect(block['reason'], 'skipped');
-    expect(describeGaze(block), 'Взгляд не записан: организатор выбрал «Без взгляда»');
+    expect(
+      describeGaze(block),
+      'Взгляд не записан: организатор выбрал «Без взгляда»',
+    );
     await unmount(tester);
   }, timeout: const Timeout(Duration(minutes: 4)));
 
@@ -432,14 +462,21 @@ void main() {
     // Поток взгляда на диске: строки спутника (их пишет спутник сам).
     kit.store.files[kit.folder]![kGazeFile] = <String>[
       for (int i = 1; i <= 10; i++)
-        jsonEncode(<String, Object?>{'n': i, 'ok': i != 3, 'seg': i > 6 ? 1 : 0}),
+        jsonEncode(<String, Object?>{
+          'n': i,
+          'ok': i != 3,
+          'seg': i > 6 ? 1 : 0,
+        }),
       '',
     ].join('\n');
 
     final List<Map<String, Object?>> during = await journal(tester);
     expect(one(during, 'eye.face.lost')['qpc_us'], isA<int>());
     expect(one(during, 'eye.face.back')['ms'], 2300);
-    expect(one(during, 'eye.lost'), <String, Object?>{'reason': 'exit', 'code': 1});
+    expect(one(during, 'eye.lost'), <String, Object?>{
+      'reason': 'exit',
+      'code': 1,
+    });
     expect(one(during, 'eye.restart')['seg'], 1);
     final List<Map<String, Object?>> gazes = <Map<String, Object?>>[
       for (final Map<String, Object?> e in during)
@@ -468,7 +505,10 @@ void main() {
     await settle(tester);
     expect(find.byType(EyeRecordingScreen), findsNothing);
     expect(sent('check').single['n'], 1);
-    expect(sat().names, containsAllInOrder(<Object?>['check', 'checked', 'close']));
+    expect(
+      sat().names,
+      containsAllInOrder(<Object?>['check', 'checked', 'close']),
+    );
     expect(sat().inputClosed, isTrue);
     expect(window.locked, isFalse);
 
@@ -476,12 +516,15 @@ void main() {
     final List<String> types = typesOf(events);
     final int stop = types.indexOf('recording.stop');
     expect(stop, greaterThan(0));
-    expect(types.sublist(stop + 1), containsAllInOrder(<String>[
-      'eye.endcheck.start',
-      'eye.target',
-      'eye.endcheck.result',
-      'eye.closed',
-    ]));
+    expect(
+      types.sublist(stop + 1),
+      containsAllInOrder(<String>[
+        'eye.endcheck.start',
+        'eye.target',
+        'eye.endcheck.result',
+        'eye.closed',
+      ]),
+    );
     for (final Map<String, Object?> e in events.sublist(stop + 1)) {
       expect(e['phase'], 'post', reason: '${e['type']}');
     }
@@ -513,7 +556,10 @@ void main() {
     expect(block['restarts'], 1);
     expect(block['valid_share'], 0.9);
     expect((block['end_check']! as Map<String, Object?>)['accuracy_deg'], 1.9);
-    expect((block['calibration']! as Map<String, Object?>)['accuracy_deg'], 2.2);
+    expect(
+      (block['calibration']! as Map<String, Object?>)['accuracy_deg'],
+      2.2,
+    );
     expect(
       describeGaze(block),
       'Взгляд: 90 % времени, точность в начале 2,2°, в конце 1,9°',
@@ -537,7 +583,11 @@ void main() {
     await settle(tester);
     expect(find.byKey(const Key('eye-recording-skip')), findsOneWidget);
     await holdOn(tester, 'eye-recording-skip');
-    await runUntil(tester, () => view() == null, limit: const Duration(seconds: 10));
+    await runUntil(
+      tester,
+      () => view() == null,
+      limit: const Duration(seconds: 10),
+    );
     final Map<String, Object?> end = one(
       kit.store.events(kit.folder),
       'eye.endcheck.result',
@@ -582,16 +632,22 @@ void main() {
   });
 
   test('SNO-F-EYE-02: доля годного времени — по строкам потока', () {
-    List<int> lines(List<bool> ok) => utf8.encode(<String>[
-      for (int i = 0; i < ok.length; i++)
-        jsonEncode(<String, Object?>{'n': i + 1, 'ok': ok[i]}).replaceAll(' ', ''),
-      '',
-    ].join('\n'));
+    List<int> lines(List<bool> ok) => utf8.encode(
+      <String>[
+        for (int i = 0; i < ok.length; i++)
+          jsonEncode(<String, Object?>{'n': i + 1, 'ok': ok[i]})
+              .replaceAll(' ', ''),
+        '',
+      ].join('\n'),
+    );
     expect(gazeValidShare(lines(<bool>[true, true, false, true])), 0.75);
     expect(gazeValidShare(const <int>[]), isNull);
     // Оборванная строка в счёт не идёт.
     expect(
-      gazeValidShare(<int>[...lines(<bool>[true]), ...utf8.encode('{"n":2,"ok":fa')]),
+      gazeValidShare(<int>[
+        ...lines(<bool>[true]),
+        ...utf8.encode('{"n":2,"ok":fa'),
+      ]),
       1.0,
     );
   });
