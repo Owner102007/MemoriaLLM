@@ -305,10 +305,10 @@ class Participant:
 
     def sweep(self, qpc_us: int) -> tuple[float, float]:
         """Поворот головы сверх покачивания: в фазе движения головы
-        участник честно водит головой, глядя на точку (BUG-60). Время —
-        от первой точки фазы подряд: приложение шлёт её заново, когда
-        меняет подсказку (BUG-61), а участник продолжает, а не начинает
-        сначала."""
+        участник честно водит головой, глядя на точку (BUG-60). Точку фазы
+        приложение шлёт заново, когда меняет подсказку на «вверх-вниз»
+        (BUG-61), — тогда участник кивает; одна точка на всю фазу —
+        первые 6 с поворот, потом кивки (`head_sweep`)."""
         with self._lock:
             current = None
             start = None
@@ -320,6 +320,10 @@ class Participant:
                 current = t
         if current is None or current.phase != "head" or start is None:
             return 0.0, 0.0
+        if current is not start:
+            # Подсказка сменилась — кивки с её мига.
+            w = 2 * math.pi * (qpc_us - current.qpc_us) / 1e6 / HEAD_SWEEP_PERIOD_S
+            return 0.0, HEAD_SWEEP_PITCH * math.sin(w)
         return head_sweep((qpc_us - start.qpc_us) / 1e6)
 
     def head(self, sec: float) -> Head:

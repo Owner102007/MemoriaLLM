@@ -451,7 +451,7 @@ class FakeEyeProcess implements EyeProcess {
           'latency_ms': 70.0,
           'points': 13,
           'excluded': <Object?>[],
-          'head_model': 'phase',
+          'head_model': 'geometry',
           'head':
               fitHead ??
               <String, Object?>{

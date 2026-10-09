@@ -780,7 +780,8 @@ class HeadModel:
 REST_AXES = ("turn", "tilt", "roll")
 
 
-def head_limits(geo: Geometry, points: np.ndarray, head_point, max_deg: float) -> dict:
+def head_limits(geo: Geometry, points: np.ndarray, head_point, max_deg: float,
+                min_deg: float = 0.0) -> dict:
     """Насколько можно повернуть и наклонить голову, глядя на точку фазы
     движения головы `head_point`, чтобы глаз в голове остался в том
     размахе, на каком его калибровали (BUG-62).
@@ -790,8 +791,11 @@ def head_limits(geo: Geometry, points: np.ndarray, head_point, max_deg: float) -
     точку, поворачивается в голове на столько же в другую сторону; дальше
     размаха калибровки модель глаз не училась, и её оценка там — догадка
     (у владельца при наклоне на 12° на экране высотой 20 см — на 15 см
-    мимо). Сверх того — не дальше `max_deg`. Градусы, как у
-    `Geometry.relative`: поворот к правому краю, наклон вниз."""
+    мимо). Сверх того — не дальше `max_deg`, и не ближе `min_deg` по
+    каждую сторону: если точки калибровки не обступают точку фазы (точку
+    исключили), голова у опоры не должна оказаться «дальше пределов».
+    Градусы, как у `Geometry.relative`: поворот к правому краю, наклон
+    вниз."""
     z0 = geo.screen.distance_mm
     m = geo._mm(np.atleast_2d(np.asarray(points, dtype=np.float64)))
     c = geo._mm(np.atleast_2d(np.asarray(head_point, dtype=np.float64)))[0]
@@ -799,11 +803,14 @@ def head_limits(geo: Geometry, points: np.ndarray, head_point, max_deg: float) -
     ay = np.degrees(np.arctan2(m[:, 1] - geo.ey, z0))
     cx = math.degrees(math.atan2(c[0] - geo.ex, z0))
     cy = math.degrees(math.atan2(c[1] - geo.ey, z0))
-    lim = float(max_deg)
-    return {"turn": (round(max(-lim, cx - float(ax.max())), 2),
-                     round(min(lim, cx - float(ax.min())), 2)),
-            "tilt": (round(max(-lim, cy - float(ay.max())), 2),
-                     round(min(lim, cy - float(ay.min())), 2))}
+    lim, low = float(max_deg), float(min_deg)
+
+    def span(c: float, a: np.ndarray) -> tuple[float, float]:
+        lo = min(max(-lim, c - float(a.max())), -low)
+        hi = max(min(lim, c - float(a.min())), low)
+        return round(lo, 2), round(hi, 2)
+
+    return {"turn": span(cx, ax), "tilt": span(cy, ay)}
 
 
 def _inside(rel: dict, limits: dict | None) -> np.ndarray:
@@ -823,8 +830,8 @@ def fit_head_rest(model: HeadModel, x: np.ndarray, target: np.ndarray, screen: S
     """Остаток поправки на голову по фазе движения головы (BUG-60, BUG-62):
     человек смотрит на неподвижную точку `target` и водит головой. Чего
     геометрия не знает — то, как ошибка зависит от поворотов головы, —
-    линейно, через ноль (на опоре геометрия и есть модель глаз), с гребнем
-    к нулю.
+    линейно, наклоном по отклонениям от средних (постоянная ошибка у точки
+    — не наклон), с гребнем к нулю; у опоры поправка — ноль.
 
     Остаток берётся, только если он сам себя доказал (BUG-62): у владельца
     половину фазы голова стояла, а взгляд был на подсказке, потом голова
@@ -891,21 +898,29 @@ def fit_head_rest(model: HeadModel, x: np.ndarray, target: np.ndarray, screen: S
     alpha = float(t.get("alpha", 0.1))
     mad_k = float(t.get("mad_k", 3.0))
 
+    def slope(d: np.ndarray, r: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        # Наклон — по отклонениям от средних, а сдвиг отбрасывается:
+        # постоянная ошибка у точки (смещение модели глаз, взгляд на
+        # подсказке) при несимметричных поворотах через ноль стала бы
+        # ложным наклоном (независимая проверка правки). Поправка у опоры
+        # — ноль, как и прежде.
+        dc = d - d.mean(axis=0)
+        rc = r - r.mean(axis=0)
+        w = np.linalg.solve(dc.T @ dc + alpha * len(d) * np.eye(len(cols)), dc.T @ rc)
+        return w, np.hypot(*(rc - dc @ w).T)
+
     def solve(mask: np.ndarray) -> np.ndarray | None:
         d, r = d_all[mask], r_all[mask]
         if len(d) < max(len(cols) * 10, min_frames // 3):
             return None
-        eye = alpha * len(d) * np.eye(len(cols))
-        w = np.linalg.solve(d.T @ d + eye, d.T @ r)
+        w, res = slope(d, r)
         # Выбросы — один раз, и остаток считается заново по тому, что
         # осталось.
-        res = np.hypot(*(r - d @ w).T)
         med = float(np.median(res))
         mad = 1.4826 * float(np.median(np.abs(res - med)))
         ok = res <= med + mad_k * max(mad, 1e-6)
         if not ok.all() and ok.sum() >= len(cols) * 10:
-            d, r = d[ok], r[ok]
-            w = np.linalg.solve(d.T @ d + alpha * len(d) * np.eye(len(cols)), d.T @ r)
+            w, _ = slope(d[ok], r[ok])
         return w
 
     # Проверка на отложенных кадрах: секунды фазы через одну.
@@ -1257,8 +1272,7 @@ class Calibration:
     def _head_rest(self, a: Attempt) -> tuple[Geometry, dict | None] | None:
         if self.screen is None:
             return None
-        pts = self._point_samples(a, "calib")
-        used = {tid: p for tid, p in pts.items() if p["used"] >= 3}
+        used = self._usable_points(self._point_samples(a, "calib"))
         if len(used) < 5:
             return None
         feats = np.concatenate([p["feats"] for p in used.values()])
@@ -1296,8 +1310,7 @@ class Calibration:
         if face is not None and face < float(self.t.get("face_min", 0.5)):
             raise CalibrationError("no_face", "Камера не видит лица")
         pts = self._point_samples(a, "calib")
-        need = int(self.t.get("min_samples", 15))
-        used = {tid: p for tid, p in pts.items() if p["used"] >= max(3, need // 3)}
+        used = self._usable_points(pts)
         excluded = sorted(tid for tid in pts if tid not in used)
         if len(used) < 5:
             raise CalibrationError("no_face", "Камера почти не видела глаз: "
@@ -1385,7 +1398,15 @@ class Calibration:
             return None
         points = np.array([(p["x"], p["y"]) for p in used.values()], dtype=np.float64)
         centre = head[0] if head else (self.screen.w / 2, self.screen.h / 2)
-        return head_limits(geo, points, centre, float(self.h.get("max_deg", 15.0)))
+        return head_limits(geo, points, centre, float(self.h.get("max_deg", 15.0)),
+                           float(self.h.get("side_deg", 3.0)))
+
+    def _usable_points(self, pts: dict) -> dict:
+        """Точки калибровки, которые идут в модель: годных кадров у них не
+        меньше трети нужного (и не меньше трёх). Одно правило у модели и у
+        подсказки фазы головы."""
+        need = int(self.t.get("min_samples", 15))
+        return {tid: p for tid, p in pts.items() if p["used"] >= max(3, need // 3)}
 
     @staticmethod
     def _noise(model, used: dict) -> tuple[float, float]:

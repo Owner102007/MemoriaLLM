@@ -121,6 +121,22 @@ def test_bug_62_rest_is_taken_only_when_it_beats_geometry_on_held_out_seconds():
     assert abs(acc(r, "phase") - acc(r, "geometry")) <= 0.3, r["variants"]
 
 
+def test_bug_62_constant_offset_is_not_a_slope():
+    # Независимая проверка правки: постоянная ошибка у точки (смещение
+    # модели глаз, взгляд на подсказке под точкой) при несимметричных
+    # поворотах подгонкой через ноль становилась ложным наклоном и
+    # доказывала себя. Геометрия здесь точна — остатку учить нечего.
+    def lopsided(sec):
+        w = 2 * math.pi * sec / 3.0
+        return {"yaw": -5.0 + 9.0 * math.sin(w), "look": (0.0, 16.0)}
+
+    s = Sim(noise=0.3, seed=19, motion=lopsided)
+    s.calibrate()
+    for yaw in (8.0, -8.0):
+        r = s.check(yaw=yaw)
+        assert acc(r, "phase") <= acc(r, "geometry") + 0.15, r["variants"]
+
+
 def test_bug_62_no_gain_means_no_rest():
     # Порог доказательства недостижим — остатка нет при любой фазе.
     s = Sim(noise=0.3, seed=16, pose_gain=0.8,
@@ -212,14 +228,18 @@ def test_bug_61_no_calibration_points_no_pose():
     assert s.cal.head_live(features.compute(face.landmarks, face.matrix, W, H)) is None
 
 
-def test_bug_61_participant_keeps_sweeping_when_the_hint_changes():
-    # Приложение шлёт точку фазы заново на смене подсказки — участник
-    # продолжает водить головой, а не начинает сначала.
+def test_bug_61_participant_follows_the_hint():
+    # Одна точка фазы — первые 6 с поворот, потом кивки; точку прислали
+    # заново (подсказка сменилась на «вверх-вниз») — кивки сразу.
     p = synthetic.Participant(latency_ms=0, noise_deg=0)
     p.target(calib.Target("head", 960, 540, "head", 1_000_000))
-    p.target(calib.Target("head", 960, 540, "head", 5_000_000))
-    yaw, pitch = p.sweep(1_000_000 + 7_000_000)
+    yaw, pitch = p.sweep(1_000_000 + 1_000_000)
+    assert yaw != 0.0 and pitch == 0.0
+    p.target(calib.Target("head", 960, 540, "head", 4_000_000))
+    yaw, pitch = p.sweep(4_000_000 + 700_000)
     assert yaw == 0.0 and pitch != 0.0
+    p.target(calib.Target("off", 0, 0, "off", 9_000_000))
+    assert p.sweep(9_500_000) == (0.0, 0.0)
 
 
 def drain(sat, seconds):

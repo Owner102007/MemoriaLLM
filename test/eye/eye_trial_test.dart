@@ -780,10 +780,7 @@ void main() {
     expect(find.text(kHeadHintTurn), findsOneWidget);
     // Подсказка — под точкой, а не над ней: взгляд уходит недалеко.
     expect(tester.getCenter(find.text(kHeadHintTurn)).dy, greaterThan(540));
-    expect(
-      tester.getTopLeft(find.text(kHeadHintTurn)).dy - 540,
-      lessThan(160),
-    );
+    expect(tester.getTopLeft(find.text(kHeadHintTurn)).dy - 540, lessThan(160));
     expect(find.byKey(const Key('eye-head-glyph')), findsOneWidget);
     const Duration tenth = Duration(milliseconds: 100);
     await runFor(tester, const Duration(milliseconds: 4800), step: tenth);

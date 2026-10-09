@@ -590,8 +590,13 @@ String? headPhaseLine(EyeFit fit) {
   final String range =
       'Движение головы: влево-вправо ${(h.turnDeg ?? 0).round()}°, '
       'вверх-вниз ${(h.tiltDeg ?? 0).round()}°';
+  final String? lead = kHeadModelNames[fit.headModel];
   return switch ((h.accepted, h.reason)) {
-    (true, _) => '$range · поправка по движению выучена',
+    (true, _) when fit.headModel == 'phase' || lead == null =>
+      '$range · поправка по движению выучена',
+    (true, _) =>
+      '$range · поправка по движению выучена, точку ведёт '
+          'способ «$lead»',
     (false, 'one_side') =>
       '$range · голова ходила в одну сторону — поправка по геометрии',
     (false, 'no_gain') =>

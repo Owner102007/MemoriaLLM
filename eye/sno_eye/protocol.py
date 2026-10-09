@@ -483,7 +483,11 @@ class Server:
         if not flags & featfile.NO_FACE:
             # Фаза движения головы (BUG-61): где голова — приложению на
             # подсказку; моргание позе не мешает.
-            head = cal.head_live(frame.feat)
+            try:
+                head = cal.head_live(frame.feat)
+            except Exception:  # noqa: BLE001 — подсказка не стоит записи
+                log.exception("head_live")
+                head = None
             if head is not None:
                 self.out.send({"hm": [round(head["turn"], 1), round(head["tilt"], 1)],
                                "far": head["far"], "t": qpc}, droppable=True)

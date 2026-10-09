@@ -366,30 +366,50 @@ void main() {
   });
 
   test('BUG-62: остаток поправки принят или нет — словами в итоге', () {
-    EyeFit fit(Map<String, Object?> head) => EyeFit.fromMessage(
-      <String, Object?>{
-        'model': 'ridge',
-        'cv_deg': 1.2,
-        'points': 9,
-        'head_model': 'geometry',
-        'head': <String, Object?>{
-          'frames': 330,
-          'moved': true,
-          'turn_deg': 17.3,
-          'tilt_deg': 13.4,
-          ...head,
-        },
-      },
-    );
+    EyeFit fit(Map<String, Object?> head) =>
+        EyeFit.fromMessage(<String, Object?>{
+          'model': 'ridge',
+          'cv_deg': 1.2,
+          'points': 9,
+          'head_model': 'geometry',
+          'head': <String, Object?>{
+            'frames': 330,
+            'moved': true,
+            'turn_deg': 17.3,
+            'tilt_deg': 13.4,
+            ...head,
+          },
+        });
     const String range = 'Движение головы: влево-вправо 17°, вверх-вниз 13°';
     expect(fit(<String, Object?>{}).headModel, 'geometry');
     expect(
-      fit(<String, Object?>{'accepted': true, 'reason': null}).headPhase
+      fit(<String, Object?>{'accepted': true, 'reason': null})
+          .headPhase
           ?.accepted,
       isTrue,
     );
+    // Остаток выучен, а точку ведёт геометрия — так и сказано.
     expect(
       headPhaseLine(fit(<String, Object?>{'accepted': true})),
+      '$range · поправка по движению выучена, точку ведёт способ '
+      '«по геометрии»',
+    );
+    expect(
+      headPhaseLine(
+        EyeFit.fromMessage(<String, Object?>{
+          'model': 'ridge',
+          'cv_deg': 1.2,
+          'points': 9,
+          'head_model': 'phase',
+          'head': <String, Object?>{
+            'frames': 330,
+            'moved': true,
+            'turn_deg': 17.3,
+            'tilt_deg': 13.4,
+            'accepted': true,
+          },
+        }),
+      ),
       '$range · поправка по движению выучена',
     );
     expect(

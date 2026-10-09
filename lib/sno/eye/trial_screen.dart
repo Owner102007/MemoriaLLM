@@ -628,7 +628,7 @@ class _HeadRingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double r = kTargetRing / 2;
+    const double r = kTargetRing / 2;
     canvas.drawCircle(
       at,
       r,
