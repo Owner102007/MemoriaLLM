@@ -329,6 +329,38 @@ def test_bug_64_search_row_press_counts_its_category(tmp_path):
     assert row["what"] == "строка найденного"
     assert row["category"] == "Анатомия" and row["shelf_book"] == "A3"
     assert row["in_target_soft"] is True
+    # Заход в категорию строки перед нажатием тоже виден.
+    assert row["lead_ms_soft"] is not None and row["lead_ms_soft"] > 300
+
+
+def test_bug_64_search_rows_of_one_category_are_sure(tmp_path):
+    """BUG-64: строки найденного ниже круга запаса — «уверенно», если
+    соседние строки той же категории, как у категории на полке."""
+    scenario = rs.Scenario().build()
+    second = scenario.answer["visits"][1]
+    x, y, w, h = rs.BOOKS["A3"][1]
+    cy = y + h / 2
+    rows = []
+    for k, (book, category) in enumerate((("A1", "Анатомия"),
+                                          ("A3", "Анатомия"),
+                                          ("A2", "Анатомия"))):
+        rows.append({"kind": "shelf_book", "id": book,
+                     "rect": [x, cy - 96 + 64 * k, w, 64], "z": 51 + k,
+                     "info": {"in": "results", "rank": k + 1,
+                              "category": category}})
+    regions = rs.shelf_regions() + [
+        {"kind": "shelf_results", "id": "",
+         "rect": [x, cy - 96, w, 192], "z": 50}] + rows
+    scenario.frame(second["start"] + 200, "shelf", regions)
+    for event in scenario.events:
+        if event["type"] == "book.open" and event.get("book") == "A3":
+            event["data"]["via"] = "shelf_search"
+    path = rs.make(tmp_path, scenario=scenario)
+    result = report.analyse(arc.load(path), report.settings(), _limits())
+    row = [r for r in result["presses"] if r["book"] == "A3"][0]
+    assert row["shelf_book"] == "A3"
+    assert row["in_target_strict"] is True
+    assert row["lead_ms_strict"] is not None
 
 
 def test_bug_64_lead_needs_an_unbroken_visit_of_the_category():

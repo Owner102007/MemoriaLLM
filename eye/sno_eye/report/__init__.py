@@ -284,6 +284,7 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
         "version": cfg["version"],
     }
     result["map_pad_px"] = zones.map_pad_px
+    result["press_gap_ms"] = cfg["press_gap_ms"]
     result["_frames"] = record.frames
     result["_zones"] = zones
     return result

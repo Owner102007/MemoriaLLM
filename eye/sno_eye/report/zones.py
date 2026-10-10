@@ -342,6 +342,19 @@ def map_category_at(groups: list[dict], x: float, y: float,
     return best
 
 
+def results_category(frame: dict, x: float, y: float) -> str | None:
+    """Категория строки найденного (поиск по названию) под точкой — та,
+    что стоит под названием в строке; не строка — `None` (BUG-64)."""
+    region = _top(frame, x, y)
+    if region is None or region.get("kind") != "shelf_book":
+        return None
+    info = region.get("info") or {}
+    category = info.get("category")
+    if info.get("in") != "results" or not isinstance(category, str):
+        return None
+    return category
+
+
 class Zones:
     """Кадры раскладки записи и ответ «что было под точкой»."""
 
@@ -411,6 +424,10 @@ class Zones:
         key = key_of(hit)
         category, book = self.place(frame, cx, cy)
         on_map = hit.get("zone") == "galaxy_map"
+        # Строка найденного: своя категория — для таблицы «Перед
+        # нажатием»; шагам похода по полке она не засчитывается.
+        row_category = results_category(frame, cx, cy)
+        row_sure = row_category is not None
         near: set[str] = set()
         category_near: set[str] = set()
         category_sure = category is not None
@@ -429,6 +446,9 @@ class Zones:
                 near.add(other_key)
             if mark is not None and other.get("mark") != mark:
                 mark_sure = False
+            if row_category is not None and \
+                    results_category(frame, px, py) != row_category:
+                row_sure = False
             if category is not None or book is not None or on_map:
                 oc, ob = self.place(frame, px, py)
                 if oc != category:
@@ -446,6 +466,7 @@ class Zones:
             "screen": frame.get("screen"), "category": category,
             "category_sure": category_sure,
             "category_near": sorted(category_near), "book": book,
+            "row_category": row_category, "row_category_sure": row_sure,
             "book_sure": book_sure, "mark_sure": mark_sure,
         }
         for name in ("page", "x_pt", "y_pt", "dimmed", "info", "mark"):

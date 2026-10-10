@@ -28,9 +28,10 @@
   раньше чем за `press_gap_ms` до него — пусто.
 
 У строки найденного (поиск по названию) категория под взглядом — та,
-что стоит под названием в строке: поиск по названию — не полка, и
-шагам похода по полке категория строки не засчитывается, а нажатию —
-засчитывается.
+что стоит под названием в строке («уверенно» — оба круга запаса на
+строках той же категории): поиск по названию — не полка, и шагам
+похода по полке категория строки не засчитывается, а нажатию и заходу
+перед ним — засчитывается.
 
 Без взгляда, без кадров раскладки, после смены окна, без годных кадров
 в окне и без строки нажатия в потоке ввода ячейки взгляда пусты, а не
@@ -118,6 +119,14 @@ def _visit_of(timeline: Timeline, t: float, screen: str):
     return None
 
 
+def _category_of(z: dict) -> tuple[str | None, bool]:
+    """Категория под взглядом для нажатия: у строки найденного — из
+    строки, иначе — категория полки или карты."""
+    if z.get("row_category") is not None:
+        return z["row_category"], bool(z.get("row_category_sure"))
+    return z.get("category"), bool(z.get("category_sure"))
+
+
 def _lead(t: float, since: float, target: str, fixes: list[Fixation],
           zones: list[dict], strict: bool, gap: float) -> float | None:
     """Сколько до нажатия в миг [t] взгляд уже был в категории [target]
@@ -130,8 +139,8 @@ def _lead(t: float, since: float, target: str, fixes: list[Fixation],
             continue
         if fix.end < since or edge - fix.end > gap:
             break
-        inside = z.get("category") == target and \
-            (not strict or z.get("category_sure"))
+        category, sure = _category_of(z)
+        inside = category == target and (not strict or sure)
         if not inside:
             break
         if not fix.moving:
@@ -190,15 +199,11 @@ def presses(record, timeline: Timeline, samples: list[Sample] | None,
         gy = statistics.median(s.y for s in window)
         margin = screen.px_for_deg(margin_deg(t, timeline))
         z = zones.classify(t - (before + after) / 2, gx, gy, margin)
-        category = z.get("category")
-        sure = z.get("category_sure")
+        category, sure = _category_of(z)
         book = z.get("book")
         info = z.get("info") or {}
         if z.get("zone") == "shelf_book" and info.get("in") == "results":
-            # Строка найденного: категория — под названием в строке.
-            category = info.get("category") \
-                if isinstance(info.get("category"), str) else None
-            sure = bool(z.get("sure")) and category is not None
+            # Строка найденного: книга строки.
             book = z.get("id") or None
         row.update({
             "zone": z.get("zone"), "bucket": z.get("bucket"),
