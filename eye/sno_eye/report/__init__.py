@@ -6,7 +6,9 @@
 * `index.html` — качество взгляда, куда уходило время изучения, ход по
   минутам, походы на полку, схема полки на каждый поход с фиксациями
   поверх и «куда смотрели на странице»;
-* `fixations.csv` — фиксации с зонами; `visits.csv` — походы на полку;
+* `fixations.csv` — фиксации с зонами; `visits.csv` — походы на полку
+  и на карту; `presses.csv` — что было под взглядом перед каждым
+  нажатием по звезде, книге полки и строке найденного (BUG-64);
 * `measures.csv` — меры сессии, строго и мягко;
 * `quality.json` — качество взгляда числами.
 
@@ -38,7 +40,8 @@ from pathlib import Path
 from .. import record_check as rc
 from . import archive as arc
 from . import html as page
-from . import idt, measures, timeline as tl, versions, zones as zn
+from . import idt, measures, presses as pr, timeline as tl, versions
+from . import zones as zn
 from .screen import screen_of
 
 # Пороги по умолчанию; настоящие — `report` в `thresholds.json`.
@@ -58,6 +61,7 @@ DEFAULTS = {
     "drift_k": 5,
     "outside_deg": 2.0,
     "sample_cap_ms": 100,
+    "map_group_pad_deg": 1.5,
 }
 
 VERSIONS = {"raw": "как записано (raw)",
@@ -92,6 +96,17 @@ def settings(path: Path | None = None) -> dict:
 
 def _median(values):
     return statistics.median(values) if values else None
+
+
+def font_scale(record: arc.Record) -> float:
+    """Масштаб шрифта устройства из паспорта записи — по нему подпись
+    группы на карте (BUG-64); без паспорта — 1."""
+    device = record.manifest.get("device")
+    value = device.get("font_scale") if isinstance(device, dict) else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) \
+            and 0.5 <= value <= 4:
+        return float(value)
+    return 1.0
 
 
 def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
@@ -134,6 +149,11 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
                 for v in line.visits]
         result["visits"] = rows
         result["visit_summary"] = measures.visit_summary(rows, False)
+        result["galaxy_summary"] = measures.visit_summary(
+            rows, False, screen="galaxy")
+        result["presses"] = pr.presses(record, line, None, [], [], None,
+                                       screen, cfg, False, False)
+        result["press_summary"] = pr.summary(result["presses"])
         result["shares"] = measures.shares([], line.study_ms)
         result["minutes"] = []
         result["quality"] = {}
@@ -158,7 +178,10 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
     fixes = idt.fixations(samples, idt_px, spans, cfg,
                           [float(f["t"]) for f in record.frames])
     outside_px = screen.px_for_deg(float(cfg["outside_deg"]))
-    zones = zn.Zones(record.frames, outside_px)
+    zones = zn.Zones(record.frames, outside_px, categories=line.categories,
+                     font_scale=font_scale(record),
+                     map_pad_px=screen.px_for_deg(
+                         float(cfg["map_group_pad_deg"])))
     found = []
     for fix in fixes:
         margin = screen.px_for_deg(measures.margin_deg(fix.start, line))
@@ -192,6 +215,12 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
         for v in line.visits]
     result["visits"] = rows
     result["visit_summary"] = measures.visit_summary(rows, zoned)
+    result["galaxy_summary"] = measures.visit_summary(rows, zoned,
+                                                      screen="galaxy")
+    result["presses"] = pr.presses(record, line, samples, fixes, found,
+                                   zones if zoned else None, screen, cfg,
+                                   True, zoned)
+    result["press_summary"] = pr.summary(result["presses"])
 
     for k, (fix, z) in enumerate(zip(fixes, found)):
         rx = _median([raw[i].x for i in fix.members])
@@ -253,6 +282,7 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
                    "h_mm": screen.h_mm, "distance_mm": screen.distance_mm},
         "version": cfg["version"],
     }
+    result["map_pad_px"] = zones.map_pad_px
     result["_frames"] = record.frames
     result["_zones"] = zones
     return result
@@ -288,7 +318,8 @@ FIX_COLUMNS = (
     ("движение раскладки", "moving"), ("зона", "zone"),
     ("имя зоны", "id"), ("вид времени", "bucket"), ("уверенно", "sure"),
     ("рядом", "near"), ("категория", "category"),
-    ("категория уверенно", "category_sure"), ("книга полки", "book"),
+    ("категория уверенно", "category_sure"),
+    ("категории рядом", "category_near"), ("книга полки", "book"),
     ("книга уверенно", "book_sure"), ("звезда", "mark"),
     ("страница", "page"), ("x_pt", "x_pt"), ("y_pt", "y_pt"),
     ("вне полосы", "dimmed"), ("книга на экране", "reading"),
@@ -311,6 +342,26 @@ VISIT_COLUMNS = (
     ("прямая находка мягко", "direct_soft"),
     ("путь строго", "path_strict"), ("путь мягко", "path_soft"),
     ("звёзд строго", "stars_strict"), ("звёзд мягко", "stars_soft"),
+    ("до звезды открытой книги строго, мс", "first_star_ms_strict"),
+    ("до звезды открытой книги мягко, мс", "first_star_ms_soft"),
+)
+
+PRESS_COLUMNS = (
+    ("№", "n"), ("от начала изучения, мс", "study_ms"),
+    ("экран", "screen"), ("что нажато", "what"), ("книга", "book"),
+    ("название", "title"), ("нужная категория", "target"),
+    ("x нажатия", "x"), ("y нажатия", "y"),
+    ("x взгляда", "gaze_x"), ("y взгляда", "gaze_y"),
+    ("зона взгляда", "zone"), ("вид времени", "bucket"),
+    ("категория под взглядом", "category"),
+    ("категория уверенно", "category_sure"),
+    ("звезда под взглядом", "star"), ("книга полки под взглядом",
+                                      "shelf_book"),
+    ("до точки нажатия, °", "distance_deg"),
+    ("нужная категория под взглядом строго", "in_target_strict"),
+    ("нужная категория под взглядом мягко", "in_target_soft"),
+    ("в нужной категории до нажатия строго, мс", "lead_ms_strict"),
+    ("в нужной категории до нажатия мягко, мс", "lead_ms_soft"),
 )
 
 SUMMARY_WORDS = (
@@ -325,13 +376,32 @@ SUMMARY_WORDS = (
 
 
 def _summary_rows(result: dict) -> list[list]:
-    s = result.get("visit_summary") or {}
     rows = []
-    for key, words in SUMMARY_WORDS:
-        if key in s:
-            rows.append([words, s[key], s[key]])
-        elif f"{key}_strict" in s:
-            rows.append([words, s[f"{key}_strict"], s[f"{key}_soft"]])
+    for name, prefix in (("visit_summary", ""),
+                         ("galaxy_summary", "карта: ")):
+        s = result.get(name) or {}
+        for key, words in SUMMARY_WORDS:
+            if prefix:
+                words = words.replace("на полку", "на карту")
+            if key in s:
+                rows.append([prefix + words, s[key], s[key]])
+            elif f"{key}_strict" in s:
+                rows.append([prefix + words, s[f"{key}_strict"],
+                             s[f"{key}_soft"]])
+    press = result.get("press_summary") or {}
+    for where, word in (("galaxy", "на карте"), ("shelf", "на полке")):
+        p = press.get(where) or {}
+        if not p.get("presses"):
+            continue
+        rows.append([f"нажатий {word}", p["presses"], p["presses"]])
+        rows.append([f"нажатий {word} со взглядом", p["known"],
+                     p["known"]])
+        rows.append([f"нажатий {word}: нужная категория под взглядом",
+                     p["in_target_strict"], p["in_target_soft"]])
+        rows.append([f"нажатий {word}: медиана «в нужной категории до "
+                     "нажатия», мс", None, p.get("lead_ms_soft")])
+        rows.append([f"нажатий {word}: медиана «до точки нажатия», °",
+                     None, p.get("distance_deg")])
     return rows
 
 
@@ -344,6 +414,9 @@ def write_outputs(result: dict, folder: Path) -> None:
     _write(folder / "visits.csv", [t for t, _ in VISIT_COLUMNS],
            [[v.get(k) for _, k in VISIT_COLUMNS]
             for v in result.get("visits") or []])
+    _write(folder / "presses.csv", [t for t, _ in PRESS_COLUMNS],
+           [[p.get(k) for _, k in PRESS_COLUMNS]
+            for p in result.get("presses") or []])
     rows = [["изучение, с", result["study_ms"] / 1000,
              result["study_ms"] / 1000],
             ["версия взгляда", result["version"], result["version"]],
@@ -370,7 +443,8 @@ def write_outputs(result: dict, folder: Path) -> None:
         encoding="utf-8")
     zones = result.get("_zones")
     text = page.render(result, result.get("_frames") or [],
-                       zones.frame_at if zones else (lambda t: None))
+                       zones.frame_at if zones else (lambda t: None),
+                       groups_of=zones.groups if zones else None)
     (folder / "index.html").write_text(text, encoding="utf-8")
 
 
@@ -413,6 +487,19 @@ TABLE_COLUMNS = (
      lambda r: _vg(r, "first_target_s_soft")),
     ("категорий строго", lambda r: _vg(r, "categories_strict")),
     ("категорий мягко", lambda r: _vg(r, "categories_soft")),
+    ("походов на карту", lambda r: _g(r, "visits")),
+    ("прямых находок на карте строго",
+     lambda r: _gg(r, "direct_share_strict")),
+    ("прямых находок на карте мягко",
+     lambda r: _gg(r, "direct_share_soft")),
+    ("нажатий на карте", lambda r: _p(r, "galaxy", "presses")),
+    ("нужная категория перед нажатием на карте строго",
+     lambda r: _ps(r, "galaxy", "in_target_strict")),
+    ("нужная категория перед нажатием на карте мягко",
+     lambda r: _ps(r, "galaxy", "in_target_soft")),
+    ("нажатий на полке", lambda r: _p(r, "shelf", "presses")),
+    ("нужная категория перед нажатием на полке мягко",
+     lambda r: _ps(r, "shelf", "in_target_soft")),
     ("оговорки", lambda r: " | ".join(r.get("notes") or [])),
 )
 
@@ -432,6 +519,27 @@ def _gaze_ok(r: dict) -> bool:
 def _vg(r: dict, key: str):
     # Меры взгляда сессии хуже порога в общую таблицу не идут.
     return _v(r, key) if _gaze_ok(r) else None
+
+
+def _g(r: dict, key: str):
+    return (r.get("galaxy_summary") or {}).get(key)
+
+
+def _gg(r: dict, key: str):
+    return _g(r, key) if _gaze_ok(r) else None
+
+
+def _p(r: dict, where: str, key: str):
+    return ((r.get("press_summary") or {}).get(where) or {}).get(key)
+
+
+def _ps(r: dict, where: str, key: str):
+    """Доля нажатий с нужной категорией под взглядом — из нажатий, у
+    которых взгляд известен; сессия хуже порога — пусто."""
+    known = _p(r, where, "known")
+    if not _gaze_ok(r) or not known:
+        return None
+    return _p(r, where, key) / known
 
 
 def _share(r: dict, mode: str, key: str):
@@ -517,6 +625,31 @@ def describe(result: dict) -> list[str]:
         line += (f", прямых находок {page.pct(s['direct_share_soft'])} "
                  f"(строго {page.pct(s.get('direct_share_strict'))})")
     lines.append(line)
+    g = result.get("galaxy_summary") or {}
+    if g.get("visits"):
+        line = (f"  походов на карту {g['visits']}, открыто книг "
+                f"{g.get('opened', 0)}")
+        if result.get("gaze_used") and \
+                g.get("direct_share_soft") is not None:
+            line += (f", прямых находок {page.pct(g['direct_share_soft'])}"
+                     f" (строго {page.pct(g.get('direct_share_strict'))})")
+        lines.append(line)
+    press = result.get("press_summary") or {}
+    for where, word in (("galaxy", "на карте"), ("shelf", "на полке")):
+        p = press.get(where) or {}
+        if not p.get("presses"):
+            continue
+        line = f"  нажатий {word} {p['presses']}"
+        if p.get("known"):
+            line += (f": нужная категория под взглядом "
+                     f"{p['in_target_soft']} из {p['known']} (строго "
+                     f"{p['in_target_strict']})")
+            if p.get("lead_ms_soft") is not None:
+                line += (", была в ней до нажатия — медиана "
+                         f"{page.sec(p['lead_ms_soft'])}")
+        elif result.get("gaze_used"):
+            line += ": взгляда перед нажатиями нет"
+        lines.append(line)
     for note in result.get("notes") or []:
         lines.append(f"   - {note}")
     if result.get("folder"):

@@ -14,8 +14,10 @@
   нужную категорию, была ли «прямая находка» (первая фиксация на полке
   — уже в нужной категории), путь взгляда по категориям. Нужная
   категория — категория книги, которую открыли в конце похода;
-* то же на карте — для ветви II: звёзды, на которые смотрели, и когда
-  взгляд дошёл до звезды открытой книги.
+* то же на карте — для ветви II: категории — группы звёзд с их
+  подписями (BUG-64, правка шага 34), путь по ним, время до нужной
+  категории и прямая находка, как на полке; ещё звёзды, на которые
+  смотрели, и когда взгляд дошёл до звезды открытой книги.
 
 Качество: точность в начале и в конце, прецизионность, доля годного,
 кадров в секунду — отдельно на полке и на странице, неявные точки и их
@@ -215,18 +217,22 @@ def visit_measures(visit: Visit, fixes: list[Fixation],
                 if c == target:
                     first = t - visit.start
                     break
-        if visit.screen == "galaxy" and visit.book is not None:
-            for f, z in own:
-                if z.get("mark") == visit.book and \
-                        (mode == "soft" or z.get("mark_sure")):
-                    first = f.start - visit.start
-                    break
         row[f"first_target_ms_{mode}"] = first
         row[f"direct_{mode}"] = (None if target is None or not cats
                                  else cats[0] == target)
         row[f"books_{mode}"] = len(set(books))
         if visit.screen == "galaxy":
             row[f"stars_{mode}"] = len(set(stars))
+            # BUG-64: до нужной категории — по группе звёзд, как на
+            # полке; до звезды открытой книги — отдельно.
+            star_first = None
+            if visit.book is not None:
+                for f, z in own:
+                    if z.get("mark") == visit.book and \
+                            (mode == "soft" or z.get("mark_sure")):
+                        star_first = f.start - visit.start
+                        break
+            row[f"first_star_ms_{mode}"] = star_first
     return row
 
 
@@ -238,9 +244,10 @@ def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
-def visit_summary(rows: list[dict], gaze: bool) -> dict:
-    """Сводка походов на полку."""
-    shelf = [r for r in rows if r["screen"] == "shelf"]
+def visit_summary(rows: list[dict], gaze: bool,
+                  screen: str = "shelf") -> dict:
+    """Сводка походов на полку (или на карту — [screen] `galaxy`)."""
+    shelf = [r for r in rows if r["screen"] == screen]
     opened = [r for r in shelf if r["outcome"] == "book"]
     out = {
         "visits": len(shelf),

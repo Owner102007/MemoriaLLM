@@ -2,9 +2,12 @@
 
 Одна страница без внешних скриптов, шрифтов и картинок: взгляд —
 биометрия, и всё остаётся на ПК организатора. Рисунки — SVG прямо в
-странице: ход изучения по минутам, схема полки на каждый поход с
-фиксациями поверх, «куда смотрели на странице» по книгам. Схема
-рисуется по кадрам раскладки — прямоугольники зон, без PDF.
+странице: ход изучения по минутам, схема полки или карты на каждый
+поход с фиксациями поверх, «перед нажатием» — что было под взглядом
+перед каждым выбором источника (BUG-64), «куда смотрели на странице»
+по книгам. Схема рисуется по кадрам раскладки — прямоугольники зон,
+без PDF; на карте — звёзды, области групп и подписи категорий там, где
+их поставил бы художник карты.
 
 Цвета — проверенная палитра по умолчанию (навык dataviz): синий —
 чтение, оранжевый — полка, бирюзовый — карта; вне экрана и прочее —
@@ -87,6 +90,8 @@ figure { margin: 0; background: var(--surface-2); border-radius: 8px;
 figcaption { font-size: 13px; color: var(--text-2); margin-top: 6px; }
 svg { display: block; width: 100%; height: auto; }
 .notes li { margin: 2px 0; }
+.yes { color: var(--s-reading); font-weight: 600; }
+.no { color: var(--accent); font-weight: 600; }
 """
 
 
@@ -232,7 +237,7 @@ def _minutes(result: dict) -> str:
 def _visits_table(result: dict) -> str:
     rows = result.get("visits") or []
     if not rows:
-        return "<p>Походов на полку не было.</p>"
+        return "<p>Походов на полку и на карту не было.</p>"
     gaze = result.get("gaze_used")
     head = ["№", "экран", "начало", "длилось", "чем кончился", "книга",
             "нужная категория", "поиск"]
@@ -265,7 +270,10 @@ def _visits_table(result: dict) -> str:
             cells += [
                 f"{r.get('categories_strict', 0)} / "
                 f"{r.get('categories_soft', 0)}",
-                f"{r.get('books_strict', 0)} / {r.get('books_soft', 0)}",
+                (f"звёзд {r.get('stars_strict', 0)} / "
+                 f"{r.get('stars_soft', 0)}" if r["screen"] == "galaxy"
+                 else f"{r.get('books_strict', 0)} / "
+                 f"{r.get('books_soft', 0)}"),
                 f"{sec(r.get('first_target_ms_strict'))} / "
                 f"{sec(r.get('first_target_ms_soft'))}",
                 f"{_yes(direct)} / {_yes(soft)}",
@@ -319,8 +327,66 @@ def _reference_frame(frames: list[dict], start: float,
     return best
 
 
+def _hull_path(hull: list, pad: float) -> str:
+    """Контур области группы: оболочка звёзд, раздутая на [pad] —
+    кругами у вершин и полосами вдоль рёбер, как пишет SVG."""
+    if not hull:
+        return ""
+    if len(hull) == 1:
+        x, y = hull[0]
+        return (f"<circle cx='{x:.1f}' cy='{y:.1f}' r='{pad:.1f}'/>")
+    points = " ".join(f"{x:.1f},{y:.1f}" for x, y in hull)
+    return (f"<polygon points='{points}' stroke-width='{2 * pad:.1f}' "
+            "stroke-linejoin='round'/>")
+
+
+def _galaxy_layer(frame: dict, groups: list[dict], target, book,
+                  unit: float, pad: float) -> list[str]:
+    """Звёзды, области групп и подписи категорий кадра карты."""
+    parts = []
+    for group in groups:
+        # Прозрачность — у группы целиком: заливка и обводка оболочки
+        # не складываются в тёмное пятно.
+        color = "var(--s-shelf)" if group["name"] == target \
+            else "var(--s-reading)"
+        shape = _hull_path(group["hull"], pad)
+        if shape:
+            parts.append(f"<g fill='{color}' stroke='{color}' "
+                         f"opacity='0.14'>{shape}</g>")
+    for group in groups:
+        for x, y, r in group["stars"]:
+            parts.append(f"<circle cx='{x:.1f}' cy='{y:.1f}' "
+                         f"r='{max(r, 2 * unit):.1f}' fill='var(--text-3)'"
+                         " fill-opacity='0.55'/>")
+    for region in frame.get("regions") or []:
+        if region.get("kind") != "galaxy_map":
+            continue
+        for mark in region.get("marks") or []:
+            if isinstance(mark, dict) and mark.get("id") == book:
+                ring = max(mark.get("r", 0), 3 * unit) + 3 * unit
+                parts.append(f"<circle cx='{mark.get('x', 0):.1f}' "
+                             f"cy='{mark.get('y', 0):.1f}' r='{ring:.1f}'"
+                             f" fill='none' stroke='var(--accent)' "
+                             f"stroke-width='{2 * unit:.1f}'/>")
+    for group in groups:
+        label = group["label"]
+        if label is None:
+            continue
+        x, y, w, h = label
+        parts.append(f"<rect x='{x:.1f}' y='{y:.1f}' width='{w:.1f}' "
+                     f"height='{h:.1f}' fill='var(--surface-2)' "
+                     "fill-opacity='0.6' stroke='var(--text-3)' "
+                     f"stroke-dasharray='{3 * unit:.1f}' "
+                     f"stroke-width='{0.7 * unit:.1f}'/>")
+        # Подпись схемы — кеглем схемы над рамкой подписи карты.
+        parts.append(f"<text x='{x + w / 2:.1f}' y='{y - 3 * unit:.1f}' "
+                     f"font-size='{10 * unit:.1f}' text-anchor='middle' "
+                     f"fill='var(--text-2)'>{_e(group['name'])}</text>")
+    return parts
+
+
 def _visit_map(visit: dict, result: dict, frames: list[dict],
-               frame_at) -> str:
+               frame_at, groups_of=None) -> str:
     frame = _reference_frame(frames, visit["start_ms"],
                              visit["start_ms"] + visit["duration_ms"])
     if frame is None:
@@ -364,10 +430,15 @@ def _visit_map(visit: dict, result: dict, frames: list[dict],
             parts.append(f"<rect x='{x}' y='{y}' width='{rw}' "
                          f"height='{rh}' fill='none' stroke='{stroke}' "
                          f"stroke-width='{width}' rx='3'/>")
-        elif kind in ("nav", "shelf_search", "shelf_results", "dialog"):
+        elif kind in ("nav", "shelf_search", "shelf_results", "dialog",
+                      "galaxy_card"):
             parts.append(f"<rect x='{x}' y='{y}' width='{rw}' "
                          f"height='{rh}' fill='var(--surface-2)' "
                          f"stroke='var(--line)' stroke-width='{unit:.1f}'/>")
+    if visit["screen"] == "galaxy" and groups_of is not None:
+        pad = float(result.get("map_pad_px") or 0.0)
+        parts.extend(_galaxy_layer(frame, groups_of(frame), target,
+                                   visit.get("book"), unit, pad))
     parts.extend(labels)
     dots = []
     path = []
@@ -399,11 +470,78 @@ def _visit_map(visit: dict, result: dict, frames: list[dict],
     parts.extend(dots)
     parts.append("</svg>")
     book = (result.get("titles") or {}).get(visit.get("book")) or ""
-    caption = (f"Поход {visit['n']} · {sec(visit['duration_ms'])}"
+    where = "карта" if visit["screen"] == "galaxy" else "полка"
+    caption = (f"Поход {visit['n']} ({where}) · "
+               f"{sec(visit['duration_ms'])}"
                + (f" · «{_e(book)}»" if book else "")
                + (f" · нужная категория «{_e(target)}»" if target else ""))
     return f"<figure>{''.join(parts)}<figcaption>{caption}</figcaption>" \
         "</figure>"
+
+
+def _yes_html(value) -> str:
+    if value is None:
+        return "—"
+    return "<span class='yes'>да</span>" if value else \
+        "<span class='no'>нет</span>"
+
+
+def _presses(result: dict) -> str:
+    rows = result.get("presses") or []
+    if not rows:
+        return "<p>Нажатий по звёздам, книгам полки и строкам найденного " \
+            "не было.</p>"
+    summary = result.get("press_summary") or {}
+    lines = []
+    for where, word in (("galaxy", "на карте"), ("shelf", "на полке")):
+        p = summary.get(where) or {}
+        if not p.get("presses"):
+            continue
+        text = f"Нажатий {word}: {p['presses']}"
+        if p.get("known"):
+            text += (f"; нужная категория под взглядом — "
+                     f"{p['in_target_soft']} из {p['known']} (строго "
+                     f"{p['in_target_strict']})")
+            if p.get("lead_ms_soft") is not None:
+                text += (f"; была в ней до нажатия — медиана "
+                         f"{sec(p['lead_ms_soft'])}")
+            if p.get("distance_deg") is not None:
+                text += (f"; от взгляда до точки нажатия — медиана "
+                         f"{deg(p['distance_deg'])}")
+        lines.append(f"<p>{_e(text)}.</p>")
+    head = ["№", "время", "экран", "что нажато", "нужная категория",
+            "под взглядом", "звезда / книга под взглядом",
+            "до точки нажатия", "нужная категория (строго / мягко)",
+            "в ней до нажатия"]
+    out = ["<div class='scroll'><table><tr>"
+           + "".join(f"<th>{_e(h)}</th>" for h in head) + "</tr>"]
+    titles = result.get("titles") or {}
+    for r in rows:
+        name = r.get("title") or r.get("book") or ""
+        if len(name) > 40:
+            name = name[:39] + "…"
+        under = r.get("category")
+        if under is not None:
+            under += " (уверенно)" if r.get("category_sure") else \
+                " (на границе)"
+        elif r.get("zone") is not None:
+            under = dict(BUCKETS).get(r.get("bucket")) or r.get("zone")
+        thing = r.get("star") or r.get("shelf_book")
+        thing = titles.get(thing) or thing
+        cells = [
+            _e(r["n"]), _e(_clock(r["study_ms"])),
+            _e(SCREEN_WORDS.get(r["screen"], r["screen"])),
+            _e(f"{r['what']} «{name}»"), _e(r.get("target") or "—"),
+            _e(under or "—"), _e(thing or "—"),
+            _e(deg(r.get("distance_deg"))),
+            f"{_yes_html(r.get('in_target_strict'))} / "
+            f"{_yes_html(r.get('in_target_soft'))}",
+            _e(sec(r.get("lead_ms_soft"))),
+        ]
+        out.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells)
+                   + "</tr>")
+    out.append("</table></div>")
+    return "".join(lines) + "".join(out)
 
 
 def _pages(result: dict) -> str:
@@ -442,7 +580,8 @@ def _pages(result: dict) -> str:
     return f"<div class='maps'>{''.join(figures)}</div>"
 
 
-def render(result: dict, frames: list[dict], frame_at) -> str:
+def render(result: dict, frames: list[dict], frame_at,
+           groups_of=None) -> str:
     """Страница разбора записи."""
     meta = result
     badges = []
@@ -474,19 +613,30 @@ def render(result: dict, frames: list[dict], frame_at) -> str:
                  "границе, по своей середине.</p>" if
                  result.get("gaze_used") else "", _shares(result),
                  "<h2>По минутам</h2>", _minutes(result),
-                 "<h2>Походы на полку</h2>", _visits_table(result)]
+                 "<h2>Походы на полку и на карту</h2>",
+                 _visits_table(result),
+                 "<h2>Перед нажатием</h2>",
+                 "<p>На каждое нажатие по звезде карты, книге полки и "
+                 "строке найденного — что было под взглядом за 300–100 мс "
+                 "до него. Нужная категория — категория нажатой книги; "
+                 "«в ней до нажатия» — сколько взгляд уже был в нужной "
+                 "категории (не раньше прежнего нажатия того же похода). "
+                 "Категория на карте — группа звёзд с её подписью.</p>"
+                 if result.get("gaze_used") else "", _presses(result)]
     if result.get("gaze_used") and result.get("layout_known"):
-        maps = [_visit_map(v, result, frames, frame_at)
+        maps = [_visit_map(v, result, frames, frame_at, groups_of)
                 for v in (result.get("visits") or [])
                 if v["screen"] in ("shelf", "galaxy")][:MAX_VISIT_MAPS]
         maps = [m for m in maps if m]
         if maps:
             sections += [
-                "<h2>Схема полки по походам</h2>",
+                "<h2>Схема полки и карты по походам</h2>",
                 "<p>Кадр — тот, что дольше всех стоял за поход; синие — "
                 "фиксации в нужной категории, оранжевые — в других; "
                 "размер — длительность; линия — порядок. Прокрутка полки "
-                "учтена сдвигом.</p>",
+                "учтена сдвигом. На карте — области групп звёзд и "
+                "подписи категорий (пунктир) там, где их ставит карта; "
+                "ширина подписи — оценка по числу знаков.</p>",
                 f"<div class='maps wide'>{''.join(maps)}</div>"]
         sections += ["<h2>Куда смотрели на странице</h2>",
                      "<p>Все страницы книги наложены на одну; серые — "
@@ -497,7 +647,7 @@ def render(result: dict, frames: list[dict], frame_at) -> str:
                      + "".join(f"<li>{_e(n)}</li>" for n in notes)
                      + "</ul>"]
     sections.append("<p class='sub'>Рядом: fixations.csv, visits.csv, "
-                    "measures.csv, quality.json.</p>")
+                    "presses.csv, measures.csv, quality.json.</p>")
     title = f"Разбор записи {_e(result['archive'])}"
     return ("<!doctype html><html lang='ru'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, "

@@ -403,8 +403,9 @@ def test_sno_f_res_03_poor_session_is_excluded(tmp_path, scenario):
 # --- выход ------------------------------------------------------------
 
 def test_sno_f_res_03_files_and_table(tmp_path, scenario, capsys):
-    """SNO-F-RES-03: рядом с архивом — папка разбора с пятью файлами,
-    для папки архивов — общая таблица; код выхода 0."""
+    """SNO-F-RES-03: рядом с архивом — папка разбора с шестью файлами
+    (с правки шага 34 — и `presses.csv`, BUG-64), для папки архивов —
+    общая таблица; код выхода 0."""
     rs.make(tmp_path, scenario=scenario)
     rs.make(tmp_path, scenario=scenario, gaze=False,
             name="sno2026_I_11111116_d10708_20261010-1000.zip")
@@ -413,10 +414,10 @@ def test_sno_f_res_03_files_and_table(tmp_path, scenario, capsys):
     folder = tmp_path / (rs.NAME[:-4] + "_eye")
     names = sorted(p.name for p in folder.iterdir())
     assert names == ["fixations.csv", "index.html", "measures.csv",
-                     "quality.json", "visits.csv"]
+                     "presses.csv", "quality.json", "visits.csv"]
     page = (folder / "index.html").read_text(encoding="utf-8")
     assert "<script" not in page and "http" not in page.split("</title>")[1]
-    assert "Схема полки по походам" in page
+    assert "Схема полки и карты по походам" in page
     table = (tmp_path / report.TABLE_NAME).read_text(encoding="utf-8-sig")
     lines = table.strip().splitlines()
     assert len(lines) == 3 and lines[0].startswith("архив;")
