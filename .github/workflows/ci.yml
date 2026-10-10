@@ -820,6 +820,50 @@ jobs:
             exit 1
           }
 
+      # Шаг 36, SNO-F-RES-06: «Сравнение ветвей» встраиваемым Python
+      # собранной папки — numpy и matplotlib из замка спутника, рисунки
+      # без окна (Agg), кириллица в пути и к архивам, и к отчёту. Набор
+      # архивов собирает генератор тестов Python'ом раннера (он без
+      # numpy — генератору хватает стандартной библиотеки).
+      - name: Сравнение ветвей встраиваемым Python
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'Результаты СНО\Набор (II + I)'
+          python eye/tests/study_scenario.py $root
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $out = Join-Path $env:RUNNER_TEMP 'Сравнение ветвей СНО2026\прогон'
+          $eye = (Resolve-Path build/eye).Path
+          Push-Location $eye
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & (Join-Path $eye 'python.exe') -I -m sno_eye study $root --out $out 2>&1 |
+            Tee-Object -FilePath (Join-Path $env:GITHUB_WORKSPACE 'eye-logs/eye-study.txt')
+          $code = $LASTEXITCODE
+          $sw.Stop()
+          Pop-Location
+          "ЗАМЕР Сравнение ветвей: 16 архивов за $([math]::Round($sw.Elapsed.TotalSeconds, 1)) с" |
+            Tee-Object -Append -FilePath eye-logs/eye-study.txt
+          if ($code -ne 0) {
+            Write-Output "::error title=SNO-F-RES-06::«Сравнение ветвей» вернуло $code"
+            exit 1
+          }
+          $need = @('index.html', 'участники.csv', 'походы.csv', 'ответы_теста.csv',
+                    'сравнение.csv', 'устойчивость.csv', 'исходные.json',
+                    'рисунки/Р1_состав.png', 'рисунки/Р4_нагрузка.svg',
+                    'рисунки/Р13_сводка.png', 'рисунки/Р14_устойчивость.png')
+          foreach ($f in $need) {
+            if (-not (Test-Path -LiteralPath (Join-Path $out $f))) {
+              Write-Output "::error title=SNO-F-RES-06::в отчёте нет $f"
+              exit 1
+            }
+          }
+          $page = Get-Content -LiteralPath (Join-Path $out 'index.html') -Raw -Encoding utf8
+          if ($page -notmatch 'в ветви II меньше') {
+            Write-Output '::error title=SNO-F-RES-06::заложенная разница ветвей не найдена'
+            exit 1
+          }
+
       - name: Выложить папку eye/
         uses: actions/upload-artifact@v7
         with:
@@ -1006,7 +1050,7 @@ jobs:
         run: |
           $eye = 'build/windows/x64/runner/Release/eye'
           if ($env:SNO_BRANCH) {
-            foreach ($f in @('python.exe', 'sno_eye/__main__.py', 'sno_eye/record_check.py', 'models/face_landmarker.task', 'Проверка камеры.cmd', 'Проверка записи.cmd', 'Инструкция организатора.txt')) {
+            foreach ($f in @('python.exe', 'sno_eye/__main__.py', 'sno_eye/record_check.py', 'sno_eye/study/__init__.py', 'models/face_landmarker.task', 'Проверка камеры.cmd', 'Проверка записи.cmd', 'Сравнение ветвей.cmd', 'Инструкция организатора.txt')) {
               if (-not (Test-Path (Join-Path $eye $f))) {
                 Write-Output "::error title=Спутник взгляда::в сборке ветви нет eye/$f"
                 exit 1
@@ -1189,7 +1233,8 @@ jobs:
           import zipfile
 
           need = ['eye/Проверка записи.cmd', 'eye/Инструкция организатора.txt',
-                  'eye/sno_eye/record_check.py']
+                  'eye/sno_eye/record_check.py', 'eye/Сравнение ветвей.cmd',
+                  'eye/sno_eye/study/__init__.py']
           bad = False
           for branch in ('I', 'II'):
               path = f'out/memoria-sno2026-{branch}-windows.zip'

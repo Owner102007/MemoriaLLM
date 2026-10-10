@@ -6,6 +6,11 @@
   сессии (SNO-F-RES-01, шаг 33); без имён — записи на этом ПК;
 * `report [архив или папка …]` — «Разбор записи»: куда смотрел
   участник — зоны, походы на полку, меры (SNO-F-RES-03, шаг 34);
+* `study [папка или архивы …]` — «Сравнение ветвей»: сводный анализ
+  всех записей — отбор по искренности, тест нагрузки, действия,
+  сравнение ветвей I и II с устойчивостью (SNO-F-RES-06, шаг 36);
+  `--series sno2026-N` — только эта серия, `--no-filter` — проверочный
+  прогон без отсева;
 * `--selftest` — пробный запуск собранной папки (CI и организатор).
 
 `--source synthetic[:вариант]` подменяет камеру и распознавание
@@ -41,14 +46,21 @@ def main(argv: list[str] | None = None) -> int:
     _utf8_stdio()
     ap = argparse.ArgumentParser(prog="sno_eye")
     ap.add_argument("command", nargs="?",
-                    choices=("serve", "bench", "check", "report"))
+                    choices=("serve", "bench", "check", "report", "study"))
     ap.add_argument("paths", nargs="*",
-                    help="check, report: архивы записей или папки с ними")
+                    help="check, report, study: архивы записей или папки "
+                         "с ними")
     ap.add_argument("--json", action="store_true",
-                    help="check, report: итог строкой JSON")
+                    help="check, report, study: итог строкой JSON")
     ap.add_argument("--version", dest="gaze_version",
                     choices=("raw", "drift"),
-                    help="report: какой версией взгляда считать меры")
+                    help="report, study: какой версией взгляда считать меры")
+    ap.add_argument("--series",
+                    help="study: только записи этой сборки исследования, "
+                         "например sno2026-2")
+    ap.add_argument("--no-filter", action="store_true",
+                    help="study: проверочный прогон — все годные архивы "
+                         "с весом 1, не для выводов")
     ap.add_argument("--no-files", action="store_true",
                     help="report: только итог, без папки разбора")
     ap.add_argument("--csv", help="check: куда положить сводную таблицу")
@@ -85,8 +97,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.print_help()
         return 2
 
-    if args.paths and args.command not in ("check", "report"):
-        ap.error("имена файлов принимают только check и report")
+    if args.paths and args.command not in ("check", "report", "study"):
+        ap.error("имена файлов принимают только check, report и study")
 
     # «Проверка записи» камеры не трогает и может идти рядом с
     # приложением и спутником — без замка единственного экземпляра.
@@ -100,6 +112,14 @@ def main(argv: list[str] | None = None) -> int:
         from .report import main as report
         return report(args.paths, as_json=args.json, out=args.out,
                       version=args.gaze_version, write=not args.no_files)
+
+    # «Сравнение ветвей» — тоже без камеры и без замка; numpy и
+    # matplotlib грузятся только здесь.
+    if args.command == "study":
+        from .study import main as study
+        return study(args.paths, series=args.series,
+                     no_filter=args.no_filter, out=args.out,
+                     as_json=args.json, version=args.gaze_version)
 
     from .runtime import Runtime, SingleInstance
 

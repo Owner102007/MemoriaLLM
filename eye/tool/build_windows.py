@@ -38,6 +38,7 @@ COPY = ["sno_eye", "thresholds.json", "model_version.txt", "python_version.txt",
         "requirements.lock", "THIRD_PARTY_NOTICES.txt", "README.md",
         "Проверка камеры.cmd", "Проверка камеры (40 минут).cmd",
         "Проверка записи.cmd", "Разбор записи.cmd",
+        "Сравнение ветвей.cmd", "Сравнение ветвей (проверочный).cmd",
         "Инструкция организатора.txt"]
 
 
