@@ -250,17 +250,19 @@ def visit_summary(rows: list[dict], gaze: bool) -> dict:
     }
     if gaze:
         for mode in ("strict", "soft"):
-            known = [r[f"direct_{mode}"] for r in opened
+            # Походы без чисел зон (окно сменили) в средние не идут.
+            own = [r for r in opened if f"categories_{mode}" in r]
+            known = [r[f"direct_{mode}"] for r in own
                      if r.get(f"direct_{mode}") is not None]
             out[f"direct_share_{mode}"] = (sum(known) / len(known)
                                            if known else None)
             out[f"first_target_s_{mode}"] = _median(
-                [r[f"first_target_ms_{mode}"] / 1000 for r in opened
+                [r[f"first_target_ms_{mode}"] / 1000 for r in own
                  if r.get(f"first_target_ms_{mode}") is not None])
             out[f"categories_{mode}"] = _mean(
-                [r[f"categories_{mode}"] for r in opened])
+                [r[f"categories_{mode}"] for r in own])
             out[f"books_{mode}"] = _mean([r[f"books_{mode}"]
-                                          for r in opened])
+                                          for r in own])
     return out
 
 

@@ -255,7 +255,11 @@ def _visits_table(result: dict) -> str:
             sec(r["duration_ms"]), outcome, book, r.get("target") or "—",
             str(r["searches"]) if r["searches"] else "—",
         ]
-        if gaze:
+        if gaze and "categories_strict" not in r:
+            # Чисел зон у похода нет: кадров раскладки нет или окно
+            # сменили.
+            cells += ["—"] * 5
+        elif gaze:
             direct = r.get("direct_strict")
             soft = r.get("direct_soft")
             cells += [

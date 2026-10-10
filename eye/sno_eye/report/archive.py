@@ -125,6 +125,7 @@ def _frame(row: dict) -> dict | None:
         else:
             clean["marks"] = [
                 m for m in clean["marks"] if isinstance(m, dict)
+                and isinstance(m.get("id"), str)
                 and all(_num(m.get(k)) is not None for k in "xyr")]
         regions.append(clean)
     frame = dict(row, t=t, viewport=dict(viewport, w=w, h=h),
@@ -134,13 +135,14 @@ def _frame(row: dict) -> dict | None:
         pages = sheet.get("pages") if isinstance(sheet, dict) else None
         ok = isinstance(pages, list) and _num(sheet.get("scale")) and \
             _rect(sheet.get("strip")) is not None and all(
-                isinstance(p, dict) and all(
-                    _num(p.get(k)) is not None for k in "xywh")
+                isinstance(p, dict) and _int(p.get("page")) is not None
+                and all(_num(p.get(k)) is not None for k in "xywh")
                 for p in pages)
         if ok:
             frame["sheet"] = dict(sheet, neighbours=[
                 n for n in sheet.get("neighbours") or []
-                if isinstance(n, dict) and _rect(n.get("rect"))])
+                if isinstance(n, dict) and _rect(n.get("rect"))
+                and isinstance(n.get("side"), str)])
         else:
             frame.pop("sheet", None)
     return frame

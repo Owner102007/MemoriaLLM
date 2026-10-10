@@ -184,8 +184,12 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
     result["shares"] = measures.shares(labels, line.study_ms)
     result["minutes"] = measures.per_minute(labels, line)
     zoned = result["layout_known"]
-    rows = [measures.visit_measures(v, fixes, found, zoned)
-            for v in line.visits]
+    changed = line.window_changed
+    # Поход после смены окна чисел зон не получает — пусто, а не ноль.
+    rows = [measures.visit_measures(
+        v, fixes, found,
+        zoned and (changed is None or v.end <= changed))
+        for v in line.visits]
     result["visits"] = rows
     result["visit_summary"] = measures.visit_summary(rows, zoned)
 

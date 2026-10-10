@@ -530,7 +530,7 @@ def test_sno_alg_eye_05_window_change_before_study_is_harmless(tmp_path):
     result = _analyse(rs.make(tmp_path / "mid", scenario=mid))
     first, after = result["visits"]
     assert first["categories_strict"] == 2
-    assert after["categories_soft"] == 0 and after["path_soft"] == []
+    assert "categories_soft" not in after
     assert any("окно" in n for n in result["notes"])
 
 
@@ -619,6 +619,9 @@ def test_sno_f_res_03_broken_frame_does_not_drop_the_record(tmp_path):
     first["regions"].append({"kind": "nav", "rect": "мусор"})
     scenario.frames.append({"t": rs.S + 10, "viewport": {"h": 800},
                             "regions": []})
+    page = scenario.frames[-2]
+    if "sheet" in page:
+        page["sheet"]["pages"][0].pop("page")
     result = _analyse(rs.make(tmp_path, scenario=scenario))
     assert result["visits"][0]["categories_strict"] == 2
     record = arc.load(rs.make(tmp_path, scenario=scenario))
