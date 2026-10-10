@@ -24,9 +24,10 @@
 просвет 6 точек, у края полотна прижата на 6 точек; группы — по имени,
 подпись, легшая на прежнюю, не встаёт (`pickLabels`). Шрифта разбор не
 знает: строка `titleSmall` — 20 точек, знак — 0,6 кегля 14, оба — на
-масштаб шрифта устройства. Категория точки на карте — группа, в чью
-подпись она попала, а иначе ближайшая группа, до подписи, оболочки
-звёзд или края звезды которой не дальше запаса группы
+масштаб шрифта устройства; подпись — одна строка, длинная обрезается.
+Категория точки на карте — группа звезды, в чей круг она попала, затем
+группа подписи, а иначе ближайшая группа, до подписи, оболочки звёзд
+или края звезды которой не дальше запаса группы
 (`map_group_pad_deg`); при равенстве — та, чья звезда ближе.
 «Уверенно / на границе» — те же два круга, что у категории полки;
 категории соседних точек кругов — `category_near`.
@@ -75,8 +76,10 @@ INNER = 6
 
 # Подпись группы на карте (BUG-64) — числа художника карты
 # (`galaxy_painter.dart`): наибольшая ширина, просвет до звёзд, отступ
-# от края; строка и знак `titleSmall` (кегль 14, строка 20).
+# от края; строка и знак `titleSmall` (кегль 14, строка 20); подписей
+# на кадре не больше `kMaxLabels`, группы встают первыми.
 LABEL_MAX_W = 240.0
+LABEL_LIMIT = 24
 LABEL_GAP = 6.0
 LABEL_EDGE = 6.0
 LABEL_LINE = 20.0
@@ -186,14 +189,12 @@ def _num(value) -> float | None:
 
 def _label_size(name: str, width: float,
                 font_scale: float) -> tuple[float, float]:
-    """Ширина и высота подписи группы: оценка по числу знаков; длинная
-    подпись переносится по наибольшей ширине."""
+    """Ширина и высота подписи группы: оценка по числу знаков. Подпись
+    — одна строка (`maxLines: 1`, `_painterOf`): длинная обрезается
+    многоточием по наибольшей ширине, а не переносится."""
     full = len(name) * LABEL_CHAR * font_scale
     room = min(LABEL_MAX_W, max(0.0, width - 2 * LABEL_EDGE))
-    line = LABEL_LINE * font_scale
-    if full <= room or room <= 0:
-        return full, line
-    return room, line * math.ceil(full / room)
+    return min(full, room), LABEL_LINE * font_scale
 
 
 def _overlaps(a, b) -> bool:
@@ -228,8 +229,8 @@ def _segment(px, py, a, b) -> float:
     bx, by = b
     dx, dy = bx - ax, by - ay
     span = dx * dx + dy * dy
-    w = 0.0 if span == 0 else max(0.0, min(1.0, ((px - ax) * dx +
-                                                  (py - ay) * dy) / span))
+    along = (px - ax) * dx + (py - ay) * dy
+    w = 0.0 if span == 0 else max(0.0, min(1.0, along / span))
     return math.hypot(px - (ax + w * dx), py - (ay + w * dy))
 
 
@@ -288,7 +289,7 @@ def map_groups(frame: dict, categories: dict, font_scale: float = 1.0
                 if not (x + r < left or x - r > left + width or
                         y + r < top or y - r > top + height)]
         label = None
-        if seen:
+        if seen and len(placed) < LABEL_LIMIT:
             w, h = _label_size(name, width, font_scale)
             if w + 2 * LABEL_EDGE <= width and h + 2 * LABEL_EDGE <= height:
                 mid = sum(x for x, _, _ in seen) / len(seen)
@@ -308,8 +309,19 @@ def map_groups(frame: dict, categories: dict, font_scale: float = 1.0
 
 def map_category_at(groups: list[dict], x: float, y: float,
                     pad_px: float) -> str | None:
-    """Категория карты под точкой (BUG-64): подпись, в которую она
-    попала, а иначе ближайшая группа не дальше [pad_px]."""
+    """Категория карты под точкой (BUG-64): звезда, в чей круг она
+    попала (подпись чужой группы может лечь поверх звезды — смотрят
+    тогда на звезду), затем подпись, а иначе ближайшая группа не
+    дальше [pad_px]."""
+    hit = None
+    hit_far = None
+    for group in groups:
+        for sx, sy, r in group["stars"]:
+            far = math.hypot(x - sx, y - sy)
+            if far <= r and (hit_far is None or far < hit_far):
+                hit, hit_far = group["name"], far
+    if hit is not None:
+        return hit
     for group in groups:
         label = group["label"]
         if label is not None and _to_rect(label, x, y) == 0.0:

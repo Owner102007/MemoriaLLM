@@ -254,3 +254,149 @@ def test_bug_64_real_frame_format_from_the_golden():
     cy = card["rect"][1] + card["rect"][3] / 2
     under = z.classify(1, cx, cy, 10)
     assert under["zone"] == "galaxy_card" and under["category"] is None
+
+
+# --- по независимой проверке правки -----------------------------------
+
+def test_bug_64_long_label_is_one_line_like_the_painter():
+    """BUG-64: подпись группы — одна строка (`maxLines: 1` у художника):
+    длинное название обрезается по 240 точкам, а не переносится."""
+    name = "Нормальная физиология человека"
+    frame = {"t": 0, "viewport": {"w": rs.W, "h": rs.H}, "regions": [
+        {"kind": "galaxy_map", "id": "", "rect": [0, 0, rs.W, rs.H],
+         "z": 0, "marks": [{"id": "a", "x": 400, "y": 400, "r": 8},
+                           {"id": "b", "x": 420, "y": 340, "r": 8}]}]}
+    groups = {g["name"]: g for g in zones.map_groups(
+        frame, {"a": name, "b": "Анатомия"})}
+    assert groups[name]["label"] == pytest.approx((280, 366, 240, 20))
+    assert groups["Анатомия"]["label"] is not None
+
+
+def test_bug_64_star_presses_are_not_implicit_points(mapped):
+    """BUG-64: нажатие звезды карты — не неявная точка: перед ним
+    смотрят на название категории, и поправка дрейфа тянула бы взгляд
+    с подписи на звёзды."""
+    path, _, _ = mapped
+    from sno_eye.report import timeline as tl, versions
+    from sno_eye.report.screen import screen_of
+    record = arc.load(path)
+    cfg = report.settings()
+    line = tl.build(record)
+    screen = screen_of(record.calibration, record.frames)
+    raw = versions.raw_samples(record, line.latency_ms)
+    pairs, _ = versions.implicit_pairs(record, raw, screen, line, cfg)
+    assert pairs
+    assert all(p.kind not in ("galaxy.star", "galaxy.card.open")
+               for p in pairs)
+
+
+def test_bug_64_label_presses_do_not_pull_the_drift(tmp_path):
+    """BUG-64: двенадцать нажатий звезды, глядя на подпись, — дрейфа
+    в записи нет, и поправка его не придумывает: взгляд перед
+    нажатием остаётся на подписи."""
+
+    plan = (("label:Ангиология", "G3"),) * 12
+    scenario = ms.MapScenario(study_ms=120_000, drift=(0.0, 0.0),
+                              plan=plan).build()
+    path = rs.make(tmp_path, scenario=scenario,
+                   name="sno2026_II_80032040_d10708_20261010-0813.zip")
+    result = report.analyse(arc.load(path), report.settings(), _limits())
+    assert result["quality"]["drift_max_deg"] < 0.5
+    rows = [r for r in result["presses"] if r["book"] == "G3"]
+    assert len(rows) == 12
+    assert all(r["category"] == "Ангиология" and r["star"] is None
+               for r in rows)
+
+
+def test_bug_64_search_row_press_counts_its_category(tmp_path):
+    """BUG-64: нажатие строки найденного, глядя на неё, — нужная
+    категория под взглядом: категория — та, что стоит в строке."""
+    scenario = rs.Scenario().build()
+    second = scenario.answer["visits"][1]
+    x, y, w, h = rs.BOOKS["A3"][1]
+    regions = rs.shelf_regions() + [
+        {"kind": "shelf_results", "id": "", "rect": [x, y, w, h],
+         "z": 50},
+        {"kind": "shelf_book", "id": "A3", "rect": [x, y, w, h], "z": 51,
+         "info": {"in": "results", "rank": 1, "category": "Анатомия"}}]
+    scenario.frame(second["start"] + 200, "shelf", regions)
+    for event in scenario.events:
+        if event["type"] == "book.open" and event.get("book") == "A3":
+            event["data"]["via"] = "shelf_search"
+    path = rs.make(tmp_path, scenario=scenario)
+    result = report.analyse(arc.load(path), report.settings(), _limits())
+    row = [r for r in result["presses"] if r["book"] == "A3"][0]
+    assert row["what"] == "строка найденного"
+    assert row["category"] == "Анатомия" and row["shelf_book"] == "A3"
+    assert row["in_target_soft"] is True
+
+
+def test_bug_64_lead_needs_an_unbroken_visit_of_the_category():
+    """BUG-64: «в нужной категории до нажатия» — непрерывный заход:
+    фиксация на отрезке движения вне нужной категории и долгий просвет
+    (лица нет) его рвут."""
+    from sno_eye.report import presses
+    from sno_eye.report.idt import Fixation
+
+    def fix(a, b, moving=False):
+        return Fixation(a, b, 0, 0, 0, 0, moving)
+
+    target = {"category": "А", "category_sure": True}
+    other = {"category": "Б", "category_sure": True}
+    # 1 с на «А», 1,5 с перенос карты со взглядом на «Б», 0,55 с на
+    # «А» и нажатие в 3050.
+    fixes = [fix(0, 1000), fix(1000, 2500, moving=True), fix(2500, 3050)]
+    lead = presses._lead(3050, 0, "А", fixes, [target, other, target],
+                         strict=False, gap=500)
+    assert lead == pytest.approx(550)
+    # Лицо пропало на 5 с между заходами в «А».
+    fixes = [fix(0, 1000), fix(6000, 6550)]
+    lead = presses._lead(6550, 0, "А", fixes, [target, target],
+                         strict=False, gap=500)
+    assert lead == pytest.approx(550)
+    # Последняя фиксация кончилась за 2 с до нажатия — пусто.
+    lead = presses._lead(3000, 0, "А", [fix(0, 1000)], [target],
+                         strict=False, gap=500)
+    assert lead is None
+    # Перенос карты, а взгляд всё время на «А», — заход не рвётся.
+    fixes = [fix(0, 1000), fix(1000, 2500, moving=True), fix(2500, 3050)]
+    lead = presses._lead(3050, 0, "А", fixes, [target, target, target],
+                         strict=False, gap=500)
+    assert lead == pytest.approx(3050)
+
+
+def test_bug_64_press_without_input_row_has_no_gaze(mapped, tmp_path):
+    """BUG-64: нажатие без строки в потоке ввода — в таблице, но без
+    взгляда: миг события — не миг нажатия."""
+    path, _, _ = mapped
+    record = arc.load(path)
+    first = next(e for e in record.events if e["type"] == "galaxy.star")
+    record.events = [dict(e, input=None) if e is first else e
+                     for e in record.events]
+    result = report.analyse(record, report.settings(), _limits())
+    row = [r for r in result["presses"] if r["kind"] == "galaxy.star"][0]
+    assert row["target"] == "Ангиология"
+    assert row["category"] is None and row["in_target_soft"] is None
+
+
+def test_bug_64_star_under_a_foreign_label_keeps_its_category():
+    """BUG-64: подпись группы может лечь поверх звезды другой группы —
+    взгляд прямо на звезду остаётся в её категории."""
+    groups = [{"name": "А", "label": (90, 90, 60, 20), "stars": [],
+               "hull": []},
+              {"name": "Б", "label": None, "stars": [(100, 100, 8)],
+               "hull": [(100, 100)]}]
+    groups[0]["stars"] = [(120, 160, 8)]
+    groups[0]["hull"] = [(120, 160)]
+    assert zones.map_category_at(groups, 101, 99, 30) == "Б"
+    assert zones.map_category_at(groups, 140, 95, 30) == "А"
+
+
+def test_bug_64_branch_one_has_no_map_rows(tmp_path):
+    """BUG-64: в ветви I походов на карту нет — и строк карты в
+    `measures.csv` нет."""
+    path = rs.make(tmp_path)
+    report.main([str(path)], out=str(tmp_path / "out"))
+    folder = tmp_path / "out" / (path.name[:-4] + "_eye")
+    text = (folder / "measures.csv").read_text(encoding="utf-8-sig")
+    assert "карта:" not in text and "нажатий на полке" in text

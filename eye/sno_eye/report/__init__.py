@@ -62,6 +62,7 @@ DEFAULTS = {
     "outside_deg": 2.0,
     "sample_cap_ms": 100,
     "map_group_pad_deg": 1.5,
+    "press_gap_ms": 500,
 }
 
 VERSIONS = {"raw": "как записано (raw)",
@@ -380,8 +381,14 @@ def _summary_rows(result: dict) -> list[list]:
     for name, prefix in (("visit_summary", ""),
                          ("galaxy_summary", "карта: ")):
         s = result.get(name) or {}
+        if prefix and not s.get("visits"):
+            # Походов на карту не было (ветвь I) — строк карты нет.
+            continue
         for key, words in SUMMARY_WORDS:
             if prefix:
+                if key == "books":
+                    # На карте книг полки нет — есть звёзды.
+                    continue
                 words = words.replace("на полку", "на карту")
             if key in s:
                 rows.append([prefix + words, s[key], s[key]])

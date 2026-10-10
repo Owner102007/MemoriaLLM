@@ -21,15 +21,26 @@
 * сколько до нажатия взгляд уже был в нужной категории: от начала
   последнего непрерывного захода фиксаций в неё до нажатия, но не
   раньше прежнего нажатия того же похода и не раньше начала похода.
-  Последняя фиксация до нажатия не в нужной категории — пусто.
+  Заход рвут фиксация вне нужной категории, фиксация на отрезке
+  движения раскладки вне неё и просвет между фиксациями дольше
+  `press_gap_ms` (дольше моргания: лицо пропало, взгляд ушёл с экрана);
+  последняя фиксация до нажатия не в нужной категории или кончилась
+  раньше чем за `press_gap_ms` до него — пусто.
 
-Без взгляда, без кадров раскладки, после смены окна и без годных кадров
-в окне ячейки взгляда пусты, а не нули.
+У строки найденного (поиск по названию) категория под взглядом — та,
+что стоит под названием в строке: поиск по названию — не полка, и
+шагам похода по полке категория строки не засчитывается, а нажатию —
+засчитывается.
+
+Без взгляда, без кадров раскладки, после смены окна, без годных кадров
+в окне и без строки нажатия в потоке ввода ячейки взгляда пусты, а не
+нули: миг события открытия книги — уже после открытия.
 """
 
 from __future__ import annotations
 
 import bisect
+import math
 import statistics
 
 from .idt import Fixation
@@ -55,7 +66,8 @@ def _int(value) -> int | None:
 def _num(value) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    value = float(value)
+    return value if math.isfinite(value) else None
 
 
 def _pressed(record) -> list[dict]:
@@ -86,12 +98,15 @@ def _pressed(record) -> list[dict]:
         t = _num(row.get("t")) if row else None
         x = _num(row.get("x")) if row else None
         y = _num(row.get("y")) if row else None
-        if t is None:
-            # Нажатия в потоке ввода нет — миг события, места нет.
-            t, x, y = float(event["t"]), None, None
+        known = t is not None
+        if not known:
+            # Нажатия в потоке ввода нет — миг события только для
+            # порядка: взгляд по нему не берётся.
+            t, x, y = _num(event.get("t")), None, None
+            if t is None:
+                continue
         out.append({"kind": kind, "what": what, "book": book, "t": t,
-                    "x": x, "y": y, "input": n,
-                    "dev": row.get("dev") if row else None})
+                    "x": x, "y": y, "input": n, "known": known})
     out.sort(key=lambda p: p["t"])
     return out
 
@@ -104,20 +119,24 @@ def _visit_of(timeline: Timeline, t: float, screen: str):
 
 
 def _lead(t: float, since: float, target: str, fixes: list[Fixation],
-          zones: list[dict], strict: bool) -> float | None:
+          zones: list[dict], strict: bool, gap: float) -> float | None:
     """Сколько до нажатия в миг [t] взгляд уже был в категории [target]
-    — по фиксациям не раньше [since]."""
+    — непрерывным заходом фиксаций не раньше [since]; просвет дольше
+    [gap] заход рвёт."""
     first = None
+    edge = t
     for fix, z in sorted(zip(fixes, zones), key=lambda p: -p[0].start):
-        if fix.start >= t or fix.moving:
+        if fix.start >= t:
             continue
-        if fix.end < since:
+        if fix.end < since or edge - fix.end > gap:
             break
         inside = z.get("category") == target and \
             (not strict or z.get("category_sure"))
         if not inside:
             break
-        first = max(fix.start, since)
+        if not fix.moving:
+            first = max(fix.start, since)
+        edge = fix.start
     return None if first is None else t - first
 
 
@@ -159,8 +178,8 @@ def presses(record, timeline: Timeline, samples: list[Sample] | None,
         if key in last:
             since = max(since, last[key])
         last[key] = t
-        if not gaze or not zoned or zones is None or \
-                (changed is not None and t >= changed):
+        if not gaze or not zoned or zones is None or not press["known"] \
+                or (changed is not None and t >= changed):
             continue
         i = bisect.bisect_left(times, t - before)
         j = bisect.bisect_right(times, t - after)
@@ -171,24 +190,34 @@ def presses(record, timeline: Timeline, samples: list[Sample] | None,
         gy = statistics.median(s.y for s in window)
         margin = screen.px_for_deg(margin_deg(t, timeline))
         z = zones.classify(t - (before + after) / 2, gx, gy, margin)
+        category = z.get("category")
+        sure = z.get("category_sure")
+        book = z.get("book")
+        info = z.get("info") or {}
+        if z.get("zone") == "shelf_book" and info.get("in") == "results":
+            # Строка найденного: категория — под названием в строке.
+            category = info.get("category") \
+                if isinstance(info.get("category"), str) else None
+            sure = bool(z.get("sure")) and category is not None
+            book = z.get("id") or None
         row.update({
             "zone": z.get("zone"), "bucket": z.get("bucket"),
-            "category": z.get("category"),
-            "category_sure": z.get("category_sure"),
-            "star": z.get("mark"), "shelf_book": z.get("book"),
+            "category": category, "category_sure": sure,
+            "star": z.get("mark"), "shelf_book": book,
             "gaze_x": gx, "gaze_y": gy,
         })
         if press["x"] is not None and press["y"] is not None:
             row["distance_deg"] = screen.angle_deg(
                 (gx, gy), (press["x"], press["y"]))
         if target is not None:
-            soft = z.get("category") == target
+            soft = category == target
             row["in_target_soft"] = soft
-            row["in_target_strict"] = soft and bool(z.get("category_sure"))
+            row["in_target_strict"] = soft and bool(sure)
+            gap = float(cfg["press_gap_ms"])
             row["lead_ms_soft"] = _lead(t, since, target, fixes, found,
-                                        strict=False)
+                                        strict=False, gap=gap)
             row["lead_ms_strict"] = _lead(t, since, target, fixes, found,
-                                          strict=True)
+                                          strict=True, gap=gap)
     return rows
 
 

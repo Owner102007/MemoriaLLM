@@ -82,8 +82,18 @@ def galaxy_regions() -> list[dict]:
     ]
 
 
+# Нажатия похода: (куда смотрит — подпись категории или звезда, какую
+# звезду жмёт).
+PLAN = (("label:Ангиология", "G4"), ("label:Математика", "M3"),
+        ("star:G2", "G2"))
+
+
 class MapScenario(rs.Scenario):
     """Поход на карту с нажатиями по звёздам, потом чтение."""
+
+    def __init__(self, *, plan=PLAN, **kw):
+        super().__init__(**kw)
+        self.plan = plan
 
     def build(self) -> "MapScenario":
         self.presses: list[dict] = []
@@ -100,24 +110,20 @@ class MapScenario(rs.Scenario):
                    {"from": "testing", "to": "galaxy"})
         self.frame(v0, "galaxy", galaxy_regions())
         t = v0 + 300
-        # 1–2: взгляд на подписи — нажатие звезды под ней, не глядя.
-        for category, star in (("Ангиология", "G4"),
-                               ("Математика", "M3")):
-            lx, ly = label_centre(category)
-            self.look(t, t + 1350, lx, ly)
+        # Взгляд на подпись — нажатие звезды под ней, не глядя на неё;
+        # взгляд на звезду — нажатие её же.
+        for where, star in self.plan:
+            kind, name = where.split(":")
+            if kind == "label":
+                gx, gy = label_centre(name)
+            else:
+                _, gx, gy, _ = STARS[name]
+            self.look(t, t + 1350, gx, gy)
             self.star(t + 1300, star, look=False)
             self.presses.append({"t": t + 1300, "star": star,
-                                 "category": category, "gaze": (lx, ly),
-                                 "since": t})
+                                 "category": STARS[star][0],
+                                 "gaze": (gx, gy), "since": t})
             t += 1700
-        # 3: взгляд прямо на звезду.
-        _, sx, sy, _ = STARS["G2"]
-        self.look(t, t + 1350, sx, sy)
-        self.star(t + 1300, "G2", look=False)
-        self.presses.append({"t": t + 1300, "star": "G2",
-                             "category": "Ангиология", "gaze": (sx, sy),
-                             "since": t})
-        t += 1700
         # 4: «Читать» в карточке — книга «Ангиологии».
         n = self.click(t, 1100, 700, "galaxy", "nav.screen",
                        {"from": "galaxy", "to": "reader"})
