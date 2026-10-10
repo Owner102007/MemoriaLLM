@@ -217,9 +217,10 @@ def test_sno_alg_res_01_repeat_by_clock_anchor_and_copy(tmp_path):
     assert entries[2]["duplicate"].startswith("повтор")   # не завершена
     assert entries[3]["in_stats"]
     assert entries[4]["duplicate"].startswith("копия")
-    # Проверочный прогон берёт повторы, но не копии.
+    # Проверочный прогон тоже: один человек — одна строка.
     compare.admit(entries, cfg(), True, None)
-    assert entries[1]["in_stats"] and not entries[4]["in_stats"]
+    assert entries[0]["in_stats"]
+    assert not entries[1]["in_stats"] and not entries[4]["in_stats"]
 
 
 def test_sno_alg_res_01_short_study_is_out(tmp_path):
@@ -273,3 +274,90 @@ def test_sno_alg_res_01_bad_archive_is_named_not_a_crash(tmp_path):
     bad = [e for e in run["entries"] if e["status"] != "ok"]
     assert len(bad) == 1 and "не годен" in bad[0]["reason"]
     assert not bad[0]["in_stats"]
+
+
+@pytest.mark.parametrize("lie,expected", [
+    ((7, 1), honesty.UNKNOWN), ((2, 1), honesty.YELLOW),
+    ((1, 7), honesty.RED)])
+def test_sno_alg_res_01_closed_test_without_failures_is_unknown(
+        tmp_path, lie, expected):
+    """«Тест пройти нельзя» после ответов на шкалу лжи: без провалов —
+    ⚪, а не 🟢; провал считается, как всегда (АК3). Шкалы
+    незавершённой части пустые (SNO-ALG-RES-02)."""
+    ss.LIE["closed"] = lie
+    try:
+        p = ss.Person(code="12120001", branch="I", colour="closed",
+                      test="closed")
+        b = ss.Builder(p).build()
+        files = b.files()
+        name = next(n for n in files if n.startswith("clt/sno"))
+        answers = json.loads(files[name])
+        full = b.answers()
+        answers["answers"] = full["answers"][:-1]   # 19 из 20
+        files[name] = json.dumps(answers).encode()
+        path = tmp_path / ss.archive_name(p)
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("manifest.json", json.dumps(b.manifest(files)))
+            for n, data in files.items():
+                z.writestr(n, data)
+    finally:
+        ss.LIE.pop("closed")
+    entries = [load(path)]
+    compare.admit(entries, cfg(), False, None)
+    assert entries[0]["colour"] == expected
+    assert entries[0]["test"]["measures"]["clt.ecl"] is None
+    assert entries[0]["test"]["measures"]["clt.tlx.mental"] is None
+
+
+def test_sno_alg_res_01_zero_weight_is_named(tmp_path):
+    p = ss.Person(code="12120002", branch="I", colour="yellow")
+    entries = [load(ss.write(tmp_path, p))]
+    compare.admit(entries, cfg(yellow_weight=0), False, None)
+    assert not entries[0]["in_stats"]
+    assert "вес цвета" in entries[0]["out"][0]
+
+
+def test_sno_alg_res_01_pc_without_camera_name_joins_its_pc(tmp_path):
+    """Сессия ПК без места записи не знает камеры: та же машина — тот же
+    слой, если камера у неё одна."""
+    with_cam = ss.Person(code="12120003", branch="I", device="pc0001",
+                         camera="Chicony USB2.0")
+    no_cam = ss.Person(code="12120004", branch="II", device="pc0001",
+                       gaze=False, seed=2)
+    b = ss.Builder(no_cam).build()
+    files = b.files()
+    manifest = b.manifest(files)
+    manifest["eye_tracker"] = {"present": False, "configured": False,
+                               "reason": "not_configured"}
+    path = tmp_path / ss.archive_name(no_cam)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        for n, data in files.items():
+            z.writestr(n, data)
+    entries = [load(ss.write(tmp_path, with_cam)), load(path)]
+    assert entries[1]["stratum"] == "pc0001"
+    collect.fill_cameras(entries)
+    assert entries[1]["stratum"] == entries[0]["stratum"] == \
+        "pc0001 · Chicony USB2.0"
+
+
+def test_sno_alg_res_02_study_length_from_the_app(tmp_path):
+    """Длина изучения — `recording.stop` → `data.study_ms`, а не разность
+    часов журнала: остановка, пришедшая на секунду позже, изучение не
+    удлиняет."""
+    p = ss.Person(code="12120005", branch="I", study_min=40)
+    b = ss.Builder(p).build()
+    for e in b.events:
+        if e["type"] == "recording.stop":
+            e["t"] += 916
+            e["data"]["duration_ms"] += 916
+    files = b.files()
+    b.end += 916
+    path = tmp_path / ss.archive_name(p)
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("manifest.json", json.dumps(b.manifest(files)))
+        for n, data in files.items():
+            z.writestr(n, data)
+    e = load(path)
+    assert e["study_s"] == pytest.approx(2400)
+    assert e["actions"]["actions.study_min"] == pytest.approx(40)

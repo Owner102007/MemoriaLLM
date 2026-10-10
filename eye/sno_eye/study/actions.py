@@ -237,6 +237,20 @@ def _median(values: list[float]) -> float | None:
     return statistics.median(values) if values else None
 
 
+def study_ms(record: Record, line: Timeline) -> float:
+    """Длина изучения: `recording.stop` → `data.study_ms` — её считает
+    приложение по большему из двух счётов (SNO-ALG-RES-02, «изучение,
+    мин»); нет — по журналу, от начала изучения до остановки."""
+    for e in record.events:
+        if e["type"] == "recording.stop":
+            value = _dict(e.get("data")).get("study_ms")
+            if isinstance(value, (int, float)) and \
+                    not isinstance(value, bool) and value > 0:
+                return float(value)
+            break
+    return line.study_ms
+
+
 def measures(record: Record, line: Timeline, found: list[Trip],
              branch: str | None, via_map: tuple[float, float]) -> dict:
     """Меры действий участника за время изучения.
@@ -246,7 +260,7 @@ def measures(record: Record, line: Timeline, found: list[Trip],
     lo, hi = line.study_start, line.study_end
     events = [e for e in record.events if e.get("phase") != "post"
               and lo <= float(e["t"]) <= hi]
-    minutes = line.study_ms / 60_000
+    minutes = study_ms(record, line) / 60_000
     per_min = (lambda n: n / minutes) if minutes > 0 else (lambda n: None)
     opens = [e for e in events if e["type"] == "book.open"]
     via = [_dict(e.get("data")).get("via") for e in opens]
@@ -292,7 +306,9 @@ def measures(record: Record, line: Timeline, found: list[Trip],
     out = {
         "actions.study_min": minutes,
         "actions.opens_per_min": per_min(n_open),
-        "actions.books": len(seen),
+        # Длина изучения у участников разная — счёт в минуту и долями,
+        # а не суммой (SNO-ALG-RES-01, шаг 6).
+        "actions.books_per_min": per_min(len(seen)),
         "actions.repeat_share": repeats / n_open if n_open else None,
         "actions.via_shelf": via.count("shelf") / n_open if n_open else None,
         "actions.via_found": (via.count("shelf_search") / n_open
@@ -318,14 +334,16 @@ def measures(record: Record, line: Timeline, found: list[Trip],
         "actions.pages_per_min": per_min(
             sum(1 for e in events if e["type"] == "page.shown")),
         "actions.read_per_book": _median(reads),
-        "actions.away_count": len(away),
-        "actions.away_s": sum(b - a for a, b in away) / 1000,
+        "actions.away_per_min": per_min(len(away)),
+        "actions.away_share": (sum(b - a for a, b in away) / line.study_ms
+                               if line.study_ms > 0 else None),
         "actions.taps_per_min": per_min(len(taps)),
         "actions.empty_tap_share": empty / len(taps) if taps else None,
     }
     info = {
         "trips": len(found), "complete_trips": len(complete),
-        "opens": n_open,
+        "opens": n_open, "books": len(seen), "away_count": len(away),
+        "away_s": sum(b - a for a, b in away) / 1000,
         "search_mode": search_mode(via, branch, via_map),
         "taps": len(taps), "empty_taps": empty,
     }

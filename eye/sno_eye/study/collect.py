@@ -136,8 +136,10 @@ def stratum(passport: dict) -> str:
     """Слой сравнения — ПК: код устройства вместе с камерой. Телефоны —
     один слой: у каждого свой код, а слой из одного участника ничего не
     сравнивает."""
-    if passport.get("platform") != "ПК":
+    if passport.get("platform") == "телефон":
         return PHONE_STRATUM
+    if passport.get("platform") != "ПК":
+        return f"{passport.get('device') or '?'} · платформа неизвестна"
     camera = passport.get("camera")
     device = passport.get("device") or "?"
     return f"{device} · {camera}" if camera else device
@@ -228,7 +230,7 @@ def load(path: Path, limits: dict, cfg: dict) -> dict:
         line = tl.build(record)
         info = passport(record)
         entry.update(info)
-        entry["study_s"] = line.study_ms / 1000
+        entry["study_s"] = actions.study_ms(record, line) / 1000
         entry["etalon"], entry["etalon_reasons"] = etalon(record)
         entry["gaze"] = gaze(record, limits)
         entry["test"] = clt.read(files, record.manifest, record.events,
@@ -262,6 +264,24 @@ def _trip_row(trip: actions.Trip, line: tl.Timeline,
         "first_time": trip.first_time,
         "screens": " → ".join(trip.screens),
     }
+
+
+def fill_cameras(entries: list[dict]) -> None:
+    """Сессия ПК без места записи (айтрекер не настроен) не знает
+    камеры. Если у того же устройства в наборе одна камера — это она:
+    иначе один ПК распался бы на два слоя."""
+    known: dict[str, set] = {}
+    for e in entries:
+        if e.get("platform") == "ПК" and e.get("camera"):
+            known.setdefault(e.get("device"), set()).add(e["camera"])
+    for e in entries:
+        if e["status"] != "ok" or e.get("platform") != "ПК" or \
+                e.get("camera"):
+            continue
+        cameras = known.get(e.get("device")) or set()
+        if len(cameras) == 1:
+            e["camera"] = next(iter(cameras))
+            e["stratum"] = stratum(e)
 
 
 def mark_repeats(entries: list[dict]) -> None:

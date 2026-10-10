@@ -169,6 +169,7 @@ def analyse(paths: list[str], *, series: str | None = None,
         if progress:
             progress(i, len(archives), path)
         entries.append(collect.load(path, limits, cfg))
+    collect.fill_cameras(entries)
     collect.mark_repeats(entries)
     compare.unify_scenarios(entries)
     compare.admit(entries, cfg, no_filter, series)

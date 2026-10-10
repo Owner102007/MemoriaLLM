@@ -158,6 +158,25 @@ def _quality(run: dict, folder: Path, figures: dict) -> str:
                      str(sum(1 for e in present if e["gaze"]["included"])),
                      num(statistics.median(starts) if starts else None, 1),
                      num(statistics.median(ends) if ends else None, 1)])
+    for b in ("I", "II"):
+        part = [e for e in run["entries"] if e["status"] == "ok"
+                and e.get("branch") == b and e["gaze"]["present"]]
+        if not part:
+            continue
+        starts = [e["gaze"]["start_deg"] for e in part
+                  if e["gaze"]["start_deg"] is not None]
+        ends = [e["gaze"]["end_deg"] for e in part
+                if e["gaze"]["end_deg"] is not None]
+        prec = [e["gaze"]["precision_deg"] for e in part
+                if isinstance(e["gaze"].get("precision_deg"), (int, float))]
+        rows.append([f"<b>вся ветвь {b}</b>", str(len(part)), b,
+                     str(len(part)),
+                     str(sum(1 for e in part if e["gaze"]["included"])),
+                     num(statistics.median(starts) if starts else None, 1),
+                     num(statistics.median(ends) if ends else None, 1)
+                     + (f" <small>прецизионность "
+                        f"{num(statistics.median(prec), 1)}</small>"
+                        if prec else "")])
     return (_check_banner(run) +
             "<p>Взгляд сессии входит в анализ, если средняя точность "
             "проверок в начале и в конце не хуже "

@@ -57,11 +57,14 @@ def flagged(value, rule: dict | None) -> bool | None:
     return True
 
 
-def colour(flags: dict) -> tuple[str, str]:
+def colour(flags: dict, complete: bool = True) -> tuple[str, str]:
     """Цвет по отметкам двух пунктов шкалы лжи.
 
     [flags] — пункт → True (провален), False (отвечен, не провален),
-    None (без ответа или теста нет).
+    None (без ответа или теста нет). [complete] — итоговая часть теста
+    пройдена: тест не пройден или закрыт выходом организатора «Тест
+    пройти нельзя» — без провалов это ⚪, а не 🟢 (SNO-ALG-RES-01, строка
+    ⚪); провал при этом считается, как всегда (АК3).
 
     | пункты                                        | цвет |
     |-----------------------------------------------|------|
@@ -77,6 +80,8 @@ def colour(flags: dict) -> tuple[str, str]:
         return RED, "провалены оба пункта шкалы лжи"
     if len(failed) == 1:
         return YELLOW, f"провален пункт {failed[0]}"
+    if not complete:
+        return UNKNOWN, "тест нагрузки не пройден до конца"
     if all(v is False for v in values):
         return GREEN, "оба пункта шкалы лжи не провалены"
     missing = [item for item, v in zip(LIE_ITEMS, values) if v is None]

@@ -76,8 +76,8 @@ MEASURES = (
             "ориентировался лучше"),
     Measure("actions.opens_per_min", "Открытий книг в минуту", "Б",
             "в мин", "чаще открывали книги"),
-    Measure("actions.books", "Разных книг открыто", "Б", "книг",
-            "больше разных книг"),
+    Measure("actions.books_per_min", "Новых книг в минуту", "Б", "в мин",
+            "быстрее открывали новые книги"),
     Measure("actions.repeat_share", "Доля повторных открытий", "Б", "доля",
             "чаще возвращались к открытым"),
     Measure("actions.via_map", "Доля открытий через карту", "Б", "доля",
@@ -100,10 +100,10 @@ MEASURES = (
             "в мин", "быстрее листали"),
     Measure("actions.read_per_book", "Чтение на книгу, медиана", "Б", "с",
             "дольше читали книгу"),
-    Measure("actions.away_count", "Отлучек", "Б", "раз",
+    Measure("actions.away_per_min", "Отлучек в минуту", "Б", "в мин",
             "чаще уходили из приложения"),
-    Measure("actions.away_s", "Отлучки, всего", "Б", "с",
-            "дольше вне приложения"),
+    Measure("actions.away_share", "Отлучки, доля времени изучения", "Б",
+            "доля", "дольше вне приложения"),
     Measure("actions.taps_per_min", "Касаний в минуту", "Б", "в мин",
             "больше касаний"),
     Measure("actions.empty_tap_share", "Доля пустых касаний", "Б", "доля",
@@ -154,8 +154,10 @@ def hard_out(e: dict, cfg: dict, no_filter: bool,
         return [e.get("reason") or "архив не годен"]
     if series and e.get("series") != series:
         out.append(f"другая серия: {e.get('series') or 'проверочная'}")
+    # Копия и повтор — вне и в проверочном прогоне: один человек — одна
+    # строка.
     duplicate = e.get("duplicate")
-    if duplicate and (not no_filter or duplicate.startswith("копия")):
+    if duplicate:
         out.append(duplicate)
     if no_filter:
         return out
@@ -163,8 +165,8 @@ def hard_out(e: dict, cfg: dict, no_filter: bool,
         out.append("проверочная сборка, а не сборка исследования")
     minimum = float(cfg["min_study_min"])
     if (e.get("study_s") or 0) < minimum * 60:
-        out.append(f"изучение {e['study_s'] / 60:.0f} мин — короче "
-                   f"{minimum:.0f} мин".replace(".", ","))
+        out.append(f"изучение {e['study_s'] / 60:.1f} мин — короче "
+                   f"{minimum:g} мин".replace(".", ","))
     return out
 
 
@@ -183,7 +185,8 @@ def admit(entries: list[dict], cfg: dict, no_filter: bool,
         if e["status"] == "ok":
             flags = {item: e["test"]["lie"].get(item, {}).get("flag")
                      for item in honesty.LIE_ITEMS}
-            colour, why = honesty.colour(flags)
+            colour, why = honesty.colour(
+                flags, complete=e["test"]["state"] == "пройден")
         else:
             colour, why = None, None
         e["colour"], e["colour_reason"] = colour, why
@@ -195,6 +198,9 @@ def admit(entries: list[dict], cfg: dict, no_filter: bool,
             if colour == honesty.RED:
                 out.append("🔴 провалены оба пункта шкалы лжи — участник "
                            "целиком вне статистики")
+            elif colour and weight <= 0:
+                out.append(f"вес цвета «{honesty.SHORT[colour]}» — 0 "
+                           "(study.yellow_weight или study.unknown_weight)")
             if e["etalon_out"]:
                 out.append(e["etalon_out"])
             if out:
@@ -358,8 +364,10 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
                 row["points"] = rows
             part.append(row)
         # Поправка Холма внутри семьи. Главная семья — с недостающей
-        # мерой как p = 1 (`H_t` до шага 37): «значимо» тогда не
-        # отменится, когда она появится.
+        # мерой как p = 1: `H_t` до шага 37 и любая главная мера, у
+        # которой мало данных. Так поправка остаётся на все три
+        # названные меры (АК4), и «значимо» не отменится, когда
+        # недостающая появится. Выбор наш: строже, чем выбросить её.
         for family in FAMILIES:
             members = [r for r in part if r["family"] == family]
             if not members:

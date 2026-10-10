@@ -120,6 +120,10 @@ def scales(answers: dict, items: dict) -> dict:
     ответов, без маркеров); меньше половины ответов — шкала пустая
     (`mean` None)."""
     order = [i for i in answers.get("order") or [] if isinstance(i, str)]
+    if not order:
+        # Без показанного порядка — пункты сценария: правило половины
+        # всё равно знает, сколько пунктов в группе.
+        order = list(items)
     checks = {i for i in answers.get("checks") or [] if isinstance(i, str)}
     shown: dict[str, int] = {}
     for item in order:
@@ -221,8 +225,12 @@ def read(files: dict, manifest: dict, events: list[dict],
         })
     result["rt_median_ms"] = statistics.median(rts) if rts else None
 
-    # Шкалы: свои — для сверки; в сравнение — числа приложения.
+    # Шкалы: свои — для сверки; в сравнение — числа приложения. Часть
+    # не завершена (не пройдена, закрыта организатором) — шкалы пустые
+    # (SNO-ALG-RES-02, краевые случаи).
     own = scales(answers, items)
+    if state != DONE:
+        own = {g: dict(v, mean=None) for g, v in own.items()}
     app = _dict(_dict(_dict(scores).get("final")).get("scores"))
     for key, group, _ in SCALES:
         mine = own.get(group, {})
@@ -231,7 +239,7 @@ def read(files: dict, manifest: dict, events: list[dict],
         if mine.get("mean") is None:
             # Меньше половины ответов — шкала пустая, даже если
             # приложение дало число.
-            if theirs is not None and mine.get("n"):
+            if theirs is not None and mine.get("n") and state == DONE:
                 notes.append(f"шкала {group}: ответов {mine['n']} из "
                              f"{mine['of']} — меньше половины, шкала пустая")
             value = None
@@ -242,8 +250,8 @@ def read(files: dict, manifest: dict, events: list[dict],
         result["measures"][key] = value
     for key, item, _ in TLX_ITEMS:
         answer = by_item.get(item)
-        result["measures"][key] = None if answer is None else \
-            _num(answer.get("value"))
+        result["measures"][key] = None if answer is None or state != DONE \
+            else _num(answer.get("value"))
 
     # Шкала лжи: отметка приложения главнее пересчёта.
     checks = _dict(_dict(scores).get("checks"))

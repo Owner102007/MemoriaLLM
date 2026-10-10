@@ -157,7 +157,8 @@ def test_sno_alg_res_02_last_trip_with_search():
     assert m["actions.last_search_trip"] == pytest.approx(2 / 4)
     assert m["actions.search_trip_share"] == pytest.approx(2 / 4)
     assert m["actions.repeat_share"] == pytest.approx(1 / 4)
-    assert m["actions.books"] == 3
+    # Счёт — в минуту изучения (`data.study_ms`), а не суммой.
+    assert m["actions.books_per_min"] == pytest.approx(3 / (400_000 / 60_000))
     assert m["actions.via_found"] == pytest.approx(0.5)
     # После последнего закрытия книги поход не доведён: он есть, но в
     # медиану времени до выбора не идёт.
