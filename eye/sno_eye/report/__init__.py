@@ -143,9 +143,11 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
     raw = versions.raw_samples(record, line.latency_ms)
     pairs, dropped = versions.implicit_pairs(record, raw, screen, line, cfg)
     end = versions.end_correction(line, screen)
-    drift = versions.build_drift(pairs, line, end, cfg)
+    start = versions.start_correction(line, screen)
+    drift = versions.build_drift(pairs, line, end, cfg, start=start)
     fixed = versions.apply(raw, drift)
-    residual = versions.residuals(pairs, line, end, screen, cfg)
+    residual = versions.residuals(pairs, line, end, screen, cfg,
+                                  start=start)
     samples = fixed if cfg["version"] == "drift" else raw
 
     precision = line.precision_deg
@@ -153,13 +155,21 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
                   float(cfg["idt_precision_k"]) * (precision or 0.0))
     idt_px = screen.px_for_deg(idt_deg)
     spans = idt.moving_spans(record.frames)
-    fixes = idt.fixations(samples, idt_px, spans, cfg)
+    fixes = idt.fixations(samples, idt_px, spans, cfg,
+                          [float(f["t"]) for f in record.frames])
     outside_px = screen.px_for_deg(float(cfg["outside_deg"]))
     zones = zn.Zones(record.frames, outside_px)
     found = []
     for fix in fixes:
         margin = screen.px_for_deg(measures.margin_deg(fix.start, line))
-        if result["layout_known"]:
+        changed = line.window_changed is not None and \
+            fix.start >= line.window_changed
+        if changed:
+            # Окно сменили посреди изучения: модель взгляда учили на
+            # другом окне — зон нет.
+            z = {"zone": "unknown", "bucket": "unknown", "sure": False,
+                 "key": "unknown", "near": []}
+        elif result["layout_known"]:
             z = zones.classify(fix.start, fix.x, fix.y, margin)
         else:
             off = fix.x < -outside_px or fix.y < -outside_px or \
@@ -173,10 +183,11 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
         float(cfg["sample_cap_ms"]), result["layout_known"])
     result["shares"] = measures.shares(labels, line.study_ms)
     result["minutes"] = measures.per_minute(labels, line)
-    rows = [measures.visit_measures(v, fixes, found, True)
+    zoned = result["layout_known"]
+    rows = [measures.visit_measures(v, fixes, found, zoned)
             for v in line.visits]
     result["visits"] = rows
-    result["visit_summary"] = measures.visit_summary(rows, True)
+    result["visit_summary"] = measures.visit_summary(rows, zoned)
 
     for k, (fix, z) in enumerate(zip(fixes, found)):
         rx = _median([raw[i].x for i in fix.members])
@@ -200,6 +211,9 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
     if line.end_deg is None:
         notes.append("проверки в конце нет — запас зон по точности "
                      "начала")
+    if not line.study_marked:
+        notes.append("отметки начала изучения в журнале нет — начало "
+                     "взято из сведений записи")
     if not line.latency_known:
         notes.append("задержка камеры не найдена — взгляд не сдвинут")
     if not screen.known:
@@ -337,9 +351,10 @@ def write_outputs(result: dict, folder: Path) -> None:
         rows.append([f"доля: {name}", strict.get(key), soft.get(key)])
     rows += _summary_rows(result)
     for minute in result.get("minutes") or []:
+        # По минутам считается только мягко.
         for key, name, _ in measures.MINUTE_GROUPS:
             rows.append([f"минута {minute['minute']}: {name}",
-                         minute.get(key), minute.get(key)])
+                         None, minute.get(key)])
     _write(folder / "measures.csv", ["мера", "строго", "мягко"], rows)
     quality = dict(result.get("quality") or {})
     quality.update({"archive": result["archive"],
@@ -529,8 +544,9 @@ def run(path: Path, cfg: dict, limits: dict, out: str | None,
         try:
             write_outputs(result, folder)
             result["folder"] = str(folder)
-        except OSError as e:
-            result["notes"].append(f"файлы разбора не записались: {e}")
+        except Exception as e:  # noqa: BLE001
+            # Пачка не роняется: итог есть, файлов нет — так и сказано.
+            result["notes"].append(f"файлы разбора не записались: {e!r}")
     return result
 
 

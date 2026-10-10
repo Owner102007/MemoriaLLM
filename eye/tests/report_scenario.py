@@ -51,7 +51,7 @@ def centre(book: str) -> tuple[float, float]:
 def shelf_regions(offset: float = 0.0) -> list[dict]:
     regions = [
         {"kind": "screen", "id": "shelf", "rect": [0, 0, W, H], "z": 0,
-         "info": {"offset": offset}},
+         "info": {"scroll": offset}},
         {"kind": "nav", "id": "", "rect": [0, 0, W, 56], "z": 1},
     ]
     z = 2
@@ -104,7 +104,8 @@ class Scenario:
     """Запись по сценарию: истинный путь взгляда и действия."""
 
     def __init__(self, *, study_ms: int = 600_000, seed: int = 7,
-                 noise: float = 4.0, drift=DRIFT, latency: int = LATENCY):
+                 noise: float = 4.0, drift=DRIFT, latency: int = LATENCY,
+                 pointer: str = "mouse"):
         self.end = S + study_ms
         self.rng = random.Random(seed)
         self.noise = noise
@@ -116,6 +117,7 @@ class Scenario:
         self.looks: list[tuple] = []        # (a, b, x, y) или без лица
         self.answer: dict = {"visits": [], "reading": [], "moving": []}
         self.book: str | None = None
+        self.pointer = pointer
 
     # --- действия ----------------------------------------------------
     def event(self, t, kind, screen, data=None, input=None, phase=None):
@@ -159,7 +161,7 @@ class Scenario:
     def click(self, t, x, y, screen, kind, data=None, after=None):
         """Смотрит на цель 400 мс и нажимает её мышью."""
         self.look(t - 400, t + 50, x, y)
-        n = self.tap(t, x, y, screen)
+        n = self.tap(t, x, y, screen, dev=self.pointer)
         self.event(t, kind, screen, data, input=n)
         return n
 

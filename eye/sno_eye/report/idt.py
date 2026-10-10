@@ -13,6 +13,10 @@
   `moving: true` до следующего устоявшегося) режут фиксацию; фиксация,
   которая начинается на таком отрезке, помечена `moving` и в меры зон
   не идёт.
+* **Каждый кадр раскладки режет фиксацию**: кадр пишется только при
+  изменении, а мгновенная смена (перелистывание, щелчок колеса) даёт
+  кадр «в движении» и устоявшийся с одним и тем же `t` — отрезка у неё
+  нет, но то, что под взглядом, сменилось.
 """
 
 from __future__ import annotations
@@ -68,12 +72,17 @@ def _in_spans(spans: list[tuple[float, float]], starts: list[float],
     return i >= 0 and spans[i][0] <= t < spans[i][1]
 
 
-def _runs(samples: list[Sample], spans: list[tuple[float, float]],
+def _cuts(spans: list[tuple[float, float]],
+          times: list[float] | None) -> list[float]:
+    found = {t for span in spans for t in span if t != float("inf")}
+    found.update(times or [])
+    return sorted(found)
+
+
+def _runs(samples: list[Sample], cuts: list[float],
           bridge_ms: float) -> list[list[int]]:
-    """Ряды годных кадров без разрывов длиннее [bridge_ms] и без границ
-    отрезков движения внутри."""
-    cuts = sorted({t for span in spans for t in span
-                   if t != float("inf")})
+    """Ряды годных кадров без разрывов длиннее [bridge_ms] и без смены
+    раскладки внутри."""
     runs: list[list[int]] = []
     run: list[int] = []
     last_t = None
@@ -116,12 +125,15 @@ def period_of(samples: list[Sample]) -> float:
 
 
 def fixations(samples: list[Sample], threshold_px: float,
-              spans: list[tuple[float, float]], cfg: dict) -> list[Fixation]:
-    """Фиксации ряда [samples] — по порогу разброса [threshold_px]."""
+              spans: list[tuple[float, float]], cfg: dict,
+              frame_times: list[float] | None = None) -> list[Fixation]:
+    """Фиксации ряда [samples] — по порогу разброса [threshold_px];
+    [frame_times] — миги кадров раскладки, каждый режет фиксацию."""
     min_ms = float(cfg["min_fix_ms"])
     period = period_of(samples)
+    cuts = _cuts(spans, frame_times)
     found: list[Fixation] = []
-    for run in _runs(samples, spans, float(cfg["bridge_ms"])):
+    for run in _runs(samples, cuts, float(cfg["bridge_ms"])):
         start = 0
         while start < len(run):
             end = start
@@ -151,15 +163,13 @@ def fixations(samples: list[Sample], threshold_px: float,
     starts = [a for a, _ in spans]
     for fix in found:
         fix.moving = _in_spans(spans, starts, fix.start)
-    return _merge(samples, found, threshold_px, spans,
+    return _merge(samples, found, threshold_px, cuts,
                   float(cfg["merge_gap_ms"]), period)
 
 
 def _merge(samples: list[Sample], found: list[Fixation], threshold: float,
-           spans: list[tuple[float, float]], gap_ms: float,
+           cuts: list[float], gap_ms: float,
            period: float) -> list[Fixation]:
-    cuts = sorted({t for span in spans for t in span
-                   if t != float("inf")})
     out: list[Fixation] = []
     for fix in found:
         if out:

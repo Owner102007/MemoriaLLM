@@ -49,7 +49,7 @@ void main() {
         kind: LayoutKind.screen,
         id: 'shelf',
         rect: LayoutRect(0, 0, width, height),
-        info: <String, Object?>{'offset': 0},
+        info: <String, Object?>{'scroll': 0},
       ),
       const LayoutRegion(
         kind: LayoutKind.nav,
@@ -322,8 +322,7 @@ void main() {
         }
         fail('разбор ответил не JSON: $out ${result.stderr}');
       }
-      return (jsonDecode(out) as List<Object?>).single!
-          as Map<String, Object?>;
+      return (jsonDecode(out) as List<Object?>).single! as Map<String, Object?>;
     }
     if (Platform.environment['CI'] == 'true') {
       fail('в CI нет Python: «Разбор записи» не проверен');

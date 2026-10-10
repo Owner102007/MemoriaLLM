@@ -6,11 +6,12 @@
 
 **Запас** `m` — точность сессии в пикселях: точность проверки в начале,
 а после середины записи — линейно к точности проверки в конце.
-Фиксация **уверенно** в зоне, если все точки круга радиуса `m` вокруг
-неё — в той же зоне; **на границе** — если хоть одна в другой: рядом
-записываются соседние зоны. То же — на уровне категории полки и книги:
-категория крупнее книги, и фиксация бывает уверенно в категории, но
-на границе двух книг.
+Фиксация **уверенно** в зоне, если все точки двух кругов вокруг неё —
+радиуса `m` и `m/2` (второй ловит зону меньше запаса, например точку
+записи) — в той же зоне; **на границе** — если хоть одна в другой:
+рядом записываются соседние зоны. То же — на уровне категории полки,
+книги и звезды карты: категория крупнее книги, и фиксация бывает
+уверенно в категории, но на границе двух книг.
 
 **Вне экрана** — точка за окном дальше 2°. Ближе — у края: она
 относится к зоне у края и всегда «на границе».
@@ -53,8 +54,9 @@ BUCKET_NAMES = dict(BUCKETS)
 # Виды зон, которые принадлежат полке.
 SHELF_KINDS = ("shelf_category", "shelf_book")
 
-# Сколько точек на круге запаса.
+# Сколько точек на круге запаса и на круге половины запаса.
 RING = 12
+INNER = 6
 
 
 def bucket_of(hit: dict) -> str:
@@ -185,14 +187,20 @@ class Zones:
         near: set[str] = set()
         category_sure = category is not None
         book_sure = book is not None
-        for k in range(RING):
-            angle = 2 * math.pi * k / RING
-            px = x + margin_px * math.cos(angle)
-            py = y + margin_px * math.sin(angle)
+        mark = hit.get("mark")
+        mark_sure = mark is not None
+        ring = [(margin_px, 2 * math.pi * k / RING) for k in range(RING)]
+        ring += [(margin_px / 2, 2 * math.pi * (k + 0.5) / INNER)
+                 for k in range(INNER)]
+        for radius, angle in ring:
+            px = x + radius * math.cos(angle)
+            py = y + radius * math.sin(angle)
             other = self._locate(frame, px, py)
             other_key = key_of(other)
             if other_key != key:
                 near.add(other_key)
+            if mark is not None and other.get("mark") != mark:
+                mark_sure = False
             if category is not None or book is not None:
                 oc, ob = shelf_place(frame, px, py)
                 if oc != category:
@@ -207,7 +215,7 @@ class Zones:
             "near": sorted(near), "frame": frame.get("n"),
             "screen": frame.get("screen"), "category": category,
             "category_sure": category_sure, "book": book,
-            "book_sure": book_sure,
+            "book_sure": book_sure, "mark_sure": mark_sure,
         }
         for name in ("page", "x_pt", "y_pt", "dimmed", "info", "mark"):
             if name in hit:

@@ -27,6 +27,10 @@ from .archive import Record, _int, _num
 # Экраны, на которых участник ищет источник, и как их назвать.
 VISIT_SCREENS = {"shelf": "полка", "galaxy": "карта"}
 
+# Раздел полки для книг без категории (`lib/domain/library/shelf.dart`):
+# в снимке полки у них `category: null`, в кадрах — это название.
+UNCATEGORISED = "Без категории"
+
 # Сколько после ухода с полки может открываться книга, чтобы считаться
 # итогом похода: книга большая, движок занят — открытие идёт секундами.
 OPEN_WAIT_MS = 20_000
@@ -66,6 +70,8 @@ class Timeline:
     end_deg: float | None
     precision_deg: float | None
     end_shift_mm: tuple[float, float] | None
+    start_shift_mm: tuple[float, float] | None = None
+    study_marked: bool = True
     away: list[tuple[float, float, str]] = field(default_factory=list)
     window_changed: float | None = None
     screens: list[tuple[float, str]] = field(default_factory=list)
@@ -119,15 +125,31 @@ def _precision(record: Record) -> float | None:
     return None
 
 
+def _shift(value) -> tuple[float, float] | None:
+    if isinstance(value, list) and len(value) == 2:
+        x, y = _num(value[0]), _num(value[1])
+        if x is not None and y is not None:
+            return x, y
+    return None
+
+
 def _end_shift(record: Record) -> tuple[float, float] | None:
     """Общий сдвиг оценки на проверке в конце, мм (оценка минус точка),
     — по последней проверке спутника."""
     for check in reversed(record.checks):
-        shift = check.get("shift_mm")
-        if isinstance(shift, list) and len(shift) == 2:
-            x, y = _num(shift[0]), _num(shift[1])
-            if x is not None and y is not None:
-                return x, y
+        shift = _shift(check.get("shift_mm"))
+        if shift is not None:
+            return shift
+    return None
+
+
+def _start_shift(record: Record) -> tuple[float, float] | None:
+    """Общий сдвиг оценки на проверке сразу после калибровки, мм."""
+    for attempt in reversed(_dict(record.calibration).get("attempts") or []):
+        shift = _shift(_dict(_dict(attempt).get("validation"))
+                       .get("shift_mm"))
+        if shift is not None:
+            return shift
     return None
 
 
@@ -144,7 +166,7 @@ def _book_places(record: Record) -> tuple[dict, dict]:
         if isinstance(key, str):
             category = book.get("category")
             categories[key] = category if isinstance(category, str) \
-                else None
+                else UNCATEGORISED
             if isinstance(book.get("title"), str):
                 titles[key] = book["title"]
     for frame in record.frames:
@@ -154,9 +176,11 @@ def _book_places(record: Record) -> tuple[dict, dict]:
                 continue
             info = _dict(region.get("info"))
             key = region.get("id")
+            # Кадр — то, что участник видел на самом деле: он сильнее
+            # снимка полки на старте.
             if isinstance(key, str) and info.get("in") != "results" and \
                     isinstance(info.get("category"), str):
-                categories.setdefault(key, info["category"])
+                categories[key] = info["category"]
     return categories, titles
 
 
@@ -174,14 +198,18 @@ def build(record: Record) -> Timeline:
             gaze_expected = _dict(event.get("data")).get("gaze") is True
         elif kind == "recording.stop" and stop is None:
             stop = float(event["t"])
+    marked = start is not None
     if start is None:
-        start = 0.0
+        # Нет отметки начала изучения — по сведениям записи, а без них
+        # с начала записи.
+        start = _num(recording.get("study_t")) or 0.0
     if stop is None:
         duration = _num(recording.get("duration_ms"))
+        own = [float(e["t"]) for e in events if e.get("phase") != "post"]
         if duration is not None:
             stop = duration
         else:
-            stop = float(events[-1]["t"]) if events else start
+            stop = own[-1] if own else start
     latency, known = _latency(record)
     end_check = _dict(record.eye.get("end_check"))
     categories, titles = _book_places(record)
@@ -193,6 +221,7 @@ def build(record: Record) -> Timeline:
                        .get("accuracy_deg")),
         end_deg=_num(end_check.get("accuracy_deg")),
         precision_deg=_precision(record), end_shift_mm=_end_shift(record),
+        start_shift_mm=_start_shift(record), study_marked=marked,
         categories=categories, titles=titles)
 
     # Отлучки: `app.foreground` знает, сколько участника не было.
@@ -206,12 +235,20 @@ def build(record: Record) -> Timeline:
             away = _num(data.get("away_ms"))
             t = float(event["t"])
             begin = t - away if away is not None else left_at
+            if begin is not None and left_at is not None:
+                # Отлучку меряет больший из двух счётов; начало — не
+                # раньше ухода.
+                begin = max(begin, left_at)
             if begin is not None and t > begin:
                 timeline.away.append((begin, t, str(data.get("kind") or "")))
             left_at = None
         elif kind == "eye.window" and data.get("changed") is True and \
                 timeline.window_changed is None and \
-                event.get("phase") != "post":
+                event.get("phase") != "post" and \
+                timeline.study_start <= float(event["t"]) < \
+                timeline.study_end:
+            # До начала изучения смена окна безвредна: приложение
+            # калибрует заново.
             timeline.window_changed = float(event["t"])
     if left_at is not None and left_at < timeline.study_end:
         timeline.away.append((left_at, timeline.study_end, "open"))

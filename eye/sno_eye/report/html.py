@@ -283,11 +283,14 @@ def _clock(ms: float) -> str:
 
 
 def _shelf_offset(frame: dict) -> float:
+    """Прокрутка полки в кадре: `scroll` в сведениях её зоны
+    (`library_screen.dart`, `_layoutInfo`)."""
     for region in frame.get("regions") or []:
         if region.get("kind") == "screen" and region.get("id") == "shelf":
             info = region.get("info") or {}
-            value = info.get("offset")
-            if isinstance(value, (int, float)):
+            value = info.get("scroll")
+            if isinstance(value, (int, float)) and \
+                    not isinstance(value, bool):
                 return float(value)
     return 0.0
 

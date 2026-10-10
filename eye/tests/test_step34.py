@@ -505,3 +505,169 @@ def test_sno_f_res_03_forty_minutes_in_time(tmp_path):
           f"{len(result['fixations'])}")
     assert spent < 60
     assert result["quality"]["fixations"] > 5000
+
+
+# --- правки по независимой проверке -----------------------------------
+
+def _analyse(path, **cfg):
+    return report.analyse(arc.load(path), dict(report.settings(), **cfg),
+                          _limits())
+
+
+def test_sno_alg_eye_05_window_change_before_study_is_harmless(tmp_path):
+    """SNO-ALG-EYE-05: смена окна во время калибровки зон не гасит —
+    приложение калибрует заново; смена посреди изучения гасит зоны с
+    этого мига — и в походах на полку тоже."""
+    before = rs.Scenario().build()
+    before.event(rs.S - 30_000, "eye.window", "testing", {"changed": True})
+    result = _analyse(rs.make(tmp_path, scenario=before))
+    assert result["shares"]["soft"]["page"] > 0.75
+    assert not any("окно" in n for n in result["notes"])
+    (tmp_path / "mid").mkdir()
+    mid = rs.Scenario().build()
+    second = mid.answer["visits"][1]["start"]
+    mid.event(second - 5000, "eye.window", "reader", {"changed": True})
+    result = _analyse(rs.make(tmp_path / "mid", scenario=mid))
+    first, after = result["visits"]
+    assert first["categories_strict"] == 2
+    assert after["categories_soft"] == 0 and after["path_soft"] == []
+    assert any("окно" in n for n in result["notes"])
+
+
+def test_sno_alg_eye_05_drift_without_clicks_leans_on_checks(tmp_path):
+    """SNO-ALG-EYE-05, шаг 3: нажатий мышью нет — поправка идёт от
+    проверки после калибровки (ноль) к проверке в конце, а не стоит
+    поправкой конца с первой минуты; знак — против ухода оценки."""
+    touch = rs.Scenario(pointer="touch").build()
+    record = arc.load(rs.make(tmp_path, scenario=touch))
+    cfg = report.settings()
+    line = tl.build(record)
+    screen = screen_of(record.calibration, record.frames)
+    raw = versions.raw_samples(record, line.latency_ms)
+    pairs, _ = versions.implicit_pairs(record, raw, screen, line, cfg)
+    assert pairs == []
+    end = versions.end_correction(line, screen)
+    assert end[0] == pytest.approx(-rs.DRIFT[0], abs=0.01)
+    assert end[1] == pytest.approx(-rs.DRIFT[1], abs=0.01)
+    start = versions.start_correction(line, screen)
+    assert start == (0.0, 0.0)
+    drift = versions.build_drift(pairs, line, end, cfg, start=start)
+    assert drift.at(line.study_start) == (0.0, 0.0)
+    assert drift.at(line.study_end) == pytest.approx(end)
+    mid = drift.at((line.study_start + line.study_end) / 2)
+    assert mid[0] == pytest.approx(end[0] / 2, abs=0.5)
+
+
+def test_sno_alg_eye_05_page_middle_tap_is_not_a_point(analysed):
+    """SNO-ALG-EYE-05, шаг 2: касание середины страницы, которое прячет
+    панели (`panel.open {panel: chrome}`), — не неявная точка."""
+    record, _ = analysed
+    cfg = report.settings()
+    line = tl.build(record)
+    screen = _screen()
+    raw = versions.raw_samples(record, line.latency_ms)
+    base, _ = versions.implicit_pairs(record, raw, screen, line, cfg)
+    events = [dict(e, data={"panel": "chrome"})
+              if e["type"] == "panel.open" else e for e in record.events]
+    record2 = arc.Record(path=record.path, check=record.check,
+                         manifest=record.manifest, events=events,
+                         inputs=record.inputs, frames=record.frames,
+                         gaze=record.gaze)
+    pairs, _ = versions.implicit_pairs(record2, raw, screen, line, cfg)
+    panel = sum(1 for p in base if p.kind == "panel.open")
+    assert panel > 50 and len(pairs) == len(base) - panel
+
+
+def test_sno_alg_eye_05_instant_layout_change_cuts_fixation():
+    """SNO-ALG-EYE-05, шаг 4: мгновенная смена раскладки (кадр «в
+    движении» и устоявшийся с одним `t`) режет фиксацию."""
+    rows = [versions.Sample(t, 100.0, 100.0, True, True)
+            for t in range(0, 900, 33)]
+    frames = [{"t": 400, "moving": True}, {"t": 400, "moving": False}]
+    spans = idt.moving_spans(frames)
+    assert spans == []
+    whole = idt.fixations(rows, 50, spans, report.settings())
+    assert len(whole) == 1
+    cut = idt.fixations(rows, 50, spans, report.settings(), [400.0, 400.0])
+    assert len(cut) == 2 and cut[0].end <= 433 and cut[1].start >= 400
+
+
+def test_sno_f_res_03_uncategorised_books_have_a_target(tmp_path):
+    """SNO-F-RES-03: книга «Без категории» — нужная категория так и
+    названа, а не пуста."""
+    scenario = rs.Scenario().build()
+    files = scenario.files()
+    snapshot = json.loads(files["snapshot_start.json"])
+    for book in snapshot["books"]:
+        if book["fingerprint"] == "F2":
+            book["category"] = None
+    files["snapshot_start.json"] = json.dumps(snapshot).encode()
+    path = rs.write(tmp_path, files, scenario.manifest(files))
+    record = arc.load(path)
+    record.frames = []
+    line = tl.build(record)
+    assert line.categories["F2"] == tl.UNCATEGORISED
+    assert line.visits[0].target == tl.UNCATEGORISED
+
+
+def test_sno_f_res_03_broken_frame_does_not_drop_the_record(tmp_path):
+    """SNO-F-RES-03: кадр без чисел окна выброшен, зона без места или
+    порядка — выброшена или получает порядок 0; разбор идёт дальше."""
+    scenario = rs.Scenario().build()
+    first = scenario.frames[1]
+    first["regions"][0].pop("z")
+    first["regions"].append({"kind": "nav", "rect": "мусор"})
+    scenario.frames.append({"t": rs.S + 10, "viewport": {"h": 800},
+                            "regions": []})
+    result = _analyse(rs.make(tmp_path, scenario=scenario))
+    assert result["visits"][0]["categories_strict"] == 2
+    record = arc.load(rs.make(tmp_path, scenario=scenario))
+    assert all(f["viewport"]["w"] > 0 for f in record.frames)
+
+
+def test_sno_f_res_03_without_layout_no_zone_numbers(tmp_path, scenario):
+    """SNO-F-RES-03: без кадров раскладки у походов нет чисел зон —
+    пусто, а не ноль."""
+    path = rs.make(tmp_path, scenario=scenario, layout=False)
+    result = _analyse(path)
+    assert "categories_strict" not in result["visits"][0]
+    assert "direct_share_strict" not in result["visit_summary"]
+
+
+def test_sno_f_res_03_shelf_map_reads_scroll():
+    """SNO-F-RES-03: прокрутка полки на схеме — `scroll` сведений зоны
+    полки, как пишет приложение."""
+    from sno_eye.report import html
+    frame = {"regions": [{"kind": "screen", "id": "shelf",
+                          "info": {"scroll": 250.0}}]}
+    assert html._shelf_offset(frame) == 250.0
+
+
+def test_sno_alg_eye_05_star_needs_its_own_margin():
+    """SNO-ALG-EYE-05, шаг 5: взгляд между двумя звёздами карты ближе
+    запаса — звезда не «уверенно», хоть зона карты и одна."""
+    frame = {"t": 0, "viewport": {"w": 800, "h": 600}, "regions": [
+        {"kind": "galaxy_map", "id": "", "rect": [0, 0, 800, 600], "z": 0,
+         "marks": [{"id": "a", "x": 400, "y": 300, "r": 6},
+                   {"id": "b", "x": 440, "y": 300, "r": 6}]}]}
+    z = zones.Zones([frame], outside_px=80)
+    far = z.classify(1, 385, 300, 5)
+    assert far["mark"] == "a" and far["mark_sure"] is True
+    close = z.classify(1, 418, 300, 10)
+    assert close["mark"] == "a" and close["mark_sure"] is False
+    assert close["sure"] is True
+
+
+def test_sno_alg_rec_06_study_end_ignores_post_events(tmp_path, scenario):
+    """SNO-ALG-REC-06: без остановки в журнале и без длительности конец
+    изучения — последнее событие до остановки, а не после неё."""
+    files = scenario.files()
+    manifest = scenario.manifest(files)
+    record = arc.load(rs.write(tmp_path, files, manifest))
+    record.events = [e for e in record.events
+                     if e["type"] != "recording.stop"]
+    record.manifest = dict(record.manifest, recording={
+        k: v for k, v in record.manifest["recording"].items()
+        if k != "duration_ms"})
+    line = tl.build(record)
+    assert line.study_end < scenario.end

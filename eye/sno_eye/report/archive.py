@@ -88,6 +88,64 @@ def _num(value) -> float | None:
     return None
 
 
+def _rect(value) -> list[float] | None:
+    if isinstance(value, list) and len(value) == 4:
+        numbers = [_num(v) for v in value]
+        if all(v is not None for v in numbers):
+            return numbers  # type: ignore[return-value]
+    return None
+
+
+def _frame(row: dict) -> dict | None:
+    """Кадр раскладки, у которого есть всё, что нужно обратному
+    переводу; зона без вида или места выбрасывается, лист без своих
+    чисел — тоже: кадр с мусором не роняет разбор целиком."""
+    viewport = row.get("viewport")
+    t = _num(row.get("t"))
+    if not isinstance(viewport, dict) or t is None:
+        return None
+    w, h = _num(viewport.get("w")), _num(viewport.get("h"))
+    if not w or not h or w <= 0 or h <= 0:
+        return None
+    regions = []
+    for region in row.get("regions") or []:
+        if not isinstance(region, dict) or \
+                not isinstance(region.get("kind"), str):
+            continue
+        rect = _rect(region.get("rect"))
+        if rect is None:
+            continue
+        clean = dict(region, rect=rect, z=_num(region.get("z")) or 0.0)
+        if not isinstance(clean.get("id"), str):
+            clean["id"] = ""
+        if not isinstance(clean.get("info"), dict):
+            clean.pop("info", None)
+        if not isinstance(clean.get("marks"), list):
+            clean.pop("marks", None)
+        else:
+            clean["marks"] = [
+                m for m in clean["marks"] if isinstance(m, dict)
+                and all(_num(m.get(k)) is not None for k in "xyr")]
+        regions.append(clean)
+    frame = dict(row, t=t, viewport=dict(viewport, w=w, h=h),
+                 regions=regions)
+    sheet = row.get("sheet")
+    if sheet is not None:
+        pages = sheet.get("pages") if isinstance(sheet, dict) else None
+        ok = isinstance(pages, list) and _num(sheet.get("scale")) and \
+            _rect(sheet.get("strip")) is not None and all(
+                isinstance(p, dict) and all(
+                    _num(p.get(k)) is not None for k in "xywh")
+                for p in pages)
+        if ok:
+            frame["sheet"] = dict(sheet, neighbours=[
+                n for n in sheet.get("neighbours") or []
+                if isinstance(n, dict) and _rect(n.get("rect"))])
+        else:
+            frame.pop("sheet", None)
+    return frame
+
+
 def load(path: Path, limits: dict | None = None) -> Record:
     """Читает архив [path]; негодный — [Refused]."""
     path = Path(path)
@@ -125,9 +183,8 @@ def load(path: Path, limits: dict | None = None) -> Record:
                 record.inputs[n] = row
 
         record.has_layout = "layout.jsonl" in names
-        frames = [r for r in rows(read("layout.jsonl"))
-                  if isinstance(r.get("viewport"), dict)
-                  and _num(r.get("t")) is not None]
+        frames = [f for f in (_frame(r) for r in rows(read("layout.jsonl")))
+                  if f is not None]
         frames.sort(key=lambda r: (r["t"], _int(r.get("n")) or 0))
         record.frames = frames
 

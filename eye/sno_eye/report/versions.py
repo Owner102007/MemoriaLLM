@@ -19,11 +19,15 @@
 этом окне и место нажатия; пара дальше 5° — «нажал не глядя», прочь.
 Нажатия по зонам листания, колесо и клавиши в пары не идут.
 
+Касание середины страницы, которое прячет и показывает панели
+(`panel.open {panel: chrome}`), цели не имеет — в пары оно не идёт.
+
 **Поправка дрейфа**: окна по 5 минут со сдвигом в минуту; сдвиг окна —
 медиана остатков его пар, ослабленная к нулю по их числу
-(`k = n / (n + 5)`). Окно без пар берёт сдвиг ближайшего окна с парами,
-а конец записи — проверки в конце. Между серединами окон сдвиг идёт
-линейно.
+(`k = n / (n + 5)`). Окно без пар берёт сдвиг соседних окон с парами —
+линейно между ними; опоры по краям — проверка сразу после калибровки в
+начале изучения (сдвиг её точек, без него — ноль: модель только что
+выучена) и проверка в конце. Между серединами окон сдвиг идёт линейно.
 """
 
 from __future__ import annotations
@@ -127,6 +131,10 @@ def implicit_pairs(record: Record, samples: list[Sample], screen: Screen,
         n = _int(event.get("input"))
         if n is None or n in seen:
             continue
+        data = event.get("data")
+        if isinstance(data, dict) and data.get("panel") == "chrome":
+            # Касание середины страницы прячет панели — цели у него нет.
+            continue
         row = record.inputs.get(n)
         if row is None or row.get("dev") not in POINTERS or \
                 row.get("kind") != "tap" or \
@@ -180,25 +188,39 @@ class Drift:
         return max((math.hypot(*s) for s in self.shifts), default=0.0)
 
 
-def end_correction(timeline: Timeline,
-                   screen: Screen) -> tuple[float, float] | None:
-    """Сдвиг по проверке в конце, пиксели: оценка ушла на `shift_mm` от
-    точек — поправка в обратную сторону."""
-    shift = timeline.end_shift_mm
+def _correction(shift: tuple[float, float] | None,
+                screen: Screen) -> tuple[float, float] | None:
+    """Оценка ушла на `shift` мм от точек — поправка в пикселях в
+    обратную сторону."""
     if shift is None:
         return None
     return (-shift[0] * screen.w / screen.w_mm,
             -shift[1] * screen.h / screen.h_mm)
 
 
+def end_correction(timeline: Timeline,
+                   screen: Screen) -> tuple[float, float] | None:
+    """Поправка по проверке в конце, пиксели."""
+    return _correction(timeline.end_shift_mm, screen)
+
+
+def start_correction(timeline: Timeline,
+                     screen: Screen) -> tuple[float, float]:
+    """Поправка в начале изучения: по проверке сразу после калибровки,
+    без неё — ноль (модель только что выучена)."""
+    return _correction(timeline.start_shift_mm, screen) or (0.0, 0.0)
+
+
 def build_drift(pairs: list[Pair], timeline: Timeline,
                 end: tuple[float, float] | None, cfg: dict,
-                skip: int | None = None) -> Drift:
+                skip: int | None = None,
+                start: tuple[float, float] | None = None) -> Drift:
     """Поправка дрейфа по парам [pairs]; [skip] — номер пары, которую не
-    брать (остаток «без своей точки»)."""
+    брать (остаток «без своей точки»); [start] и [end] — опоры в начале
+    и в конце изучения."""
     t0, t1 = timeline.study_start, timeline.study_end
-    step = float(cfg["drift_step_s"]) * 1000
-    half = float(cfg["drift_window_s"]) * 1000 / 2
+    step = max(1.0, float(cfg["drift_step_s"])) * 1000
+    half = max(1.0, float(cfg["drift_window_s"])) * 1000 / 2
     k0 = float(cfg["drift_k"])
     centers = []
     c = t0
@@ -219,21 +241,28 @@ def build_drift(pairs: list[Pair], timeline: Timeline,
         k = len(own) / (len(own) + k0)
         values.append((k * statistics.median(p.dx for p in own),
                        k * statistics.median(p.dy for p in own)))
-    known = [i for i, v in enumerate(values) if v is not None]
+    # Опоры: окна с парами и края изучения.
+    anchors: list[tuple[float, tuple[float, float]]] = []
+    if start is not None and values[0] is None:
+        anchors.append((t0, start))
+    anchors += [(centers[i], v) for i, v in enumerate(values)
+                if v is not None]
+    if end is not None and values[-1] is None:
+        anchors.append((t1, end))
     filled: list[tuple[float, float]] = []
-    for i, value in enumerate(values):
+    for c, value in zip(centers, values):
         if value is not None:
             filled.append(value)
             continue
-        after = [j for j in known if j > i]
-        if end is not None and not after:
-            # Конец записи без пар — по проверке в конце.
-            filled.append(end)
-        elif known:
-            j = min(known, key=lambda j: (abs(j - i), j))
-            filled.append(values[j])  # type: ignore[arg-type]
-        elif end is not None:
-            filled.append(end)
+        left = [a for a in anchors if a[0] <= c]
+        right = [a for a in anchors if a[0] > c]
+        if left and right:
+            (ta, va), (tb, vb) = left[-1], right[0]
+            w = (c - ta) / (tb - ta) if tb > ta else 0.0
+            filled.append((va[0] + (vb[0] - va[0]) * w,
+                           va[1] + (vb[1] - va[1]) * w))
+        elif left or right:
+            filled.append((left[-1] if left else right[0])[1])
         else:
             filled.append((0.0, 0.0))
     return Drift(centers, filled, counts, end)
@@ -253,14 +282,14 @@ def apply(samples: list[Sample], drift: Drift) -> list[Sample]:
 
 def residuals(pairs: list[Pair], timeline: Timeline,
               end: tuple[float, float] | None, screen: Screen,
-              cfg: dict) -> dict:
+              cfg: dict, start: tuple[float, float] | None = None) -> dict:
     """Остаток неявных точек до и после поправки — у каждой пары по
     поправке, посчитанной без неё (иначе поправка проверяла бы сама
     себя)."""
     raw = [p.err_deg for p in pairs]
     fixed = []
     for i, p in enumerate(pairs):
-        drift = build_drift(pairs, timeline, end, cfg, skip=i)
+        drift = build_drift(pairs, timeline, end, cfg, skip=i, start=start)
         dx, dy = drift.at(p.t)
         fixed.append(screen.angle_deg((p.gx + dx, p.gy + dy), (p.tx, p.ty)))
     return {

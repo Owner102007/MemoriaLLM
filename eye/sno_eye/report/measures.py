@@ -203,7 +203,7 @@ def visit_measures(visit: Visit, fixes: list[Fixation],
             if z.get("book") is not None and \
                     (mode == "soft" or z.get("book_sure")):
                 books.append(z["book"])
-            if z.get("mark") and (mode == "soft" or z.get("sure")):
+            if z.get("mark") and (mode == "soft" or z.get("mark_sure")):
                 stars.append(z["mark"])
         path = _ordered(cats)
         row[f"categories_{mode}"] = len(set(cats))
@@ -218,7 +218,7 @@ def visit_measures(visit: Visit, fixes: list[Fixation],
         if visit.screen == "galaxy" and visit.book is not None:
             for f, z in own:
                 if z.get("mark") == visit.book and \
-                        (mode == "soft" or z.get("sure")):
+                        (mode == "soft" or z.get("mark_sure")):
                     first = f.start - visit.start
                     break
         row[f"first_target_ms_{mode}"] = first
