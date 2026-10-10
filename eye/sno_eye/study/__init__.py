@@ -1,14 +1,17 @@
 """«Сравнение ветвей» — сводный анализ всех записей СНО2026
-(SNO-F-RES-06, шаг 36 — часть 1: без мер взгляда).
+(SNO-F-RES-06; шаг 36 — отбор, тест нагрузки, действия; шаг 37 —
+беспорядочность взгляда, средний взгляд ветвей, научение).
 
 Организатор перетаскивает папку с архивами — с обоих ПК и с телефонов,
 можно по подпапкам — на `eye\\Сравнение ветвей.cmd`. Ставить ничего не
 нужно, сеть не нужна. В «Документах» появляется
 `Сравнение ветвей СНО2026\\<дата-время>\\`:
 
-* `index.html` — кто вошёл в статистику и с каким весом, какой взгляд
-  дал каждый ПК, нагрузка по ветвям, как искали книги, сводка «I против
-  II», держится ли вывод при другом отборе, «Как читать»;
+* `index.html` — вверху «Файлы отчёта» со ссылками на все таблицы и
+  рисунки (BUG-68); кто вошёл в статистику и с каким весом, какой
+  взгляд дал каждый ПК, нагрузка по ветвям, как искали книги, в какой
+  ветви взгляд беспорядочнее, средний взгляд ветви, научение, сводка
+  «I против II», держится ли вывод при другом отборе, «Как читать»;
 * `участники.csv`, `походы.csv`, `ответы_теста.csv`, `сравнение.csv`,
   `устойчивость.csv` — для Excel;
 * `рисунки\\*.png`, `*.svg` — для статьи;
@@ -26,18 +29,25 @@
 | `clt.py`     | 2   | ответы теста, шкалы, сверка с      | json, statistics   |
 |              |     | приложением                        |                    |
 | `honesty.py` | 3   | цвет искренности и вес             | —                  |
-| — (шаг 37)   | 4   | разбор взгляда — `report.analyse`  | —                  |
+| `gaze.py`    | 4   | разбор взгляда — `report.analyse`; | —                  |
+|              |     | схема полки, тепловая карта        |                    |
 | `actions.py` | 5   | походы за книгой, меры действий    | statistics         |
-| — (шаг 37)   | 6–7 | беспорядочность, средний взгляд    | numpy              |
+| `disorder.py`| 6   | беспорядочность: фиксации общим    | numpy              |
+|              |     | порогом, энтропии, K, путь, NNI    |                    |
+| `average.py` | 7   | средний взгляд ветви, матрицы,     | numpy              |
+|              |     | тепловая карта, научение           |                    |
 | `table.py`   | 8   | таблицы CSV                        | csv                |
 | `stats.py`,  | 9   | δ Клиффа по слоям, бутстреп,       | numpy              |
 | `compare.py` |     | перестановки, Холм, сценарии       |                    |
-| `charts.py`  | 10  | рисунки Р1–Р5, Р13, Р14            | matplotlib (Agg)   |
+| `charts.py`  | 10  | рисунки Р1–Р14                     | matplotlib (Agg)   |
 | `page.py`    | 11  | отчёт `index.html`                 | html, base64       |
 
 Скрипт не пересчитывает того, что уже считается: годность архива —
-«Проверка записи» (`record_check`), чтение архива и ход сессии —
-«Разбор записи» (`report.archive`, `report.timeline`) без изменений.
+«Проверка записи» (`record_check`), чтение архива, ход сессии, версии
+взгляда, фиксации, зоны и доли — «Разбор записи» (`report.archive`,
+`report.timeline`, `report.analyse`) без изменений. Своё в нём —
+цвет искренности, меры беспорядочности (фиксации заново, одним
+порогом на всё исследование), средний взгляд ветви и сравнение.
 
 Единица анализа — участник: одна строка и один вес. Походы сначала
 сводятся к участнику медианой, долей или в минуту, и только потом
@@ -62,8 +72,8 @@ from .. import record_check as rc
 from ..report import settings as report_settings
 
 # Версия скрипта сравнения — в `исходные.json`: по ней видно, каким
-# кодом считали. Шаг 36 — часть 1, без мер взгляда.
-SCRIPT_VERSION = "36.0"
+# кодом считали. Шаг 36 — часть 1, шаг 37 — меры взгляда.
+SCRIPT_VERSION = "37.0"
 
 OUT_FOLDER = "Сравнение ветвей СНО2026"
 
@@ -88,6 +98,26 @@ DEFAULTS = {
     "exact_limit": 20_000,
     "n_eff_min": 3,
     "alpha": 0.05,
+    # АК12: общий порог фиксаций для мер беспорядочности, градусы.
+    "idt_deg": 4.5,
+    # Сетка окна для энтропии поиска: столбцов × строк.
+    "grid": [4, 3],
+    # Пол числа переходов: поиск, чтение, всё изучение.
+    "ht_min_transitions": [40, 200, 200],
+    # Подвыборок и розыгрышей случайного уровня энтропии.
+    "ht_repeats": 200,
+    # Просвет между фиксациями дольше — не переход (лица нет, отлучка).
+    "transition_gap_ms": 1000,
+    # Фиксаций для NNI; розыгрышей случайных точек.
+    "min_fix_nni": 20,
+    "nni_mc": 200,
+    # |ρ| меры с прецизионностью сессии — «чувствует шум».
+    "noise_rho": 0.5,
+    # Меньше участников в минуте (и в номере похода) — не рисуется.
+    "min_minute_participants": 3,
+    # Походов для наклона научения; повторных — для отдельной кривой.
+    "min_visits_curve": 6,
+    "min_repeat_visits": 3,
 }
 
 
@@ -158,17 +188,24 @@ def fingerprint(entries: list[dict]) -> str:
 
 def analyse(paths: list[str], *, series: str | None = None,
             no_filter: bool = False, cfg: dict | None = None,
-            limits: dict | None = None, progress=None) -> dict:
-    """Весь сводный анализ без записи файлов: записи, отбор, сравнение."""
-    from . import collect, compare
+            limits: dict | None = None, progress=None,
+            version: str | None = None) -> dict:
+    """Весь сводный анализ без записи файлов: записи, отбор, меры
+    взгляда, сравнение, средние ветвей."""
+    from . import average, collect, compare, disorder
     cfg = cfg or settings()
     limits = limits or rc.thresholds()
+    # Версия взгляда для мер — та же, что у «Разбора записи»
+    # (`report.version`), или названная ключом `--version`.
+    report_cfg = report_settings()
+    if version in ("raw", "drift"):
+        report_cfg["version"] = version
     archives = collect.find(paths)
     entries = []
     for i, path in enumerate(archives, start=1):
         if progress:
             progress(i, len(archives), path)
-        entries.append(collect.load(path, limits, cfg))
+        entries.append(collect.load(path, limits, cfg, report_cfg))
     collect.fill_cameras(entries)
     collect.mark_repeats(entries)
     compare.unify_scenarios(entries)
@@ -177,13 +214,20 @@ def analyse(paths: list[str], *, series: str | None = None,
                                 str(e.get("participant") or "~"),
                                 e["archive"]))
     print_ = fingerprint(entries)
+    # Шаг 6 — меры беспорядочности: `k` и μ, σ — по участникам S0.
+    gaze_info = disorder.finish(entries, cfg, fingerprint=print_,
+                                no_filter=no_filter, series=series)
+    # Шаг 7 — наклоны научения идут в сравнение мерами участника.
+    average.learning(entries, cfg)
     result = compare.run(entries, cfg, fingerprint=print_,
                          no_filter=no_filter, series=series)
+    result["gaze_info"] = gaze_info
+    result["average"] = average.build(entries, cfg, no_filter, series)
     result["warnings"] = compare.warnings(entries, result, no_filter)
     return {"entries": entries, "result": result, "cfg": cfg,
             "limits": limits, "fingerprint": print_, "series": series,
             "no_filter": no_filter, "archives": [str(a) for a in archives],
-            "gaze_version": report_settings()["version"]}
+            "gaze_version": report_cfg["version"]}
 
 
 def sources(run: dict) -> dict:
@@ -194,7 +238,8 @@ def sources(run: dict) -> dict:
     return {
         "schema": "sno2026-study/1",
         "script": SCRIPT_VERSION,
-        "step": "шаг 36 — часть 1: отбор, тест нагрузки, действия",
+        "step": "шаг 36 — отбор, тест нагрузки, действия; шаг 37 — "
+                "беспорядочность, средний взгляд, научение",
         "series": run["series"], "no_filter": run["no_filter"],
         "gaze_version": run["gaze_version"],
         "fingerprint": run["fingerprint"],
@@ -205,12 +250,47 @@ def sources(run: dict) -> dict:
         "archives": [{"archive": e["archive"], "path": e["path"],
                       "sha256": e.get("sha256"), "status": e["status"],
                       "reason": e.get("reason")} for e in run["entries"]],
-        "thresholds": {"study": run["cfg"], "record_check": run["limits"]},
+        "thresholds": {"study": run["cfg"], "record_check": run["limits"],
+                       "report": report_settings()},
+        # Меры беспорядочности (SNO-ALG-RES-03): число переходов
+        # подвыборки `k` и случайный уровень энтропии по фазам, μ и σ
+        # коэффициента K — одни во всех сценариях; по ним прогон
+        # повторяется.
+        "gaze": _gaze_sources(run["result"].get("gaze_info") or {}),
         "versions": {"python": platform.python_version(),
                      "numpy": numpy.__version__,
                      "matplotlib": matplotlib.__version__,
                      "platform": platform.platform()},
     }
+
+
+def _gaze_sources(info: dict) -> dict:
+    out = {"from": info.get("from"), "idt_deg": info.get("idt_deg"),
+           "grid": info.get("grid"), "phases": {}}
+    for phase, own in (info.get("phases") or {}).items():
+        row = {k: own.get(k) for k in ("zones", "floor", "k", "k_norep",
+                                       "K")}
+        for name in ("random", "random_norep"):
+            if own.get(name) is not None:
+                row[name] = {"H_t": own[name][0], "H_s": own[name][1]}
+        out["phases"][phase] = row
+    return out
+
+
+# Файлы отчёта и что в каждом — для «Файлов отчёта» вверху `index.html`
+# и для консоли (BUG-68).
+FILES = (
+    ("участники.csv", "строка на участника: ветвь, ПК, цвет, вес, эталон, "
+     "шкалы теста, меры действий и взгляда"),
+    ("походы.csv", "строка на поход за книгой: время до выбора, путь "
+     "взгляда, прямота, возвраты"),
+    ("ответы_теста.csv", "строка на ответ теста нагрузки"),
+    ("сравнение.csv", "строка на меру: средние ветвей, δ, интервал, p, p "
+     "по Холму, вывод"),
+    ("устойчивость.csv", "главные меры в шести сценариях отбора"),
+    ("исходные.json", "что разобрано и чем: архивы с SHA-256, пороги, "
+     "версии, зёрна"),
+)
 
 
 def write(run: dict, folder: Path) -> list[Path]:
@@ -225,6 +305,7 @@ def write(run: dict, folder: Path) -> list[Path]:
     table.robustness(result, folder / "устойчивость.csv")
     figures = charts.draw_all(run, folder / "рисунки")
     run["_figures_folder"] = str(folder / "рисунки")
+    run["_folder"] = str(folder)
     (folder / "исходные.json").write_text(
         json.dumps(sources(run), ensure_ascii=False, indent=1),
         encoding="utf-8")
@@ -255,6 +336,7 @@ def summary(run: dict) -> dict:
             "weight": e.get("weight"), "in_stats": e.get("in_stats"),
             "out": e.get("out"), "etalon": e.get("etalon"),
             "gaze_included": (e.get("gaze") or {}).get("included"),
+            "disorder_gate": e.get("disorder_gate"),
             "search_mode": e.get("search_mode"),
         } for e in entries],
         "primary": rows,
@@ -282,13 +364,33 @@ def describe(run: dict, folder: Path | None) -> list[str]:
     for row in s["primary"]:
         lines.append(f"  {row['measure']}: {row['words']}")
     if folder is not None:
-        lines.append(f"Отчёт: {folder / 'index.html'}")
+        # BUG-68: папка отчёта и что в ней, а не только `index.html`.
+        lines.append("")
+        lines.append(f"Папка отчёта: {folder}")
+        lines.append("  index.html — отчёт, открыть в браузере")
+        for name, words in FILES:
+            lines.append(f"  {name} — {words}")
+        lines.append("  рисунки\\ — рисунки отчёта, PNG и SVG")
     return lines
+
+
+def open_folder(folder: Path) -> bool:
+    """Открывает папку отчёта в Проводнике (BUG-68, ярлыки `--open`).
+    Не Windows или не вышло — молча: путь уже напечатан."""
+    starter = getattr(os, "startfile", None)
+    if starter is None:
+        return False
+    try:
+        starter(str(folder))
+        return True
+    except OSError:
+        return False
 
 
 def main(paths: list[str], *, series: str | None = None,
          no_filter: bool = False, out: str | None = None,
-         as_json: bool = False, version: str | None = None) -> int:
+         as_json: bool = False, version: str | None = None,
+         open_folder: bool = False) -> int:
     """Вход `python -I -m sno_eye study`. Код выхода: 0 — отчёт готов,
     3 — сравнивать нечего, 4 — отчёт не записался."""
     _matplotlib_cache()
@@ -309,9 +411,7 @@ def main(paths: list[str], *, series: str | None = None,
             print(f"[{i}/{n}] {path.name}", flush=True)
 
     run = analyse(paths, series=series, no_filter=no_filter,
-                  progress=progress)
-    if version in ("raw", "drift"):
-        run["gaze_version"] = version
+                  progress=progress, version=version)
     folder = out_folder(out, no_filter)
     try:
         write(run, folder)
@@ -326,4 +426,10 @@ def main(paths: list[str], *, series: str | None = None,
         for line in describe(run, folder):
             print(line)
     sys.stdout.flush()
+    if open_folder and not as_json:
+        _open(folder)
     return 0
+
+
+# Имя внутри модуля: параметр `open_folder` у `main` его заслоняет.
+_open = open_folder

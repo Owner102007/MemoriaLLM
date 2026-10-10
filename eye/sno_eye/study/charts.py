@@ -1,8 +1,10 @@
-"""Шаг 10 — рисунки Р1–Р5, Р13, Р14 (SNO-F-RES-06, «Рисунки»).
+"""Шаг 10 — рисунки Р1–Р14 (SNO-F-RES-06, «Рисунки»).
 
 Откуда данные: записи после отбора (`study.compare.admit`) и итог
 сравнения (`study.compare.run`): точки участников с весами, средние
-ветвей с интервалом, δ с интервалом, сценарии устойчивости.
+ветвей с интервалом, δ с интервалом, сценарии устойчивости; средний
+взгляд ветвей (`study.average.build`, шаг 37): доли, минуты, матрицы
+переходов, тепловая карта, схема полки, кривые научения.
 Технология: matplotlib с бэкендом Agg — рисует без окна, на ПК
 организатора и на раннере CI одинаково; PNG — 200 точек на дюйм,
 SVG — с путями букв (шрифт на чужом ПК не нужен). Шрифт — DejaVu Sans
@@ -15,6 +17,10 @@ I — синий `#2a78d6`, ветвь II — оранжевый `#eb6834`; ис
 (только там, где красные идут в счёт: сценарий S3 и проверочный
 прогон). Так различие видно и на чёрно-белой печати, и людям с
 нарушением цветового зрения. Тонкие отметки, сетка — волосяная.
+Величина (матрицы, тепловая карта, схема полки) — один оттенок,
+синий, от светлого к тёмному, с числами в клетках; доли по группам
+(Р8) — первые четыре места палитры и серый «прочее», с подписями долей
+и таблицей в отчёте.
 Вход → выход: прогон (`study.analyse`) → файлы `рисунки/Р*.png` и
 `*.svg`; ответ — номер рисунка → (подпись, имя PNG).
 """
@@ -29,6 +35,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 from matplotlib.ticker import FuncFormatter  # noqa: E402
@@ -56,6 +63,15 @@ STATUS_WORDS = {honesty.GREEN: "зелёный — искренен",
                 honesty.UNKNOWN: "неизвестно — нет ответа",
                 honesty.RED: "красный — оба провалены"}
 NEUTRAL = {"in": "#2a78d6", "bad": "#b9b7b0", "none": "#e1e0d9"}
+# Величина — синяя шкала палитры (палитра, «Sequential hue»): от
+# поверхности к шагу 700.
+SEQUENTIAL = LinearSegmentedColormap.from_list(
+    "sno_blue", [SURFACE, "#cde2fb", "#86b6ef", "#3987e5", "#1c5cab",
+                 "#0d366b"])
+# Группы видов времени (Р8, Р9) — первые четыре места палитры, «прочее»
+# серым (проверено `validate_palette.js`: CVD ΔE ≥ 9).
+GROUP_COLOURS = {"reading": "#2a78d6", "shelf": "#eb6834",
+                 "galaxy": "#1baf7a", "off": "#eda100", "other": "#b9b7b0"}
 
 DPI = 200
 
@@ -422,7 +438,7 @@ def figure_13(run: dict, folder: Path) -> str:
         m = r["measure"]
         labels.append((y, m.title, r["family"] == "0"))
         if r["pending"]:
-            ax.text(0, y, "появится в шаге 37", va="center", ha="center",
+            ax.text(0, y, "появится позже", va="center", ha="center",
                     fontsize=7, color=MUTED)
             continue
         if res.delta is None:
@@ -494,8 +510,322 @@ def figure_14(run: dict, folder: Path) -> str | None:
     return _save(fig, folder, "Р14_устойчивость")
 
 
+# --- Р6. Беспорядочность ---------------------------------------------------
+
+# Энтропия — от нуля, верх не задан: при малом `k` бывает и больше 1.
+DISORDER_KEYS = [("search.H_t", (0, None)), ("search.K", None),
+                 ("search.straight", (-0.05, 1.05)),
+                 ("search.returns", (-0.05, 1.05)), ("search.path", None),
+                 ("search.nni_dev", None), ("reading.H_t", (0, None)),
+                 ("all.H_t", (0, None))]
+
+
+def figure_6(run: dict, folder: Path) -> str | None:
+    rows = _branch_rows(run)
+    if not any((rows.get(k) or {}).get("points") for k, _ in DISORDER_KEYS):
+        return None
+    return figure_measures(
+        run, folder, DISORDER_KEYS,
+        "Р6. Беспорядочность взгляда: поиск, чтение, всё изучение — точки "
+        "участников, взвешенное среднее и интервал 95 %",
+        "Р6_беспорядочность", 4)
+
+
+# --- Р7. Матрицы переходов ------------------------------------------------
+
+def _matrix_panel(ax, zones: list, p: list, title: str) -> None:
+    import numpy as np
+    arr = np.array(p, dtype=float) if p else np.zeros((0, 0))
+    if arr.size == 0:
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, "нет данных", ha="center", va="center",
+                color=MUTED, transform=ax.transAxes)
+        ax.set_title(_wrap(title, 40), loc="left", fontsize=8.5)
+        return
+    shown = np.nan_to_num(arr, nan=0.0)
+    ax.imshow(shown, cmap=SEQUENTIAL, vmin=0, vmax=1, aspect="equal")
+    n = len(zones)
+    for i in range(n):
+        for j in range(n):
+            if arr[i, j] != arr[i, j]:
+                continue
+            ax.text(j, i, f"{arr[i, j]:.2f}".replace(".", ","),
+                    ha="center", va="center", fontsize=6.5,
+                    color=SURFACE if arr[i, j] > 0.55 else INK)
+    labels = [_wrap(str(z), 14) for z in zones]
+    ax.set_xticks(range(n))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=6.5)
+    ax.set_yticks(range(n))
+    ax.set_yticklabels(labels, fontsize=6.5)
+    ax.set_xlabel("куда", fontsize=7)
+    ax.set_ylabel("откуда", fontsize=7)
+    ax.grid(False)
+    ax.set_title(_wrap(title, 40), loc="left", fontsize=8.5)
+
+
+def figure_7(run: dict, folder: Path) -> str | None:
+    avg = run["result"].get("average") or {}
+    branches = [b for b in ("I", "II")
+                if (avg.get("matrix", {}).get(b) or {}).get("n")]
+    if not branches:
+        return None
+    fig, axes = plt.subplots(2, len(branches),
+                             figsize=(4.4 * len(branches), 8.4),
+                             squeeze=False)
+    for k, b in enumerate(branches):
+        m = avg["matrix"][b]
+        _matrix_panel(axes[0][k], m["zones"], m["p"],
+                      f"Ветвь {b}: всё изучение, группы видов времени "
+                      f"(участников {m['n']})")
+        c = avg["categories"][b]
+        _matrix_panel(axes[1][k], c["zones"], c["p"],
+                      f"Ветвь {b}: поиск, категории полки и группы карты "
+                      f"(участников {c['n']})")
+    fig.suptitle(_wrap("Р7. Матрица переходов ветви: доля переходов из "
+                       "строки в столбец; строка — откуда, столбец — куда",
+                       90), x=0.01, ha="left", fontweight="bold", color=INK)
+    fig.tight_layout()
+    return _save(fig, folder, "Р7_переходы")
+
+
+# --- Р8. Доли времени по группам -------------------------------------------
+
+def figure_8(run: dict, folder: Path) -> str | None:
+    from .average import GROUP_WORDS
+    avg = run["result"].get("average") or {}
+    shares = avg.get("shares") or {}
+    branches = [b for b in ("I", "II") if shares.get(b)]
+    if not branches:
+        return None
+    fig, ax = plt.subplots(figsize=(6.4, 1.1 + 0.7 * len(branches)))
+    for y, b in enumerate(branches):
+        left = 0.0
+        groups = shares[b]["groups"]
+        for key in GROUP_COLOURS:
+            width = groups.get(key) or 0.0
+            if width <= 0:
+                continue
+            # Зазор 2 точки цвета поверхности между частями полосы.
+            ax.barh(y, width, left=left, color=GROUP_COLOURS[key],
+                    edgecolor=SURFACE, linewidth=1.5, height=0.55)
+            if width >= 0.06:
+                ax.text(left + width / 2, y, f"{round(width * 100)} %",
+                        ha="center", va="center", fontsize=7, color=INK)
+            left += width
+    ax.set_yticks(range(len(branches)))
+    ax.set_yticklabels([f"ветвь {b} (n {shares[b]['n']})"
+                        for b in branches])
+    ax.set_xlim(0, 1)
+    ax.xaxis.set_major_formatter(FuncFormatter(
+        lambda v, _: f"{round(v * 100)} %"))
+    ax.grid(axis="y", visible=False)
+    ax.invert_yaxis()
+    handles = [Rectangle((0, 0), 1, 1, color=GROUP_COLOURS[k],
+                         label=GROUP_WORDS[k]) for k in GROUP_COLOURS]
+    ax.legend(handles=handles, loc="upper center", ncol=3, fontsize=7,
+              bbox_to_anchor=(0.5, -0.25))
+    ax.set_title(_wrap("Р8. Доли времени изучения по группам видов "
+                       "времени (мягко), взвешенное среднее ветви", 70),
+                 loc="left")
+    _spines(ax)
+    fig.tight_layout()
+    return _save(fig, folder, "Р8_доли_времени")
+
+
+# --- Р9. Ход по минутам --------------------------------------------------
+
+def figure_9(run: dict, folder: Path) -> str | None:
+    from .average import GROUP_WORDS
+    avg = run["result"].get("average") or {}
+    minutes = avg.get("minutes") or {}
+    keys = ("reading", "shelf", "galaxy", "off")
+    if not any(minutes.get(b, {}).get(k) for b in ("I", "II")
+               for k in keys):
+        return None
+    fig, axes = plt.subplots(1, len(keys), figsize=(11.5, 3.1),
+                             squeeze=False)
+    for ax, key in zip(axes.flat, keys):
+        for b in ("I", "II"):
+            rows = (minutes.get(b) or {}).get(key) or []
+            if not rows:
+                continue
+            xs = [r[0] for r in rows]
+            ax.fill_between(xs, [r[2] for r in rows], [r[3] for r in rows],
+                            color=BRANCH[b], alpha=0.15, lw=0)
+            ax.plot(xs, [r[1] for r in rows], color=BRANCH[b], lw=2,
+                    label=f"ветвь {b}")
+        ax.set_ylim(-0.02, 1.02)
+        ax.yaxis.set_major_formatter(FuncFormatter(
+            lambda v, _: f"{round(v * 100)} %"))
+        ax.set_xlabel("минута изучения")
+        ax.set_title(_wrap(GROUP_WORDS[key], 26), loc="left", fontsize=8.5)
+        _spines(ax)
+    handles = [Line2D([], [], color=BRANCH[b], lw=2, label=f"ветвь {b}")
+               for b in ("I", "II")] + [
+        Rectangle((0, 0), 1, 1, color=INK_2, alpha=0.15,
+                  label="между 25-м и 75-м процентилями")]
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=7.5,
+               bbox_to_anchor=(0.5, 0.0))
+    fig.suptitle("Р9. Ход по минутам: доля минуты по группам, средняя "
+                 "ветви с полосой", x=0.01, ha="left", fontweight="bold",
+                 color=INK)
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    return _save(fig, folder, "Р9_по_минутам")
+
+
+# --- Р10. Тепловая карта «Галактики» ---------------------------------------
+
+def figure_10(run: dict, folder: Path) -> str | None:
+    import numpy as np
+    avg = run["result"].get("average") or {}
+    heat = (avg.get("heat") or [])[:2]
+    panels = [(item, b) for item in heat
+              for b in sorted(item["branches"])]
+    if not panels:
+        return None
+    x0, x1, y0, y1 = panels[0][0]["extent"]
+    ratio = (y1 - y0) / max(x1 - x0, 1e-9)
+    width = 6.0 if len(panels) == 1 else 5.0
+    fig, axes = plt.subplots(1, len(panels),
+                             figsize=(width * len(panels),
+                                      width * ratio + 1.3),
+                             squeeze=False)
+    for ax, (item, b) in zip(axes.flat, panels):
+        x0, x1, y0, y1 = item["extent"]
+        grid = np.array(item["branches"][b]["grid"])
+        if grid.max() > 0:
+            grid = grid / grid.max()
+        # Ось y карты — вниз, как на экране.
+        ax.imshow(grid, cmap=SEQUENTIAL, vmin=0, vmax=1,
+                  extent=(x0, x1, y1, y0), aspect="equal",
+                  interpolation="bilinear")
+        ax.scatter([p["x"] for p in item["points"]],
+                   [p["y"] for p in item["points"]], s=14,
+                   facecolors="none", edgecolors=INK, linewidths=0.8,
+                   zorder=3)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(False)
+        own = item["branches"][b]
+        note = f", не с эталона — {own['not_reference']}" \
+            if own.get("not_reference") else ""
+        ax.set_title(_wrap(f"Карта {item['key']}, ветвь {b}: участников "
+                           f"{own['n']}{note}", 44), loc="left",
+                     fontsize=8.5)
+    fig.suptitle(_wrap("Р10. Куда смотрят на карте: взгляд в поиске на "
+                       "полотне карты, в координатах карты; темнее — "
+                       "дольше; кружки — звёзды", 95), x=0.01, ha="left",
+                 fontweight="bold", color=INK, fontsize=9)
+    fig.tight_layout()
+    return _save(fig, folder, "Р10_тепловая_карта")
+
+
+# --- Р11. Схема полки ---------------------------------------------------
+
+def figure_11(run: dict, folder: Path) -> str | None:
+    avg = run["result"].get("average") or {}
+    shelves = avg.get("shelf") or {}
+    branches = [b for b in ("I", "II")
+                if (shelves.get(b) or {}).get("rows")
+                and (shelves.get(b) or {}).get("n")]
+    if not branches:
+        return None
+    rows_n = max(len(shelves[b]["rows"]) for b in branches)
+    cols_n = max(len(r["books"]) for b in branches
+                 for r in shelves[b]["rows"]) + 1
+    fig, axes = plt.subplots(len(branches), 1,
+                             figsize=(min(13.0, 1.05 * cols_n + 1.6),
+                                      (0.85 * rows_n + 0.6) * len(branches)
+                                      + 0.7),
+                             squeeze=False)
+    # Шкала одна на обе ветви: одинаковый цвет — одинаковая доля.
+    top = max([r["header"] or 0 for b in branches
+               for r in shelves[b]["rows"]] +
+              [x["share"] or 0 for b in branches
+               for r in shelves[b]["rows"] for x in r["books"]] + [1e-9])
+    for ax, b in zip(axes.flat, branches):
+        rows = shelves[b]["rows"]
+        total = sum((r["header"] or 0) + sum(x["share"] or 0
+                                             for x in r["books"])
+                    for r in rows)
+        for i, row in enumerate(rows):
+            cells = [("шапка", row["header"])] + [
+                (x["title"], x["share"]) for x in row["books"]]
+            for j, (title, share) in enumerate(cells):
+                if share is None:
+                    face = SURFACE
+                else:
+                    face = SEQUENTIAL(share / top)
+                ax.add_patch(Rectangle((j + 0.04, -i - 0.92), 0.92, 0.84,
+                                       facecolor=face, edgecolor=AXIS,
+                                       linewidth=0.6))
+                dark = share is not None and share / top > 0.55
+                text = _wrap(title, 12)
+                text += "\n" + ("—" if share is None else
+                                 f"{share * 100:.0f} %")
+                ax.text(j + 0.5, -i - 0.5, text, ha="center", va="center",
+                        fontsize=5.8, color=SURFACE if dark else INK)
+            ax.text(-0.08, -i - 0.5, _wrap(row["category"], 14),
+                    ha="right", va="center", fontsize=7, color=INK_2)
+        ax.set_xlim(-1.6, cols_n)
+        ax.set_ylim(-len(rows) - 0.1, 0.1)
+        ax.set_axis_off()
+        ax.set_title(f"Ветвь {b}: участников {shelves[b]['n']}; на полке "
+                     f"— {total * 100:.0f} % времени поиска", loc="left",
+                     fontsize=8.5)
+    fig.suptitle(_wrap("Р11. Куда смотрят на полке: доля времени поиска "
+                       "на шапке каждой категории и на каждой книге "
+                       "(мягко), взвешенное среднее ветви; «—» — такой "
+                       "категории ни у кого не было", 110), x=0.01,
+                 ha="left", fontweight="bold", color=INK, fontsize=9)
+    fig.tight_layout()
+    return _save(fig, folder, "Р11_схема_полки")
+
+
+# --- Р12. Научение -------------------------------------------------------
+
+def figure_12(run: dict, folder: Path) -> str | None:
+    avg = run["result"].get("average") or {}
+    curve = avg.get("curve") or {}
+    if not any(curve.get(b, {}).get(k) for b in ("I", "II")
+               for k in ("choice", "path")):
+        return None
+    fig, axes = plt.subplots(1, 2, figsize=(10.2, 3.4), squeeze=False)
+    panels = (("choice", "Время до выбора книги, с", "repeat"),
+              ("path", "Путь взгляда до книги, °", None))
+    for ax, (key, title, extra) in zip(axes.flat, panels):
+        for b in ("I", "II"):
+            rows = (curve.get(b) or {}).get(key) or []
+            if rows:
+                ax.plot([r[0] for r in rows], [r[1] for r in rows],
+                        color=BRANCH[b], lw=2, marker="o", markersize=4,
+                        label=f"ветвь {b}")
+            more = (curve.get(b) or {}).get(extra) if extra else None
+            if more:
+                ax.plot([r[0] for r in more], [r[1] for r in more],
+                        color=BRANCH[b], lw=1.2, ls="--",
+                        label=f"ветвь {b}: повторные походы")
+        ax.set_xlabel("номер похода за книгой")
+        _comma(ax, "y")
+        ax.set_title(title, loc="left", fontsize=8.5)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=7)
+        else:
+            ax.text(0.5, 0.5, "нет данных", ha="center", va="center",
+                    color=MUTED, transform=ax.transAxes)
+        _spines(ax)
+    fig.suptitle(_wrap("Р12. Кривая научения: медиана ветви по номеру "
+                       "похода (номер, где участников меньше трёх, не "
+                       "рисуется); пунктир — походы к уже открывавшейся "
+                       "книге по их номеру", 110), x=0.01, ha="left",
+                 fontweight="bold", color=INK, fontsize=9)
+    fig.tight_layout()
+    return _save(fig, folder, "Р12_научение")
+
+
 def draw_all(run: dict, folder: Path) -> dict:
-    """Все рисунки части 1; ответ — номер → имя PNG (или None)."""
+    """Все рисунки; ответ — номер → имя PNG (или None, если данных для
+    рисунка нет)."""
     out = {
         "Р1": figure_1(run, folder),
         "Р2": figure_2(run, folder),
@@ -507,6 +837,13 @@ def draw_all(run: dict, folder: Path) -> dict:
         "Р5": figure_measures(run, folder, ACTION_KEYS,
                               "Р5. Действия: как искали книги",
                               "Р5_действия", 4),
+        "Р6": figure_6(run, folder),
+        "Р7": figure_7(run, folder),
+        "Р8": figure_8(run, folder),
+        "Р9": figure_9(run, folder),
+        "Р10": figure_10(run, folder),
+        "Р11": figure_11(run, folder),
+        "Р12": figure_12(run, folder),
         "Р13": figure_13(run, folder),
         "Р14": figure_14(run, folder),
     }

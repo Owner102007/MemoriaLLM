@@ -287,6 +287,14 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
     result["press_gap_ms"] = cfg["press_gap_ms"]
     result["_frames"] = record.frames
     result["_zones"] = zones
+    # Шаг 37: «Сравнение ветвей» пересчитывает фиксации одним порогом на
+    # всё исследование (SNO-ALG-RES-03) — на тех же выборках, тех же
+    # отрезках движения и том же экране. Разбору они не нужны; в файлы
+    # и `--json` служебное не идёт.
+    result["_samples"] = samples
+    result["_spans"] = spans
+    result["_screen"] = screen
+    result["_timeline"] = line
     return result
 
 

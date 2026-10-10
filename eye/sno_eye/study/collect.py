@@ -28,6 +28,7 @@ from .. import record_check as rc
 from ..report import archive as arc
 from ..report import timeline as tl
 from . import actions, clt
+from . import gaze as gaze_part
 
 # Эталон словами (SNO-ALG-RES-01, шаг 7).
 ETALON_YES = "да"
@@ -204,11 +205,14 @@ def gaze(record: arc.Record, limits: dict) -> dict:
             "valid_share": check.get("valid_share"), "fps": check.get("fps")}
 
 
-def load(path: Path, limits: dict, cfg: dict) -> dict:
+def load(path: Path, limits: dict, cfg: dict,
+         report_cfg: dict | None = None) -> dict:
     """Одна запись: всё, что нужно сравнению, без самого архива.
 
     Негодный архив не роняет прогон: он назван с причиной
-    (`status: bad`)."""
+    (`status: bad`). Взгляд записи (шаг 37) разбирает «Разбор записи»
+    версией [report_cfg]; упал разбор взгляда — тест и действия у
+    записи остаются, причина названа."""
     entry: dict = {"archive": path.name, "path": str(path),
                    "sha256": None, "status": "ok", "reason": None}
     try:
@@ -242,8 +246,18 @@ def load(path: Path, limits: dict, cfg: dict) -> dict:
         entry["actions_info"] = done["info"]
         entry["search_mode"] = done["info"]["search_mode"]
         entry["trips"] = [_trip_row(t, line, record) for t in found]
+        entry["shelf_layout"] = gaze_part.shelf_layout(record.snapshot)
     except Exception as e:  # noqa: BLE001
         entry.update(status="bad", reason=f"разбор записи упал: {e!r}")
+        return entry
+    if report_cfg is not None and entry["gaze"]["present"]:
+        try:
+            entry["gaze_data"] = gaze_part.read(
+                record, found, cfg, report_cfg, limits, entry["sha256"])
+        except Exception as e:  # noqa: BLE001 — тест и действия остаются
+            entry["gaze_data"] = None
+            entry["gaze"]["reason"] = f"разбор взгляда упал: {e!r}"
+            entry["gaze"]["included"] = False
     return entry
 
 

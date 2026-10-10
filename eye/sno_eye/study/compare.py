@@ -49,8 +49,7 @@ FAMILIES = {
 
 MEASURES = (
     Measure("search.H_t", "Энтропия переходов взгляда в поиске", "В",
-            "бит", "взгляд в поиске беспорядочнее", gaze=True,
-            pending="шаг 37 — меры взгляда"),
+            "доля случайного", "взгляд в поиске беспорядочнее", gaze=True),
     Measure("clt.ecl", "ECL — нагрузка от интерфейса", "А", "1–7",
             "интерфейс мешал больше"),
     Measure("actions.time_to_choice", "Время до выбора книги", "Б", "с",
@@ -108,6 +107,62 @@ MEASURES = (
             "больше касаний"),
     Measure("actions.empty_tap_share", "Доля пустых касаний", "Б", "доля",
             "беспорядочнее рука"),
+) + tuple(
+    # Беспорядочность взгляда (SNO-ALG-RES-03, шаг 37) — по фазам.
+    Measure(f"{phase}.{key}", f"{title} — {words}", "В", unit, more,
+            gaze=True)
+    for phase, words, keys in (
+        ("search", "поиск", (
+            ("H_s", "Энтропия распределения взгляда", "доля случайного",
+             "внимание размазано"),
+            ("K", "Коэффициент K", "z", "сосредоточеннее (K < 0 — "
+             "обзорный режим)"),
+            ("path", "Путь взгляда до книги, медиана", "°",
+             "длиннее путь — беспорядочнее"),
+            ("straight", "Прямота похода, медиана", "доля",
+             "прямее к цели"),
+            ("returns", "Возвраты в клетку, медиана", "доля",
+             "чаще возвращался — искал вслепую"),
+            ("nni_dev", "Кучность |1 − NNI|", "доля",
+             "дальше от случайного разброса — упорядоченнее"),
+            ("fix_ms", "Длительность фиксации, медиана", "мс",
+             "дольше фиксации"),
+            ("sacc_deg", "Амплитуда саккады, медиана", "°",
+             "длиннее скачки"),
+            ("fix_rate", "Фиксаций в секунду", "в с",
+             "чаще фиксации"))),
+        ("reading", "чтение", (
+            ("H_t", "Энтропия переходов", "доля случайного",
+             "беспорядочнее"),
+            ("H_s", "Энтропия распределения", "доля случайного",
+             "внимание размазано"),
+            ("K", "Коэффициент K", "z", "сосредоточеннее"),
+            ("fix_ms", "Длительность фиксации, медиана", "мс",
+             "дольше фиксации"),
+            ("sacc_deg", "Амплитуда саккады, медиана", "°",
+             "длиннее скачки"),
+            ("fix_rate", "Фиксаций в секунду", "в с", "чаще фиксации"))),
+        ("all", "всё изучение", (
+            ("H_t", "Энтропия переходов", "доля случайного",
+             "беспорядочнее"),
+            ("H_s", "Энтропия распределения", "доля случайного",
+             "внимание размазано"),
+            ("K", "Коэффициент K", "z", "сосредоточеннее"))),
+    )
+    for key, title, unit, more in keys
+) + (
+    # Средний взгляд и научение (SNO-ALG-RES-04, шаг 37).
+    Measure("share.reading", "Доля изучения: взгляд на чтении", "Г",
+            "доля", "больше времени на чтении", gaze=True),
+    Measure("share.search", "Доля изучения: взгляд на полке и карте", "Г",
+            "доля", "больше времени на поиске", gaze=True),
+    Measure("share.off", "Доля изучения: вне экрана и вне приложения",
+            "Г", "доля", "дольше мимо экрана", gaze=True),
+    Measure("learn.choice_slope", "Научение: наклон времени до выбора",
+            "Г", "b", "медленнее ускорялись (b < 0 — ускорение)"),
+    Measure("learn.path_slope", "Научение: наклон пути взгляда", "Г",
+            "b", "медленнее укорачивался путь (b < 0 — короче)",
+            gaze=True),
 )
 
 BY_KEY = {m.key: m for m in MEASURES}
@@ -273,7 +328,8 @@ def scenario_weight(e: dict, scenario: str, cfg: dict, no_filter: bool,
 
 
 def value(e: dict, key: str):
-    """Значение меры [key] у записи; меры взгляда — шаг 37."""
+    """Значение меры [key] у записи: тест, действия, научение или
+    взгляд (`gaze_measures` — шаг 37: беспорядочность и доли)."""
     if e.get("status") != "ok":
         return None
     if key.startswith("clt."):
@@ -282,6 +338,8 @@ def value(e: dict, key: str):
         return e["test"]["measures"].get(key)
     if key.startswith("actions."):
         return e["actions"].get(key)
+    if key.startswith("learn."):
+        return (e.get("learn") or {}).get(key)
     return (e.get("gaze_measures") or {}).get(key)
 
 
@@ -364,10 +422,9 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
                 row["points"] = rows
             part.append(row)
         # Поправка Холма внутри семьи. Главная семья — с недостающей
-        # мерой как p = 1: `H_t` до шага 37 и любая главная мера, у
-        # которой мало данных. Так поправка остаётся на все три
-        # названные меры (АК4), и «значимо» не отменится, когда
-        # недостающая появится. Выбор наш: строже, чем выбросить её.
+        # мерой как p = 1: главная мера, у которой мало данных, остаётся
+        # в поправке, и та идёт на все три названные меры (АК4). Выбор
+        # наш: строже, чем выбросить её.
         for family in FAMILIES:
             members = [r for r in part if r["family"] == family]
             if not members:
@@ -400,8 +457,32 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
         robust.append({"measure": m, "cases": cases,
                        "verdict": stability(cases)})
 
+    # Шум веб-камеры сам делает взгляд «беспорядочнее» (SNO-ALG-RES-03):
+    # по каждой мере взгляда — ранговая связь с прецизионностью сессии
+    # по участникам S0 обеих ветвей; |ρ| ≥ `study.noise_rho` — пометка
+    # «чувствует шум». При десятке участников это пометка, а не защита.
+    limit = float(cfg["noise_rho"])
+    for r in table:
+        m = r["measure"]
+        if r["comparison"] != BRANCH or not m.gaze:
+            continue
+        xs, ys, ws = [], [], []
+        for e in entries:
+            x = value(e, m.key)
+            prec = ((e.get("gaze_data") or {}).get("precision_deg"))
+            w = scenario_weight(e, "S0", cfg, no_filter, series, True)
+            if x is not None and prec is not None and w > 0:
+                xs.append(float(x))
+                ys.append(float(prec))
+                ws.append(w)
+        rho = stats.spearman(xs, ys, ws)
+        r["noise_rho"] = rho
+        r["noisy"] = rho is not None and abs(rho) >= limit
+
     links = []
-    pairs = [("clt.ecl", "actions.time_to_choice")]
+    names = ("clt.ecl", "search.H_t", "actions.time_to_choice",
+             "learn.choice_slope")
+    pairs = [(a, b) for i, a in enumerate(names) for b in names[i + 1:]]
     for branch in ("I", "II"):
         for a, b in pairs:
             xs, ys, ws = [], [], []
@@ -409,7 +490,8 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
                 if e.get("branch") != branch:
                     continue
                 va, vb = value(e, a), value(e, b)
-                w = scenario_weight(e, "S0", cfg, no_filter, series, False)
+                gaze = BY_KEY[a].gaze or BY_KEY[b].gaze
+                w = scenario_weight(e, "S0", cfg, no_filter, series, gaze)
                 if va is not None and vb is not None and w > 0:
                     xs.append(va)
                     ys.append(vb)

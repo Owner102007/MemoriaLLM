@@ -57,6 +57,20 @@ def _test(e: dict, *path):
 
 
 ACTION_COLUMNS = [m for m in compare.MEASURES if m.key.startswith("actions.")]
+GAZE_COLUMNS = [m for m in compare.MEASURES if m.family in ("В", "Г")
+                or m.key == "search.H_t"]
+
+
+def _gd(e: dict, *path):
+    """Поле `gaze_data` записи по пути ключей."""
+    value = e.get("gaze_data") or {}
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+def _transitions(e: dict, phase: str):
+    return (e.get("gaze_measures") or {}).get(f"{phase}.transitions")
 
 PARTICIPANT_COLUMNS = [
     ("код участника", lambda e: e.get("participant")),
@@ -126,8 +140,36 @@ PARTICIPANT_COLUMNS = [
      .get("empty_taps")),
 ] + [(f"{m.title}, {m.unit}", (lambda k: lambda e: compare.value(e, k))(
     m.key)) for m in ACTION_COLUMNS] + [
+    # Взгляд (шаг 37): версия, пороги фиксаций — сессии и общий, почему
+    # нет мер беспорядочности, сколько переходов, клетка сетки.
+    ("версия взгляда", lambda e: _gd(e, "version")),
+    ("порог фиксаций сессии, °", lambda e: _gd(e, "idt_session_deg")),
+    ("общий порог фиксаций, °", lambda e: _gd(e, "disorder", "idt_deg")),
+    ("меры беспорядочности — почему нет",
+     lambda e: None if e.get("disorder_live") else e.get("disorder_gate")),
+    ("переходов в поиске", lambda e: _transitions(e, "search")),
+    ("переходов в чтении", lambda e: _transitions(e, "reading")),
+    ("переходов за всё изучение", lambda e: _transitions(e, "all")),
+    ("клетка сетки, ° (ширина)", lambda e: (_gd(e, "disorder", "cell_deg")
+                                            or [None])[0]),
+    ("клетка сетки, ° (высота)", lambda e: (_gd(e, "disorder", "cell_deg")
+                                            or [None, None])[1]),
+    ("клетка меньше двух запасов точности", lambda e: _gd(e, "cell_small")),
+    ("походов без взгляда", lambda e: (e.get("gaze_measures") or {})
+     .get("search.trips_no_gaze")),
+    ("H_t поиска без повторов", lambda e: (e.get("gaze_measures") or {})
+     .get("search.H_t_norep")),
+    ("NNI (сырой)", lambda e: (e.get("gaze_measures") or {})
+     .get("search.nni")),
+    ("NNI — экран", lambda e: (e.get("gaze_measures") or {})
+     .get("search.nni_screen")),
+    ("карта (отпечаток мест звёзд)", lambda e: (_gd(e, "map") or {})
+     .get("key")),
+] + [(f"{m.title}, {m.unit}", (lambda k: lambda e: compare.value(e, k))(
+    m.key)) for m in GAZE_COLUMNS] + [
     ("оговорки", lambda e: (e.get("check_notes") or [])
-     + ((e.get("test") or {}).get("notes") or [])),
+     + ((e.get("test") or {}).get("notes") or [])
+     + (_gd(e, "notes") or [])),
 ]
 
 
@@ -148,15 +190,28 @@ TRIP_COLUMNS = (
 )
 
 
+# Взгляд похода (шаг 37, М4, М5): фиксации общим порогом, путь по
+# содержимому до места нажатия, прямота, возвраты.
+TRIP_GAZE = (("фиксаций поиска", "fixations"), ("путь взгляда, °",
+                                                "path_deg"),
+             ("прямота", "straight"), ("возвраты", "returns"))
+
+
 def trips(entries: list[dict], path: Path) -> None:
     rows = []
     for e in entries:
+        gaze = {t["n"]: t for t in _gd(e, "disorder", "trips") or []}
+        live = bool(e.get("disorder_live"))
         for t in e.get("trips") or []:
+            own = gaze.get(t["n"]) if live else None
             rows.append([e.get("participant"), e.get("branch"),
                          e.get("in_stats")]
-                        + [t.get(k) for _, k in TRIP_COLUMNS])
+                        + [t.get(k) for _, k in TRIP_COLUMNS]
+                        + [None if own is None else own.get(k)
+                           for _, k in TRIP_GAZE])
     write(path, ["код участника", "ветвь", "участник в статистике"]
-          + [t for t, _ in TRIP_COLUMNS], rows)
+          + [t for t, _ in TRIP_COLUMNS] + [t for t, _ in TRIP_GAZE],
+          rows)
 
 
 def answers(entries: list[dict], path: Path) -> None:
@@ -197,6 +252,7 @@ def comparison(result: dict, path: Path) -> None:
             res.p, res.exact, r.get("p_holm"), res.delta_all,
             res.diff, _ci(res.diff_ci, 0), _ci(res.diff_ci, 1),
             " | ".join(res.strata), res.pooled, r.get("words"),
+            r.get("noise_rho"), r.get("noisy") if m.gaze else None,
         ])
     write(path, [
         "сравнение", "семья", "главная", "мера", "название", "единицы",
@@ -209,6 +265,7 @@ def comparison(result: dict, path: Path) -> None:
         "p", "p точный", "p по Холму", "δ без слоёв (справочно)",
         "разница средних A − B", "разница: 2,5 %", "разница: 97,5 %",
         "сравнимые слои", "без слоёв (ветвь совпадает с ПК)", "вывод",
+        "ρ с прецизионностью сессии", "чувствует шум",
     ], rows)
 
 

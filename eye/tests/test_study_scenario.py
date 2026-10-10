@@ -1,5 +1,5 @@
-"""Шаг 36, SNO-F-RES-06: «Сравнение ветвей» на синтетической выборке с
-известным ответом (`study_scenario.py`).
+"""Шаги 36 и 37, SNO-F-RES-06: «Сравнение ветвей» на синтетической
+выборке с известным ответом (`study_scenario.py`).
 
 Восемь участников на ветвь, два ПК, на каждом — обе ветви; в ветви II
 ECL ниже и книгу выбирают быстрее. Двое — 🟡, один — 🔴 (с «неправильной»
@@ -7,6 +7,12 @@ ECL ниже и книгу выбирают быстрее. Двое — 🟡, �
 найти направление разницы по главным мерам во всех сценариях, где
 данных хватает, не пустить 🔴, взвесить 🟡; на отдельном наборе, где
 ветвь совпадает с ПК, — сказать об этом над результатом.
+
+Шаг 37: ветвь I ищет книгу на полке зигзагом, ветвь II — на карте по
+порядку. Скрипт обязан найти, что в ветви II взгляд в поиске
+упорядоченнее (SNO-ALG-RES-03), а в чтении разницы нет, не дать мер
+взгляда сессии хуже 3° и мер беспорядочности шумной камере, нарисовать
+Р6–Р12 и повести отчёт к своим файлам (BUG-68).
 """
 
 from __future__ import annotations
@@ -157,11 +163,21 @@ def test_sno_f_res_06_files_of_the_report(run, tmp_path):
                    for f in figures), n
         assert any(f.startswith(n + "_") and f.endswith(".svg")
                    for f in figures), n
+    for n in ("Р6", "Р7", "Р8", "Р9", "Р10", "Р11", "Р12"):
+        assert any(f.startswith(n + "_") and f.endswith(".png")
+                   for f in figures), n
     page = (tmp_path / "index.html").read_text(encoding="utf-8")
     assert "Как читать" in page and "data:image/png;base64," in page
+    assert "следующий шаг" not in page and "шаг 37" not in page
     assert "src='http" not in page and 'src="http' not in page
     sources = json.loads((tmp_path / "исходные.json").read_text("utf-8"))
     assert len(sources["archives"]) == 16
+    # `k` и случайный уровень по фазам, μ и σ K — по ним прогон
+    # повторяется.
+    search = sources["gaze"]["phases"]["search"]
+    assert search["k"] >= 40 and search["random"]["H_t"] > 0
+    assert set(search["K"]) == {"mu_d", "sd_d", "mu_a", "sd_a"}
+    assert sources["script"] == study.SCRIPT_VERSION
     assert all(len(a["sha256"]) == 64 for a in sources["archives"])
     assert sources["versions"]["numpy"]
     # Excel: «;», UTF-8 с меткой, дробная часть через запятую.
@@ -237,8 +253,9 @@ def test_sno_f_res_06_check_command_stays_light():
 
 
 @pytest.mark.parametrize("name,flag", [
-    ("Сравнение ветвей.cmd", "study %*"),
-    ("Сравнение ветвей (проверочный).cmd", "study --no-filter %*")])
+    ("Сравнение ветвей.cmd", "study --open %*"),
+    ("Сравнение ветвей (проверочный).cmd",
+     "study --no-filter --open %*")])
 def test_sno_f_res_06_cmd_shortcuts_go_into_the_zip(name, flag):
     raw = (EYE / name).read_bytes()
     text = raw.decode("ascii")
@@ -262,6 +279,7 @@ def test_sno_f_res_06_every_file_says_where_from():
         if path.name == "__init__.py":
             assert "Карта скрипта" in head
             for name in ("collect.py", "clt.py", "honesty.py", "actions.py",
+                         "gaze.py", "disorder.py", "average.py",
                          "table.py", "stats.py", "compare.py", "charts.py",
                          "page.py"):
                 assert name in head, name
@@ -281,3 +299,119 @@ def test_sno_f_res_06_thresholds_section():
     assert own["primary"] == ["search.H_t", "clt.ecl",
                               "actions.time_to_choice"]
     assert set(own) == set(study.DEFAULTS)
+
+
+# --- шаг 37: меры взгляда -----------------------------------------------
+
+def gaze_row(run, key):
+    return row(run, key)
+
+
+@pytest.mark.parametrize("key,sign", [
+    ("search.H_t", -1), ("search.path", -1), ("search.returns", -1),
+    ("search.K", 1), ("search.straight", 1), ("search.nni_dev", 1),
+    ("all.H_t", -1)])
+def test_sno_alg_res_03_finds_planted_order_of_search(run, key, sign):
+    """В ветви II взгляд в поиске заложен упорядоченнее: энтропия,
+    путь и возвраты меньше, K, прямота и кучность больше. Направление —
+    по δ и интервалу: слова у разведочных мер решает ещё и поправка
+    Холма на всю семью, а при семи участниках на ветвь её выдерживают
+    не все меры."""
+    r = gaze_row(run, key)
+    res = r["result"]
+    assert res.enough, key
+    assert res.delta * sign > 0.5, key
+    lo, hi = res.ci
+    assert (lo > 0) if sign > 0 else (hi < 0), key
+    if r["family"] == "0":
+        assert r["words"] == "в ветви II меньше", key
+
+
+def test_sno_alg_res_03_h_t_is_primary_and_stable(run):
+    r = gaze_row(run, "search.H_t")
+    assert r["family"] == "0" and not r["pending"]
+    robust = {i["measure"].key: i for i in run["result"]["robust"]}
+    item = robust["search.H_t"]
+    assert item["verdict"] == "устойчив"
+    assert all(c["result"].delta < 0 for c in item["cases"])
+
+
+def test_sno_alg_res_03_reading_is_the_same_in_both_branches(run):
+    assert gaze_row(run, "reading.H_t")["words"] == "разницы не видно"
+
+
+def test_sno_alg_res_03_who_gets_gaze_measures(run):
+    by = {e["participant"]: e for e in run["entries"]}
+    plan = ss.default_plan()
+    poor, noisy, red = plan[3], plan[5], plan[10]
+    # Хуже 3°: тест и действия на месте, мер взгляда в сравнении нет.
+    codes = {p[5] for p in gaze_row(run, "search.H_t")["points"]}
+    assert poor.code not in codes
+    assert poor.code in {p[5] for p in row(run, "clt.ecl")["points"]}
+    # Шумная камера: доли зон есть, мер беспорядочности нет.
+    e = by[noisy.code]
+    assert "общего порога" in e["disorder_gate"]
+    assert "search.H_t" not in e["gaze_measures"]
+    assert noisy.code in {p[5] for p in
+                          gaze_row(run, "share.reading")["points"]}
+    # 🔴 — ни в одной мере взгляда.
+    for key in ("search.H_t", "share.reading", "learn.path_slope"):
+        assert red.code not in {p[5] for p in gaze_row(run, key)["points"]}
+
+
+def test_sno_alg_res_03_check_run_lifts_the_noise_gate(plan_folder):
+    result = study.analyse([str(plan_folder)], cfg=cfg(), no_filter=True)
+    noisy = ss.default_plan()[5]
+    e = next(x for x in result["entries"]
+             if x["participant"] == noisy.code)
+    assert e["disorder_gate"] and e["disorder_live"]
+    assert noisy.code in {p[5] for p in
+                          row(result, "search.H_t")["points"]}
+
+
+def test_sno_alg_res_04_average_of_the_branches(run):
+    avg = run["result"]["average"]
+    # Ветвь II искала на карте — тепловая карта одна, на её звёздах.
+    assert len(avg["heat"]) == 1
+    heat = avg["heat"][0]
+    assert set(heat["branches"]) == {"II"} and len(heat["points"]) == 12
+    # Схема полки: у ветви I время поиска на полке, у ветви II — нет.
+    total = {b: sum(x["share"] or 0 for r in avg["shelf"][b]["rows"]
+                    for x in r["books"]) for b in ("I", "II")}
+    assert total["I"] > 0.2 and total["II"] == 0
+    for b in ("I", "II"):
+        groups = avg["shares"][b]["groups"]
+        assert sum(groups.values()) == pytest.approx(1.0)
+        assert avg["curve"][b]["choice"]
+    m = avg["matrix"]["II"]
+    assert m["n"] == 7 and len(m["p"]) == 5
+
+
+def test_bug_68_report_leads_to_its_files(run, tmp_path):
+    """BUG-68: из отчёта открывается каждый его файл, и каждый такой
+    файл лежит в папке; консоль называет папку."""
+    from urllib.parse import unquote
+    study.write(run, tmp_path)
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    links = [unquote(h) for h in re.findall(r"href='([^']+)'", page)]
+    for name in ("участники.csv", "походы.csv", "ответы_теста.csv",
+                 "сравнение.csv", "устойчивость.csv", "исходные.json",
+                 "рисунки/"):
+        assert name in links, name
+    for link in links:
+        assert (tmp_path / link).exists(), link
+    assert any(link.startswith("рисунки/Р6_") for link in links)
+    lines = study.describe(run, tmp_path)
+    assert f"Папка отчёта: {tmp_path}" in lines
+    assert any(line.strip().startswith("участники.csv") for line in lines)
+    assert str(tmp_path) in page
+
+
+def test_bug_68_open_flag_opens_the_folder(monkeypatch, tmp_path):
+    opened = []
+    monkeypatch.setattr(study.os, "startfile", lambda p: opened.append(p),
+                        raising=False)
+    assert study.open_folder(tmp_path)
+    assert opened == [str(tmp_path)]
+    monkeypatch.delattr(study.os, "startfile", raising=False)
+    assert not study.open_folder(tmp_path)

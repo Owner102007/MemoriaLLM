@@ -6,10 +6,11 @@
 стандартной библиотеки. Страница без внешних скриптов, шрифтов и
 картинок — по образцу «Разбора записи» (`report/html.py`), стиль оттуда
 же: данные участников остаются на ПК организатора.
-Метод: разделы — по «Сводный анализ — структура скрипта»: состав
-выборки, качество взгляда по ПК, нагрузка, действия, (беспорядочность,
-средний взгляд, научение — шаг 37), сводка «I против II», устойчивость,
-«Как читать», оговорки, исходные.
+Метод: разделы — по «Сводный анализ — структура скрипта»: файлы
+отчёта (BUG-68), состав выборки, качество взгляда по ПК, нагрузка,
+действия, беспорядочность взгляда, средний взгляд, научение, сводка «I
+против II», устойчивость, «Как читать», оговорки, исходные. Ссылки на
+файлы — относительные: папку отчёта можно переносить.
 Вход → выход: прогон и рисунки → текст страницы.
 """
 
@@ -20,6 +21,7 @@ import html
 import statistics
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from ..report.html import STYLE as BASE_STYLE
 from . import compare, honesty
@@ -73,9 +75,16 @@ def _img(folder: Path, name: str | None, caption: str) -> str:
         return f"<p class='later'>{_e(caption)}: данных для рисунка нет.</p>"
     data = (folder / name).read_bytes()
     src = "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+    svg = name[:-4] + ".svg"
     return (f"<figure class='chart'><img src='{src}' alt='{_e(caption)}'>"
-            f"<figcaption>{_e(caption)} · файлы — рисунки\\"
-            f"{_e(name)} и .svg</figcaption></figure>")
+            f"<figcaption>{_e(caption)} · файлы — "
+            f"{_link('рисунки/' + name, 'рисунки/' + name)} и "
+            f"{_link('рисунки/' + svg, '.svg')}</figcaption></figure>")
+
+
+def _link(path: str, text: str) -> str:
+    """Относительная ссылка на файл отчёта (BUG-68)."""
+    return (f"<a href='{_e(quote(path))}'>{_e(text)}</a>")
 
 
 def _check_banner(run: dict) -> str:
@@ -181,8 +190,9 @@ def _quality(run: dict, folder: Path, figures: dict) -> str:
             "<p>Взгляд сессии входит в анализ, если средняя точность "
             "проверок в начале и в конце не хуже "
             f"{num(run['limits']['include_deg'], 0)}° (Т19). Тест и "
-            "действия такая сессия отдаёт всегда. Меры взгляда — шаг 37; "
-            "здесь — сколько сессий их дадут.</p>"
+            "действия такая сессия отдаёт всегда. Меры беспорядочности "
+            "ещё и требуют, чтобы шум был меньше общего порога фиксаций "
+            f"({num(run['cfg']['idt_deg'], 1)}°, раздел 5).</p>"
             + _table(["ПК (слой)", "Сессий", "Ветви", "Со взглядом",
                       "Взгляд в анализе", "Точность в начале, медиана, °",
                       "В конце, медиана, °"], rows, num_cols=(1, 3, 4, 5, 6))
@@ -190,7 +200,17 @@ def _quality(run: dict, folder: Path, figures: dict) -> str:
                    "Р3. Качество взгляда по сессиям"))
 
 
-def _measure_rows(run: dict, keys, comparison=compare.BRANCH) -> list:
+def _noise(r: dict) -> str:
+    if r.get("noise_rho") is None:
+        return "—"
+    text = f"ρ {num(r['noise_rho'])}"
+    if r.get("noisy"):
+        text = f"<b>чувствует шум</b> ({text})"
+    return text
+
+
+def _measure_rows(run: dict, keys, comparison=compare.BRANCH,
+                  noise: bool = False) -> list:
     rows = []
     table = {(r["comparison"], r["measure"].key): r
              for r in run["result"]["table"]}
@@ -202,7 +222,8 @@ def _measure_rows(run: dict, keys, comparison=compare.BRANCH) -> list:
         a, b = r["groups"]
         if r["pending"]:
             rows.append([_e(m.title), "—", "—", "—", "—", "—",
-                         f"<span class='later'>{_e(r['words'])}</span>"])
+                         f"<span class='later'>{_e(r['words'])}</span>"]
+                        + (["—"] if noise else []))
             continue
         res = r["result"]
         da, db = res.describe.get(a, {}), res.describe.get(b, {})
@@ -216,7 +237,8 @@ def _measure_rows(run: dict, keys, comparison=compare.BRANCH) -> list:
             f"n_eff {num(da.get('n_eff'), 1)})</small>",
             num(res.delta) + (f" <small>{_e(r['effect'])}</small>"
                               if res.delta is not None else ""),
-            ci_text(res.ci), p_text(r.get("p_holm")), _e(r["words"])]))
+            ci_text(res.ci), p_text(r.get("p_holm")), _e(r["words"])]
+            + ([_noise(r)] if noise else [])))
     return rows
 
 
@@ -257,10 +279,171 @@ def _actions(run: dict, folder: Path, figures: dict) -> str:
             + _img(folder, figures.get("Р5"), "Р5. Действия"))
 
 
-def _later(title: str) -> str:
-    return (f"<p class='later'>{_e(title)} — следующий шаг (шаг 37): "
-            "меры взгляда считаются по «Разбору записи» каждой сессии со "
-            "взглядом в анализе.</p>")
+def _why_no_gaze(run: dict) -> str:
+    """Почему участники без мер взгляда — словами, по причинам."""
+    reasons: dict = {}
+    for e in run["entries"]:
+        if e.get("status") != "ok" or not e.get("in_stats"):
+            continue
+        g = e.get("gaze") or {}
+        if not g.get("present") or not g.get("included"):
+            why = g.get("reason") or "взгляда нет"
+            if run["no_filter"] and g.get("present"):
+                continue
+        elif not e.get("disorder_live"):
+            why = e.get("disorder_gate") or "мер беспорядочности нет"
+        elif "search.H_t" not in (e.get("gaze_measures") or {}):
+            why = ("энтропии поиска нет: переходов в поиске меньше k или "
+                   "пола")
+        else:
+            continue
+        reasons.setdefault(why, []).append(str(e.get("participant")))
+    if not reasons:
+        return ""
+    items = "".join(f"<li>{_e(why)}: {_e(', '.join(codes))}</li>"
+                    for why, codes in sorted(reasons.items()))
+    return ("<p>Участники в статистике, но без мер взгляда, без мер "
+            f"беспорядочности или без энтропии поиска:</p><ul>{items}</ul>")
+
+
+def _empty_h_t(run: dict) -> str:
+    """Доля пустых `H_t` поиска по ветвям: прямой поиск даёт мало
+    переходов, и выпадать должны не самые упорядоченные."""
+    parts = []
+    for b in ("I", "II"):
+        live = [e for e in run["entries"] if e.get("in_stats")
+                and e.get("branch") == b and e.get("disorder_live")]
+        if not live:
+            continue
+        empty = sum(1 for e in live
+                    if "search.H_t" not in e["gaze_measures"])
+        parts.append(f"ветвь {b} — {empty} из {len(live)}")
+    if not parts:
+        return ""
+    return ("<p>Энтропия поиска пустая (мало переходов): "
+            + "; ".join(parts) + ". Если пустых в одной ветви заметно "
+            "больше, вывод по энтропии говорит о тех, кто искал дольше."
+            "</p>")
+
+
+def _k_source(info: dict) -> str:
+    if info.get("from") == "S0":
+        return "по участникам основного сценария S0"
+    return ("по всем записям со взглядом — в основном сценарии S0 "
+            "участников со взглядом нет")
+
+
+def _disorder(run: dict, folder: Path, figures: dict) -> str:
+    info = run["result"].get("gaze_info") or {}
+    phases = info.get("phases") or {}
+    rows = []
+    for phase, words in (("search", "поиск"), ("reading", "чтение"),
+                         ("all", "всё изучение")):
+        own = phases.get(phase) or {}
+        rnd = own.get("random")
+        rows.append([words, str(own.get("zones", "—")),
+                     str(own.get("floor", "—")),
+                     "—" if own.get("k") is None else str(own["k"]),
+                     num(rnd[0]) if rnd else "—"])
+    keys = [m.key for m in compare.MEASURES if m.family == "В"
+            or m.key == "search.H_t"]
+    live = sum(1 for e in run["entries"] if e.get("disorder_live")
+               and e.get("in_stats"))
+    return (_check_banner(run) +
+            "<p>Одного числа «беспорядочности» нет — мер несколько, и каждая "
+            "ловит своё. Фиксации для них пересчитаны <b>одним порогом на всё "
+            f"исследование</b> — {num(info.get('idt_deg'), 1)}° (АК12): "
+            "порог «Разбора записи» у каждой сессии свой, и число фиксаций "
+            "мерило бы камеру. Сессия, у которой три прецизионности больше "
+            "порога, сюда не идёт. Фазы: <b>поиск</b> — походы за книгой "
+            "на полке и карте до выбора книги (главная), <b>чтение</b>, "
+            "<b>всё изучение</b>. Зоны поиска — сетка окна "
+            f"{_e('×'.join(str(v) for v in info.get('grid') or []))} и «вне "
+            "экрана»: одинаковы у обеих ветвей. Энтропия считается на "
+            "одинаковом числе переходов <i>k</i> у всех и делится на "
+            "уровень совершенно случайного взгляда: 0 — следующий взгляд "
+            "предсказуем по текущему, 1 — как у случайного. Число "
+            "переходов подвыборки <i>k</i> и μ, σ коэффициента K взяты "
+            f"{_e(_k_source(info))} и одинаковы во всех сценариях. "
+            f"Участников с мерами беспорядочности в статистике — {live}."
+            "</p>"
+            + _why_no_gaze(run) + _empty_h_t(run)
+            + _table(["Фаза", "Зон", "Пол переходов", "k",
+                      "H_t случайного взгляда, бит"], rows,
+                     num_cols=(1, 2, 3, 4))
+            + _table(MEASURE_HEADER + ["Шум"], _measure_rows(run, keys,
+                                                            noise=True))
+            + _img(folder, figures.get("Р6"),
+                   "Р6. Беспорядочность взгляда по ветвям"))
+
+
+def _average(run: dict, folder: Path, figures: dict) -> str:
+    from .average import GROUP_WORDS
+    avg = run["result"].get("average") or {}
+    shares = avg.get("shares") or {}
+    rows = []
+    for key, words in GROUP_WORDS.items():
+        rows.append([_e(words)] + [
+            "—" if not shares.get(b) else
+            f"{round((shares[b]['groups'].get(key) or 0) * 100)} %"
+            for b in ("I", "II")])
+    n = avg.get("n_gaze") or {}
+    keys = ["share.reading", "share.search", "share.off"]
+    heat = avg.get("heat") or []
+    maps = ""
+    if len(heat) > 1:
+        maps = (f"<p>В наборе {len(heat)} разных карты (разные наборы "
+                "книг или их места) — тепловая карта строится на каждую "
+                "отдельно; на рисунке — первые две.</p>")
+    return (_check_banner(run) +
+            "<p>Средний взгляд ветви — взвешенное среднее участников со "
+            "взглядом в анализе (ветвь I — "
+            f"{n.get('I', 0)}, ветвь II — {n.get('II', 0)}); у 🔴 вес 0. "
+            "Это описание, а не сравнение: слои ПК здесь не учитываются, "
+            "сравнение долей — в таблице ниже и в разделе 8.</p>"
+            + _table(["Группа видов времени", "Ветвь I", "Ветвь II"], rows,
+                     num_cols=(1, 2))
+            + _img(folder, figures.get("Р8"), "Р8. Доли времени изучения")
+            + _img(folder, figures.get("Р9"), "Р9. Ход по минутам")
+            + _img(folder, figures.get("Р7"), "Р7. Матрица переходов")
+            + maps
+            + _img(folder, figures.get("Р10"),
+                   "Р10. Тепловая карта «Галактики»")
+            + _img(folder, figures.get("Р11"), "Р11. Схема полки")
+            + _table(MEASURE_HEADER + ["Шум"], _measure_rows(run, keys,
+                                                            noise=True)))
+
+
+def _learning(run: dict, folder: Path, figures: dict) -> str:
+    keys = ["learn.choice_slope", "learn.path_slope"]
+    return (_check_banner(run) +
+            "<p>Наклон <i>b</i> прямой <code>log y = a + b · log(номер "
+            "похода)</code> у каждого участника (закон степени научения, "
+            "Newell и Rosenbloom, 1981): чем отрицательнее, тем быстрее "
+            "ускоряется поиск. По времени до выбора книги — у всех, из "
+            "журнала; по пути взгляда — у вошедших со взглядом. Меньше "
+            f"{run['cfg']['min_visits_curve']} доведённых походов — "
+            "наклона нет. Если ускоряются только повторные походы, "
+            "запомнилось расположение, а не освоился экран.</p>"
+            + _table(MEASURE_HEADER, _measure_rows(run, keys))
+            + _img(folder, figures.get("Р12"), "Р12. Кривая научения"))
+
+
+def _files(run: dict, figures: dict) -> str:
+    """BUG-68: вверху отчёта — ссылка на каждый его файл и где лежит
+    папка."""
+    from . import FILES
+    items = "".join(f"<li>{_link(name, name)} — {_e(words)}</li>"
+                    for name, words in FILES)
+    pics = [n for n in figures.values() if n]
+    items += (f"<li>{_link('рисунки/', 'рисунки')} — все рисунки отчёта, "
+              f"PNG и SVG ({len(pics)} шт.)</li>")
+    where = run.get("_folder")
+    place = (f"<p>Папка отчёта: <code>{_e(where)}</code></p>"
+             if where else "")
+    return (place + f"<ul>{items}</ul><p>Таблицы открываются в Excel "
+            "двойным щелчком: разделитель «;», кодировка UTF-8, дробная "
+            "часть через запятую.</p>")
 
 
 def _summary(run: dict, folder: Path, figures: dict) -> str:
@@ -308,8 +491,7 @@ def _summary(run: dict, folder: Path, figures: dict) -> str:
                  f"{_e(compare.BY_KEY[x['b']].title)}", str(x["n"]),
                  num(x["rho"])] for x in links]
         parts.append("<details><summary>Разведка — связи мер (Спирмен с "
-                     "весами)</summary><p>Слов о причинах нет. `H_t` и "
-                     "наклон научения добавятся в шаге 37.</p>"
+                     "весами)</summary><p>Слов о причинах нет.</p>"
                      + _table(["Ветвь", "Меры", "n", "ρ"], rows,
                               num_cols=(2, 3)) + "</details>")
     return "".join(parts)
@@ -365,8 +547,32 @@ II меньше», с весами пар; от −1 до 1, 0 — разниц�
 <p><b>p</b> — перестановочный тест для той же δ: метки ветвей
 перемешиваются внутри ПК, веса остаются при участниках; перестановок не
 больше {run['cfg']['exact_limit']} — перебираются все (точный тест).
-<b>Поправка Холма</b> — внутри семьи мер; у главных мер недостающая пока
-<code>H_t</code> входит в поправку с p = 1.</p>
+<b>Поправка Холма</b> — внутри семьи мер; главная мера, у которой мало
+данных, входит в поправку с p = 1.</p>
+<p><b>Энтропия переходов H_t</b> (Krejtz и др., 2015) — насколько
+следующее место взгляда предсказуемо по текущему: переходы между зонами
+складываются в матрицу, у каждого участника берётся одинаковое число
+переходов <i>k</i> (оценка по малой выборке занижена), и результат
+делится на уровень совершенно случайного взгляда. 0 — предсказуемо, 1 —
+как у случайного; <b>больше — беспорядочнее</b>. Единица — не потолок:
+взгляд, случайно прыгающий по нескольким клеткам, при малом <i>k</i>
+даёт и больше 1, а по двум клеткам — меньше. <b>H_s</b> — то же для
+того, как взгляд разбросан по зонам без учёта порядка; π — доли начал
+переходов, это приближение к стационарному распределению Krejtz.
+<b>Коэффициент K</b> (Krejtz и др., 2016) — длительность фиксации минус
+длина следующего скачка, обе в долях разброса по всем участникам: K &lt;
+0 — обзорный режим, короткие фиксации и длинные скачки; K &gt; 0 —
+сосредоточенный. <b>Путь</b> — сумма скачков взгляда по содержимому от
+первой фиксации похода до нажатия (прокрутка полки и сдвиг карты не
+входят); <b>прямота</b> — прямое расстояние от первой фиксации до книги,
+делённое на путь, 1 — смотрел прямо на цель. <b>Возвраты</b> — доля
+заходов в клетку, где взгляд в этом походе уже был. <b>Кучность</b> — NNI,
+среднее расстояние до ближайшей соседней фиксации против случайных точек
+в той же области; в сравнение идёт |1 − NNI|: около 0 — разброс как у
+случайных точек, <b>меньше — беспорядочнее</b>. <b>«Чувствует шум»</b> —
+мера связана с прецизионностью сессии (|ρ| ≥ {num(run['cfg']['noise_rho'])}):
+шум веб-камеры сам делает взгляд «беспорядочнее»; при десятке участников
+это пометка, а не защита.</p>
 <p><b>Меры</b>:</p><ul>{items}</ul>"""
 
 
@@ -383,7 +589,7 @@ def _sources(run: dict) -> str:
     return (f"<p>Отпечаток набора: <code>{_e(run['fingerprint'][:16])}"
             f"</code> · зерно меры — "
             f"<code>stats.seed_for</code> от отпечатка, сравнения, сценария и "
-            f"меры · версия взгляда для мер (шаг 37): "
+            f"меры · версия взгляда для мер: "
             f"{_e(run['gaze_version'])} · {_e(versions)}. Архивы с "
             "SHA-256, пороги и версии — <code>исходные.json</code>: по нему "
             "прогон повторяется до бита.</p>")
@@ -404,13 +610,14 @@ def _render(run: dict, figures: dict, folder: Path) -> str:
         f"<li>{_e(w)}</li>" for w in warn) + "</ul></div>") if warn else ""
     series = run["series"] or "все серии в папке"
     sections = [
+        ("Файлы отчёта", _files(run, figures)),
         ("1. Состав выборки", _composition(run, folder, figures)),
         ("2. Качество взгляда по ПК", _quality(run, folder, figures)),
         ("3. Нагрузка", _load(run, folder, figures)),
         ("4. Действия", _actions(run, folder, figures)),
-        ("5. Беспорядочность взгляда", _later("Беспорядочность взгляда")),
-        ("6. Средний взгляд", _later("Средний взгляд ветви")),
-        ("7. Научение", _later("Кривая научения")),
+        ("5. Беспорядочность взгляда", _disorder(run, folder, figures)),
+        ("6. Средний взгляд", _average(run, folder, figures)),
+        ("7. Научение", _learning(run, folder, figures)),
         ("8. Сводка «I против II»", _summary(run, folder, figures)),
         ("9. Устойчивость", _robust(run, folder, figures)),
         ("10. Как читать", _how_to_read(run)),
@@ -425,8 +632,8 @@ def _render(run: dict, figures: dict, folder: Path) -> str:
 <body><main>
 <h1>Сравнение ветвей СНО2026</h1>
 <p class="sub">Собрано {when} · архивов {len(entries)}, годных {ok}, в
-статистике {used} · {_e(series)} · шаг 36: отбор, тест нагрузки, действия
-(меры взгляда — шаг 37)</p>
+статистике {used} · {_e(series)} · версия взгляда для мер:
+{_e(run['gaze_version'])}</p>
 {warn_html}
 {body}
 </main></body></html>
