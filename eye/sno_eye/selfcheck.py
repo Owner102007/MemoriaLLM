@@ -178,8 +178,10 @@ def evaluate(m: dict, t: dict) -> dict:
 def fps_limit(m: dict, t: dict) -> str | None:
     """Кто упёрся в частоту кадров (BUG-58): `camera` — камера сама даёт
     столько кадров (обычно от недостатка света: в тусклом свете камера
-    удлиняет выдержку), `pc` — ПК не успевает их обрабатывать, `None` —
-    замер этого не знает (самопроверка прежней версии).
+    удлиняет выдержку), `format` — камера отдаёт кадры не в MJPG, а
+    несжатыми, и по USB 2.0 их меньше (BUG-66), `pc` — ПК не успевает
+    их обрабатывать, `None` — замер этого не знает (самопроверка
+    прежней версии).
 
     ПК не успевает, если захват выбросил заметную долю кадров или
     обработка кадра занимает почти весь промежуток между кадрами камеры.
@@ -193,12 +195,20 @@ def fps_limit(m: dict, t: dict) -> str | None:
     interval_ms = 1000.0 / max(1e-6, float(grabbed_fps))
     if float(drops) > lim["drop_share"] or float(proc_ms) > lim["proc_share"] * interval_ms:
         return "pc"
+    # BUG-66: камера встала не в MJPG — кадров мало из-за формата, а не
+    # от света.
+    fourcc = m.get("fourcc")
+    if isinstance(fourcc, str) and fourcc != "MJPG":
+        return "format"
     return "camera"
 
 
 def _fps_text(fps: float, verdict: str, limit: str | None) -> str:
     if verdict == GOOD:
         return f"Частота {fps:.1f} к/с"
+    if limit == "format":
+        return (f"Камера даёт {fps:.1f} к/с: кадры идут без сжатия, "
+                "а не в MJPG")
     if limit == "camera":
         if verdict == WARN:
             return (f"Частота {fps:.1f} к/с — камере мало света: "
@@ -419,7 +429,7 @@ def measure(open_source, processor_factory, cpu_meter, thresholds: dict,
             m["camera"] = "camera_lost"
             return {**evaluate(m, thresholds), "measures": m}
         tried.append({"mode": [res["width"], res["height"]],
-                      "fps": round(res["fps"], 1)})
+                      "fps": round(res["fps"], 1), "fourcc": res["fourcc"]})
         if chosen is None:
             chosen = res
         elif res["fps"] > 0 and res["fps"] >= chosen["fps"] * gain:
@@ -476,6 +486,7 @@ def _measure_mode(cap, proc, cpu_meter, thresholds, progress, stopped, shots=Non
     # BUG-58: сколько кадров дала сама камера, сколько выбросил захват и
     # сколько длится обработка — по ним видно, кто упёрся в частоту.
     res.update({"width": cap.source.width, "height": cap.source.height,
+                "fourcc": getattr(cap.source, "fourcc", None),
                 "cpu_percent": cpu, "dropped": cap.stats.dropped,
                 "camera_fps": grabbed / seconds if seconds > 0 else 0.0,
                 "drop_share": dropped / grabbed if grabbed else 0.0,

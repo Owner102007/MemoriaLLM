@@ -312,6 +312,8 @@ class Session:
         summary.update({"dropped": self.capture.stats.dropped,
                         "lost": self.capture.stats.lost, "dead": self.dead,
                         "camera_released": released, "seg": self.seg,
+                        # BUG-66: в каком формате шли кадры.
+                        "fourcc": self.capture.source.fourcc,
                         "satellite": VERSION})
         if extra:
             summary.update(extra)

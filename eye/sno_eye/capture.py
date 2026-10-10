@@ -1,8 +1,9 @@
 """Захват камеры (SNO-ALG-EYE-01, шаг 1).
 
 OpenCV через DirectShow; Media Foundation — только запасным путём: на
-части камер он открывается десятки секунд. Формат MJPG, затем частота,
-затем размер. Метка времени ставится в миг, когда кадр получен.
+части камер он открывается десятки секунд. Частота, затем размер, затем
+формат MJPG — последним (BUG-66, `configure`). Метка времени ставится в
+миг, когда кадр получен.
 Очередь на два кадра: если обработка отстаёт, старый кадр выбрасывается,
 а пропуск считается. Поток захвата — с повышенным приоритетом, чтобы
 метки не дрожали.
@@ -22,6 +23,7 @@ from . import clock, privacy
 from .synthetic import Head
 
 MODES = ((1920, 1080), (1280, 720))
+MJPG = "MJPG"
 
 
 class CameraError(Exception):
@@ -60,6 +62,8 @@ class Source:
     name = "?"
     width = 0
     height = 0
+    # Формат кадров камеры («MJPG», «YUY2»); None — не известен.
+    fourcc: str | None = None
 
     def open(self, mode: tuple[int, int]) -> None: ...
     def read(self) -> tuple[bool, np.ndarray | None, dict]: ...
@@ -84,21 +88,22 @@ class CvSource(Source):
         # перечня DirectShow нет вовсе (номер найден пробой, CAP_ANY).
         backends = [cv2.CAP_DSHOW] if self.info.backend == "dshow" else [cv2.CAP_ANY]
         for backend in backends:
-            cap = cv2.VideoCapture(self.info.index, backend)
-            if not cap.isOpened():
-                cap.release()
-                continue
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            cap.set(cv2.CAP_PROP_FPS, 30)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, mode[0])
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, mode[1])
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                cap.release()
-                continue
-            self._cap = cap
-            self.height, self.width = frame.shape[:2]
-            return
+            # BUG-66: камера, на которой MJPG не заработал (кадра нет),
+            # открывается ещё раз без него — в формате, какой даст.
+            for mjpg in (True, False):
+                cap = cv2.VideoCapture(self.info.index, backend)
+                if not cap.isOpened():
+                    cap.release()
+                    break
+                configure(cv2, cap, mode, mjpg=mjpg)
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    cap.release()
+                    continue
+                self._cap = cap
+                self.height, self.width = frame.shape[:2]
+                self.fourcc = fourcc_text(cap.get(cv2.CAP_PROP_FOURCC))
+                return
         raise CameraError("camera_busy",
                           "Камера занята другой программой — закройте Teams, "
                           "Zoom, браузер")
@@ -111,6 +116,41 @@ class CvSource(Source):
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+
+
+def fourcc_text(value) -> str | None:
+    """Формат из `CAP_PROP_FOURCC` четырьмя буквами; `None` — драйвер
+    его не назвал или назвал не буквами (несжатый RGB у DirectShow)."""
+    try:
+        code = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if code <= 0:
+        return None
+    text = "".join(chr((code >> (8 * i)) & 0xFF) for i in range(4))
+    return text if text.isalnum() else None
+
+
+def configure(cv2, cap, mode: tuple[int, int], mjpg: bool = True) -> None:
+    """Просит у камеры 30 кадров в секунду, размер [mode] и MJPG (BUG-66).
+
+    Порядок важен для DirectShow: OpenCV перенастраивает камеру на каждый
+    запрос, и формат держится, только пока его не перебьют. Размер после
+    формата и частота после него настраивают камеру заново без формата,
+    и драйвер встаёт в первый, какой у этого размера есть, по порядку
+    OpenCV — несжатые раньше MJPG. Камера второго ПК (Chicony USB2.0)
+    так встала в YUY2 1280×720, а он по USB 2.0 — 10 кадров в секунду;
+    самопроверка же просила 1080p, получала ближайший размер в MJPG и
+    видела 30. Поэтому частота — первой, размер — затем, формат —
+    последним: запрос формата берёт размер, уже стоящий у камеры, а
+    просьба о частоте остаётся в силе при перенастройке. Запасной путь
+    (Media Foundation) просит в том же порядке.
+    """
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, mode[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, mode[1])
+    if mjpg:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*MJPG))
 
 
 class SyntheticSource(Source):

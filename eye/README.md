@@ -71,6 +71,14 @@ python -m sno_eye bench --source synthetic --minutes 0.2 --no-window
 * `--source synthetic[:denied|busy|none|dark|noface|slow|twofaces]` —
   синтетика вместо камеры и модели.
 
+Камера открывается DirectShow (`capture.configure`): частота, размер,
+формат MJPG — **последним** (BUG-66). OpenCV перенастраивает камеру на
+каждый запрос, и размер или частота после формата сбрасывают MJPG:
+камера USB 2.0 встаёт в несжатый YUY2, а при 720p это 10 кадров в
+секунду. Формат, в котором шли кадры, — `fourcc` в замере самопроверки
+и в `summary.json` записи; тесты — на поддельном DirectShow
+`tests/fake_dshow.py`, который настраивает камеру как OpenCV 5.0.0.
+
 Замки: `python_version.txt` (встраиваемый Python), `requirements.lock`
 (колёса, `tool/make_lock.py`), `model_version.txt` (модель лица).
 Подъём версий — отдельным шагом. Сборку папки делает CI
