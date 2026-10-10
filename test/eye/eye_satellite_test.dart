@@ -596,6 +596,62 @@ void main() {
         'кадров в секунду ${report['fps']} | точность '
         '${report['start_deg']}° / ${report['end_deg']}°',
       );
+
+      // SNO-F-RES-03: «Разбор записи» — тем же встраиваемым Python, на
+      // том же архиве. Архив лежит в папке «Записи», поэтому папка
+      // разбора названа явно (без неё разбор ушёл бы в «Документы»).
+      final Directory reportOut = Directory('${temp.path}$sepРазбор');
+      final Stopwatch reporting = Stopwatch()..start();
+      final ProcessResult reported = await Process.run(
+        '${Platform.environment['SNO_EYE_DIR']}${sep}python.exe',
+        <String>[
+          '-I',
+          '-m',
+          'sno_eye',
+          'report',
+          archive.path,
+          '--json',
+          '--out',
+          reportOut.path,
+        ],
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      final String reportText = '${reported.stdout}';
+      expect(
+        reportText.trimLeft(),
+        startsWith('['),
+        reason: '${reported.stderr}',
+      );
+      final Map<String, Object?> analysed =
+          (jsonDecode(reportText) as List<Object?>).single!
+              as Map<String, Object?>;
+      expect(analysed['refused'], isNull, reason: '${analysed['refused']}');
+      expect(analysed['gaze_used'], isTrue);
+      final String base = archive.uri.pathSegments.last;
+      final String folderName =
+          '${base.substring(0, base.length - '.zip'.length)}_eye';
+      for (final String name in <String>[
+        'index.html',
+        'fixations.csv',
+        'visits.csv',
+        'measures.csv',
+        'quality.json',
+      ]) {
+        expect(
+          File('${reportOut.path}$sep$folderName$sep$name').existsSync(),
+          isTrue,
+          reason: name,
+        );
+      }
+      final Map<String, Object?> quality =
+          analysed['quality']! as Map<String, Object?>;
+      stdout.writeln(
+        'ЗАМЕР SNO-F-RES-03 | «Разбор записи» на архиве со взглядом | '
+        '${reporting.elapsedMilliseconds} мс | фиксаций '
+        '${analysed['fixation_count']} | годных ${quality['valid_share']} '
+        '| точность ${quality['start_deg']}° / ${quality['end_deg']}°',
+      );
       eye.dispose();
       session.dispose();
       await window.dispose();
