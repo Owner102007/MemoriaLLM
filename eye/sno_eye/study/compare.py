@@ -45,6 +45,7 @@ FAMILIES = {
     "Б": "Действия",
     "В": "Беспорядочность взгляда",
     "Г": "Средний взгляд и научение",
+    "Д": "Портрет участника",
 }
 
 MEASURES = (
@@ -163,6 +164,37 @@ MEASURES = (
     Measure("learn.path_slope", "Научение: наклон пути взгляда", "Г",
             "b", "медленнее укорачивался путь (b < 0 — короче)",
             gaze=True),
+) + (
+    # Портрет участника (SNO-ALG-RES-06, -07, -08, шаг 38) — семья «Д»;
+    # направления «лучше» записаны в «больше — значит», где они заданы
+    # (АЛ6: утверждаются до основной серии).
+    Measure("portrait.search_slope", "Энтропия поиска по ходу: наклон",
+            "Д", "в мин поиска", "взгляд в поиске упорядочивается "
+            "медленнее (меньше 0 — упорядочивается)", gaze=True),
+    Measure("portrait.reading_slope", "Энтропия чтения по ходу: наклон",
+            "Д", "за 10 мин", "взгляд в чтении беспорядочнее к концу "
+            "(направление «лучше» не задано)", gaze=True),
+    Measure("portrait.cat_return_share", "Возвраты в категории в поиске, "
+            "доля заходов", "Д", "доля", "чаще возвращался в уже "
+            "осмотренную категорию", gaze=True),
+    Measure("portrait.cat_return_ratio", "Возвраты в категории: было / "
+            "без памяти", "Д", "отношение", "хуже помнил, где уже смотрел "
+            "(меньше 1 — помнит)", gaze=True),
+    Measure("portrait.ui_trans_per_min", "Переходы между зонами "
+            "интерфейса", "Д", "в мин", "чаще переводил взгляд "
+            "(направление «лучше» не задано)", gaze=True),
+    Measure("portrait.cat_trans_per_min", "Переходы между категориями в "
+            "поиске", "Д", "в мин поиска", "чаще метался между "
+            "категориями", gaze=True),
+    Measure("portrait.lookbacks_per_min", "Взгляды назад при чтении", "Д",
+            "в мин чтения", "чаще возвращался к прочитанному "
+            "(направление «лучше» не задано)", gaze=True),
+    Measure("portrait.lookback_share", "Доля чтения во взглядах назад", "Д",
+            "доля", "дольше перечитывал (направление «лучше» не "
+            "задано)", gaze=True),
+    Measure("portrait.page_backs_per_min", "Возвраты на страницу назад",
+            "Д", "в мин чтения", "чаще листал назад (направление «лучше» "
+            "не задано)"),
 )
 
 BY_KEY = {m.key: m for m in MEASURES}
@@ -328,8 +360,9 @@ def scenario_weight(e: dict, scenario: str, cfg: dict, no_filter: bool,
 
 
 def value(e: dict, key: str):
-    """Значение меры [key] у записи: тест, действия, научение или
-    взгляд (`gaze_measures` — шаг 37: беспорядочность и доли)."""
+    """Значение меры [key] у записи: тест, действия, научение,
+    взгляд (`gaze_measures` — шаг 37: беспорядочность и доли) или
+    портрет (`portrait_measures` — шаг 38)."""
     if e.get("status") != "ok":
         return None
     if key.startswith("clt."):
@@ -340,6 +373,8 @@ def value(e: dict, key: str):
         return e["actions"].get(key)
     if key.startswith("learn."):
         return (e.get("learn") or {}).get(key)
+    if key.startswith("portrait."):
+        return (e.get("portrait_measures") or {}).get(key)
     return (e.get("gaze_measures") or {}).get(key)
 
 

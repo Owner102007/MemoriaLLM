@@ -371,6 +371,11 @@ def prepare(samples: list, spans: list, frames: list[dict], screen,
     out["trips"] = _trips(fixes, done, at, events, inputs, screen)
     out["nni"] = _nni(fixes, done, int(cfg["min_fix_nni"]),
                       int(cfg["nni_mc"]), seed)
+    # Шаг 38: портрет участника (`study.portrait`) считает на тех же
+    # фиксациях общим порогом — их забирает `study.gaze.read`, в
+    # записи они не остаются.
+    out["_fixes"] = fixes
+    out["_done"] = done
     return out
 
 

@@ -24,6 +24,19 @@
 что-то делает (поиск, первые 30 секунд чтения): поток весит меньше, а
 разбор тот же.
 
+Портрет (шаг 38). Чтение листается: за первые 20 секунд каждого
+открытия — четыре страницы вперёд (событие `page.shown` со страницей и
+откуда, новый кадр раскладки), строки читаются сверху вниз, с новой
+страницы — с первой строки. Заложено: у участника со стилем `learn`
+(ветвь I) поиск от похода к походу становится упорядоченнее — всё
+чаще книги полки просматриваются по порядку, ряд за рядом, а не
+зигзагом (энтропия поиска по ходу падает); у участников с `lookback`
+в каждом открытии на 27-й секунде чтения взгляд уходит на четыре
+строки вверх к прочитанному и через 600 мс возвращается (взгляд назад
+на известной секунде); у участников с `page_back` во втором открытии
+на 25-й секунде страница листается назад, а в третьем на 20,5-й —
+вперёд и через секунду назад (промах листания).
+
 Только стандартная библиотека: генератор запускает и Python раннера
 Windows без numpy (работа `eye-windows` в CI).
 """
@@ -253,6 +266,10 @@ class Person:
     noise: float = 4.0
     precision_deg: float = 0.8
     layout: bool = True
+    # Портрет (шаг 38): взгляд назад на 27-й секунде каждого чтения;
+    # возврат на страницу назад и промах листания.
+    lookback: bool = False
+    page_back: bool = False
 
 
 class Builder:
@@ -310,11 +327,14 @@ class Builder:
         return n
 
     def event(self, t, kind, data=None, book=None, input=None,
-              phase=None):
+              phase=None, page=None, strip=None):
         row = {"t": int(t), "wall": f"{DAY}T10:00:00+03:00",
                "type": kind, "screen": self.screen}
         if book:
             row["book"] = book
+        if page is not None:
+            row["page"] = page
+            row["strip"] = strip or 1
         if input is not None:
             row["input"] = input
         if phase:
@@ -340,14 +360,32 @@ class Builder:
             else "zigzag"
 
     def search_looks(self, a: float, b: float, target: tuple,
-                     index: int) -> None:
+                     index: int, trip: int = 0) -> None:
         """Взгляд в поиске от [a] до [b]: зигзагом по полке или по
         порядку по звёздам группы; последние 400 мс — на цели (на неё и
-        нажимают)."""
+        нажимают). Стиль `learn` — от похода [trip] к походу всё чаще
+        по порядку: книги категории цели слева направо."""
         rng = self.look_rng
         end = b - 400
         t = a
-        if self.style() == "direct":
+        style = self.style()
+        if style == "learn":
+            # Доля походов «по порядку» растёт от 0 до 1 к середине.
+            share = min(1.0, trip / max(1.0, self.p.trips * 0.5))
+            if rng.random() < share:
+                # По порядку: книги полки слева направо, ряд за рядом.
+                k = 0
+                while True:
+                    d = rng.uniform(250, 330)
+                    if t + d > end:
+                        break
+                    self.look(t, t + d, *book_centre(k % len(BOOKS)))
+                    t += d + 40
+                    k += 1
+                self.look(max(t, end), b, *target)
+                return
+            style = "zigzag"
+        if style == "direct":
             first = 0 if index < 6 else 6
             group = range(first, first + 6)
             # Подпись группы — над её звёздами.
@@ -372,12 +410,24 @@ class Builder:
                 t += d + 40
         self.look(max(t, end), b, *target)
 
-    def read_looks(self, a: float, b: float) -> None:
-        """Чтение: фиксации по строкам страницы по 230 мс."""
+    def read_looks(self, a: float, b: float, flips=(),
+                   lookback: float | None = None) -> None:
+        """Чтение: фиксации по строкам страницы по 230 мс; с каждым
+        мигом [flips] (новая страница) — снова с первой строки. В миг
+        [lookback] — взгляд на четыре строки вверх на 600 мс."""
         t = a
         line = col = 0
         stop = min(b, a + READ_GAZE_MS)
+        flips = sorted(flips)
         while t < stop - 300:
+            if flips and t >= flips[0]:
+                flips.pop(0)
+                line = col = 0
+            if lookback is not None and t >= lookback:
+                self.look(t, t + 600, 470, 120 + max(0, line - 4) * 40)
+                t += 640
+                lookback = None
+                continue
             x = 420 + col * 100
             y = 120 + line * 40
             self.look(t, t + 230, x, y)
@@ -385,7 +435,17 @@ class Builder:
             col += 1
             if col == 5:
                 col = 0
-                line = (line + 1) % 15
+                line = min(line + 1, 15)
+
+    def flip(self, t: float, book: str, page: int, was: int,
+             cause: str = "tap_zone") -> None:
+        """Показ новой страницы: касание зоны у правого края, событие
+        `page.shown` со страницей и откуда, кадр раскладки."""
+        n = self.tap(t, "reader", 1180.0, 400.0)
+        self.event(t, "page.shown", {"cause": cause,
+                                      "from": {"page": was, "strip": 1}},
+                   book=book, input=n, page=page, strip=1)
+        self.frame(t, "reader", page)
 
     def build(self) -> "Builder":
         p = self.p
@@ -457,7 +517,7 @@ class Builder:
                     self.nav(t0 + 300, "shelf", x=160.0, y=28.0)
                 pick = t0 + 300 + choice * 1000
                 bx, by = book_centre(index)
-                self.search_looks(t0 + 350, pick, (bx, by), index)
+                self.search_looks(t0 + 350, pick, (bx, by), index, k)
                 self.nav(pick, "reader", x=bx, y=by)
                 self.event(pick + 40, "book.open", {
                     "via": "shelf", "visit": 1, "title": title,
@@ -466,13 +526,20 @@ class Builder:
             opened += 1
             read = self.rng.uniform(60_000, 120_000)
             t_read = self.events[-1]["t"]
-            self.read_looks(t_read + 200, min(t_read + read, end) - 500)
-            for j in range(4):
-                # Зона листания — у правого края, далеко от строк.
-                n = self.tap(t_read + 5000 * (j + 1), "reader", 1180.0,
-                             400.0)
-                self.event(t_read + 5000 * (j + 1), "page.shown",
-                           {"cause": "zone"}, book=book, input=n)
+            self.screen = "reader"
+            # Четыре страницы вперёд за 20 секунд — зона листания у
+            # правого края, далеко от строк (шаг 38: со страницей).
+            flips = [t_read + 5000 * (j + 1) for j in range(4)]
+            for j, at in enumerate(flips):
+                self.flip(at, book, j + 2, j + 1)
+            if p.page_back and opened == 2:
+                self.flip(t_read + 25_000, book, 4, 5)
+            if p.page_back and opened == 3:
+                self.flip(t_read + 20_500, book, 6, 5)
+                self.flip(t_read + 21_500, book, 5, 6)
+            self.read_looks(t_read + 200, min(t_read + read, end) - 500,
+                            flips,
+                            t_read + 27_000 if p.lookback else None)
             # Пустое касание — мимо всего.
             self.tap(t_read + 30_000, "reader", 20.0, 790.0)
             close = t_read + read
@@ -816,6 +883,12 @@ def default_plan(*, confounded: bool = False) -> list[Person]:
     # фиксаций — в меры беспорядочности не идёт, доли зон остаются.
     people[5].precision_deg = 2.0
     people[12].etalon = "not_reset"
+    # Портрет (шаг 38): поиск упорядочивается по ходу сессии; взгляд
+    # назад на известной секунде; возврат на страницу и промах.
+    people[0].style = "learn"
+    people[2].lookback = True
+    people[11].lookback = True
+    people[2].page_back = True
     return people
 
 

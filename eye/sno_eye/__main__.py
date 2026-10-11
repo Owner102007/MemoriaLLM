@@ -9,9 +9,11 @@
 * `study [папка или архивы …]` — «Сравнение ветвей»: сводный анализ
   всех записей — отбор по искренности, тест нагрузки, действия,
   сравнение ветвей I и II с устойчивостью (SNO-F-RES-06, шаг 36),
-  беспорядочность и средний взгляд ветвей, научение (шаг 37);
+  беспорядочность и средний взгляд ветвей, научение (шаг 37),
+  портрет каждого участника (шаг 38, SNO-F-RES-07);
   `--series sno2026-N` — только эта серия, `--no-filter` — проверочный
-  прогон без отсева, `--open` — открыть папку отчёта (ярлыки);
+  прогон без отсева, `--open` — открыть папку отчёта (ярлыки),
+  `--no-portraits` — без страниц портретов;
 * `--selftest` — пробный запуск собранной папки (CI и организатор).
 
 `--source synthetic[:вариант]` подменяет камеру и распознавание
@@ -64,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
                          "с весом 1, не для выводов")
     ap.add_argument("--open", action="store_true",
                     help="study: открыть папку отчёта в Проводнике")
+    ap.add_argument("--no-portraits", action="store_true",
+                    help="study: без страниц портретов участников")
     ap.add_argument("--no-files", action="store_true",
                     help="report: только итог, без папки разбора")
     ap.add_argument("--csv", help="check: куда положить сводную таблицу")
@@ -123,7 +127,8 @@ def main(argv: list[str] | None = None) -> int:
         return study(args.paths, series=args.series,
                      no_filter=args.no_filter, out=args.out,
                      as_json=args.json, version=args.gaze_version,
-                     open_folder=args.open)
+                     open_folder=args.open,
+                     portraits=not args.no_portraits)
 
     from .runtime import Runtime, SingleInstance
 

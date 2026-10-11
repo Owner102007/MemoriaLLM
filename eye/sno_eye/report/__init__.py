@@ -295,6 +295,10 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
     result["_spans"] = spans
     result["_screen"] = screen
     result["_timeline"] = line
+    # Шаг 38: портрет участника — лента сессии по секундам
+    # (SNO-ALG-RES-07) и время годного взгляда на экране — из тех же
+    # кадров с видами, что доли и минуты.
+    result["_labels"] = labels
     return result
 
 

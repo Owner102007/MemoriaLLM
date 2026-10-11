@@ -827,7 +827,8 @@ jobs:
       # numpy — генератору хватает стандартной библиотеки). Шаг 37: в
       # наборе есть поток взгляда и кадры раскладки — меры
       # беспорядочности, средний взгляд и научение (Р6–Р12), ссылки на
-      # файлы отчёта (BUG-68).
+      # файлы отчёта (BUG-68). Шаг 38: энтропия по ходу сессии (Р16),
+      # ленты участников (Р17) и портрет каждого участника.
       - name: Сравнение ветвей встраиваемым Python
         shell: pwsh
         env:
@@ -858,11 +859,31 @@ jobs:
                     'рисунки/Р8_доли_времени.png', 'рисунки/Р9_по_минутам.png',
                     'рисунки/Р10_тепловая_карта.png',
                     'рисунки/Р11_схема_полки.png', 'рисунки/Р12_научение.png',
-                    'рисунки/Р13_сводка.png', 'рисунки/Р14_устойчивость.png')
+                    'рисунки/Р13_сводка.png', 'рисунки/Р14_устойчивость.png',
+                    'рисунки/Р16_энтропия_по_ходу.png',
+                    'рисунки/Р17_ленты_участников.png')
           foreach ($f in $need) {
             if (-not (Test-Path -LiteralPath (Join-Path $out $f))) {
               Write-Output "::error title=SNO-F-RES-06::в отчёте нет $f"
               exit 1
+            }
+          }
+          # Шаг 38: портрет на каждого участника — страница, лента сессии
+          # и взгляд назад при чтении.
+          $own = Join-Path $out 'Портреты'
+          $pages = @(Get-ChildItem -LiteralPath $own -Filter '*.html')
+          if ($pages.Count -lt 16) {
+            Write-Output "::error title=SNO-F-RES-07::портретов $($pages.Count) из 16"
+            exit 1
+          }
+          foreach ($p in $pages) {
+            $dir = Join-Path $own $p.BaseName
+            foreach ($f in @('П1_лента_сессии.png', 'П4_чтение_назад.png',
+                             'окна_энтропии.csv', 'взгляд_назад.csv')) {
+              if (-not (Test-Path -LiteralPath (Join-Path $dir $f))) {
+                Write-Output "::error title=SNO-F-RES-07::у портрета $($p.BaseName) нет $f"
+                exit 1
+              }
             }
           }
           $page = Get-Content -LiteralPath (Join-Path $out 'index.html') -Raw -Encoding utf8

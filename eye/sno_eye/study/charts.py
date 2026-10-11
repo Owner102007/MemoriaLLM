@@ -1,10 +1,13 @@
-"""Шаг 10 — рисунки Р1–Р14 (SNO-F-RES-06, «Рисунки»).
+"""Шаг 10 — рисунки Р1–Р14, Р16, Р17 (SNO-F-RES-06, «Рисунки»;
+Р16 и Р17 — шаг 38, портрет участника SNO-F-RES-07).
 
 Откуда данные: записи после отбора (`study.compare.admit`) и итог
 сравнения (`study.compare.run`): точки участников с весами, средние
 ветвей с интервалом, δ с интервалом, сценарии устойчивости; средний
 взгляд ветвей (`study.average.build`, шаг 37): доли, минуты, матрицы
-переходов, тепловая карта, схема полки, кривые научения.
+переходов, тепловая карта, схема полки, кривые научения; кривые
+энтропии по ходу сессии с кластерами и ленты участников
+(`study.average.entropy_curves`, `ribbons`, шаг 38).
 Технология: matplotlib с бэкендом Agg — рисует без окна, на ПК
 организатора и на раннере CI одинаково; PNG — 200 точек на дюйм,
 SVG — с путями букв (шрифт на чужом ПК не нужен). Шрифт — DejaVu Sans
@@ -823,6 +826,135 @@ def figure_12(run: dict, folder: Path) -> str | None:
     return _save(fig, folder, "Р12_научение")
 
 
+# --- Р16. Энтропия по ходу сессии: ветви ---------------------------------
+
+def figure_16(run: dict, folder: Path) -> str | None:
+    """Две панели: поиск по накопленному времени поиска, чтение — по
+    минуте изучения; среднее ветви с полосой 95 %, тонкие линии —
+    участники; серым — кластеры различия с p < 0,05 (SNO-ALG-RES-06)."""
+    from .portrait import READING, SEARCH
+    avg = run["result"].get("average") or {}
+    ent = avg.get("entropy") or {}
+    if not any((ent.get(n) or {}).get("people") for n in (SEARCH,
+                                                           READING)):
+        return None
+    alpha = float(run["cfg"]["alpha"])
+    fig, axes = plt.subplots(1, 2, figsize=(11.6, 4.0),
+                             gridspec_kw={"width_ratios": [1, 1.4]})
+    panels = ((SEARCH, "Поиск", "накопленное время поиска, мин"),
+              (READING, "Чтение", "минута изучения"))
+    for ax, (name, title, xlabel) in zip(axes, panels):
+        own = ent.get(name) or {}
+        width = own.get("width") or 1.0
+        for c in (own.get("test") or {}).get("clusters") or []:
+            if c.get("p") is None or c["p"] >= alpha:
+                continue
+            ax.axvspan(c["x"][0], c["x"][1], color=GRID, alpha=0.8, lw=0,
+                       zorder=0)
+            word = "у II выше" if c["mass"] > 0 else "у II ниже"
+            ax.text((c["x"][0] + c["x"][1]) / 2, 0.97,
+                    f"{word},\np = {c['p']:.3f}".replace(".", ","),
+                    ha="center", va="top", fontsize=7, color=INK,
+                    transform=ax.get_xaxis_transform())
+        for p in own.get("people") or []:
+            pts = sorted(p["values"].items())
+            ax.plot([(k + 0.5) * width for k, _ in pts], [v for _, v in pts],
+                    color=BRANCH.get(p["branch"], MUTED), lw=0.6, alpha=0.3)
+        for b in ("I", "II"):
+            rows = (own.get("curves") or {}).get(b) or []
+            if not rows:
+                continue
+            xs = [r["x"] for r in rows]
+            band = [r for r in rows if r["ci"]]
+            if band:
+                ax.fill_between([r["x"] for r in band],
+                                [r["ci"][0] for r in band],
+                                [r["ci"][1] for r in band],
+                                color=BRANCH[b], alpha=0.18, lw=0)
+            # Точки на линии: кривая из одной корзины тоже видна.
+            ax.plot(xs, [r["mean"] for r in rows], color=BRANCH[b], lw=2.2,
+                    marker="o", markersize=3.5, label=f"ветвь {b}")
+        ax.axhline(1.0, color=MUTED, lw=0.8, ls="--")
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("H_t, доля от случайного")
+        _comma(ax)
+        _comma(ax, "x")
+        ax.set_title(title, loc="left", fontsize=9)
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(loc="lower left", fontsize=7.5)
+        else:
+            ax.text(0.5, 0.5, "мало данных: корзин, где в ветви не "
+                    "меньше трёх участников, нет", ha="center",
+                    va="center", color=MUTED, fontsize=8,
+                    transform=ax.transAxes)
+        _spines(ax)
+    fig.suptitle("Р16. Энтропия по ходу сессии: среднее ветви с полосой "
+                 "95 %, тонкие линии — участники;\nсерое — где ветви "
+                 "различаются (перестановочный тест кластеров внутри ПК, "
+                 "p < 0,05)", x=0.01, ha="left", fontweight="bold",
+                 color=INK, fontsize=9.5)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.9))
+    return _save(fig, folder, "Р16_энтропия_по_ходу")
+
+
+# --- Р17. Ленты сессий всех участников -----------------------------------
+
+def figure_17(run: dict, folder: Path) -> str | None:
+    """Строка — участник, цвет — группа видов времени по секундам; по
+    ветвям; жёлтые и вне статистики подписаны (SNO-ALG-RES-07)."""
+    from .average import GROUP_WORDS
+    avg = run["result"].get("average") or {}
+    rows = avg.get("ribbons") or []
+    if not rows:
+        return None
+    height = 1.6 + 0.32 * len(rows)
+    fig, ax = plt.subplots(figsize=(11.0, height))
+    y = 0.0
+    ticks, labels = [], []
+    last = None
+    longest = 1.0
+    for r in rows:
+        if last is not None and r["branch"] != last:
+            y += 0.6
+        last = r["branch"]
+        by: dict = {}
+        for a, b, g in r["ribbon"]:
+            by.setdefault(g, []).append((a / 60, (b - a) / 60))
+        for g, spans in by.items():
+            ax.broken_barh(spans, (y + 0.12, 0.76),
+                           color=GROUP_COLOURS.get(g, MUTED), lw=0)
+        if r["opens"]:
+            ax.plot([t / 60 for t in r["opens"]], [y + 0.5] * len(r["opens"]),
+                    ls="", marker="v", color=INK, ms=3,
+                    markeredgecolor=SURFACE)
+        longest = max(longest, r["study_s"] / 60)
+        mark = ""
+        if r["colour"] == honesty.YELLOW:
+            mark = " · жёлтый"
+        if not r["in_stats"]:
+            mark += " · вне статистики"
+        ticks.append(y + 0.5)
+        labels.append(f"ветвь {r['branch']} · {r['code']}{mark}")
+        y += 1
+    ax.set_xlim(0, longest)
+    ax.set_ylim(y, -0.3)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(labels, fontsize=7)
+    ax.set_xlabel("минута изучения")
+    ax.grid(False)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    handles = [Rectangle((0, 0), 1, 1, color=GROUP_COLOURS[k],
+                         label=GROUP_WORDS[k]) for k in GROUP_COLOURS]
+    fig.legend(handles=handles, loc="lower center", ncol=5, fontsize=7.5,
+               bbox_to_anchor=(0.5, 0.0))
+    ax.set_title("Р17. Ленты сессий всех участников: строка — участник, "
+                 "цвет — куда смотрел (▼ — открыл книгу)", loc="left",
+                 fontsize=9)
+    fig.tight_layout(rect=(0, 0.5 / height, 1, 1))
+    return _save(fig, folder, "Р17_ленты_участников")
+
+
 def draw_all(run: dict, folder: Path) -> dict:
     """Все рисунки; ответ — номер → имя PNG (или None, если данных для
     рисунка нет)."""
@@ -846,5 +978,7 @@ def draw_all(run: dict, folder: Path) -> dict:
         "Р12": figure_12(run, folder),
         "Р13": figure_13(run, folder),
         "Р14": figure_14(run, folder),
+        "Р16": figure_16(run, folder),
+        "Р17": figure_17(run, folder),
     }
     return out

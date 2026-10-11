@@ -8,7 +8,8 @@
 «;», UTF-8 с меткой порядка байт — так таблицы открывает Excel с
 русскими настройками; дробная часть — через запятую.
 Вход → выход: записи и итог → `участники.csv`, `походы.csv`,
-`ответы_теста.csv`, `сравнение.csv`, `устойчивость.csv`.
+`ответы_теста.csv`, `сравнение.csv`, `устойчивость.csv`; таблицы
+участника в папке портрета пишет `study.portrait_page` этим же `write`.
 
 Числа пишутся шестью значащими цифрами: тот же набор на тех же версиях
 даёт те же строки до знака (проверяет `test_study_scenario.py`).
@@ -19,7 +20,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from . import clt, compare, honesty
+from . import clt, compare, honesty, portrait
 
 
 def cell(value) -> str:
@@ -59,6 +60,32 @@ def _test(e: dict, *path):
 ACTION_COLUMNS = [m for m in compare.MEASURES if m.key.startswith("actions.")]
 GAZE_COLUMNS = [m for m in compare.MEASURES if m.family in ("В", "Г")
                 or m.key == "search.H_t"]
+
+
+PORTRAIT_COLUMNS = [m for m in compare.MEASURES if m.family == "Д"]
+PORTRAIT_EXTRA = (
+    ("портрет: окон энтропии в поиске", "portrait.search_windows"),
+    ("портрет: окон энтропии в чтении", "portrait.reading_windows"),
+    ("портрет: разброс энтропии окон поиска", "portrait.search_iqr"),
+    ("портрет: разброс энтропии окон чтения", "portrait.reading_iqr"),
+    ("портрет: плотность матрицы переходов", "portrait.ui_density"),
+    ("портрет: возвратов в зоны интерфейса", "portrait.ui_revisits"),
+    ("портрет: возвратов в категории", "portrait.cat_revisits"),
+    ("портрет: ожидалось возвратов в категории без памяти",
+     "portrait.cat_expected"),
+    ("портрет: возвратов к книгам и звёздам", "portrait.book_revisits"),
+    ("портрет: книги — было / без памяти", "portrait.book_ratio"),
+    ("портрет: возвраты к страницам, доля заходов",
+     "portrait.page_revisit_share"),
+    ("портрет: взглядов назад", "portrait.lookbacks"),
+    ("портрет: скачок назад, медиана, °", "portrait.lookback_jump_deg"),
+    ("портрет: доля показов со взглядом назад", "portrait.shows_with_back"),
+    ("портрет: взгляда назад нет — почему", "portrait.lookback_reason"),
+    ("портрет: возвратов на страницу назад", "portrait.page_backs"),
+    ("портрет: промахов листания", "portrait.misflips"),
+    ("портрет: навигации назад (оглавление, найденное)",
+     "portrait.navigation"),
+)
 
 
 def _gd(e: dict, *path):
@@ -167,6 +194,12 @@ PARTICIPANT_COLUMNS = [
      .get("key")),
 ] + [(f"{m.title}, {m.unit}", (lambda k: lambda e: compare.value(e, k))(
     m.key)) for m in GAZE_COLUMNS] + [
+    # Портрет (шаг 38): числа семьи «Д» — как в сравнении (пусто, если
+    # в сравнение не идут), и справочные.
+    (f"{m.title}, {m.unit}", (lambda k: lambda e: compare.value(e, k))(
+        m.key)) for m in PORTRAIT_COLUMNS] + [
+    (title, (lambda k: lambda e: portrait.numbers(e).get(k))(key))
+    for title, key in PORTRAIT_EXTRA] + [
     ("оговорки", lambda e: (e.get("check_notes") or [])
      + ((e.get("test") or {}).get("notes") or [])
      + (_gd(e, "notes") or [])),
@@ -196,22 +229,38 @@ TRIP_GAZE = (("фиксаций поиска", "fixations"), ("путь взгл
                                                 "path_deg"),
              ("прямота", "straight"), ("возвраты", "returns"))
 
+# Заходы похода (шаг 38, SNO-ALG-RES-07): категории и книги, видимые зоны
+# и ожидание без памяти.
+TRIP_DWELL = (("заходов в категории", "cat_entries"),
+              ("возвратов в категории", "cat_revisits"),
+              ("видно категорий", "cat_visible"),
+              ("ожидалось возвратов в категории без памяти", "cat_expected"),
+              ("заходов к книгам и звёздам", "book_entries"),
+              ("возвратов к книгам и звёздам", "book_revisits"),
+              ("видно книг и звёзд", "book_visible"),
+              ("ожидалось возвратов к книгам без памяти", "book_expected"))
+
 
 def trips(entries: list[dict], path: Path) -> None:
     rows = []
     for e in entries:
         gaze = {t["n"]: t for t in _gd(e, "disorder", "trips") or []}
+        dw = {t["n"]: t for t in
+              _gd(e, "portrait", "dwell", "trips") or []}
         live = bool(e.get("disorder_live"))
         for t in e.get("trips") or []:
             own = gaze.get(t["n"]) if live else None
+            stay = dw.get(t["n"]) if live else None
             rows.append([e.get("participant"), e.get("branch"),
                          e.get("in_stats")]
                         + [t.get(k) for _, k in TRIP_COLUMNS]
                         + [None if own is None else own.get(k)
-                           for _, k in TRIP_GAZE])
+                           for _, k in TRIP_GAZE]
+                        + [None if stay is None else stay.get(k)
+                           for _, k in TRIP_DWELL])
     write(path, ["код участника", "ветвь", "участник в статистике"]
-          + [t for t, _ in TRIP_COLUMNS] + [t for t, _ in TRIP_GAZE],
-          rows)
+          + [t for t, _ in TRIP_COLUMNS] + [t for t, _ in TRIP_GAZE]
+          + [t for t, _ in TRIP_DWELL], rows)
 
 
 def answers(entries: list[dict], path: Path) -> None:

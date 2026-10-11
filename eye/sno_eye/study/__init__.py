@@ -1,6 +1,7 @@
 """«Сравнение ветвей» — сводный анализ всех записей СНО2026
 (SNO-F-RES-06; шаг 36 — отбор, тест нагрузки, действия; шаг 37 —
-беспорядочность взгляда, средний взгляд ветвей, научение).
+беспорядочность взгляда, средний взгляд ветвей, научение; шаг 38 —
+портрет каждого участника, SNO-F-RES-07).
 
 Организатор перетаскивает папку с архивами — с обоих ПК и с телефонов,
 можно по подпапкам — на `eye\\Сравнение ветвей.cmd`. Ставить ничего не
@@ -10,8 +11,12 @@
 * `index.html` — вверху «Файлы отчёта» со ссылками на все таблицы и
   рисунки (BUG-68); кто вошёл в статистику и с каким весом, какой
   взгляд дал каждый ПК, нагрузка по ветвям, как искали книги, в какой
-  ветви взгляд беспорядочнее, средний взгляд ветви, научение, сводка
-  «I против II», держится ли вывод при другом отборе, «Как читать»;
+  ветви взгляд беспорядочнее и как энтропия менялась по ходу сессии,
+  средний взгляд ветви, научение, портреты участников, сводка «I
+  против II», держится ли вывод при другом отборе, «Как читать»;
+* `Портреты\\<код>.html` — портрет каждого участника (лента сессии,
+  переходы, возвраты, взгляд назад при чтении) и `Портреты\\<код>\\` —
+  его рисунки и таблицы;
 * `участники.csv`, `походы.csv`, `ответы_теста.csv`, `сравнение.csv`,
   `устойчивость.csv` — для Excel;
 * `рисунки\\*.png`, `*.svg` — для статьи;
@@ -35,11 +40,21 @@
 | `disorder.py`| 6   | беспорядочность: фиксации общим    | numpy              |
 |              |     | порогом, энтропии, K, путь, NNI    |                    |
 | `average.py` | 7   | средний взгляд ветви, матрицы,     | numpy              |
-|              |     | тепловая карта, научение           |                    |
+|              |     | тепловая карта, научение; кривые   |                    |
+|              |     | энтропии по ходу (Р16), ленты      |                    |
+| `portrait.py`| 7а  | портрет: окна энтропии по ходу,    | numpy              |
+|              |     | наклоны, числа участника           |                    |
+| `dwell.py`   | 7а  | заходы, возвраты, переходы между   | —                  |
+|              |     | зонами, ожидание без памяти, лента |                    |
+| `reading_    | 7а  | взгляд назад при чтении, возвраты  | —                  |
+| back.py`     |     | на страницу назад по журналу       |                    |
 | `table.py`   | 8   | таблицы CSV                        | csv                |
 | `stats.py`,  | 9   | δ Клиффа по слоям, бутстреп,       | numpy              |
-| `compare.py` |     | перестановки, Холм, сценарии       |                    |
-| `charts.py`  | 10  | рисунки Р1–Р14                     | matplotlib (Agg)   |
+| `compare.py` |     | перестановки, Холм, сценарии;      |                    |
+|              |     | кластеры по ходу сессии            |                    |
+| `charts.py`  | 10  | рисунки Р1–Р14, Р16, Р17           | matplotlib (Agg)   |
+| `portrait_   | 10а | страница портрета, рисунки П1–П4,  | matplotlib, html,  |
+| page.py`     |     | таблицы участника                  | base64, csv        |
 | `page.py`    | 11  | отчёт `index.html`                 | html, base64       |
 
 Скрипт не пересчитывает того, что уже считается: годность архива —
@@ -72,8 +87,9 @@ from .. import record_check as rc
 from ..report import settings as report_settings
 
 # Версия скрипта сравнения — в `исходные.json`: по ней видно, каким
-# кодом считали. Шаг 36 — часть 1, шаг 37 — меры взгляда.
-SCRIPT_VERSION = "37.0"
+# кодом считали. Шаг 36 — часть 1, шаг 37 — меры взгляда, шаг 38 —
+# портрет участника.
+SCRIPT_VERSION = "38.0"
 
 OUT_FOLDER = "Сравнение ветвей СНО2026"
 
@@ -118,18 +134,25 @@ DEFAULTS = {
     # Походов для наклона научения; повторных — для отдельной кривой.
     "min_visits_curve": 6,
     "min_repeat_visits": 3,
+    # Шаг 38, Р16: порог |δ| корзины для кластера — «средний» по
+    # Romano и др., 2006.
+    "cluster_delta": 0.33,
 }
 
 
 def settings(path: Path | None = None) -> dict:
     """Пороги сравнения: `study` из `thresholds.json` поверх значений по
-    умолчанию."""
+    умолчанию; пороги портрета участника (шаг 38) — `portrait`, ключом
+    `portrait`."""
+    from . import portrait
     values = dict(DEFAULTS)
+    values["portrait"] = portrait.settings(None)
     if path is None:
         path = Path(__file__).resolve().parent.parent.parent / \
             "thresholds.json"
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
+        values["portrait"] = portrait.settings(raw.get("portrait"))
         own = raw.get("study") or {}
         for key, default in DEFAULTS.items():
             value = own.get(key)
@@ -192,7 +215,7 @@ def analyse(paths: list[str], *, series: str | None = None,
             version: str | None = None) -> dict:
     """Весь сводный анализ без записи файлов: записи, отбор, меры
     взгляда, сравнение, средние ветвей."""
-    from . import average, collect, compare, disorder
+    from . import average, collect, compare, disorder, portrait
     cfg = cfg or settings()
     limits = limits or rc.thresholds()
     # Версия взгляда для мер — та же, что у «Разбора записи»
@@ -219,10 +242,16 @@ def analyse(paths: list[str], *, series: str | None = None,
                                 no_filter=no_filter, series=series)
     # Шаг 7 — наклоны научения идут в сравнение мерами участника.
     average.learning(entries, cfg)
+    # Шаг 7а — числа портрета участника (семья «Д»): энтропия по ходу,
+    # заходы и возвраты, взгляд назад, возвраты на страницу.
+    portrait.finish(entries, cfg, no_filter=no_filter)
     result = compare.run(entries, cfg, fingerprint=print_,
                          no_filter=no_filter, series=series)
     result["gaze_info"] = gaze_info
     result["average"] = average.build(entries, cfg, no_filter, series)
+    result["average"]["entropy"] = average.entropy_curves(
+        entries, cfg, no_filter, series, print_)
+    result["average"]["ribbons"] = average.ribbons(entries)
     result["warnings"] = compare.warnings(entries, result, no_filter)
     return {"entries": entries, "result": result, "cfg": cfg,
             "limits": limits, "fingerprint": print_, "series": series,
@@ -239,7 +268,8 @@ def sources(run: dict) -> dict:
         "schema": "sno2026-study/1",
         "script": SCRIPT_VERSION,
         "step": "шаг 36 — отбор, тест нагрузки, действия; шаг 37 — "
-                "беспорядочность, средний взгляд, научение",
+                "беспорядочность, средний взгляд, научение; шаг 38 — "
+                "портрет участника",
         "series": run["series"], "no_filter": run["no_filter"],
         "gaze_version": run["gaze_version"],
         "fingerprint": run["fingerprint"],
@@ -257,6 +287,9 @@ def sources(run: dict) -> dict:
         # коэффициента K — одни во всех сценариях; по ним прогон
         # повторяется.
         "gaze": _gaze_sources(run["result"].get("gaze_info") or {}),
+        # Портрет (SNO-ALG-RES-06): случайный уровень энтропии на размер
+        # окна — одно число на всех; кластеры Р16 — как посчитаны.
+        "portrait": _portrait_sources(run),
         "versions": {"python": platform.python_version(),
                      "numpy": numpy.__version__,
                      "matplotlib": matplotlib.__version__,
@@ -277,6 +310,30 @@ def _gaze_sources(info: dict) -> dict:
     return out
 
 
+def _portrait_sources(run: dict) -> dict:
+    from . import portrait
+    levels = {}
+    for e in run["entries"]:
+        ent = ((e.get("gaze_data") or {}).get("portrait") or {}).get(
+            "entropy") or {}
+        for name, own in ent.items():
+            levels[f"{own['size']}"] = own["level"]
+    curves = {}
+    avg = run["result"].get("average") or {}
+    for name, own in (avg.get("entropy") or {}).items():
+        test = own.get("test") or {}
+        curves[name] = {
+            "bin_min": own.get("width"), "bins": test.get("bins"),
+            "pooled": test.get("pooled"), "exact": test.get("exact"),
+            "permutations": test.get("permutations"),
+            "clusters": [{"bins": c["bins"], "mass": c["mass"],
+                          "p": c.get("p")} for c in
+                         test.get("clusters") or []]}
+    return {"zones": len(portrait.disorder.search_zones(
+        tuple(run["cfg"]["grid"]))), "random_level_by_window": levels,
+        "curves": curves}
+
+
 # Файлы отчёта и что в каждом — для «Файлов отчёта» вверху `index.html`
 # и для консоли (BUG-68).
 FILES = (
@@ -293,9 +350,11 @@ FILES = (
 )
 
 
-def write(run: dict, folder: Path) -> list[Path]:
-    """Кладёт отчёт, таблицы, рисунки и исходные в [folder]."""
-    from . import charts, page, table
+def write(run: dict, folder: Path, portraits: bool = True) -> list[Path]:
+    """Кладёт отчёт, таблицы, рисунки, портреты участников и исходные в
+    [folder]; [portraits] False — без страниц портретов (ключ
+    `--no-portraits`)."""
+    from . import charts, page, portrait_page, table
     folder.mkdir(parents=True, exist_ok=True)
     entries, result = run["entries"], run["result"]
     table.participants(entries, folder / "участники.csv")
@@ -304,6 +363,8 @@ def write(run: dict, folder: Path) -> list[Path]:
     table.comparison(result, folder / "сравнение.csv")
     table.robustness(result, folder / "устойчивость.csv")
     figures = charts.draw_all(run, folder / "рисунки")
+    run["_portraits"] = portrait_page.write_all(run, folder) if portraits \
+        else None
     run["_figures_folder"] = str(folder / "рисунки")
     run["_folder"] = str(folder)
     (folder / "исходные.json").write_text(
@@ -371,6 +432,9 @@ def describe(run: dict, folder: Path | None) -> list[str]:
         for name, words in FILES:
             lines.append(f"  {name} — {words}")
         lines.append("  рисунки\\ — рисунки отчёта, PNG и SVG")
+        if run.get("_portraits") is not None:
+            lines.append(f"  Портреты\\ — портрет каждого участника "
+                         f"({len(run['_portraits'])} шт.)")
     return lines
 
 
@@ -390,7 +454,7 @@ def open_folder(folder: Path) -> bool:
 def main(paths: list[str], *, series: str | None = None,
          no_filter: bool = False, out: str | None = None,
          as_json: bool = False, version: str | None = None,
-         open_folder: bool = False) -> int:
+         open_folder: bool = False, portraits: bool = True) -> int:
     """Вход `python -I -m sno_eye study`. Код выхода: 0 — отчёт готов,
     3 — сравнивать нечего, 4 — отчёт не записался."""
     _matplotlib_cache()
@@ -414,7 +478,7 @@ def main(paths: list[str], *, series: str | None = None,
                   progress=progress, version=version)
     folder = out_folder(out, no_filter)
     try:
-        write(run, folder)
+        write(run, folder, portraits=portraits)
     except OSError as e:
         print(f"Отчёт записать не удалось: {e}")
         return 4

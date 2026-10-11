@@ -415,3 +415,155 @@ def test_bug_68_open_flag_opens_the_folder(monkeypatch, tmp_path):
     assert opened == [str(tmp_path)]
     monkeypatch.delattr(study.os, "startfile", raising=False)
     assert not study.open_folder(tmp_path)
+
+
+# --- шаг 38: портрет участника -----------------------------------------
+
+def entry(run, person):
+    return next(e for e in run["entries"] if e["participant"] == person.code)
+
+
+def test_sno_alg_res_06_planted_ordering_of_search_shows_in_slope(run):
+    """Участник `learn` (ветвь I): поиск от похода к походу всё чаще по
+    порядку — наклон энтропии поиска отрицательный и заметно ниже, чем
+    у ищущих зигзагом всю сессию."""
+    plan = ss.default_plan()
+    learner = entry(run, plan[0])["portrait_measures"]
+    assert learner["portrait.search_slope"] < -0.1
+    others = [entry(run, p)["portrait_measures"].get(
+        "portrait.search_slope") for p in plan[1:8]]
+    others = [v for v in others if v is not None]
+    assert len(others) >= 5
+    assert all(learner["portrait.search_slope"] < v for v in others)
+    # Окна П1: в первых походах энтропия выше, чем в последних.
+    wins = entry(run, plan[0])["gaze_data"]["portrait"]["entropy"][
+        "search"]["windows"]
+    assert wins[0]["h"] > wins[-1]["h"]
+
+
+def test_sno_alg_res_08_planted_lookbacks_in_the_set(run):
+    """Взгляд назад заложен на 27-й секунде каждого чтения у двоих — он
+    найден там и больше нигде; без закладки — ни одного."""
+    plan = ss.default_plan()
+    for p in plan:
+        e = entry(run, p)
+        look = e["gaze_data"]["portrait"]["lookback"]
+        if look.get("reason"):
+            assert p is plan[5]          # шумная камера
+            continue
+        if not p.lookback:
+            assert look["count"] == 0, p.code
+            continue
+        lo = e["study_start"]
+        opens = [lo + s * 1000 for s in e["gaze_data"]["portrait"]["opens"]]
+        assert look["count"] >= len(opens) - 1
+        for ep in look["episodes"]:
+            near = min(abs(ep["t0"] - (o + 27_000)) for o in opens)
+            assert near <= 1000, (p.code, ep["t0"])
+
+
+def test_sno_alg_res_08_planted_page_back_and_misflip(run):
+    plan = ss.default_plan()
+    for p in plan:
+        nav = entry(run, p)["reading_nav"]
+        if p.page_back:
+            assert nav["backs"] == 1 and nav["misflips"] == 1
+        else:
+            assert nav["backs"] == 0 and nav["misflips"] == 0
+    assert entry(run, plan[2])["portrait_measures"][
+        "portrait.page_backs_per_min"] > 0
+
+
+def test_sno_f_res_07_family_d_in_the_comparison(run):
+    keys = [m.key for m in compare.MEASURES if m.family == "Д"]
+    assert "portrait.search_slope" in keys and \
+        "portrait.page_backs_per_min" in keys
+    plan = ss.default_plan()
+    red, noisy = plan[10], plan[5]
+    r = row(run, "portrait.page_backs_per_min")
+    codes = {p[5] for p in r["points"]}
+    # По журналу — у всех в статистике, и у шумной камеры; 🔴 — нет.
+    assert noisy.code in codes and red.code not in codes
+    # Энтропия по ходу и заходы — без шумной сессии.
+    assert noisy.code not in {p[5] for p in row(
+        run, "portrait.ui_trans_per_min")["points"]}
+
+
+def test_sno_f_res_07_portraits_written_for_everyone(run, tmp_path):
+    """Страница на каждого участника, ссылка из отчёта; «не для
+    выводов» — у 🔴, у взгляда хуже 3° и у шумной камеры; рисунки П1–П4
+    и таблицы участника лежат рядом."""
+    from urllib.parse import unquote
+    study.write(run, tmp_path)
+    plan = ss.default_plan()
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "8. Портреты участников" in page
+    links = [unquote(h) for h in re.findall(r"href='([^']+)'", page)]
+    for p in plan:
+        assert f"Портреты/{p.code}.html" in links, p.code
+        own = (tmp_path / "Портреты" / f"{p.code}.html").read_text(
+            encoding="utf-8")
+        assert "../index.html" in own
+        for name in ("П1_лента_сессии.png", "П2_переходы.png",
+                     "П4_чтение_назад.png", "окна_энтропии.csv",
+                     "заходы.csv", "взгляд_назад.csv"):
+            assert (tmp_path / "Портреты" / p.code / name).exists(), name
+        marked = "Не для выводов" in own
+        assert marked == (p in (plan[3], plan[5], plan[10])), p.code
+    assert "шумно" in (tmp_path / "Портреты" / f"{plan[5].code}.html") \
+        .read_text(encoding="utf-8")
+    for name in ("Р16_энтропия_по_ходу.png", "Р17_ленты_участников.png"):
+        assert (tmp_path / "рисунки" / name).exists()
+    for link in links:
+        assert (tmp_path / link).exists(), link
+    head = (tmp_path / "участники.csv").read_text(encoding="utf-8-sig") \
+        .splitlines()[0]
+    assert "Энтропия поиска по ходу: наклон" in head
+    assert "портрет: промахов листания" in head
+    # Числа справочных столбцов на месте, а не пустые.
+    cols = head.split(";")
+    lines = (tmp_path / "участники.csv").read_text(encoding="utf-8-sig") \
+        .splitlines()[1:]
+    misflips = [ln.split(";")[cols.index("портрет: промахов листания")]
+                for ln in lines]
+    assert "1" in misflips and "0" in misflips
+
+
+def test_sno_f_res_07_phone_portrait_says_why_no_gaze(tmp_path):
+    """Запись с телефона: портрет говорит «взгляда нет» и показывает
+    возвраты на страницу назад по журналу."""
+    phone = ss.Person(code="20010007", branch="I", phone=True, gaze=False,
+                      device="ph0001", via="shelf", seed=5, trips=6,
+                      page_back=True)
+    pc = ss.Person(code="20020004", branch="II", seed=6, trips=6)
+    for p in (phone, pc):
+        ss.write(tmp_path / "архивы", p)
+    result = study.analyse([str(tmp_path / "архивы")], cfg=cfg(),
+                           no_filter=True)
+    study.write(result, tmp_path / "отчёт")
+    own = (tmp_path / "отчёт" / "Портреты" / f"{phone.code}.html") \
+        .read_text(encoding="utf-8")
+    assert "Взгляда нет" in own
+    assert (tmp_path / "отчёт" / "Портреты" / phone.code /
+            "П4_чтение_назад.png").exists()
+    e = next(x for x in result["entries"] if x["participant"] == phone.code)
+    assert e["reading_nav"]["backs"] == 1
+    assert e["portrait_measures"]["portrait.page_backs_per_min"] > 0
+
+
+def test_sno_f_res_07_no_portraits_flag(run, tmp_path):
+    study.write(run, tmp_path, portraits=False)
+    assert not (tmp_path / "Портреты").exists()
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "--no-portraits" in page
+
+
+def test_sno_alg_res_06_r16_curves_and_test_ran(run):
+    ent = run["result"]["average"]["entropy"]
+    reading = ent["reading"]
+    assert reading["curves"]["I"] and reading["curves"]["II"]
+    # Чтение у ветвей одно — кластера с p < 0,05 нет.
+    assert not any(c["p"] < 0.05 for c in reading["test"]["clusters"])
+    # Шумная камера в кривые не идёт.
+    noisy = ss.default_plan()[5].code
+    assert noisy not in {p["code"] for p in reading["people"]}

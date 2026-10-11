@@ -501,3 +501,173 @@ def compare(rows: list[tuple], *, seed: int, bootstrap_repeats: int,
                           [r[0] for r in every if r[2] == first],
                           [r[1] for r in every if r[2] == first])
     return res
+
+
+# --- кластеры по ходу сессии (Р16, SNO-ALG-RES-06) ---------------------
+
+def _binned_deltas(z: np.ndarray, rows: list[dict], strata: list[str],
+                   bins: list[int]) -> np.ndarray:
+    """δ по слоям в каждой корзине для пачки разметок [z] (`B × P`, 1 —
+    ветвь II): `B × K`. Участник без значения в корзине в неё не идёт;
+    слой, где в корзине нет одной из ветвей, в свод не идёт; корзина без
+    сравнимых слоёв — δ = 0."""
+    out = np.zeros((z.shape[0], len(bins)))
+    w = np.array([r["w"] for r in rows], float)
+    for k, b in enumerate(bins):
+        num = np.zeros(z.shape[0])
+        den = np.zeros(z.shape[0])
+        for s in sorted(set(strata)):
+            idx = [i for i, r in enumerate(rows)
+                   if strata[i] == s and b in r["values"]]
+            if len(idx) < 2:
+                continue
+            x = np.array([rows[i]["values"][b] for i in idx], float)
+            ws = w[idx]
+            zs = z[:, idx].astype(float)
+            m = (ws[:, None] * ws[None, :]) * np.sign(x[:, None] - x[None, :])
+            n2 = np.einsum("ki,ij,kj->k", zs, m, 1.0 - zs)
+            W2 = zs @ ws
+            W1 = (1.0 - zs) @ ws
+            ok = (W2 > 0) & (W1 > 0)
+            lam = np.where(ok, W1 * W2 / np.where(ok, W1 + W2, 1.0), 0.0)
+            d = np.where(ok, n2 / np.where(ok, W2 * W1, 1.0), 0.0)
+            num += lam * d
+            den += lam
+        out[:, k] = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
+    return out
+
+
+def clusters(deltas: list[float], bins: list[int], threshold: float
+             ) -> list[dict]:
+    """Кластеры: подряд идущие корзины (номера подряд), где |δ| не
+    меньше [threshold] и знак один; масса — сумма δ его корзин."""
+    out: list[dict] = []
+    cur: dict | None = None
+    prev_bin = None
+    for d, b in zip(deltas, bins):
+        d = float(d)
+        sign = (d > 0) - (d < 0)
+        strong = abs(d) >= threshold - _EPS and sign != 0
+        joined = cur is not None and strong and sign == cur["sign"] and \
+            prev_bin is not None and b == prev_bin + 1
+        if joined:
+            cur["bins"].append(b)
+            cur["mass"] += d
+        elif strong:
+            cur = {"bins": [b], "mass": d, "sign": sign}
+            out.append(cur)
+        else:
+            cur = None
+        prev_bin = b
+    return out
+
+
+def _max_mass(d: np.ndarray, bins: list[int], threshold: float
+              ) -> np.ndarray:
+    """Наибольшая |масса| кластера у каждой разметки пачки (`B × K`)."""
+    best = np.zeros(d.shape[0])
+    cur = np.zeros(d.shape[0])
+    sign = np.zeros(d.shape[0])
+    prev = None
+    for k, b in enumerate(bins):
+        x = d[:, k]
+        s = np.sign(x)
+        strong = (np.abs(x) >= threshold - _EPS) & (s != 0)
+        adjacent = prev is not None and b == prev + 1
+        same = strong & (s == sign) & adjacent
+        cur = np.where(same, cur + x, np.where(strong, x, 0.0))
+        sign = np.where(strong, s, 0.0)
+        best = np.maximum(best, np.abs(cur))
+        prev = b
+    return best
+
+
+def cluster_test(rows: list[dict], *, threshold: float, min_n: int,
+                 seed: int, repeats: int, exact_limit: int) -> dict:
+    """Перестановочный тест кластеров (Maris E., Oostenveld R.
+    «Nonparametric statistical testing of EEG- and MEG-data», J.
+    Neuroscience Methods, 2007, 164:177–190) по корзинам кривой.
+
+    [rows] — участники: `branch` («I» или «II»), `w` — вес, `stratum` —
+    ПК, `values` — корзина → значение. В тест идут корзины, где у каждой
+    ветви не меньше [min_n] участников. В каждой корзине — δ Клиффа по
+    слоям ПК с весами (как в сравнении, SNO-ALG-RES-05); кластер —
+    подряд идущие корзины с |δ| ≥ [threshold] одного знака, масса —
+    сумма δ. Метки ветвей перемешиваются внутри ПК (веса и значения
+    остаются при участнике), и в каждой разметке запоминается
+    наибольшая |масса|; p кластера — доля разметок, где она не меньше
+    настоящей: перебором всех, если их не больше [exact_limit], иначе
+    [repeats] случайных и p = (b + 1) / (B + 1). Тест один на кривую —
+    поправки между корзинами не нужно, в этом его смысл.
+
+    ПК, где были обе ветви, нет — метки перемешиваются по всем
+    участникам (`pooled`): ветвь тогда не отделить от ПК."""
+    rows = [r for r in rows if r["w"] > 0 and r["branch"] in (SECOND,
+                                                               FIRST)]
+    all_bins = sorted({b for r in rows for b in r["values"]})
+    bins = []
+    for b in all_bins:
+        n2 = sum(1 for r in rows if r["branch"] == SECOND
+                 and b in r["values"])
+        n1 = sum(1 for r in rows if r["branch"] == FIRST
+                 and b in r["values"])
+        if n2 >= min_n and n1 >= min_n:
+            bins.append(b)
+    out = {"bins": bins, "deltas": [], "clusters": [], "pooled": False,
+           "exact": None}
+    if not bins:
+        return out
+    strata = [r["stratum"] for r in rows]
+    both = {s for s in set(strata)
+            if {r["branch"] for r, t in zip(rows, strata) if t == s}
+            >= {SECOND, FIRST}}
+    if not both:
+        out["pooled"] = True
+        strata = ["все"] * len(rows)
+    observed = np.array([[1 if r["branch"] == SECOND else 0
+                          for r in rows]], dtype=np.int8)
+    deltas = _binned_deltas(observed, rows, strata, bins)[0]
+    out["deltas"] = [float(d) + 0.0 for d in deltas]
+    found = clusters(list(deltas), bins, threshold)
+    if not found:
+        return out
+    groups: dict = {}
+    for i, s in enumerate(strata):
+        groups.setdefault(s, []).append(i)
+    total = 1
+    for idx in groups.values():
+        total *= math.comb(len(idx), int(observed[0, idx].sum()))
+    if total <= exact_limit:
+        z = np.zeros((1, len(rows)), dtype=np.int8)
+        for s in sorted(groups):
+            idx = groups[s]
+            k = int(observed[0, idx].sum())
+            combos = list(itertools.combinations(idx, k))
+            part = np.zeros((len(combos), len(rows)), dtype=np.int8)
+            for row, chosen in enumerate(combos):
+                part[row, list(chosen)] = 1
+            z = (z[:, None, :] + part[None, :, :]).reshape(-1, len(rows))
+        best = np.concatenate([
+            _max_mass(_binned_deltas(z[a:a + _CHUNK], rows, strata, bins),
+                      bins, threshold)
+            for a in range(0, z.shape[0], _CHUNK)])
+        out["exact"] = True
+    else:
+        rng = np.random.default_rng(seed)
+        best = np.zeros(repeats)
+        for a in range(0, repeats, _CHUNK):
+            b = min(repeats, a + _CHUNK)
+            z = np.tile(observed[0], (b - a, 1))
+            for idx in groups.values():
+                z[:, idx] = rng.permuted(z[:, idx], axis=1)
+            best[a:b] = _max_mass(_binned_deltas(z, rows, strata, bins),
+                                  bins, threshold)
+        out["exact"] = False
+    for c in found:
+        hits = int(np.sum(best >= abs(c["mass"]) - _EPS))
+        c["p"] = hits / best.size if out["exact"] else \
+            (hits + 1) / (best.size + 1)
+        c["mass"] = float(c["mass"]) + 0.0
+    out["clusters"] = found
+    out["permutations"] = int(best.size)
+    return out

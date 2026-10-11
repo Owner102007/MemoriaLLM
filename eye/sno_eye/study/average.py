@@ -385,3 +385,103 @@ def _heat(entries: list[dict], weight) -> list[dict]:
             out.append({"key": key, "points": item["points"],
                         "extent": [x0, x1, y0, y1], "branches": branches})
     return out
+
+
+# --- энтропия по ходу сессии (Р16, SNO-ALG-RES-06) --------------------------
+
+def _binned(wins: list[dict], width_min: float) -> dict[int, float]:
+    """Корзина → среднее `h` окон участника, чья середина в ней."""
+    acc: dict[int, list[float]] = {}
+    for w in wins:
+        if w.get("h") is None or w.get("x") is None:
+            continue
+        acc.setdefault(int(w["x"] // width_min), []).append(w["h"])
+    return {b: sum(v) / len(v) for b, v in acc.items()}
+
+
+def entropy_curves(entries: list[dict], cfg: dict, no_filter: bool,
+                   series: str | None, fingerprint: str) -> dict:
+    """Кривые ветвей на Р16: слева — поиск по накопленному времени
+    поиска (корзины `portrait.search_bin_s`), справа — чтение по минуте
+    изучения.
+
+    У участника на корзину — среднее `h` окон, чья середина в ней; у
+    ветви — взвешенное среднее, полоса — интервал 95 % среднего
+    бутстрепом участников внутри ветви; корзина, где участников ветви
+    меньше `min_minute_participants`, не рисуется и в кластеры не идёт.
+    Где ветви различаются — перестановочный тест кластеров
+    (`stats.cluster_test`). Участники — со взглядом в анализе (вес S0) и
+    с мерами беспорядочности: шумная сессия в кривую не идёт."""
+    from . import stats
+    from .compare import scenario_weight
+    from .portrait import READING, SEARCH
+    pc = cfg["portrait"]
+    min_n = int(cfg["min_minute_participants"])
+    rep = int(cfg["bootstrap"])
+    widths = {SEARCH: float(pc["search_bin_s"]) / 60, READING: 1.0}
+    out: dict = {}
+    for name in (SEARCH, READING):
+        width = widths[name]
+        people = []
+        for e in entries:
+            data = (e.get("gaze_data") or {}).get("portrait")
+            if not data or not e.get("disorder_live") or \
+                    e.get("branch") not in BRANCHES:
+                continue
+            w = scenario_weight(e, "S0", cfg, no_filter, series, True)
+            if w <= 0:
+                continue
+            values = _binned(data["entropy"][name]["windows"], width)
+            if values:
+                people.append({"branch": e["branch"], "w": w,
+                               "stratum": e.get("stratum"),
+                               "code": str(e.get("participant")),
+                               "colour": e.get("colour"),
+                               "values": values})
+        curves: dict = {}
+        for b in BRANCHES:
+            own = [p for p in people if p["branch"] == b]
+            rows = []
+            for k in sorted({k for p in own for k in p["values"]}):
+                xs = [p["values"][k] for p in own if k in p["values"]]
+                ws = [p["w"] for p in own if k in p["values"]]
+                if len(xs) < min_n:
+                    continue
+                rows.append({"bin": k, "x": (k + 0.5) * width,
+                             "mean": stats.weighted_mean(xs, ws),
+                             "ci": stats.mean_interval(
+                                 xs, ws, stats.seed_for(
+                                     fingerprint, "curve", name, b, k),
+                                 rep),
+                             "n": len(xs)})
+            curves[b] = rows
+        test = stats.cluster_test(
+            people, threshold=float(cfg["cluster_delta"]), min_n=min_n,
+            seed=stats.seed_for(fingerprint, "cluster", name),
+            repeats=int(cfg["permutations"]),
+            exact_limit=int(cfg["exact_limit"]))
+        for c in test["clusters"]:
+            c["x"] = [min(c["bins"]) * width, (max(c["bins"]) + 1) * width]
+        out[name] = {"width": width, "people": people, "curves": curves,
+                     "test": test}
+    return out
+
+
+def ribbons(entries: list[dict]) -> list[dict]:
+    """Ленты сессий всех участников со взглядом (Р17): по ветвям, внутри
+    — по коду; у каждого — отрезки групп видов времени и открытия книг."""
+    out = []
+    for e in entries:
+        data = (e.get("gaze_data") or {}).get("portrait")
+        if e.get("status") != "ok" or not data:
+            continue
+        rib = (data.get("dwell") or {}).get("ribbon")
+        if not rib:
+            continue
+        out.append({"code": str(e.get("participant")),
+                    "branch": e.get("branch"), "colour": e.get("colour"),
+                    "in_stats": bool(e.get("in_stats")),
+                    "ribbon": rib, "opens": data.get("opens") or [],
+                    "study_s": (data.get("study_ms") or 0) / 1000})
+    out.sort(key=lambda r: (str(r["branch"]), r["code"]))
+    return out
