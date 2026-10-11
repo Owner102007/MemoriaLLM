@@ -69,9 +69,11 @@ def test_sno_f_res_06_finds_planted_direction(run):
         assert r["result"].delta < -0.5, key
         assert r["result"].ci[1] < 0, key
         assert r["words"] == "в ветви II меньше", key
-    # Raw TLX и ICL заложены одинаковыми — «разницы не видно».
+    # Raw TLX и ICL заложены одинаковыми — «разница не доказана»
+    # («разницы нет» не пишется никогда, ALG-RES-10, шаг 41).
     for key in ("clt.raw_tlx", "clt.icl"):
-        assert row(run, key)["words"] == "разницы не видно", key
+        assert row(run, key)["words"].startswith("разница не доказана"), \
+            key
     # Сравнение — внутри ПК: оба слоя сравнимы.
     assert len(row(run, "clt.ecl")["result"].strata) == 2
 
@@ -315,7 +317,7 @@ def test_sno_alg_res_03_finds_planted_order_of_search(run, key, sign):
     """В ветви II взгляд в поиске заложен упорядоченнее: энтропия,
     путь и возвраты меньше, K, прямота и кучность больше. Направление —
     по δ и интервалу: слова у разведочных мер решает ещё и поправка
-    Холма на всю семью, а при семи участниках на ветвь её выдерживают
+    на всю семью, а при семи участниках на ветвь её выдерживают
     не все меры."""
     r = gaze_row(run, key)
     res = r["result"]
@@ -337,7 +339,8 @@ def test_sno_alg_res_03_h_t_is_primary_and_stable(run):
 
 
 def test_sno_alg_res_03_reading_is_the_same_in_both_branches(run):
-    assert gaze_row(run, "reading.H_t")["words"] == "разницы не видно"
+    assert gaze_row(run, "reading.H_t")["words"].startswith(
+        "разница не доказана")
 
 
 def test_sno_alg_res_03_who_gets_gaze_measures(run):
@@ -595,3 +598,85 @@ def test_bug_69_branches_of_one_pc_are_compared_within_it(run):
     assert not any("ветвь совпадает с ПК" in w
                    for w in run["result"]["warnings"])
     assert not row(run, "clt.ecl")["result"].pooled
+
+
+# --- шаг 41: свод средних, матрица, итог (SNO-ALG-RES-10, АН2) ---------
+
+def test_sno_alg_res_10_planted_direction_is_stronger(run):
+    """В ветви II ECL ниже и книгу выбирают быстрее; у обеих мер «лучше» —
+    «↓», и вывод держится во всех сценариях — ветвь II сильнее."""
+    for key in ("clt.ecl", "actions.time_to_choice"):
+        r = row(run, key)
+        assert r["better"] == "↓", key
+        assert r["stability"] == "устойчив", key
+        assert r["verdict"] == "сильнее", key
+    # ICL заложен одинаковым и направления не имеет.
+    assert row(run, "clt.icl")["verdict"] == "направление не задано"
+    s = study.summary(run)
+    assert {"clt.ecl", "actions.time_to_choice"} <= set(s["stronger"])
+    assert not {"clt.ecl", "actions.time_to_choice"} & set(s["weaker"])
+
+
+def test_sno_alg_res_10_time_is_a_ratio_of_geometric_means(run):
+    r = row(run, "actions.time_to_choice")
+    mm = r["means"]
+    assert mm["scale"] == "log"
+    diff = mm["diff"]
+    assert diff["kind"] == "отношение"
+    assert 0 < diff["value"] < 1
+    assert diff["ci"][1] < 1
+    one, two = mm["branch"]["I"], mm["branch"]["II"]
+    assert two["mean"] < one["mean"]
+    assert one["ci"][0] <= one["mean"] <= one["ci"][1]
+    # Среднее каждого ПК — оба ПК, обе ветви.
+    assert len(mm["pc"]) == 2
+    assert all(set(v) == {"I", "II"} for v in mm["pc"].values())
+    # g на логарифмах — отрицательный: у II меньше.
+    assert mm["g"] < 0
+    # Мера из походов — проверка иерархическим бутстрепом.
+    assert mm["hier"] is not None and mm["hier"][0] < mm["hier"][1]
+    # ECL — шкала теста, обычное среднее и разница.
+    e = row(run, "clt.ecl")["means"]
+    assert e["scale"] == "lin" and e["diff"]["kind"] == "разница"
+    assert e["diff"]["value"] < 0
+
+
+def test_sno_alg_res_10_exploratory_families_use_bh(run):
+    for r in run["result"]["table"]:
+        if r["comparison"] != compare.BRANCH or r.get("p_adj") is None:
+            continue
+        want = "Холм" if r["family"] == "0" else "Бенджамини — Хохберг"
+        assert r["adjust"] == want, r["measure"].key
+
+
+def test_sno_alg_res_10_obrien_main_family_favours_ii(run):
+    sums = run["result"]["obrien"]
+    main = sums["families"]["0"]
+    assert set(main["measures"]) == {"search.H_t", "clt.ecl",
+                                     "actions.time_to_choice"}
+    assert main["delta"] > 0
+    assert sums["total"]["n"] > 0
+
+
+def test_sno_alg_res_10_matrix_figures_and_summary_section(run, tmp_path):
+    study.write(run, tmp_path, portraits=False)
+    text = (tmp_path / "матрица.csv").read_bytes().decode("utf-8-sig")
+    head = text.splitlines()[0].split(";")
+    for col in ("лучше", "I: среднее", "II: среднее", "g Хеджеса", "δ",
+                "p с поправкой", "устойчивость", "II лучше / хуже"):
+        assert col in head, col
+    assert "Сумма О'Брайена" in text
+    assert "II лучше" in text
+    compare_head = (tmp_path / "сравнение.csv").read_bytes().decode(
+        "utf-8-sig").splitlines()[0]
+    assert "II лучше / хуже" in compare_head
+    figures = {p.name for p in (tmp_path / "рисунки").iterdir()}
+    for n in ("Р15_", "Р18_", "Р19_"):
+        assert any(f.startswith(n) and f.endswith(".png")
+                   for f in figures), n
+    page = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert "12. Итог: в чём ветвь II сильнее ветви I и в чём слабее" in page
+    assert page.index("12. Итог") > page.index("11. Как читать")
+    assert "Ветвь II сильнее ветви I" in page
+    assert "разницы не видно" not in page
+    assert "матрица.csv" in page

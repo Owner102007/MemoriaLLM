@@ -320,10 +320,13 @@ def comparison(result: dict, path: Path) -> None:
             b, db.get("n"), db.get("n_eff"), res.n_eff_cmp.get(b),
             db.get("mean"), db.get("median"), db.get("sd"),
             res.delta, _ci(res.ci, 0), _ci(res.ci, 1), r.get("effect"),
-            res.p, res.exact, r.get("p_holm"), res.delta_all,
+            res.p, res.exact, r.get("p_adj"), r.get("adjust"),
+            res.delta_all,
             res.diff, _ci(res.diff_ci, 0), _ci(res.diff_ci, 1),
             " | ".join(res.strata), res.pooled, r.get("words"),
             r.get("noise_rho"), r.get("noisy") if m.gaze else None,
+            r.get("better"), _VERDICT_CSV.get(r.get("verdict"),
+                                              r.get("verdict")),
         ])
     write(path, [
         "сравнение", "семья", "главная", "мера", "название", "единицы",
@@ -333,11 +336,99 @@ def comparison(result: dict, path: Path) -> None:
         "группа B", "B: n", "B: n_eff", "B: n_eff в сравнимых слоях",
         "B: среднее", "B: медиана", "B: отклонение",
         "δ (A против B)", "δ: 2,5 %", "δ: 97,5 %", "величина",
-        "p", "p точный", "p по Холму", "δ без слоёв (справочно)",
+        "p", "p точный", "p с поправкой", "поправка",
+        "δ без слоёв (справочно)",
         "разница средних A − B", "разница: 2,5 %", "разница: 97,5 %",
         "сравнимые слои", "без слоёв (ветвь совпадает с ПК)", "вывод",
         "ρ с прецизионностью сессии", "чувствует шум",
+        "лучше", "II лучше / хуже",
     ], rows)
+
+
+# Итог АН2 — столбцом «II лучше / хуже» (шаг 41).
+_VERDICT_CSV = {"сильнее": "II лучше", "слабее": "II хуже"}
+
+
+def matrix(result: dict, path: Path) -> None:
+    """`матрица.csv` — структурированная матрица (SNO-ALG-RES-10, шаг
+    41): строка на меру сравнения ветвей, главные первыми; под ней —
+    суммы О'Брайена по семьям и общая."""
+    rows = []
+    order = list(compare.FAMILIES)
+    table = [r for r in result["table"] if r["comparison"] ==
+             compare.BRANCH and not r.get("pending")]
+    table.sort(key=lambda r: order.index(r["family"]))
+    for r in table:
+        m = r["measure"]
+        res = r["result"]
+        mm = r.get("means") or {}
+        br = mm.get("branch") or {}
+        one, two = br.get("I") or {}, br.get("II") or {}
+        diff = mm.get("diff") or {}
+        hier = mm.get("hier")
+        rows.append([
+            compare.FAMILIES[r["family"]], m.key, m.title, m.unit,
+            mm.get("scale"), mm.get("scale_why") or None, r.get("better"),
+            one.get("mean"), _ci(one.get("ci"), 0), _ci(one.get("ci"), 1),
+            one.get("n"), one.get("n_eff"),
+            two.get("mean"), _ci(two.get("ci"), 0), _ci(two.get("ci"), 1),
+            two.get("n"), two.get("n_eff"),
+            " | ".join(f"{pc}: I {_fmt(v.get('I'))}, II {_fmt(v.get('II'))}"
+                       for pc, v in (mm.get("pc") or {}).items()) or None,
+            diff.get("kind"), diff.get("value"), _ci(diff.get("ci"), 0),
+            _ci(diff.get("ci"), 1), diff.get("p"),
+            mm.get("g"), res.delta, _ci(res.ci, 0), _ci(res.ci, 1),
+            res.p, r.get("p_adj"), r.get("adjust"),
+            None if hier is None else hier[0],
+            None if hier is None else hier[1],
+            r.get("stability"),
+            (r.get("noisy") if m.gaze else None), r.get("words"),
+            _VERDICT_CSV.get(r.get("verdict"), r.get("verdict")),
+        ])
+    head = [
+        "семья", "мера", "название", "единицы", "шкала", "шкала: почему",
+        "лучше",
+        "I: среднее", "I: 2,5 %", "I: 97,5 %", "I: n", "I: n_eff",
+        "II: среднее", "II: 2,5 %", "II: 97,5 %", "II: n", "II: n_eff",
+        "среднее по ПК", "II против I", "разница или отношение", "2,5 %",
+        "97,5 %", "p разницы (справочно)", "g Хеджеса", "δ", "δ: 2,5 %",
+        "δ: 97,5 %", "p δ", "p с поправкой", "поправка",
+        "по походам: 2,5 %", "по походам: 97,5 %", "устойчивость",
+        "чувствует шум", "вывод", "II лучше / хуже"]
+    sums = result.get("obrien") or {}
+    tail = []
+    for family, own in (sums.get("families") or {}).items():
+        tail.append(_obrien_row(compare.FAMILIES[family], own, len(head)))
+    if sums.get("total"):
+        tail.append(_obrien_row("все семьи (поровну)", sums["total"],
+                                len(head)))
+    if tail:
+        rows.append([None] * len(head))
+        rows.append(["Сумма О'Брайена — вторичный итог; δ > 0 — у ветви II "
+                     "сумма лучше"] + [None] * (len(head) - 1))
+        rows.extend(tail)
+    write(path, head, rows)
+
+
+def _fmt(x) -> str:
+    if x is None:
+        return "—"
+    return f"{x:.3g}".replace(".", ",")
+
+
+def _obrien_row(name: str, own: dict, width: int) -> list:
+    words = own.get("words") or "мало данных"
+    row = [f"сумма: {name}", ", ".join(own.get("measures") or [])
+           or None, f"участников {own.get('n', 0)}", None, None, None,
+           None]
+    row += [None] * (width - len(row))
+    # δ, интервал, p — в столбцах δ матрицы.
+    row[24] = own.get("delta")
+    row[25] = _ci(own.get("ci"), 0)
+    row[26] = _ci(own.get("ci"), 1)
+    row[27] = own.get("p")
+    row[34] = words
+    return row
 
 
 def robustness(result: dict, path: Path) -> None:

@@ -84,8 +84,13 @@ def _overlap(a: float, b: float, c: float, d: float) -> float:
 
 def _screen_time(line: Timeline, a: float, b: float,
                  names: tuple[str, ...]) -> float:
-    """Время в [a, b) на экранах [names] без отлучек."""
+    """Время в [a, b) на экранах [names] без отлучек.
+
+    BUG-72: из участка вычитается **объединение** отлучек — перекрытые
+    отлучки (`app.foreground` без `app.background`, `away_ms` дальше
+    прежней отлучки) иначе вычитались бы дважды."""
     marks = line.screens + [(float("inf"), "")]
+    away = _union(line.away)
     total = 0.0
     for (t, name), (t_next, _) in zip(marks, marks[1:]):
         if name not in names:
@@ -94,10 +99,21 @@ def _screen_time(line: Timeline, a: float, b: float,
         if hi <= lo:
             continue
         span = hi - lo
-        for x, y, _ in line.away:
+        for x, y in away:
             span -= _overlap(lo, hi, x, y)
         total += max(0.0, span)
     return total
+
+
+def _union(spans) -> list[tuple[float, float]]:
+    """Отлучки, слитые в непересекающиеся отрезки (BUG-72)."""
+    out: list[list[float]] = []
+    for x, y, *_ in sorted(spans):
+        if out and x <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], y)
+        else:
+            out.append([x, y])
+    return [(x, y) for x, y in out]
 
 
 def episodes(events: list[dict], scope: str) -> list[tuple[float, float]]:
@@ -289,6 +305,8 @@ def measures(record: Record, line: Timeline, found: list[Trip],
              if isinstance(r, (int, float)) and not isinstance(r, bool)]
     away = [(max(a, lo), min(b, hi)) for a, b, _ in line.away
             if min(b, hi) > max(a, lo)]
+    # BUG-72: время отлучек — длина их объединения, а не сумма.
+    away_ms = sum(b - a for a, b in _union(away))
 
     # Касания участника и пустые: на касание не сослалось ни одно
     # событие журнала (поле `input`, SNO-F-REC-11).
@@ -335,7 +353,7 @@ def measures(record: Record, line: Timeline, found: list[Trip],
             sum(1 for e in events if e["type"] == "page.shown")),
         "actions.read_per_book": _median(reads),
         "actions.away_per_min": per_min(len(away)),
-        "actions.away_share": (sum(b - a for a, b in away) / line.study_ms
+        "actions.away_share": (away_ms / line.study_ms
                                if line.study_ms > 0 else None),
         "actions.taps_per_min": per_min(len(taps)),
         "actions.empty_tap_share": empty / len(taps) if taps else None,
@@ -343,7 +361,7 @@ def measures(record: Record, line: Timeline, found: list[Trip],
     info = {
         "trips": len(found), "complete_trips": len(complete),
         "opens": n_open, "books": len(seen), "away_count": len(away),
-        "away_s": sum(b - a for a, b in away) / 1000,
+        "away_s": away_ms / 1000,
         "search_mode": search_mode(via, branch, via_map),
         "taps": len(taps), "empty_taps": empty,
     }

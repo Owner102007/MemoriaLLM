@@ -374,6 +374,24 @@ def holm(ps: list[float | None], missing_as_one: bool = False
     return out
 
 
+def bh(ps: list[float | None]) -> list[float | None]:
+    """Поправка Бенджамини — Хохберга (Benjamini Y., Hochberg Y.
+    «Controlling the false discovery rate», JRSS B, 1995, 57:289): p
+    упорядочиваются по возрастанию, k-е умножается на m / k, сверху вниз
+    берётся накопленный минимум, потолок — 1. Мера без p в семью не
+    входит. Разведочные семьи (АЛ5 (а), шаг 41): мягче Холма и годится
+    для связанных мер; главные меры — Холм всегда."""
+    order = sorted((p, i) for i, p in enumerate(ps) if p is not None)
+    m = len(order)
+    out: list[float | None] = [None] * len(ps)
+    running = 1.0
+    for k in range(m - 1, -1, -1):
+        p, i = order[k]
+        running = min(running, min(1.0, p * m / (k + 1)))
+        out[i] = running
+    return out
+
+
 def effect_words(delta: float | None) -> str:
     """Величина δ словами — пороги Romano и др., 2006."""
     if delta is None:

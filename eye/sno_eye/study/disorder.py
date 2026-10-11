@@ -67,7 +67,7 @@ from ..report import idt
 from ..report.measures import MINUTE_GROUPS
 from ..report.zones import bucket_of
 from . import noise, stats
-from .actions import SEARCH_SCREENS, Trip, _overlap, _screen_time
+from .actions import SEARCH_SCREENS, Trip, _overlap, _screen_time, _union
 
 SEARCH = "search"
 READING = "reading"
@@ -410,7 +410,8 @@ def _time_on(line, a: float, b: float, names) -> float:
     if names is not None:
         return _screen_time(line, a, b, names)
     total = max(0.0, b - a)
-    for x, y, _ in line.away:
+    # BUG-72: объединение отлучек, а не каждая по очереди.
+    for x, y in _union(line.away):
         total -= _overlap(a, b, x, y)
     return max(0.0, total)
 

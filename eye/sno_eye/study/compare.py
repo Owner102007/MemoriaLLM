@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import honesty, stats
+from . import honesty, means, stats
 from .collect import ETALON_NOT_RESET, ETALON_YES
 
 # --- меры ----------------------------------------------------------------
@@ -415,31 +415,96 @@ COMPARISONS = (
 )
 
 
-def words(res: stats.Result, p_holm: float | None, alpha: float,
-          groups: tuple[str, str]) -> str:
-    """Вывод словами — по одной статистике, δ (шаг 6)."""
+def words(res: stats.Result, p_adj: float | None, alpha: float,
+          groups: tuple[str, str], diff: float | None = None) -> str:
+    """Вывод словами — по δ (шаг 6, ALG-RES-05) и знаку разницы средних
+    (АЛ4 (а), шаг 41): интервал δ не накрывает ноль, p с поправкой <
+    alpha, n_eff ≥ порога — **и** знак разницы средних [diff] тот же.
+    Знаки разошлись — «разница не доказана: среднее и ранги говорят
+    разное»: среднее при десятке людей тянет один выброс, ранги — нет.
+    «Разницы нет» не пишется никогда (ALG-RES-10, шаг 10): при таких n
+    равенство не доказать (Lakens, 2017)."""
     second, first = groups
     if not res.enough:
         return "мало данных — только описание"
-    if res.delta is None or res.ci is None or p_holm is None:
+    if res.delta is None or res.ci is None or p_adj is None:
         return "мало данных — только описание"
     lo, hi = res.ci
     who = f"в ветви {second}" if second in ("I", "II") else f"«{second}»"
-    if p_holm < alpha and (lo > 0 or hi < 0):
-        if res.delta > 0:
-            return f"{who} больше"
-        return f"{who} меньше"
-    return "разницы не видно"
+    if p_adj < alpha and (lo > 0 or hi < 0):
+        sign = (res.delta > 0) - (res.delta < 0)
+        if diff is not None:
+            mean_sign = (diff > 0) - (diff < 0)
+            if mean_sign != sign:
+                return UNPROVEN_MIXED
+        return f"{who} больше" if sign > 0 else f"{who} меньше"
+    return UNPROVEN
+
+
+UNPROVEN = "разница не доказана"
+UNPROVEN_MIXED = "разница не доказана: среднее и ранги говорят разное"
+
+
+def _adjust(cfg: dict) -> str:
+    """Поправка разведочных семей (АЛ5): `bh` — Бенджамини — Хохберг
+    (решение владельца 11.10.2026), `holm` — Холм."""
+    return "holm" if str(cfg.get("fdr", "bh")) == "holm" else "bh"
+
+
+ADJUST_WORDS = {"holm": "Холм", "bh": "Бенджамини — Хохберг"}
+
+
+def _scenario_cases(entries, m, cfg, fingerprint, no_filter, series,
+                    rep, perm, exact, neff) -> list[dict]:
+    cases = []
+    for code, title in SCENARIOS:
+        rows = _rows(entries, m, code, cfg, no_filter, series,
+                     lambda e: e.get("branch"))
+        res = stats.compare(
+            rows, seed=stats.seed_for(fingerprint, BRANCH, code, m.key),
+            bootstrap_repeats=rep, permutation_repeats=perm,
+            exact_limit=exact, n_eff_min=neff)
+        cases.append({"scenario": code, "title": title, "result": res})
+    return cases
+
+
+def _means_row(entries, m, rows, cfg, fingerprint, no_filter, series,
+               rep, perm, exact) -> dict:
+    """Свод средних меры (SNO-ALG-RES-10, шаги 1–4, 8): шкала, средние
+    ветвей и ПК, разница или отношение, g, интервал по походам."""
+    plain = [r[:4] for r in rows]
+    scale, why = means.scale_of(m, [r[0] for r in plain], cfg)
+    out = {"scale": scale, "scale_why": why}
+    out.update(means.branch_means(
+        plain, scale, seed_parts=(fingerprint, BRANCH, "mean", m.key),
+        repeats=rep))
+    out["diff"] = means.difference(
+        plain, scale, seed=stats.seed_for(fingerprint, BRANCH, "diff",
+                                          m.key),
+        repeats=rep, perm_repeats=perm, exact_limit=exact,
+        keep_draws=m.key in tuple(cfg.get("primary") or PRIMARY_KEYS))
+    out["g"] = means.hedges_g(plain, scale)
+    out["hier"] = None
+    if m.key in means.TRIP_MEASURES:
+        table = means.trip_table(
+            entries, m.key, lambda e: scenario_weight(
+                e, "S0", cfg, no_filter, series, m.gaze))
+        out["hier"] = means.hierarchical(
+            table, scale, seed=stats.seed_for(fingerprint, BRANCH, "hier",
+                                              m.key),
+            repeats=min(rep, int(cfg.get("hier_bootstrap", 2000))))
+    return out
 
 
 def run(entries: list[dict], cfg: dict, *, fingerprint: str,
         no_filter: bool, series: str | None) -> dict:
-    """Все сравнения, устойчивость и связи мер."""
+    """Все сравнения, свод средних, устойчивость, итог и связи мер."""
     rep = int(cfg["bootstrap"])
     perm = int(cfg["permutations"])
     exact = int(cfg["exact_limit"])
     neff = float(cfg["n_eff_min"])
     alpha = float(cfg["alpha"])
+    adjust = _adjust(cfg)
     table = []
     for name, groups, label in COMPARISONS:
         part = []
@@ -464,24 +529,43 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
                         rep)
                     for g in groups}
                 row["points"] = rows
+                if name == BRANCH:
+                    row["means"] = _means_row(entries, m, rows, cfg,
+                                              fingerprint, no_filter,
+                                              series, rep, perm, exact)
             part.append(row)
-        # Поправка Холма внутри семьи. Главная семья — с недостающей
+        # Поправка внутри семьи. Главная семья — Холм, с недостающей
         # мерой как p = 1: главная мера, у которой мало данных, остаётся
         # в поправке, и та идёт на все три названные меры (АК4). Выбор
-        # наш: строже, чем выбросить её.
+        # наш: строже, чем выбросить её. Разведочные семьи — Бенджамини —
+        # Хохберг (АЛ5 (а), шаг 41) или Холм (`study.fdr`).
         for family in FAMILIES:
             members = [r for r in part if r["family"] == family]
             if not members:
                 continue
             ps = [r["result"].p if not r["pending"] else None
                   for r in members]
-            adjusted = stats.holm(ps, missing_as_one=family == "0")
+            how = "holm" if family == "0" else adjust
+            adjusted = stats.holm(ps, missing_as_one=True) \
+                if family == "0" else (stats.holm(ps) if how == "holm"
+                                       else stats.bh(ps))
             for r, q in zip(members, adjusted):
-                r["p_holm"] = q
+                r["p_adj"] = q
+                r["adjust"] = ADJUST_WORDS[how]
         for r in part:
-            r.setdefault("p_holm", None)
-            r["words"] = "появится — " + r["pending"] if r["pending"] \
-                else words(r["result"], r["p_holm"], alpha, groups)
+            r.setdefault("p_adj", None)
+            r.setdefault("adjust", None)
+            if r["pending"]:
+                r["words"] = "появится — " + r["pending"]
+            else:
+                if name == BRANCH:
+                    sign = means.sign_of(r["means"]["diff"])
+                    diff = float(sign) if r["means"]["diff"]["log"] \
+                        is not None else None
+                else:
+                    diff = r["result"].diff
+                r["words"] = words(r["result"], r["p_adj"], alpha, groups,
+                                   diff=diff)
             r["effect"] = stats.effect_words(r["result"].delta)
         table.extend(part)
 
@@ -489,17 +573,32 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
     for m in primary(cfg):
         if m.pending:
             continue
-        cases = []
-        for code, title in SCENARIOS:
-            rows = _rows(entries, m, code, cfg, no_filter, series,
-                         lambda e: e.get("branch"))
-            res = stats.compare(
-                rows, seed=stats.seed_for(fingerprint, BRANCH, code, m.key),
-                bootstrap_repeats=rep, permutation_repeats=perm,
-                exact_limit=exact, n_eff_min=neff)
-            cases.append({"scenario": code, "title": title, "result": res})
+        cases = _scenario_cases(entries, m, cfg, fingerprint, no_filter,
+                                series, rep, perm, exact, neff)
         robust.append({"measure": m, "cases": cases,
                        "verdict": stability(cases)})
+    by_key = {item["measure"].key: item["verdict"] for item in robust}
+
+    # Итог «сильнее / слабее» (АН2): вывод S0 со стрелкой «лучше» и
+    # устойчивость во всех сценариях — у главных мер она уже посчитана,
+    # у остальных считается только там, где S0 сказало «больше / меньше»
+    # (иначе устойчивость в итог не идёт).
+    for r in table:
+        if r["comparison"] != BRANCH or r["pending"]:
+            continue
+        m = r["measure"]
+        verdict_s0 = r["words"].endswith(("больше", "меньше"))
+        if m.key in by_key:
+            r["stability"] = by_key[m.key]
+        elif verdict_s0 and means.arrow(m, cfg) != "—":
+            r["stability"] = stability(_scenario_cases(
+                entries, m, cfg, fingerprint, no_filter, series, rep, perm,
+                exact, neff))
+        else:
+            r["stability"] = None
+        r["better"] = means.arrow(m, cfg)
+        r["verdict"] = means.verdict(m, r["words"], r["stability"] or "",
+                                     cfg)
 
     # Шум веб-камеры сам делает взгляд «беспорядочнее» (SNO-ALG-RES-03):
     # по каждой мере взгляда — ранговая связь с прецизионностью сессии
@@ -542,7 +641,71 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
                     ws.append(w)
             links.append({"branch": branch, "a": a, "b": b, "n": len(xs),
                           "rho": stats.spearman(xs, ys, ws)})
-    return {"table": table, "robust": robust, "links": links}
+    return {"table": table, "robust": robust, "links": links,
+            "obrien": obrien_sums(entries, table, cfg, fingerprint,
+                                  no_filter, series)}
+
+
+def obrien_sums(entries, table, cfg, fingerprint, no_filter,
+                series) -> dict:
+    """Сумма О'Брайена по семьям и общая (SNO-ALG-RES-10, «Сумма —
+    только как вторичный итог»; АЛ6 (а)). Значение меры у участника
+    берётся, только если он идёт в эту меру в S0 (мера взгляда — с
+    годным взглядом); вес — цвет искренности."""
+    better = {m.key: means.arrow(m, cfg) for m in MEASURES}
+    rows = []
+    for e in entries:
+        w = scenario_weight(e, "S0", cfg, no_filter, series, False)
+        if w <= 0 or e.get("branch") not in ("I", "II"):
+            continue
+        values = {}
+        for m in MEASURES:
+            if m.pending:
+                continue
+            x = value(e, m.key)
+            if x is None:
+                continue
+            if m.gaze and scenario_weight(e, "S0", cfg, no_filter, series,
+                                          True) <= 0:
+                continue
+            values[m.key] = float(x)
+        rows.append({"branch": e["branch"], "stratum": e.get("stratum"),
+                     "w": w, "values": values})
+    rep = int(cfg["permutations"])
+    exact = int(cfg["exact_limit"])
+    boot = int(cfg["bootstrap"])
+    neff = float(cfg["n_eff_min"])
+    rho = float(cfg.get("merge_rho", 0.7))
+    families = {}
+    for family in FAMILIES:
+        keys = [r["measure"].key for r in table
+                if r["comparison"] == BRANCH and r["family"] == family
+                and not r["pending"]]
+        families[family] = means.obrien(
+            rows, keys, better, merge_rho=rho,
+            seed=stats.seed_for(fingerprint, "obrien", family),
+            repeats=rep, exact_limit=exact, bootstrap_repeats=boot,
+            n_eff_min=neff)
+    total = means.obrien_total(
+        rows, families, seed=stats.seed_for(fingerprint, "obrien", "all"),
+        repeats=rep, exact_limit=exact, bootstrap_repeats=boot,
+        n_eff_min=neff)
+    alpha = float(cfg["alpha"])
+    for own in list(families.values()) + [total]:
+        own.pop("scores", None)
+        own["words"] = obrien_words(own, alpha)
+    return {"families": families, "total": total}
+
+
+def obrien_words(own: dict, alpha: float) -> str:
+    """Сумма словами — то же правило, что у меры, без поправки: сумма
+    одна на семью и вторична."""
+    if not own.get("enough") or own.get("delta") is None:
+        return "мало данных"
+    ci = own.get("ci")
+    if (own.get("p") or 1.0) < alpha and ci and (ci[0] > 0 or ci[1] < 0):
+        return "у II лучше" if own["delta"] > 0 else "у II хуже"
+    return "разница не доказана"
 
 
 def stability(cases: list[dict]) -> str:
@@ -569,12 +732,24 @@ def warnings(entries: list[dict], result: dict, no_filter: bool) -> list:
         if b not in branches:
             out.append(f"ветви {b} в наборе нет — сравнения ветвей нет")
     if branches >= {"I", "II"}:
-        pooled = [r for r in result["table"]
-                  if r["comparison"] == BRANCH and r["result"].pooled]
-        if pooled:
+        # BUG-71: оговорка — о тех мерах, где ветвь совпадает с ПК, а не
+        # обо всём наборе. Мера без сравнения (одна ветвь) — не в счёт.
+        live = [r for r in result["table"]
+                if r["comparison"] == BRANCH and not r.get("pending")
+                and (r["result"].enough or r["result"].pooled
+                     or r["result"].strata)]
+        pooled = [r for r in live if r["result"].pooled]
+        if pooled and len(pooled) == len(live):
             out.append("ветвь совпадает с ПК — ни на одном ПК не было "
                        "обеих ветвей: разницу ветвей нельзя отделить от "
                        "разницы камер")
+        elif pooled:
+            names = "; ".join(f"«{r['measure'].title}»" for r in pooled)
+            out.append(f"ветвь совпадает с ПК у мер: {names} — участники "
+                       "с этой мерой есть в каждой ветви, но не на одном "
+                       "ПК: в них разницу ветвей нельзя отделить от "
+                       "разницы камер; остальные меры сравниваются "
+                       "внутри ПК")
     tags = {}
     for e in used:
         tags[e.get("series") or "проверочная"] = \

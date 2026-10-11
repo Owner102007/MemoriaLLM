@@ -1,5 +1,6 @@
-"""Шаг 10 — рисунки Р1–Р14, Р16, Р17 (SNO-F-RES-06, «Рисунки»;
-Р16 и Р17 — шаг 38, портрет участника SNO-F-RES-07).
+"""Шаг 10 — рисунки Р1–Р19 (SNO-F-RES-06, «Рисунки»; Р16 и Р17 —
+шаг 38, портрет участника SNO-F-RES-07; Р15, Р18, Р19 — шаг 41, свод
+средних SNO-ALG-RES-10).
 
 Откуда данные: записи после отбора (`study.compare.admit`) и итог
 сравнения (`study.compare.run`): точки участников с весами, средние
@@ -955,6 +956,291 @@ def figure_17(run: dict, folder: Path) -> str | None:
     return _save(fig, folder, "Р17_ленты_участников")
 
 
+# --- Р15, Р18, Р19. Свод средних (SNO-ALG-RES-10, шаг 41) ---------------
+
+PC_MARKERS = ("o", "s", "^", "D", "v", "P")
+
+
+def _pc_marker(run: dict) -> dict:
+    """ПК → форма точки: порядок ПК — как в наборе (имена слоёв)."""
+    names = sorted({e.get("stratum") for e in run["entries"]
+                    if e.get("stratum")}, key=str)
+    return {n: PC_MARKERS[i % len(PC_MARKERS)] for i, n in enumerate(names)}
+
+
+def _num(x, digits: int = 2) -> str:
+    if x is None:
+        return "—"
+    # Мелкие числа (наклоны за минуту) — двумя значащими, иначе «0,00».
+    text = f"{x:.2g}" if x != 0 and abs(x) < 0.05 and digits == 2 \
+        else f"{x:.{digits}f}"
+    return text.replace(".", ",").replace("-", "−")
+
+
+def _ci(ci, digits: int = 2) -> str:
+    if not ci:
+        return "—"
+    return f"[{_num(ci[0], digits)}; {_num(ci[1], digits)}]"
+
+
+def _diff_text(diff: dict, digits: int = 2) -> str:
+    if diff.get("value") is None:
+        return "—"
+    mark = "×" if diff.get("kind") == "отношение" else ""
+    lo, hi = diff.get("ci") or (None, None)
+    return (f"{mark}{_num(diff['value'], digits)} "
+            f"[{mark}{_num(lo, digits)}; {mark}{_num(hi, digits)}]")
+
+
+def _estimation_panel(fig, spec, row: dict, markers: dict,
+                      title: str) -> None:
+    """Оценочный рисунок одной меры (Gardner — Altman; Ho и др., 2019):
+    слева — точки участников (ветвь — цвет, ПК — форма, 🟡 и ⚪ — полые,
+    🔴 — крестик), среднее ветви с интервалом 95 %; справа — разница
+    средних (или отношение) с распределением бутстрепа и интервалом."""
+    sub = spec.subgridspec(1, 2, width_ratios=(3.2, 1.3), wspace=0.08)
+    ax = fig.add_subplot(sub[0])
+    mm = row.get("means") or {}
+    order = ["I", "II"]
+    for k, g in enumerate(order):
+        color = BRANCH[g]
+        for x, w, group, pc, colour, code in row.get("points") or []:
+            if group != g:
+                continue
+            style = _marker(colour, color)
+            if colour != honesty.RED:
+                style["marker"] = markers.get(pc, "o")
+            ax.scatter([k + _jitter(code, 0.16)], [x], zorder=3, **style)
+        b = (mm.get("branch") or {}).get(g) or {}
+        if b.get("mean") is not None:
+            ax.scatter([k + 0.38], [b["mean"]], color=INK, s=40, zorder=4)
+        if b.get("ci"):
+            ax.plot([k + 0.38, k + 0.38], b["ci"], color=INK, lw=1.6,
+                    zorder=4)
+    ns = {g: ((mm.get("branch") or {}).get(g) or {}).get("n", 0)
+          for g in order}
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels([f"ветвь {g} (n {ns[g]})" for g in order])
+    ax.set_xlim(-0.6, 1.7)
+    ax.grid(axis="x", visible=False)
+    m = row["measure"]
+    geo = " (геом.)" if mm.get("scale") == "log" else ""
+    ax.set_ylabel(_wrap(f"{m.title}, {m.unit}{geo}", 34), fontsize=8)
+    _comma(ax, "y")
+    ax.set_title(_wrap(title, 60), loc="left", fontsize=9)
+    _spines(ax)
+    right = fig.add_subplot(sub[1])
+    diff = mm.get("diff") or {}
+    ratio = diff.get("kind") == "отношение"
+    zero = 1.0 if ratio else 0.0
+    right.axhline(zero, color=INK_2, lw=1)
+    draws = diff.get("draws")
+    if draws:
+        import numpy as np
+        vals = np.asarray(draws, float)
+        hist, edges = np.histogram(vals, bins=40)
+        if hist.max() > 0:
+            mid = (edges[:-1] + edges[1:]) / 2
+            right.fill_betweenx(mid, 0, hist / hist.max(),
+                                color=BRANCH["II"], alpha=0.25, lw=0)
+    if diff.get("value") is not None:
+        right.scatter([0.15], [diff["value"]], color=INK, s=40, zorder=4)
+        if diff.get("ci"):
+            right.plot([0.15, 0.15], diff["ci"], color=INK, lw=1.6)
+    res = row["result"]
+    lines = [_diff_text(diff)]
+    if res.delta is not None:
+        lines.append(f"δ = {_num(res.delta)} {_ci(res.ci)}")
+    if row.get("p_adj") is not None:
+        lines.append(f"p δ = {_num(res.p, 3)} "
+                     f"({_short_adjust(row.get('adjust'))} "
+                     f"{_num(row['p_adj'], 3)})")
+    lines.append(_wrap(row.get("words") or "", 26))
+    # Числа — под полем разницы, а не на нём: точка и распределение
+    # могут стоять где угодно по высоте.
+    right.set_xlabel("\n".join(lines), fontsize=7, color=INK,
+                     loc="left", labelpad=4)
+    if diff.get("value") is None:
+        right.set_yticks([])
+    right.set_xlim(0, 1.1)
+    right.set_xticks([])
+    right.yaxis.tick_right()
+    right.yaxis.set_label_position("right")
+    right.set_ylabel("отношение II / I" if ratio else "разница II − I",
+                     fontsize=8)
+    _comma(right, "y")
+    right.grid(axis="x", visible=False)
+    for side in ("top", "left", "bottom"):
+        right.spines[side].set_visible(False)
+
+
+def _estimation_legend(fig, markers: dict) -> None:
+    handles = [Line2D([], [], marker=mk, ls="", color=INK_2,
+                      label=f"ПК {pc}", markersize=6)
+               for pc, mk in markers.items()]
+    handles += [Line2D([], [], marker="o", ls="", markerfacecolor=SURFACE,
+                       markeredgecolor=INK_2, label="жёлтый и неизвестно "
+                       "(вес меньше)", markersize=6),
+                Line2D([], [], marker="o", color=INK, lw=1.6,
+                       label="среднее и интервал 95 %")]
+    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=7.5,
+               bbox_to_anchor=(0.5, 0.0))
+
+
+def figure_15(run: dict, folder: Path) -> str | None:
+    """Р15 — оценочный рисунок каждой главной меры (SNO-ALG-RES-10)."""
+    rows = _branch_rows(run)
+    keys = [m.key for m in compare.primary(run["cfg"])
+            if m.key in rows and (rows[m.key].get("means") or {})]
+    if not keys:
+        return None
+    markers = _pc_marker(run)
+    fig = plt.figure(figsize=(9.0, 3.8 * len(keys) + 0.8))
+    grid = fig.add_gridspec(len(keys), 1, hspace=0.75)
+    for i, key in enumerate(keys):
+        _estimation_panel(fig, grid[i], rows[key], markers,
+                          compare.BY_KEY[key].title)
+    _estimation_legend(fig, markers)
+    fig.suptitle("Р15. Главные меры: слева — участники, справа — разница "
+                 "средних с её распределением бутстрепа", x=0.01,
+                 ha="left", fontweight="bold", color=INK)
+    return _save(fig, folder, "Р15_оценочный_рисунок")
+
+
+def figure_18(run: dict, folder: Path) -> str | None:
+    """Р18 — меры портрета по ветвям (семья «Д»): точки, среднее,
+    интервал, справа — разница средних (SNO-ALG-RES-10)."""
+    rows = _branch_rows(run)
+    keys = [m.key for m in compare.MEASURES if m.family == "Д"
+            and m.key in rows and rows[m.key].get("points")]
+    if not keys:
+        return None
+    markers = _pc_marker(run)
+    cols = 2
+    lines = (len(keys) + cols - 1) // cols
+    fig = plt.figure(figsize=(13.5, 3.6 * lines + 0.9))
+    grid = fig.add_gridspec(lines, cols, hspace=0.95, wspace=0.45)
+    for i, key in enumerate(keys):
+        _estimation_panel(fig, grid[i // cols, i % cols], rows[key],
+                          markers, compare.BY_KEY[key].title)
+    _estimation_legend(fig, markers)
+    fig.suptitle("Р18. Меры портрета по ветвям: точки участников, среднее "
+                 "с интервалом 95 % и разница средних", x=0.01, ha="left",
+                 fontweight="bold", color=INK)
+    return _save(fig, folder, "Р18_меры_портрета")
+
+
+def figure_19(run: dict, folder: Path) -> str | None:
+    """Р19 — структурированная матрица (SNO-ALG-RES-10): строка — мера
+    сравнения ветвей; голубая клетка вывода — вывод держится (в итоге
+    «сильнее / слабее»). Цвет не говорит «лучше / хуже» — это говорит
+    столбец «Лучше»."""
+    order = list(compare.FAMILIES)
+    rows = [r for r in run["result"]["table"]
+            if r["comparison"] == compare.BRANCH and not r["pending"]]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: order.index(r["family"]))
+    cols = (("Мера", 0.0), ("Лучше", 0.255), ("Ветвь I", 0.30),
+            ("Ветвь II", 0.415), ("II против I", 0.53), ("g", 0.655),
+            ("δ [95 %]", 0.695), ("p (поправка)", 0.815),
+            ("Вывод", 0.905))
+    height = 0.24 * len(rows) + 1.8
+    fig = plt.figure(figsize=(16.0, height))
+    ax = fig.add_axes((0.04, 0.02, 0.95, 1 - 1.0 / height))
+    ax.set_axis_off()
+    total = len(rows) + 2.5
+    ax.set_ylim(0, total)
+    ax.set_xlim(0, 1)
+    top = total - 0.5
+    for name, x in cols:
+        ax.text(x, top, name, fontsize=7.5, fontweight="bold", va="center")
+    ax.plot([0, 1], [top - 0.5, top - 0.5], color=AXIS, lw=0.8)
+    prev = None
+    for i, r in enumerate(rows):
+        y = top - 1.2 - i
+        if prev is not None and r["family"] != prev:
+            ax.plot([0, 1], [y + 0.5, y + 0.5], color=AXIS, lw=0.6)
+        if r["family"] != prev:
+            ax.text(-0.012, y, compare.FAMILIES[r["family"]].split(" (")[0],
+                    fontsize=6, color=MUTED, ha="right", va="center")
+        prev = r["family"]
+        m = r["measure"]
+        mm = r.get("means") or {}
+        br = mm.get("branch") or {}
+        res = r["result"]
+        geo = " (геом.)" if mm.get("scale") == "log" else ""
+        cells = [
+            _wrap(f"{m.title}, {m.unit}{geo}", 58).split("\n")[0],
+            r.get("better") or "—",
+            _mean_ci(br.get("I") or {}),
+            _mean_ci(br.get("II") or {}),
+            _diff_text(mm.get("diff") or {}),
+            _num(mm.get("g"), 1),
+            "—" if res.delta is None else
+            f"{_num(res.delta)} {_ci(res.ci)}",
+            "—" if r.get("p_adj") is None else
+            f"{_num(r['p_adj'], 3)} ({_short_adjust(r.get('adjust'))})",
+            _verdict_cell(r),
+        ]
+        hold = r.get("verdict") in ("сильнее", "слабее")
+        if hold:
+            ax.add_patch(Rectangle((0.9, y - 0.42), 0.1, 0.84,
+                                   color="#cde2fb", lw=0))
+        for (name, x), text in zip(cols, cells):
+            bold = (name == "Вывод" and hold) or (name == "Мера"
+                                                  and r["family"] == "0")
+            ax.text(x + 0.004, y, text, fontsize=6.5, va="center",
+                    color=INK, fontweight="bold" if bold else "normal")
+    sums = run["result"].get("obrien") or {}
+    note = _obrien_note(sums)
+    if note:
+        ax.text(0, 0.2, note, fontsize=7, color=INK_2, va="bottom")
+    fig.suptitle("Р19. Структурированная матрица: направление «лучше» "
+                 "записано до основной серии; голубой — вывод держится",
+                 x=0.01, ha="left", fontweight="bold", color=INK)
+    return _save(fig, folder, "Р19_структурированная_матрица")
+
+
+def _mean_ci(own: dict) -> str:
+    if own.get("mean") is None:
+        return "—"
+    return f"{_num(own['mean'])} {_ci(own.get('ci'))}"
+
+
+def _short_adjust(word) -> str:
+    return "Холм" if word == "Холм" else "БХ"
+
+
+def _verdict_cell(r: dict) -> str:
+    v = r.get("verdict")
+    words = r.get("words") or ""
+    if v == "сильнее":
+        return words.replace("в ветви ", "у ") + " — лучше"
+    if v == "слабее":
+        return words.replace("в ветви ", "у ") + " — хуже"
+    if words.startswith("мало данных"):
+        return "мало данных"
+    if v == "не держится":
+        return "не держится в S0–S5"
+    if words.endswith(("больше", "меньше")):
+        return words.replace("в ветви ", "у ")
+    return "не доказано"
+
+
+def _obrien_note(sums: dict) -> str:
+    total = sums.get("total") or {}
+    if not total:
+        return ""
+    word = total.get("words") or "мало данных"
+    if total.get("delta") is not None:
+        word += (f", δ = {_num(total['delta'])}, p = "
+                 f"{_num(total.get('p'), 3)}")
+    return ("Сумма О'Брайена по всем семьям (ранги внутри ПК по "
+            f"направлению «лучше», меры со стрелкой): {word} — вторичный "
+            "итог, строк мер не заменяет.")
+
+
 def draw_all(run: dict, folder: Path) -> dict:
     """Все рисунки; ответ — номер → имя PNG (или None, если данных для
     рисунка нет)."""
@@ -978,7 +1264,10 @@ def draw_all(run: dict, folder: Path) -> dict:
         "Р12": figure_12(run, folder),
         "Р13": figure_13(run, folder),
         "Р14": figure_14(run, folder),
+        "Р15": figure_15(run, folder),
         "Р16": figure_16(run, folder),
         "Р17": figure_17(run, folder),
+        "Р18": figure_18(run, folder),
+        "Р19": figure_19(run, folder),
     }
     return out

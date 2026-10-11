@@ -9,8 +9,11 @@
 Метод: разделы — по «Сводный анализ — структура скрипта»: файлы
 отчёта (BUG-68), состав выборки, качество взгляда по ПК, нагрузка,
 действия, беспорядочность взгляда (с шага 38 — и энтропия по ходу
-сессии, Р16), средний взгляд, научение, портреты участников (шаг 38),
-сводка «I против II», устойчивость, «Как читать», оговорки, исходные.
+сессии, Р16), средний взгляд, научение, портреты участников (шаг 38;
+с шага 41 — Р18), сводка «I против II» (с шага 41 — средние в единицах
+меры, Р15, структурированная матрица Р19 и сумма О'Брайена),
+устойчивость, «Как читать», итог «в чём ветвь II сильнее и в чём
+слабее» (раздел 12, шаг 41), исходные.
 Ссылки на файлы — относительные: папку отчёта можно переносить.
 Вход → выход: прогон и рисунки → текст страницы.
 """
@@ -212,6 +215,30 @@ def _noise(r: dict) -> str:
     return text
 
 
+def _mean_cell(r: dict, g: str, describe: dict) -> str:
+    """Среднее ветви: у сравнения ветвей — свод средних (шаг 41:
+    геометрическое у времени и частот, с интервалом 95 %), у остальных
+    сравнений — взвешенное среднее."""
+    own = ((r.get("means") or {}).get("branch") or {}).get(g)
+    if own is None:
+        return (f"{num(describe.get('mean'))} <small>(n "
+                f"{describe.get('n', 0)}, n_eff "
+                f"{num(describe.get('n_eff'), 1)})</small>")
+    return (f"{num(own.get('mean'))} <small>{ci_text(own.get('ci'))}"
+            f"<br>n {own.get('n', 0)}, n_eff {num(own.get('n_eff'), 1)}"
+            "</small>")
+
+
+def diff_text(diff: dict | None) -> str:
+    """Разница «II − I» или отношение «II / I» с интервалом."""
+    if not diff or diff.get("value") is None:
+        return "—"
+    mark = "×" if diff.get("kind") == "отношение" else ""
+    lo, hi = diff.get("ci") or (None, None)
+    return (f"{mark}{num(diff['value'])} <small>[{mark}{num(lo)}; "
+            f"{mark}{num(hi)}]</small>")
+
+
 def _measure_rows(run: dict, keys, comparison=compare.BRANCH,
                   noise: bool = False) -> list:
     rows = []
@@ -224,29 +251,38 @@ def _measure_rows(run: dict, keys, comparison=compare.BRANCH,
         m = r["measure"]
         a, b = r["groups"]
         if r["pending"]:
-            rows.append([_e(m.title), "—", "—", "—", "—", "—",
+            rows.append([_e(m.title), "—", "—", "—", "—", "—", "—",
                          f"<span class='later'>{_e(r['words'])}</span>"]
                         + (["—"] if noise else []))
             continue
         res = r["result"]
         da, db = res.describe.get(a, {}), res.describe.get(b, {})
         cls = "main-row" if r["family"] == "0" else ""
+        mm = r.get("means") or {}
+        geo = " · геом. среднее" if mm.get("scale") == "log" else ""
+        arrow = r.get("better")
+        better = f"; лучше {arrow}" if arrow in ("↓", "↑") else ""
+        g = mm.get("g")
+        diff = diff_text(mm.get("diff")) + (
+            f"<br><small>g {num(g)}</small>" if g is not None else "")
+        adjust = f"<br><small>{_e(r['adjust'])}</small>" \
+            if r.get("adjust") and r.get("p_adj") is not None else ""
         rows.append((cls, [
-            _e(m.title) + f"<br><small>{_e(m.unit)}; больше — "
-            f"{_e(m.more)}</small>",
-            f"{num(db.get('mean'))} <small>(n {db.get('n', 0)}, "
-            f"n_eff {num(db.get('n_eff'), 1)})</small>",
-            f"{num(da.get('mean'))} <small>(n {da.get('n', 0)}, "
-            f"n_eff {num(da.get('n_eff'), 1)})</small>",
+            _e(m.title) + f"<br><small>{_e(m.unit)}{_e(geo)}; больше — "
+            f"{_e(m.more)}{_e(better)}</small>",
+            _mean_cell(r, b, db), _mean_cell(r, a, da),
+            diff if mm else "—",
             num(res.delta) + (f" <small>{_e(r['effect'])}</small>"
                               if res.delta is not None else ""),
-            ci_text(res.ci), p_text(r.get("p_holm")), _e(r["words"])]
+            ci_text(res.ci), p_text(r.get("p_adj")) + adjust,
+            _e(r["words"])]
             + ([_noise(r)] if noise else [])))
     return rows
 
 
-MEASURE_HEADER = ["Мера", "Ветвь I: среднее", "Ветвь II: среднее", "δ",
-                  "Интервал 95 %", "p по Холму", "Вывод"]
+MEASURE_HEADER = ["Мера", "Ветвь I: среднее", "Ветвь II: среднее",
+                  "II против I", "δ", "Интервал 95 %", "p с поправкой",
+                  "Вывод"]
 
 
 def _load(run: dict, folder: Path, figures: dict) -> str:
@@ -581,7 +617,9 @@ def _portraits(run: dict, folder: Path, figures: dict) -> str:
             + table
             + "<h3>Числа портрета по ветвям — семья «Д. Портрет»</h3>"
             + _table(MEASURE_HEADER + ["Шум"], _measure_rows(run, keys,
-                                                            noise=True)))
+                                                            noise=True))
+            + _img(folder, figures.get("Р18"),
+                   "Р18. Меры портрета по ветвям"))
 
 
 def _files(run: dict, figures: dict) -> str:
@@ -609,17 +647,33 @@ def _summary(run: dict, folder: Path, figures: dict) -> str:
     result = run["result"]
     primary = [m.key for m in compare.primary(run["cfg"])]
     parts = [_check_banner(run)]
+    adjust = compare.ADJUST_WORDS[compare._adjust(run["cfg"])]
     parts.append("<p>Главные меры названы до основной серии (АК4) и "
                  "поправляются по Холму своей семьёй; остальное — "
-                 "разведка, и так и подписано. Вывод словами — только когда "
-                 "n_eff в сравнимых слоях не меньше "
+                 f"разведка, поправка в семье — {_e(adjust)} (АЛ5), и так и "
+                 "подписано. Вывод словами — только когда n_eff в "
+                 "сравнимых слоях не меньше "
                  f"{num(run['cfg']['n_eff_min'], 0)} в обеих ветвях, "
-                 "интервал δ не накрывает ноль и p по Холму меньше "
-                 f"{num(run['cfg']['alpha'])}.</p>")
+                 "интервал δ не накрывает ноль, p с поправкой меньше "
+                 f"{num(run['cfg']['alpha'])} и знак разницы средних тот "
+                 "же, что у δ (АЛ4 (а)). Средние — в единицах меры: у "
+                 "времени и частот геометрические, и «II против I» — "
+                 "отношение (×), у остальных — разница.</p>")
     parts.append("<h3>Главные меры</h3>")
     parts.append(_table(MEASURE_HEADER, _measure_rows(run, primary)))
+    parts.append(_img(folder, figures.get("Р15"),
+                      "Р15. Главные меры: участники, средние и разница "
+                      "средних"))
+    parts.append(_hier(run, primary))
     parts.append(_img(folder, figures.get("Р13"),
                       "Р13. Сводка «I против II»"))
+    parts.append("<h3>Структурированная матрица</h3>"
+                 "<p>Все меры одной таблицей — <code>матрица.csv</code>; "
+                 "голубым — вывод, который держится во всех сценариях "
+                 "отбора и идёт в итог (раздел 12).</p>")
+    parts.append(_img(folder, figures.get("Р19"),
+                      "Р19. Структурированная матрица"))
+    parts.append(_obrien(run))
     for family, title in compare.FAMILIES.items():
         if family == "0":
             continue
@@ -641,7 +695,8 @@ def _summary(run: dict, folder: Path, figures: dict) -> str:
             "способе. «Смешанно» сюда не входит. Все меры — в "
             "<code>сравнение.csv</code>.</p>"
             + _table(["Мера", "«полкой»: среднее", "«картой»: среднее",
-                      "δ", "Интервал 95 %", "p по Холму", "Вывод"], rows)
+                      "—", "δ", "Интервал 95 %", "p с поправкой",
+                      "Вывод"], rows)
             + "</details>")
     links = result.get("links") or []
     if links:
@@ -653,6 +708,125 @@ def _summary(run: dict, folder: Path, figures: dict) -> str:
                      "весами)</summary><p>Слов о причинах нет.</p>"
                      + _table(["Ветвь", "Меры", "n", "ρ"], rows,
                               num_cols=(2, 3)) + "</details>")
+    return "".join(parts)
+
+
+def _hier(run: dict, keys) -> str:
+    """Проверка мер из походов иерархическим бутстрепом (шаг 8
+    ALG-RES-10)."""
+    rows = []
+    for r in run["result"]["table"]:
+        mm = r.get("means") or {}
+        if r["comparison"] != compare.BRANCH or not mm.get("hier"):
+            continue
+        lo, hi = mm["hier"]
+        diff = mm.get("diff") or {}
+        mark = "×" if diff.get("kind") == "отношение" else ""
+        rows.append([_e(r["measure"].title), diff_text(diff),
+                     f"[{mark}{num(lo)}; {mark}{num(hi)}]"])
+    if not rows:
+        return ""
+    return ("<details><summary>Проверка мер из походов — иерархический "
+            "бутстреп</summary><p>Участники вытягиваются внутри ветви и "
+            "ПК, походы — внутри участника (Saravanan и др., 2020). Если "
+            "интервал по походам заметно шире основного, походы одного "
+            "человека похожи друг на друга, и основной интервал "
+            "оптимистичен. Это проверка, а не замена.</p>"
+            + _table(["Мера", "II против I", "Интервал по походам"], rows)
+            + "</details>")
+
+
+def _obrien(run: dict) -> str:
+    """Сумма О'Брайена — вторичный итог под матрицей (АЛ6 (а))."""
+    sums = run["result"].get("obrien") or {}
+    if not sums:
+        return ""
+    rows = []
+    items = list((sums.get("families") or {}).items())
+    for family, own in items + [("все", sums.get("total") or {})]:
+        if not own:
+            continue
+        name = "Все семьи поровну" if family == "все" else \
+            compare.FAMILIES[family]
+        n = len(own.get("measures") or []) if family != "все" else \
+            len(own.get("families") or [])
+        word = own.get("words") or "мало данных"
+        rows.append([_e(name), str(n), str(own.get("n", 0)),
+                     num(own.get("delta")), ci_text(own.get("ci")),
+                     p_text(own.get("p")), _e(word)])
+    return ("<h3>Сумма О'Брайена — вторичный итог</h3><p>У каждой меры со "
+            "стрелкой «лучше» участники ранжируются внутри своего ПК так, "
+            "чтобы больший ранг был лучше; ранг делится на число "
+            "участников ПК; меры, связанные сильнее |ρ| = "
+            f"{num(run['cfg'].get('merge_rho', 0.7))}, делят вес. Сумма "
+            "участника сравнивается δ Клиффа по ПК, как каждая мера "
+            "(O'Brien, 1984). Сумма сильна, когда меры сдвинуты в одну "
+            "сторону, и слаба, когда в разные; строк мер она не "
+            "заменяет, и поправки на неё нет.</p>"
+            + _table(["Семья", "Мер (семей)", "Участников", "δ",
+                      "Интервал 95 %", "p", "Сумма"], rows,
+                     num_cols=(1, 2, 3, 5)))
+
+
+VERDICT_TITLES = (
+    ("сильнее", "Ветвь II сильнее ветви I"),
+    ("слабее", "Ветвь II слабее ветви I"),
+    ("разница не доказана", "Разница не доказана"),
+    ("не держится", "Вывод в S0 есть, но не держится во всех сценариях "
+     "отбора"),
+    ("мало данных", "Мало данных"),
+    ("направление не задано", "Направление «лучше» не задано"),
+)
+
+
+def _verdicts(run: dict) -> str:
+    """Раздел 12 — итог «в чём ветвь II сильнее и в чём слабее» (АН2):
+    по спискам, внутри — по семьям, главные первыми."""
+    order = list(compare.FAMILIES)
+    rows = [r for r in run["result"]["table"]
+            if r["comparison"] == compare.BRANCH and not r["pending"]]
+    rows.sort(key=lambda r: order.index(r["family"]))
+    warn = run["result"]["warnings"]
+    parts = [_check_banner(run)]
+    if warn:
+        parts.append("<div class='warn'><ul>" + "".join(
+            f"<li>{_e(w)}</li>" for w in warn) + "</ul></div>")
+    parts.append("<p>Мера попадает в «сильнее», если вывод сравнения "
+                 "(«у II больше» или «у II меньше») совпадает со стрелкой "
+                 "«лучше» этой меры, и в «слабее» — если противоречит ей; "
+                 "только если вывод держится во всех шести сценариях "
+                 "отбора. Стрелки записаны в <code>thresholds.json</code> до "
+                 "основной серии (АЛ6). «Разница не доказана» — не «разницы "
+                 "нет»: при таком числе участников равенство не доказать.</p>")
+    for key, title in VERDICT_TITLES:
+        own = [r for r in rows if r.get("verdict") == key]
+        if key in ("сильнее", "слабее"):
+            if not own:
+                parts.append(f"<h3>{_e(title)}</h3><p>Ни по одной мере "
+                             "вывод не держится.</p>")
+                continue
+            items = []
+            for r in own:
+                mm = r.get("means") or {}
+                br = mm.get("branch") or {}
+                one = (br.get("I") or {}).get("mean")
+                two = (br.get("II") or {}).get("mean")
+                fam = compare.FAMILIES[r["family"]]
+                items.append(
+                    f"<li><b>{_e(r['measure'].title)}</b> "
+                    f"<small>({_e(fam)})</small>: {_e(r['words'])}, лучше "
+                    f"{_e(r.get('better'))}; среднее I {num(one)}, II "
+                    f"{num(two)} ({_e(r['measure'].unit)}); II против I "
+                    f"{diff_text(mm.get('diff'))}; δ "
+                    f"{num(r['result'].delta)} {ci_text(r['result'].ci)}; "
+                    "держится во всех сценариях</li>")
+            parts.append(f"<h3>{_e(title)}</h3><ul>{''.join(items)}</ul>")
+        else:
+            if not own:
+                continue
+            names = ", ".join(_e(r["measure"].title) for r in own)
+            parts.append(f"<details><summary>{_e(title)} — {len(own)}"
+                         f"</summary><p>{names}</p></details>")
     return "".join(parts)
 
 
@@ -680,9 +854,13 @@ def _robust(run: dict, folder: Path, figures: dict) -> str:
 
 
 def _how_to_read(run: dict) -> str:
+    from . import means
+    arrows = {"↓": "меньше — лучше", "↑": "больше — лучше",
+              "—": "направление «лучше» не задано"}
     items = "".join(
         f"<li><b>{_e(m.title)}</b> ({_e(m.unit)}): больше — "
-        f"{_e(m.more)}.</li>" for m in compare.MEASURES)
+        f"{_e(m.more)}; {_e(arrows[means.arrow(m, run['cfg'])])}.</li>"
+        for m in compare.MEASURES)
     return f"""
 <p><b>Вес.</b> Цвет искренности — по двум пунктам шкалы лжи теста
 (<code>lie.defer</code>, <code>lie.late</code>): ни один не провален — 🟢,
@@ -706,8 +884,26 @@ II меньше», с весами пар; от −1 до 1, 0 — разниц�
 <p><b>p</b> — перестановочный тест для той же δ: метки ветвей
 перемешиваются внутри ПК, веса остаются при участниках; перестановок не
 больше {run['cfg']['exact_limit']} — перебираются все (точный тест).
-<b>Поправка Холма</b> — внутри семьи мер; главная мера, у которой мало
-данных, входит в поправку с p = 1.</p>
+<b>Поправка</b> — внутри семьи мер: главные меры — Холм (главная мера, у
+которой мало данных, входит в поправку с p = 1), разведочные семьи —
+Бенджамини — Хохберг (АЛ5): она мягче и годится для связанных мер, а
+ошибкой считает долю ложных выводов среди найденных, а не саму
+возможность одного ложного.</p>
+<p><b>Средние в единицах меры</b> (шаг 41). Сначала одно число на
+участника, потом участники (Mumford, Nichols, 2009). Среднее ветви —
+взвешенное цветом искренности; у времени и частот — <b>геометрическое</b>
+(логарифм, среднее, обратно), и «II против I» — <b>отношение</b>: ×0,7 —
+у ветви II на 30 % меньше (Keene, 1995); у меры, где нулей больше
+{num(run['cfg'].get('log_zero_share', 0.2) * 100, 0)} % участников, —
+обычное среднее и разница. Разница считается внутри ПК и сводится теми же
+весами, что δ; её интервал — бутстреп, p — перестановки, оно справочное.
+<b>g Хеджеса</b> — разница, делённая на разброс внутри ПК, с поправкой на
+малую выборку (Hedges, 1981): чтобы меры в разных единицах можно было
+сравнить глазами. Слова «больше / меньше» решает δ, а знак разницы
+средних обязан с ним совпасть: если не совпал — «разница не доказана:
+среднее и ранги говорят разное», потому что среднее при десятке людей
+тянет один выброс. Процентильный интервал бутстрепа при малом числе
+участников уже настоящего (Hesterberg, 2015).</p>
 <p><b>Энтропия переходов H_t</b> (Krejtz и др., 2015) — насколько
 следующее место взгляда предсказуемо по текущему: переходы между зонами
 складываются в матрицу, у каждого участника берётся одинаковое число
@@ -829,6 +1025,8 @@ def _render(run: dict, figures: dict, folder: Path) -> str:
         ("9. Сводка «I против II»", _summary(run, folder, figures)),
         ("10. Устойчивость", _robust(run, folder, figures)),
         ("11. Как читать", _how_to_read(run)),
+        ("12. Итог: в чём ветвь II сильнее ветви I и в чём слабее",
+         _verdicts(run)),
         ("Исходные", _sources(run)),
     ]
     body = "".join(f"<h2>{_e(t)}</h2>{s}" for t, s in sections)
