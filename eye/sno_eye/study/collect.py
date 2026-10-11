@@ -134,9 +134,10 @@ def etalon(record: arc.Record) -> tuple[str, list[str]]:
 
 
 def stratum(passport: dict) -> str:
-    """Слой сравнения — ПК: код устройства вместе с камерой. Телефоны —
-    один слой: у каждого свой код, а слой из одного участника ничего не
-    сравнивает."""
+    """Слой сравнения одной записи, пока остальные не прочитаны: код
+    устройства вместе с камерой. Телефоны — один слой: у каждого свой
+    код, а слой из одного участника ничего не сравнивает. Настоящее имя
+    слоя ПК даёт `name_strata`, когда прочитан весь набор."""
     if passport.get("platform") == "телефон":
         return PHONE_STRATUM
     if passport.get("platform") != "ПК":
@@ -146,19 +147,46 @@ def stratum(passport: dict) -> str:
     return f"{device} · {camera}" if camera else device
 
 
+def machine(passport: dict) -> str | None:
+    """Чем опознаётся ПК (BUG-69): путь камеры в системе, а не код
+    устройства.
+
+    Код устройства — у **приложения**: у ветвей I и II свои папки
+    данных и свой код, и один ноутбук с обеими ветвями давал два слоя
+    — «ни на одном ПК не было обеих ветвей». Путь камеры
+    (`place.camera.path`, путь экземпляра устройства Windows) один у
+    обеих ветвей одного ПК и разный у двух ПК даже с одинаковой
+    камерой. Нет пути (прежняя сборка, место записи не задано) — код
+    устройства с камерой, как раньше."""
+    if passport.get("platform") != "ПК":
+        return None
+    path = passport.get("camera_path")
+    if path:
+        return "камера:" + path
+    return "устройство:" + stratum(passport)
+
+
 def passport(record: arc.Record) -> dict:
     """Паспорт записи из `manifest.json` и итога проверки."""
     m = record.manifest
     check = record.check
     recording = _dict(m.get("recording"))
     eye = _dict(m.get("eye_tracker"))
-    camera = _dict(_dict(eye.get("place")).get("camera")).get("name")
+    place = _dict(eye.get("place"))
+    camera = _dict(place.get("camera")).get("name")
+    path = _dict(place.get("camera")).get("path")
+    width = _dict(place.get("screen")).get("w_mm")
     out = {
         "participant": check.get("participant"),
         "branch": check.get("branch"),
         "platform": check.get("platform"),
         "device": check.get("device"),
         "camera": camera if isinstance(camera, str) and camera else None,
+        "camera_path": (path.strip().lower() if isinstance(path, str)
+                        and path.strip() else None),
+        "screen_mm": (float(width) if isinstance(width, (int, float))
+                      and not isinstance(width, bool) and width > 0
+                      else None),
         "model": check.get("model"),
         "series": check.get("study_tag"),
         "version": check.get("version"),
@@ -288,20 +316,77 @@ def _trip_row(trip: actions.Trip, line: tl.Timeline,
 
 def fill_cameras(entries: list[dict]) -> None:
     """Сессия ПК без места записи (айтрекер не настроен) не знает
-    камеры. Если у того же устройства в наборе одна камера — это она:
-    иначе один ПК распался бы на два слоя."""
+    камеры. Если у того же устройства в наборе одна камера — это она
+    (и её путь): иначе один ПК распался бы на два слоя."""
     known: dict[str, set] = {}
     for e in entries:
         if e.get("platform") == "ПК" and e.get("camera"):
-            known.setdefault(e.get("device"), set()).add(e["camera"])
+            known.setdefault(e.get("device"), set()).add(
+                (e["camera"], e.get("camera_path")))
     for e in entries:
         if e["status"] != "ok" or e.get("platform") != "ПК" or \
                 e.get("camera"):
             continue
         cameras = known.get(e.get("device")) or set()
         if len(cameras) == 1:
-            e["camera"] = next(iter(cameras))
+            e["camera"], e["camera_path"] = next(iter(cameras))
             e["stratum"] = stratum(e)
+
+
+def _mm(value: float) -> str:
+    """Миллиметры словами отчёта: «396,1»."""
+    return f"{round(value, 1):g}".replace(".", ",")
+
+
+# Экраны одного ПК, чьи ширины в местах записи расходятся больше, —
+# разные мерки одного экрана (BUG-69).
+SCREEN_SPREAD = 1.03
+
+
+def name_strata(entries: list[dict]) -> list[str]:
+    """Слои ПК по всему набору (BUG-69): записи с одним путём камеры —
+    один ПК, сколько бы кодов устройства у него ни было (у каждой ветви
+    свой). Имя слоя — коды через «+» и камера: «4aac45 + 54c8bf · HP
+    TrueVision HD Camera».
+
+    Ответ — оговорки набора: ПК, у которого ветви записали в «Место
+    записи» разную ширину экрана (мерили по карте каждая сама). Градусы
+    — точность, порог фиксаций, клетки — у таких записей в разной
+    шкале; каждая из них получает оговорку."""
+    fill_cameras(entries)
+    groups: dict[str, list[dict]] = {}
+    for e in entries:
+        if e.get("status") != "ok":
+            continue
+        key = machine(e)
+        if key is not None:
+            groups.setdefault(key, []).append(e)
+    notes = []
+    for own in groups.values():
+        codes = sorted({str(e.get("device") or "?") for e in own})
+        cameras = sorted({e["camera"] for e in own if e.get("camera")})
+        name = " + ".join(codes)
+        if cameras:
+            name += " · " + " / ".join(cameras)
+        for e in own:
+            e["stratum"] = name
+        widths = sorted({round(e["screen_mm"], 1) for e in own
+                         if e.get("screen_mm")})
+        if len(widths) > 1 and widths[-1] > widths[0] * SCREEN_SPREAD:
+            words = [_mm(w) for w in widths]
+            listed = (", ".join(words[:-1]) + " и " + words[-1])
+            text = ("на ПК «" + name + "» в «Месте записи» разная "
+                    "ширина экрана: " + listed + " мм — градусы "
+                    "записей этого ПК в разной шкале; задайте место "
+                    "записи заново в обеих ветвях")
+            notes.append(text)
+            for e in own:
+                if e.get("screen_mm"):
+                    e.setdefault("check_notes", []).append(
+                        "ширина экрана в «Месте записи» "
+                        f"{_mm(e['screen_mm'])} мм, у других записей "
+                        "этого ПК — иная")
+    return notes
 
 
 def mark_repeats(entries: list[dict]) -> None:

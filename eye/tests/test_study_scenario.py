@@ -583,3 +583,15 @@ def test_sno_alg_res_07_observed_and_expected_in_the_same_trips(run):
                 assert own["ratio"] is None
             else:
                 assert own["observed_vs"] <= own["revisits"]
+
+
+def test_bug_69_branches_of_one_pc_are_compared_within_it(run):
+    """У ветвей одного ПК разные коды устройства, путь камеры один:
+    слоёв ПК два, на каждом обе ветви, сравнение — внутри ПК."""
+    strata = {e["stratum"] for e in run["entries"]
+              if e.get("platform") == "ПК"}
+    assert strata == {"d10708 + e3a911 · Integrated Camera",
+                      "a51c02 + b62f17 · Chicony USB2.0"}
+    assert not any("ветвь совпадает с ПК" in w
+                   for w in run["result"]["warnings"])
+    assert not row(run, "clt.ecl")["result"].pooled

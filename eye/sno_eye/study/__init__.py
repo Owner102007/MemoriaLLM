@@ -229,7 +229,7 @@ def analyse(paths: list[str], *, series: str | None = None,
         if progress:
             progress(i, len(archives), path)
         entries.append(collect.load(path, limits, cfg, report_cfg))
-    collect.fill_cameras(entries)
+    pc_notes = collect.name_strata(entries)
     collect.mark_repeats(entries)
     compare.unify_scenarios(entries)
     compare.admit(entries, cfg, no_filter, series)
@@ -252,7 +252,9 @@ def analyse(paths: list[str], *, series: str | None = None,
     result["average"]["entropy"] = average.entropy_curves(
         entries, cfg, no_filter, series, print_)
     result["average"]["ribbons"] = average.ribbons(entries)
-    result["warnings"] = compare.warnings(entries, result, no_filter)
+    # BUG-69: ПК с разной шириной экрана в местах записи ветвей.
+    result["warnings"] = (compare.warnings(entries, result, no_filter)
+                          + pc_notes)
     return {"entries": entries, "result": result, "cfg": cfg,
             "limits": limits, "fingerprint": print_, "series": series,
             "no_filter": no_filter, "archives": [str(a) for a in archives],

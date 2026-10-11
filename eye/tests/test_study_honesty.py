@@ -361,3 +361,64 @@ def test_sno_alg_res_02_study_length_from_the_app(tmp_path):
     e = load(path)
     assert e["study_s"] == pytest.approx(2400)
     assert e["actions"]["actions.study_min"] == pytest.approx(40)
+
+
+# --- BUG-69: ПК опознаётся по камере, а не по коду приложения -----------
+
+HP = "\\\\?\\usb#vid_0408&pid_5365&mi_00#6&fd6cfa0&0&0000"
+
+
+def test_bug_69_one_pc_with_both_branches_is_one_stratum(tmp_path):
+    """У ветвей I и II одного ноутбука свои папки данных и свой код
+    устройства (4aac45 и 54c8bf, записи 10–11.10.2026), а камера и её
+    путь в системе — одни: это один ПК. Та же модель камеры на другом
+    ПК — другой путь, другой слой."""
+    a = ss.Person(code="69690001", branch="I", device="4aac45",
+                  camera="HP TrueVision HD Camera", camera_path=HP)
+    b = ss.Person(code="69690002", branch="II", device="54c8bf",
+                  camera="HP TrueVision HD Camera",
+                  camera_path=HP.upper(), seed=2)
+    other = ss.Person(code="69690003", branch="II", device="77aa00",
+                      camera="HP TrueVision HD Camera", seed=3,
+                      camera_path=HP.replace("fd6cfa0", "1b2c3d4"))
+    entries = [load(ss.write(tmp_path, p)) for p in (a, b, other)]
+    # Пока набор не прочитан целиком — слой по коду, как раньше.
+    assert entries[0]["stratum"] != entries[1]["stratum"]
+    notes = collect.name_strata(entries)
+    assert notes == []
+    assert entries[0]["stratum"] == entries[1]["stratum"] == \
+        "4aac45 + 54c8bf · HP TrueVision HD Camera"
+    assert entries[2]["stratum"] == "77aa00 · HP TrueVision HD Camera"
+
+
+def test_bug_69_screen_width_differs_between_branches_of_one_pc(tmp_path):
+    """Ветви мерили экран по карте каждая сама: 344 и 396,1 мм на одном
+    ноутбуке — оговорка набора и каждой записи; 344 и 345 — нет."""
+    a = ss.Person(code="69690011", branch="I", device="4aac45",
+                  camera="HP TrueVision HD Camera", camera_path=HP,
+                  screen_mm=396.1)
+    b = ss.Person(code="69690012", branch="II", device="54c8bf",
+                  camera="HP TrueVision HD Camera", camera_path=HP,
+                  screen_mm=344.0, seed=2)
+    entries = [load(ss.write(tmp_path, p)) for p in (a, b)]
+    notes = collect.name_strata(entries)
+    assert len(notes) == 1
+    assert "344 и 396,1 мм" in notes[0] and "заново" in notes[0]
+    assert any("396,1 мм" in n for n in entries[0]["check_notes"])
+    b.screen_mm = 345.0
+    entries = [load(ss.write(tmp_path / "2", p)) for p in (a, b)]
+    entries[0]["screen_mm"] = 344.0
+    assert collect.name_strata(entries) == []
+
+
+def test_bug_69_phone_and_old_builds_keep_their_strata(tmp_path):
+    """Без пути камеры (прежняя сборка) — код устройства с камерой, как
+    раньше; телефоны — один слой."""
+    old = ss.Person(code="69690021", branch="I", device="d10708",
+                    camera="Integrated Camera")
+    phone = ss.Person(code="69690022", branch="II", phone=True,
+                      device="ph0001", seed=2)
+    entries = [load(ss.write(tmp_path, p)) for p in (old, phone)]
+    collect.name_strata(entries)
+    assert entries[0]["stratum"] == "d10708 · Integrated Camera"
+    assert entries[1]["stratum"] == "телефон"

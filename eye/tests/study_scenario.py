@@ -239,6 +239,10 @@ class Person:
     branch: str
     device: str = "d10708"
     camera: str = "Integrated Camera"
+    # Путь камеры в системе и ширина экрана из «Места записи»: по пути
+    # опознаётся ПК (BUG-69) — код устройства у каждой ветви свой.
+    camera_path: str | None = None
+    screen_mm: float | None = None
     phone: bool = False
     colour: str = "green"
     gaze: bool = True
@@ -762,6 +766,19 @@ class Builder:
             out.append(row)
         return out
 
+    def place(self) -> dict:
+        p = self.p
+        camera = {"index": 0, "name": p.camera}
+        if p.camera_path:
+            camera["path"] = p.camera_path
+        out = {"camera": camera}
+        if p.screen_mm:
+            out["screen"] = {"w_px": 1920, "h_px": 1080,
+                             "w_mm": p.screen_mm,
+                             "px_per_mm": round(1920 / p.screen_mm, 4),
+                             "source": "card"}
+        return out
+
     def manifest(self, files: dict) -> dict:
         p = self.p
         eye: dict
@@ -770,7 +787,7 @@ class Builder:
         elif p.gaze:
             eye = {"present": True, "configured": True, "quality": "ok",
                    "source": "webcam",
-                   "place": {"camera": {"index": 0, "name": p.camera}},
+                   "place": self.place(),
                    "calibration": {"accepted": True,
                                    "accuracy_deg": p.start_deg,
                                    "precision_deg": p.precision_deg,
@@ -780,7 +797,7 @@ class Builder:
         else:
             eye = {"present": False, "configured": True,
                    "reason": "skipped",
-                   "place": {"camera": {"index": 0, "name": p.camera}}}
+                   "place": self.place()}
         manifest = {
             "schema": "sno2026-recording/1", "branch": p.branch,
             "app": {"version": f"0.41.0-sno2026.{p.branch}",
@@ -846,7 +863,14 @@ def write(folder: Path, p: Person) -> Path:
 # Заложенная разница ветвей.
 ECL = {"I": 4.6, "II": 2.6}
 CHOICE = {"I": 9.0, "II": 4.0}
-PCS = (("d10708", "Integrated Camera"), ("a51c02", "Chicony USB2.0"))
+# Два ПК. Как в жизни (BUG-69): у ветвей I и II одного ПК свои папки
+# данных и свой код устройства, а камера и её путь в системе — одни.
+PCS = (
+    ({"I": "d10708", "II": "e3a911"}, "Integrated Camera",
+     "\\\\?\\usb#vid_04f2&pid_b83e&mi_00#6&39400099&0&0000"),
+    ({"I": "a51c02", "II": "b62f17"}, "Chicony USB2.0",
+     "\\\\?\\usb#vid_04f2&pid_b5a7&mi_00#7&1c2d3e4f&0&0000"),
+)
 
 
 def default_plan(*, confounded: bool = False) -> list[Person]:
@@ -862,13 +886,14 @@ def default_plan(*, confounded: bool = False) -> list[Person]:
     for branch in ("I", "II"):
         for k in range(8):
             if confounded:
-                device, camera = PCS[0] if branch == "I" else PCS[1]
+                codes, camera, path = PCS[0] if branch == "I" else PCS[1]
             else:
-                device, camera = PCS[k % 2]
+                codes, camera, path = PCS[k % 2]
             seed += 1
             code = f"{1000 + seed:04d}{seed * 7 % 10000:04d}"
-            p = Person(code=code, branch=branch, device=device,
-                       camera=camera, seed=seed, ecl=ECL[branch],
+            p = Person(code=code, branch=branch, device=codes[branch],
+                       camera=camera, camera_path=path, screen_mm=344.0,
+                       seed=seed, ecl=ECL[branch],
                        choice_s=CHOICE[branch],
                        via="galaxy" if branch == "II" else "shelf",
                        anchor=f"{DAY}T{10 + k:02d}:00:00.000+03:00")
