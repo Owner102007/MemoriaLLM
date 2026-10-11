@@ -801,10 +801,7 @@ void main() {
       expect(again.missing, isEmpty);
       expect(again.dropped, isEmpty);
       expect(await shelf(), archiveOrder);
-      expect(
-        describeReset(again),
-        'Сброшено. Состояние совпадает с эталоном.',
-      );
+      expect(describeReset(again), 'Сброшено. Состояние совпадает с эталоном.');
     });
 
     test('BUG-67: книга на полке без файла держит свою категорию', () async {
@@ -820,12 +817,15 @@ void main() {
       expect(await shelf(), archiveOrder);
     });
 
-    test('BUG-67: забыть эталон, которого нет, — ничего не случилось', () async {
-      await archiveShelf();
-      await keeper().forget();
-      expect(await keeper().reference(), isNull);
-      expect(await shelf(), archiveOrder);
-    });
+    test(
+      'BUG-67: забыть эталон, которого нет, — ничего не случилось',
+      () async {
+        await archiveShelf();
+        await keeper().forget();
+        expect(await keeper().reference(), isNull);
+        expect(await shelf(), archiveOrder);
+      },
+    );
 
     test('SNO-F-CFG-04: без эталона сбрасывать не к чему', () async {
       await archiveShelf();

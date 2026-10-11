@@ -442,7 +442,9 @@ const int kNamedMissing = 3;
 
 /// Что сказать экспериментатору после сброса.
 String describeReset(ResetReport report) {
-  if (report.missing.isEmpty && report.extra.isEmpty) {
+  if (report.missing.isEmpty &&
+      report.extra.isEmpty &&
+      report.dropped.isEmpty) {
     return report.matches
         ? 'Сброшено. Состояние совпадает с эталоном.'
         : 'Сброшено, но сверить состояние с эталоном не удалось.';
@@ -801,8 +803,7 @@ class ReferenceKeeper {
     // пустой она не возвращается.
     final Set<String> filled = <String>{
       for (final ShelfBook book in reference.shelf.books)
-        if (book.category != null &&
-            _stands(placed[book.fingerprint], revived))
+        if (book.category != null && _stands(placed[book.fingerprint], revived))
           book.category!.toLowerCase(),
     };
     final List<String> restored = <String>[
