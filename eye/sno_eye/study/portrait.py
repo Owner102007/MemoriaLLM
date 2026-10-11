@@ -374,6 +374,10 @@ def numbers(e: dict) -> dict:
         out["portrait.ui_density"] = (d.get("ui") or {}).get("density")
         out["portrait.ui_revisits"] = (d.get("ui") or {}).get("revisits")
         out["portrait.cat_revisits"] = (d.get("cat") or {}).get("revisits")
+        # Было и ожидалось — в одних и тех же походах (видно не меньше
+        # трёх категорий), иначе столбцы рядом не сравнить.
+        out["portrait.cat_observed_vs"] = (d.get("cat") or {}).get(
+            "observed_vs")
         out["portrait.cat_expected"] = (d.get("cat") or {}).get("expected")
         out["portrait.book_revisits"] = (d.get("book") or {}).get(
             "revisits")

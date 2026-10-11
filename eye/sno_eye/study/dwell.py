@@ -446,8 +446,9 @@ def prepare(fixes: list[dict], res: dict, record, done: list, line,
                 and t[f"{field}_visible"] >= MIN_VISIBLE]
         obs = sum(t[f"{field}_revisits"] for t in live)
         exp = sum(t[f"{field}_expected"] for t in live)
-        out[key]["expected"] = exp
-        out[key]["observed_vs"] = obs
+        # Без таких походов сравнивать не с чем: ожидание пустое, а не 0.
+        out[key]["expected"] = exp if live else None
+        out[key]["observed_vs"] = obs if live else None
         out[key]["trips_vs"] = len(live)
         out[key]["ratio"] = obs / exp if exp > 0 else None
 

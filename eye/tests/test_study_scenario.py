@@ -567,3 +567,19 @@ def test_sno_alg_res_06_r16_curves_and_test_ran(run):
     # Шумная камера в кривые не идёт.
     noisy = ss.default_plan()[5].code
     assert noisy not in {p["code"] for p in reading["people"]}
+
+
+def test_sno_alg_res_07_observed_and_expected_in_the_same_trips(run):
+    """«Было» и «ожидалось без памяти» — в одних и тех же походах; нет
+    походов, где видно от трёх зон, — оба пустые, а не 0."""
+    for e in run["entries"]:
+        d = ((e.get("gaze_data") or {}).get("portrait") or {}).get("dwell")
+        if not d or d.get("reason"):
+            continue
+        for key in ("cat", "book"):
+            own = d[key]
+            if own["trips_vs"] == 0:
+                assert own["expected"] is None and own["observed_vs"] is None
+                assert own["ratio"] is None
+            else:
+                assert own["observed_vs"] <= own["revisits"]
