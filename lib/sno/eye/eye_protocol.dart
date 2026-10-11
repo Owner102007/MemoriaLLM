@@ -566,6 +566,17 @@ class EyeScreen {
 /// запас на случай, если не назвал.
 const double kEyeFpsWarn = 25;
 
+/// Запас под порогом (BUG-66): камера, дающая ровно 25 кадров (частый
+/// режим против мерцания ламп при 50 Гц), за 2 с замера насчитывает
+/// 49–50 кадров — 24,6–25,0 в секунду; такая камера годится.
+const double kEyeFpsSlack = 1;
+
+/// Мало ли кадров для взгляда: [fps] ниже порога [warn] (по умолчанию
+/// [kEyeFpsWarn]) больше чем на [kEyeFpsSlack].
+bool eyeFpsSlow(double? fps, double? warn) {
+  return fps != null && fps < (warn ?? kEyeFpsWarn) - kEyeFpsSlack;
+}
+
 /// Ответ `open` (шаг 35, BUG-66): размер кадра, формат и — если её
 /// мерили — сколько кадров в секунду камера отдаёт на самом деле.
 class EyeOpened {
@@ -602,10 +613,7 @@ class EyeOpened {
   final double? fpsWarn;
 
   /// Камера даёт меньше кадров, чем нужно взгляду.
-  bool get slow {
-    final double? measured = fps;
-    return measured != null && measured < (fpsWarn ?? kEyeFpsWarn);
-  }
+  bool get slow => eyeFpsSlow(fps, fpsWarn);
 
   /// Поля события `eye.camera.fps`.
   Map<String, Object?> toJson() => <String, Object?>{

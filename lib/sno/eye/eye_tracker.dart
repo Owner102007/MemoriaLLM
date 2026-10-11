@@ -805,6 +805,11 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   /// открытой заново под новое окно.
   bool _stale = false;
 
+  /// Сколько раз сменилось окно: окно, сменившееся, пока камера
+  /// открывалась (с замером частоты это секунды), тоже делает её
+  /// устаревшей.
+  int _windowEpoch = 0;
+
   /// Пишется ли поток взгляда: изучение идёт с ним.
   bool _gazeOn = false;
 
@@ -1153,6 +1158,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     _qpc0 ??= tracker._qpc.nowUs();
     _t0 ??= session.eyeNow;
     final String? dir = _eyeDir;
+    final int epoch = _windowEpoch;
     try {
       final EyeOpened opened = await link.open(
         screen: screen,
@@ -1189,7 +1195,9 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     }
     _cameraOpen = true;
     _segmentUsed = true;
-    _stale = false;
+    // Окно сменилось, пока камера открывалась, — углы считаются по
+    // прежнему: калибровка откроет её заново.
+    _stale = epoch != _windowEpoch;
     info.segments = _segment + 1;
     return true;
   }
@@ -1482,6 +1490,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   }
 
   void _windowChanged(EyeWindowLock changed) {
+    _windowEpoch++;
     info.window = changed;
     _dpr = changed.dpr;
     _log(SnoEventType.eyeWindow, <String, Object?>{

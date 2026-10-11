@@ -83,6 +83,35 @@ jobs:
             --dart-define=APP_VERSION="$GITHUB_REF_NAME" \
             --dart-define=APP_COMMIT="$GITHUB_SHA"
 
+      # BUG-65: на ПК без пакета Visual C++ memoria.exe не запускается —
+      # те же три библиотеки CRT, что в ci.yml, рядом с memoria.exe.
+      - name: Библиотеки Visual C++ рядом с memoria.exe (BUG-65)
+        shell: pwsh
+        run: |
+          $out = 'build/windows/x64/runner/Release'
+          $dlls = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $redist = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory |
+            Where-Object { $_.Name -match '^[0-9]+\.' } |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1
+          $crt = if ($redist) {
+            Get-ChildItem (Join-Path $redist.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' |
+              Select-Object -First 1
+          }
+          if (-not $crt) {
+            Write-Output '::error title=BUG-65::нет библиотек Visual C++ у Visual Studio раннера'
+            exit 1
+          }
+          foreach ($dll in $dlls) {
+            Copy-Item (Join-Path $crt.FullName $dll) (Join-Path $out $dll) -Force
+            if (-not (Test-Path (Join-Path $out $dll))) {
+              Write-Output "::error title=BUG-65::рядом с memoria.exe нет $dll"
+              exit 1
+            }
+          }
+
       - run: dart run msix:create --store
 
       - name: Назвать файлы по версии

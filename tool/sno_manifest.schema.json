@@ -167,7 +167,8 @@
         "restarts": {"type": "integer", "minimum": 0},
         "gave_up": {"type": "boolean"},
         "quality": {"enum": ["ok", "low"]},
-        "reason": {"enum": ["not_configured", "unavailable", "selfcheck_failed", "open_failed", "skipped", "stopped", "gave_up", "limit"]},
+        "camera": {"type": "object"},
+        "reason": {"enum": ["not_configured", "unavailable", "selfcheck_failed", "open_failed", "slow_camera", "skipped", "stopped", "gave_up", "limit"]},
         "source": {"const": "webcam"},
         "calibration": {
           "type": "object",

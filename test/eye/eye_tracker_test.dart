@@ -663,6 +663,25 @@ void main() {
         files: const <PackedFile>[],
       );
       expect(phone['eye_tracker'], <String, Object?>{'present': false});
+      // BUG-66: камера давала мало кадров — «Без взгляда» с замером.
+      expect(
+        schemaProblems(<String, Object?>{
+          ...manifest,
+          'eye_tracker': <String, Object?>{
+            ...block,
+            'reason': 'slow_camera',
+            'camera': <String, Object?>{
+              'fps': 9.0,
+              'warn': 25.0,
+              'fourcc': 'YUY2',
+              'frame': <int>[1280, 720],
+              'slow': true,
+              'n': 2,
+            },
+          },
+        }, schema),
+        isEmpty,
+      );
       expect(
         schemaProblems(<String, Object?>{
           ...manifest,

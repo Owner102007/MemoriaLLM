@@ -510,10 +510,7 @@ String rejectAdvice(EyeValidation v) {
 
 /// Обрабатывалось ли к концу проверки меньше кадров, чем нужно взгляду
 /// (BUG-66).
-bool _slowFps(EyeValidation v) {
-  final double? fps = v.fps;
-  return fps != null && fps < (v.fpsWarn ?? kEyeFpsWarn);
-}
+bool _slowFps(EyeValidation v) => eyeFpsSlow(v.fps, v.fpsWarn);
 
 /// Камера даёт мало кадров — словами для экрана айтрекера записи
 /// (BUG-66): «Камера даёт 10,0 кадра в секунду — взгляд не записать».

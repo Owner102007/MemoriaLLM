@@ -618,8 +618,10 @@ void main() {
       expect(unmeasured.fps, isNull);
       expect(unmeasured.fourcc, isNull);
       expect(unmeasured.slow, isFalse);
-      // Порога спутник не назвал — запасной, 25.
-      expect(const EyeOpened(fps: 24.9).slow, isTrue);
+      // Порога спутник не назвал — запасной, 25; камера на 25 кадрах
+      // (24,6–25 за 2 с замера) годится, на 23 — нет.
+      expect(const EyeOpened(fps: 24.6).slow, isFalse);
+      expect(const EyeOpened(fps: 23.9).slow, isTrue);
       expect(
         slowCameraAdvice(const EyeOpened(fps: 12, fourcc: 'MJPG')),
         isNot(contains('без сжатия')),

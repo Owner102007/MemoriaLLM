@@ -155,9 +155,16 @@ function Get-File([string]$Url, [string]$Path) {
     if ($curl) {
         # Оборванная загрузка продолжается с места обрыва; ход виден.
         & $curl.Source '-L' '--fail' '--progress-bar' '-C' '-' '-o' $part $Url
-        $done = $LASTEXITCODE -eq 0
+        $code = $LASTEXITCODE
+        $done = $code -eq 0
+        # Не понял путь или не смог писать (2, 3, 23, 26) — качает
+        # PowerShell; оборвалась сеть — недокачанное остаётся, и
+        # следующий запуск продолжит с места обрыва.
+        if (-not $done -and @(2, 3, 23, 26) -notcontains $code) {
+            throw "загрузка оборвалась (curl, код $code)"
+        }
         if (-not $done) {
-            Write-Note "curl не справился (код $LASTEXITCODE) — качаю иначе…"
+            Write-Note "curl не справился (код $code) — качаю иначе…"
         }
     }
     if (-not $done) {
@@ -382,13 +389,22 @@ foreach ($branch in $stale) {
     $zips[$branch] = $zip
 }
 
+# Пока шла загрузка, могла начаться запись — проверка ещё раз.
+foreach ($branch in $stale) {
+    if (Test-OpenSession $branch) {
+        Stop-With ("В ветви $branch есть незавершённая сессия записи. " +
+            'Завершите её и заберите запись, потом запустите обновление ' +
+            'снова — скачанное не пропадёт. Ничего не изменено.')
+    }
+}
+
 if (-not $NoStop) {
     $dirs = @($stale | ForEach-Object { Join-Path $Root $_ })
     $running = @(Get-Running $dirs)
     if ($running.Count -gt 0) {
         Write-Host ''
         Write-Note 'Запущены Memoria или спутник взгляда из этих папок.'
-        if (-not (Confirm-Step 'Закрыть их? Незавершённой сессии нет.')) {
+        if (-not (Confirm-Step 'Закрыть их? Незавершённой сессии в них нет.')) {
             Stop-With 'Отменено. Закройте Memoria и запустите обновление снова. Ничего не изменено.' 0
         }
         $running | Stop-Process -Force
