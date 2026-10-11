@@ -1094,6 +1094,48 @@ jobs:
             exit 1
           }
 
+      # BUG-65: на ПК без пакета Visual C++ memoria.exe не запускается —
+      # Flutter собирает его с CRT из DLL, а кладёт их рядом не он.
+      # Три библиотеки CRT берутся из папки Redist той Visual Studio, что
+      # собирала (их разрешено класть рядом с программой), и проверяются.
+      - name: Библиотеки Visual C++ рядом с memoria.exe (BUG-65)
+        if: steps.probe.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          $out = 'build/windows/x64/runner/Release'
+          $dlls = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $redist = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory |
+            Where-Object { $_.Name -match '^[0-9]+\.' } |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1
+          if (-not $redist) {
+            Write-Output '::error title=BUG-65::нет папки VC\Redist\MSVC у Visual Studio раннера'
+            exit 1
+          }
+          $crt = Get-ChildItem (Join-Path $redist.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' |
+            Select-Object -First 1
+          if (-not $crt) {
+            Write-Output "::error title=BUG-65::нет x64\Microsoft.VC*.CRT в $($redist.FullName)"
+            exit 1
+          }
+          foreach ($dll in $dlls) {
+            $from = Join-Path $crt.FullName $dll
+            if (-not (Test-Path $from)) {
+              Write-Output "::error title=BUG-65::нет $dll в $($crt.FullName)"
+              exit 1
+            }
+            Copy-Item $from (Join-Path $out $dll) -Force
+          }
+          foreach ($dll in $dlls) {
+            if (-not (Test-Path (Join-Path $out $dll))) {
+              Write-Output "::error title=BUG-65::рядом с memoria.exe нет $dll"
+              exit 1
+            }
+          }
+          Write-Output "Visual C++: $($crt.FullName) → $out"
+
       - name: Портативный ZIP
         if: steps.probe.outputs.ready == 'true'
         shell: pwsh
@@ -1267,7 +1309,9 @@ jobs:
 
           need = ['eye/Проверка записи.cmd', 'eye/Инструкция организатора.txt',
                   'eye/sno_eye/record_check.py', 'eye/Сравнение ветвей.cmd',
-                  'eye/sno_eye/study/__init__.py']
+                  'eye/sno_eye/study/__init__.py',
+                  # BUG-65: ZIP запускается на ПК без пакета Visual C++.
+                  'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll']
           bad = False
           for branch in ('I', 'II'):
               path = f'out/memoria-sno2026-{branch}-windows.zip'

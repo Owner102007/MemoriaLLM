@@ -225,6 +225,8 @@ String describeReadiness(Readiness readiness) {
 /// тестировщиком удерживает «Сбросить» — следы предыдущего стёрты,
 /// полка и настройки снова как после архива. Сброс прячется в том же
 /// блоке и срабатывает только удержанием: стирает он по-настоящему.
+/// Рядом — «Забыть эталон» удержанием (BUG-67): литература сменилась, и
+/// следующий архив запомнится новым эталоном.
 class TestingScreen extends StatefulWidget {
   /// Создаёт раздел.
   ///
@@ -692,6 +694,34 @@ class _TestingScreenState extends State<TestingScreen>
       _resetResult = null;
     });
     final String result = await _runReset();
+    await _refreshReference();
+    if (mounted) {
+      setState(() {
+        _resetting = false;
+        _resetResult = result;
+      });
+    }
+  }
+
+  /// Забывает эталон (BUG-67): литература сменилась, а эталон помнит
+  /// прежний архив. Следующий добавленный архив запомнится новым.
+  Future<void> _forget() async {
+    if (_busy || _resetting || _starting || _sessionOpen) {
+      return;
+    }
+    setState(() {
+      _resetting = true;
+      _resetResult = null;
+    });
+    String result;
+    try {
+      await _keeper().forget();
+      result =
+          'Эталон забыт. Добавьте архив с литературой — он запомнится '
+          'новым эталоном, — затем сбросьте устройство.';
+    } on Object {
+      result = 'Забыть эталон не удалось: он остался прежним.';
+    }
     await _refreshReference();
     if (mounted) {
       setState(() {
@@ -1213,15 +1243,23 @@ class _TestingScreenState extends State<TestingScreen>
         ),
       ),
       if (reference == null)
-        const Padding(
-          key: Key('sno-reference-none'),
-          padding: EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Эталона ещё нет: он запомнится, когда будет добавлен '
-              'архив с литературой.',
-            ),
+        Padding(
+          key: const Key('sno-reference-none'),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text(
+                'Эталона ещё нет: он запомнится, когда будет добавлен '
+                'архив с литературой.',
+              ),
+              // BUG-67: итог «Забыть эталон» виден и без эталона.
+              if (result != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(result, key: const Key('sno-reset-result')),
+                ),
+            ],
           ),
         )
       else
@@ -1272,6 +1310,24 @@ class _TestingScreenState extends State<TestingScreen>
                     style: theme.textTheme.bodySmall,
                   ),
                 ),
+              // BUG-67: литература сменилась — эталон, помнящий прежний
+              // архив, забывается, и следующий архив запомнится новым.
+              const SizedBox(height: 16),
+              HoldToConfirmButton(
+                key: const Key('sno-forget-hold'),
+                label: 'Удерживайте, чтобы забыть эталон',
+                onConfirmed: _busy || _resetting || _starting || _sessionOpen
+                    ? null
+                    : () => unawaited(_forget()),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Если литература сменилась: эталон забудется, следующий '
+                'добавленный архив запомнится новым. Книги и записи '
+                'остаются.',
+                key: const Key('sno-forget-note'),
+                style: theme.textTheme.bodySmall,
+              ),
             ],
           ),
         ),

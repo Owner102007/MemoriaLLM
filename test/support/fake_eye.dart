@@ -56,7 +56,17 @@ class FakeEyeProcess implements EyeProcess {
     this.checkedError,
     this.headMotion = true,
     List<Map<String, Object?>>? validateReplies,
-  }) : validateReplies = validateReplies ?? <Map<String, Object?>>[];
+    List<double>? openFps,
+    this.fourcc = 'MJPG',
+  }) : validateReplies = validateReplies ?? <Map<String, Object?>>[],
+       openFps = openFps ?? <double>[];
+
+  /// Сколько кадров в секунду «даёт камера» при каждом открытии с
+  /// замером, по порядку (шаг 35, BUG-66); кончились — 30.
+  final List<double> openFps;
+
+  /// Формат кадров в ответе `open`; `null` — не известен.
+  final String? fourcc;
 
   /// Водит ли «участник» головой в фазе движения головы (BUG-61): пока
   /// последняя точка — фазы `head`, спутник раз в 33 мс шлёт положение
@@ -405,9 +415,14 @@ class FakeEyeProcess implements EyeProcess {
             ].every((String k) => screen[k] is num && (screen[k]! as num) > 0);
         // Спутник, поднятый заново посреди записи, берёт модель из файла.
         _fitted = command['calibration'] != null;
+        // Шаг 35, BUG-66: с `measure` — сколько кадров даёт камера.
+        final bool measured = command['measure'] != null;
         emit(<String, Object?>{
           'reply': 'open',
           'frame': <int>[1920, 1080],
+          'fourcc': fourcc,
+          if (measured) 'fps': openFps.isEmpty ? 30.0 : openFps.removeAt(0),
+          if (measured) 'fps_warn': 25.0,
         });
       case 'close':
         _headPhase(on: false);

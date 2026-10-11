@@ -82,6 +82,14 @@
 * итог сегмента — `summary.json` (у сегмента `k > 0` — `summary.k.json`):
   кадры, файлы, частота, поток взгляда (`gaze`: строк, годных, доля),
   калибровка.
+
+Частота камеры после открытия (шаг 35, BUG-66): ответ `open` называет
+формат кадров (`fourcc`: `MJPG`, `YUY2`… или `null`); с `measure: N`
+(секунды, до 10) спутник прежде ответа меряет, сколько кадров в секунду
+камера отдаёт на самом деле (`fps` — по кадрам захвата после полсекунды
+прогрева), и называет порог самопроверки (`fps_warn`). Ответ `validate`
+несёт `fps` — сколько кадров в секунду обрабатывалось к концу проверки, —
+и тот же `fps_warn`: итог «мало годных кадров» тогда называет частоту.
 """
 
 from __future__ import annotations
@@ -160,6 +168,29 @@ def _int(cmd: dict, key: str, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise CommandError("bad_command", f"«{key}» — не целое неотрицательное число")
     return value
+
+
+# Сколько секунд спутник вправе мерить частоту камеры перед ответом
+# `open` (BUG-66): приложение ждёт ответа не дольше `kOpenTimeout`.
+MEASURE_MAX_S = 10.0
+# Прогрев перед замером частоты: первые кадры после открытия камера
+# отдаёт неровно, пока подстраивает выдержку.
+MEASURE_WARMUP_S = 0.5
+
+
+def _measure(cmd: dict) -> float:
+    """`measure` команды `open` — секунды замера частоты, 0 — не мерить."""
+    value = cmd.get("measure", 0)
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not 0 <= value <= MEASURE_MAX_S):
+        raise CommandError("bad_command",
+                           f"«measure» — секунды от 0 до {MEASURE_MAX_S:g}")
+    return float(value)
+
+
+def _fps_warn() -> float:
+    """Порог частоты самопроверки (`fps.warn`): ниже — взгляд не записать."""
+    return float(selfcheck.load_thresholds()["fps"]["warn"])
 
 
 def _mode(cmd: dict, rt: Runtime) -> tuple[int, int]:
@@ -312,6 +343,8 @@ class Session:
         summary.update({"dropped": self.capture.stats.dropped,
                         "lost": self.capture.stats.lost, "dead": self.dead,
                         "camera_released": released, "seg": self.seg,
+                        # BUG-66: в каком формате шли кадры.
+                        "fourcc": self.capture.source.fourcc,
                         "satellite": VERSION})
         if extra:
             summary.update(extra)
@@ -468,6 +501,7 @@ class Server:
         self._error(code, text, "record")
 
     def _open(self, cmd: dict) -> None:
+        measure = _measure(cmd)
         with self.lock:
             if self.abort.is_set():
                 return
@@ -522,9 +556,40 @@ class Server:
                 log.addHandler(handler)
                 self._log_handler = handler
             log.info("open %s", cmd.get("dir"))
-            self.out.send({"reply": "open",
-                           "frame": [self.session.capture.source.width,
-                                     self.session.capture.source.height]})
+            session = self.session
+            source = session.capture.source
+            reply = {"reply": "open", "frame": [source.width, source.height],
+                     # BUG-66: в каком формате идут кадры.
+                     "fourcc": source.fourcc}
+            if measure <= 0:
+                self.out.send(reply)
+                return
+        # BUG-66: сколько кадров камера отдаёт на самом деле — до
+        # калибровки, вне замка: сердцебиение и закрытие не ждут замера.
+        fps = self._camera_fps(session, measure)
+        if self.abort.is_set():
+            return
+        log.info("open fps %.1f fourcc %s", fps, reply["fourcc"])
+        self.out.send({**reply, "fps": round(fps, 1), "fps_warn": _fps_warn()})
+
+    def _camera_fps(self, session: Session, seconds: float) -> float:
+        """Кадров в секунду от камеры за [seconds] после прогрева: по
+        счёту захвата, а не обработки — меряется камера, а не ПК."""
+        stats = session.capture.stats
+
+        def wait(until: float) -> bool:
+            while time.perf_counter() < until:
+                if self.abort.is_set() or session.dead:
+                    return False
+                time.sleep(0.02)
+            return True
+
+        if not wait(time.perf_counter() + min(MEASURE_WARMUP_S, seconds / 4)):
+            return 0.0
+        grabbed, start = stats.grabbed, time.perf_counter()
+        wait(start + seconds)
+        elapsed = time.perf_counter() - start
+        return (stats.grabbed - grabbed) / elapsed if elapsed > 0 else 0.0
 
     def _close(self) -> None:
         with self.lock:
@@ -738,7 +803,10 @@ class Server:
         except calib.CalibrationError as e:
             raise CommandError(e.code, e.text) from None
         self._write_calibration(self.session, cal)
-        self.out.send({"reply": "validate", "attempt": cal.attempt.n, **res})
+        # BUG-66: «мало годных кадров» — частота к концу проверки.
+        fps = round(self.session.fps(), 1) if self.session else None
+        self.out.send({"reply": "validate", "attempt": cal.attempt.n, **res,
+                       "fps": fps, "fps_warn": _fps_warn()})
 
     def _check(self, cmd: dict) -> None:
         cal = self._calibration()

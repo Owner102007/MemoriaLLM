@@ -7,7 +7,9 @@
 /// пошло изучение. Не принято — «Повторить»; после второй неудачи —
 /// выбор организатора удержанием. После остановки записи он встаёт ещё
 /// раз — над экраном завершения — точками проверки в конце; организатор
-/// может её пропустить удержанием.
+/// может её пропустить удержанием. Камера даёт мало кадров (шаг 35,
+/// BUG-66) — до первой точки встаёт предупреждение с «Повторить» и «Без
+/// взгляда».
 ///
 /// Уйти с экрана нельзя: ни «назад», ни `Esc`. Клавиши и нажатия не
 /// достаются ничему под ним; точка записи — над ним, и удержание её по-
@@ -248,8 +250,65 @@ class _EyeRecordingScreenState extends State<EyeRecordingScreen> {
     );
   }
 
+  /// Камера даёт мало кадров (шаг 35, BUG-66): до первой точки
+  /// калибровки — «Повторить» или, удержанием, «Без взгляда».
+  Widget _slowCamera(ThemeData theme, EyeOpened slow) {
+    final bool busy = _view.busy;
+    final String? problem = _view.problem;
+    return _page(theme, <Widget>[
+      Text('Камера айтрекера', style: theme.textTheme.headlineSmall),
+      const SizedBox(height: 12),
+      Text(
+        slowCameraLine(slow),
+        key: const Key('eye-recording-slow'),
+        style: theme.textTheme.titleMedium,
+      ),
+      const SizedBox(height: 6),
+      Text(
+        slowCameraAdvice(slow),
+        key: const Key('eye-recording-slow-advice'),
+        style: theme.textTheme.bodyLarge,
+      ),
+      if (problem != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(problem, key: const Key('eye-recording-problem')),
+        ),
+      if (busy)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            'Камера открывается заново…',
+            key: Key('eye-recording-busy'),
+          ),
+        ),
+      const SizedBox(height: 20),
+      FilledButton(
+        key: const Key('eye-recording-retry'),
+        onPressed: busy ? null : () => unawaited(_view.retry()),
+        child: const Text('Повторить'),
+      ),
+      const SizedBox(height: 16),
+      Text(
+        'Решает организатор — удерживайте кнопку:',
+        style: theme.textTheme.bodyMedium,
+      ),
+      const SizedBox(height: 8),
+      HoldToConfirmButton(
+        key: const Key('eye-recording-without'),
+        label: 'Без взгляда',
+        hold: kEyeChoiceHold,
+        onConfirmed: busy ? null : () => unawaited(_view.choose(write: false)),
+      ),
+    ]);
+  }
+
   /// Итог попытки (кадр SNO-SCR-07.2).
   Widget _result(ThemeData theme) {
+    final EyeOpened? slow = _view.slowCamera;
+    if (slow != null) {
+      return _slowCamera(theme, slow);
+    }
     final EyeAttemptOutcome? outcome = _view.outcome;
     final EyeValidation? v = outcome?.validation;
     final bool accepted = v?.accepted ?? false;

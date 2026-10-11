@@ -300,8 +300,10 @@ class EyeLink {
 
   /// Открывает камеру (SNO-ALG-EYE-02, SNO-ALG-EYE-03): [write] —
   /// писать ли файлы в папку [dir]; [screen] и [distanceMm] — по ним
-  /// спутник считает углы. Ответ — размер кадра камеры.
-  Future<List<int>?> open({
+  /// спутник считает углы. [measure] — сколько секунд мерить частоту
+  /// камеры перед ответом (шаг 35, BUG-66). Ответ — размер кадра,
+  /// формат и частота.
+  Future<EyeOpened> open({
     required EyeScreen screen,
     required int distanceMm,
     EyeCamera? camera,
@@ -312,6 +314,7 @@ class EyeLink {
     int? qpc0Us,
     int? t0,
     String? calibration,
+    double? measure,
   }) async {
     final Map<String, Object?> reply = await request(
       'open',
@@ -328,15 +331,11 @@ class EyeLink {
         // SNO-F-EYE-02: спутник поднят заново посреди записи — та же
         // модель из файла калибровки.
         'calibration': ?calibration,
+        'measure': ?measure,
       },
       timeout: kOpenTimeout,
     );
-    final Object? frame = reply['frame'];
-    return frame is List<Object?> &&
-            frame.length == 2 &&
-            frame.every((Object? v) => v is int)
-        ? <int>[frame[0]! as int, frame[1]! as int]
-        : null;
+    return EyeOpened.fromMessage(reply);
   }
 
   /// Новая попытка калибровки: [kind] — `full` (как у участника) или

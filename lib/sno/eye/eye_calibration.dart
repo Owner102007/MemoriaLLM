@@ -493,6 +493,12 @@ String rejectAdvice(EyeValidation v) {
     EyeRejectReason.worst =>
       'Одна точка ушла на ${eyeNumber(v.worstDeg ?? 0)}° (порог — '
           '${eyeNumber(v.worstMaxDeg)}°) — поправьте посадку и свет',
+    // BUG-66: годных кадров мало, потому что их мало даёт камера, —
+    // посадка и свет тут ни при чём, и сказано это прямо.
+    EyeRejectReason.fewPoints when _slowFps(v) =>
+      'Камера даёт ${eyeNumber(v.fps!)} кадра в секунду (нужно не меньше '
+          '${v.fpsWarn?.round() ?? kEyeFpsWarn.round()}) — на точках '
+          'проверки мало кадров',
     EyeRejectReason.fewPoints =>
       'Камера мало видела глаза на точках проверки — поправьте посадку '
           'и свет',
@@ -500,6 +506,31 @@ String rejectAdvice(EyeValidation v) {
       'Точность ${eyeNumber(acc ?? 0)}° (порог — ${eyeNumber(v.acceptDeg)}°) — '
           'поправьте посадку и свет',
   };
+}
+
+/// Обрабатывалось ли к концу проверки меньше кадров, чем нужно взгляду
+/// (BUG-66).
+bool _slowFps(EyeValidation v) {
+  final double? fps = v.fps;
+  return fps != null && fps < (v.fpsWarn ?? kEyeFpsWarn);
+}
+
+/// Камера даёт мало кадров — словами для экрана айтрекера записи
+/// (BUG-66): «Камера даёт 10,0 кадра в секунду — взгляд не записать».
+String slowCameraLine(EyeOpened opened) {
+  return 'Камера даёт ${eyeNumber(opened.fps ?? 0)} кадра в секунду — '
+      'взгляд не записать';
+}
+
+/// Что делать, если камера даёт мало кадров (BUG-66).
+String slowCameraAdvice(EyeOpened opened) {
+  final int need = (opened.fpsWarn ?? kEyeFpsWarn).round();
+  final String format = opened.fourcc == null || opened.fourcc == 'MJPG'
+      ? ''
+      : ' Кадры идут без сжатия (${opened.fourcc}).';
+  return 'Нужно не меньше $need.$format Закройте программы, которые '
+      'держат камеру, проверьте свет и нажмите «Повторить». Не поможет — '
+      'организатор выбирает «Без взгляда».';
 }
 
 /// Голова на проверке против калибровки словами (BUG-60): «голова

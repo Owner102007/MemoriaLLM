@@ -184,7 +184,7 @@ void main() {
       final List<EyeGaze> gaze = <EyeGaze>[];
       link.onGaze = gaze.add;
       final String folder = '${temp.path}${Platform.pathSeparator}стенд';
-      final List<int>? frame = await link.open(
+      final EyeOpened opened = await link.open(
         screen: const EyeScreen(
           width: 1920,
           height: 1080,
@@ -194,8 +194,12 @@ void main() {
         distanceMm: 600,
         dir: folder,
         strip: false,
+        // Шаг 35, BUG-66: спутник меряет частоту камеры до ответа.
+        measure: 1,
       );
-      expect(frame, isNotNull);
+      expect(opened.frame, isNotNull);
+      expect(opened.fps, greaterThan(20));
+      expect(opened.slow, isFalse);
       await link.calibrate(attempt: 1, kind: 'quick');
       Future<void> show(String phase, String prefix) async {
         for (int i = 0; i < kValidationPoints.length; i++) {

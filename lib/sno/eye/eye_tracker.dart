@@ -145,9 +145,13 @@ class EyeRunInfo {
   String? quality;
 
   /// Почему взгляда в записи нет: `not_configured`, `unavailable`,
-  /// `selfcheck_failed`, `open_failed`, `skipped`, `stopped`,
-  /// `gave_up`, `limit`.
+  /// `selfcheck_failed`, `open_failed`, `slow_camera`, `skipped`,
+  /// `stopped`, `gave_up`, `limit`.
   String? reason;
+
+  /// Камера, открытая для записи (шаг 35, BUG-66): последний замер —
+  /// кадров в секунду, формат, размер кадра, хватает ли взгляду.
+  Map<String, Object?>? camera;
 
   /// Итог калибровки: попытки, модель, точность, задержка камеры.
   Map<String, Object?>? calibration;
@@ -180,6 +184,7 @@ class EyeRunInfo {
     quality = null;
     reason = null;
     calibration = null;
+    camera = null;
     endCheck = null;
     segments = 0;
     validShare = null;
@@ -202,6 +207,7 @@ class EyeRunInfo {
     'restarts': restarts,
     'gave_up': gaveUp,
     if (calibration != null) 'calibration': calibration,
+    if (camera != null) 'camera': camera,
     if (endCheck != null) 'end_check': endCheck,
     if (present) 'file': kGazeFile,
     if (present) 'segments': segments,
@@ -778,6 +784,17 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   /// Идёт выбор или начало изучения: второе нажатие не в счёт.
   bool _acting = false;
 
+  /// Что спутник ответил на последнее открытие камеры с замером частоты
+  /// (шаг 35, BUG-66).
+  EyeOpened? _opened;
+
+  /// Сколько раз частоту камеры мерили в этой записи.
+  int _measures = 0;
+
+  /// Камера давала мало кадров: предупреждение на экране итога вместо
+  /// калибровки; `null` — кадров хватает.
+  EyeOpened? _slow;
+
   /// Папка `eye/` записи на диске.
   String? _eyeDir;
 
@@ -870,6 +887,9 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
 
   @override
   String? get problem => _problem;
+
+  @override
+  EyeOpened? get slowCamera => _slow;
 
   bool get alive => !_stopped && _link != null && !_link!.exited;
 
@@ -1017,10 +1037,80 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
       await _without('selfcheck_failed', drop: true);
       return;
     }
-    if (!await _openCamera(first: true)) {
+    if (!await _openCamera(first: true, measure: true)) {
+      return;
+    }
+    // Шаг 35, BUG-66: кадров мало — организатор узнаёт об этом до
+    // первой точки, а калибровка молча не начинается.
+    if (!await _rateChecked(rounds: kOpenMeasureRounds)) {
       return;
     }
     await _calibrate(next: true);
+  }
+
+  /// Хватает ли кадров взгляду (шаг 35, BUG-66). Замер последнего
+  /// открытия камеры — в журнал; мало — камера открывается заново и
+  /// меряется ещё раз, всего [rounds] замеров; так и не хватило — на
+  /// экране итога предупреждение с «Повторить» и «Без взгляда».
+  /// Отвечает, можно ли начинать калибровку.
+  Future<bool> _rateChecked({required int rounds}) async {
+    for (int round = 1; ; round++) {
+      final EyeOpened? opened = _opened;
+      if (_stopped || _aside) {
+        return false;
+      }
+      if (opened == null) {
+        // Спутник частоты не назвал (прежняя версия) — как раньше.
+        return true;
+      }
+      _measures++;
+      info.camera = <String, Object?>{...opened.toJson(), 'n': _measures};
+      _log(SnoEventType.eyeCameraFps, <String, Object?>{
+        ...opened.toJson(),
+        'n': _measures,
+        'seg': _segment,
+      });
+      if (!opened.slow) {
+        _slow = null;
+        return true;
+      }
+      if (round >= rounds) {
+        break;
+      }
+      if (!await _reopenMeasured()) {
+        if (_stopped || _aside) {
+          return false;
+        }
+        _slow = opened;
+        _problem = 'Камера не открылась заново — повторите';
+        _outcome = null;
+        _set(EyeRecordingPhase.result);
+        return false;
+      }
+    }
+    _slow = _opened;
+    _problem = null;
+    _outcome = null;
+    _set(EyeRecordingPhase.result);
+    unawaited(tracker._store());
+    return false;
+  }
+
+  /// Закрывает камеру и открывает её заново с замером частоты — в
+  /// следующий сегмент файлов (шаг 35, BUG-66).
+  Future<bool> _reopenMeasured() async {
+    final EyeLink? link = _link;
+    if (link == null || _stopped) {
+      return false;
+    }
+    try {
+      await link.closeCamera();
+    } on EyeError {
+      // Не закрылась — откроется всё равно: спутник сам закроет прежнюю.
+    }
+    _cameraOpen = false;
+    _nextSegment();
+    return _openCamera(first: false, measure: true);
   }
 
   /// Окно в логических пикселях и миллиметрах: размер — от экрана,
@@ -1046,7 +1136,11 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
   /// сегмент и, если изучение уже идёт, модель из файла калибровки.
   /// Не открылась — запись идёт без взгляда (до изучения) или спутник
   /// считается потерянным (во время него); отвечает, открылась ли.
-  Future<bool> _openCamera({required bool first, bool restore = false}) async {
+  Future<bool> _openCamera({
+    required bool first,
+    bool restore = false,
+    bool measure = false,
+  }) async {
     final EyeLink? link = _link;
     final EyePlace? place = _place;
     if (link == null || place == null || _stopped) {
@@ -1060,7 +1154,7 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     _t0 ??= session.eyeNow;
     final String? dir = _eyeDir;
     try {
-      await link.open(
+      final EyeOpened opened = await link.open(
         screen: screen,
         distanceMm: place.distanceMm,
         camera: place.camera,
@@ -1073,7 +1167,12 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
         calibration: restore && dir != null
             ? p.join(dir, 'calibration.json')
             : null,
+        // Шаг 35, BUG-66: сколько кадров камера даёт на самом деле.
+        measure: measure ? kOpenMeasureSeconds : null,
       );
+      if (measure) {
+        _opened = opened;
+      }
     } on EyeError catch (e) {
       if (_stopped || !identical(link, _link) || e.code == 'exit') {
         return false;
@@ -1232,6 +1331,10 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     if (_phase != EyeRecordingPhase.result || _acting || mustChoose) {
       return;
     }
+    if (_slow != null) {
+      await _retryCamera();
+      return;
+    }
     final EyeAttemptOutcome? outcome = _outcome;
     // Не видно лица, сбой спутника, прерванная попытка — та же попытка,
     // не в счёт; не принята — следующая.
@@ -1239,9 +1342,45 @@ class _EyeRun extends ChangeNotifier implements EyeRecordingView {
     await _calibrate(next: counted);
   }
 
+  /// «Повторить» при камере, которая давала мало кадров (BUG-66):
+  /// камера открывается заново и меряется; хватает — калибровка.
+  Future<void> _retryCamera() async {
+    _acting = true;
+    _problem = null;
+    _changed();
+    final bool opened = await _reopenMeasured();
+    _acting = false;
+    if (_stopped || _aside) {
+      return;
+    }
+    if (!opened) {
+      _problem = 'Камера не открылась заново — повторите';
+      _changed();
+      return;
+    }
+    if (!await _rateChecked(rounds: 1)) {
+      _changed();
+      return;
+    }
+    await _calibrate(next: true);
+  }
+
   @override
   Future<void> choose({required bool write}) async {
     if (_phase != EyeRecordingPhase.result || _acting) {
+      return;
+    }
+    final EyeOpened? slow = _slow;
+    if (slow != null) {
+      // BUG-66: писать взгляд при таком числе кадров нечем — выбор один.
+      _log(SnoEventType.eyeSkip, <String, Object?>{
+        'by': 'experimenter',
+        'write': false,
+        'failures': _failures,
+        'slow_camera': true,
+        'fps': ?slow.fps,
+      });
+      await _without('slow_camera', drop: true);
       return;
     }
     // Модели нет (спутник поднимали заново после итога) — писать нечем:

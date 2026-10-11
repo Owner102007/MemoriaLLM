@@ -2229,6 +2229,7 @@ class RecordingSession extends ChangeNotifier implements ActionLog {
     SnoEventType.eyeWindow,
     // SNO-F-EYE-01, SNO-F-EYE-02: калибровка и поток взгляда тоже.
     SnoEventType.eyeCheck,
+    SnoEventType.eyeCameraFps,
     SnoEventType.eyeCalibrationStart,
     SnoEventType.eyeTarget,
     SnoEventType.eyeCalibrationResult,

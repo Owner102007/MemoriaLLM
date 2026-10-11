@@ -1289,6 +1289,39 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('BUG-67: «Забыть эталон» удержанием — эталона нет, архив '
+        'запомнится новым', (WidgetTester tester) async {
+      tall(tester);
+      await archiveShelf();
+      await keeper().remember(laid);
+      int resets = 0;
+      await pumpSection(tester, onStateReset: () => resets++);
+      await openExperimenter(tester);
+      expect(find.byKey(const Key('sno-forget-note')), findsOneWidget);
+
+      final Finder hold = find.byKey(const Key('sno-forget-hold'));
+      await tester.ensureVisible(hold);
+      await tester.pumpAndSettle();
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(hold),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      await tester.pump(kResetHold + const Duration(milliseconds: 100));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(await keeper().reference(), isNull);
+      expect(find.byKey(const Key('sno-reference-none')), findsOneWidget);
+      expect(find.textContaining('Эталон забыт'), findsOneWidget);
+      expect(find.byKey(const Key('sno-reset-hold')), findsNothing);
+      // Полка и книги на месте, сброса не было.
+      expect(resets, 0);
+      expect(await data.library.books(), hasLength(2));
+
+      await unmount(tester);
+    });
+
     testWidgets('SNO-F-CFG-04: отпустили раньше — ничего не произошло', (
       WidgetTester tester,
     ) async {

@@ -59,6 +59,10 @@ void main() {
 
   /// Что ответит спутник на `validate` по попыткам и на самопроверку.
   late List<Map<String, Object?>> validations;
+
+  /// Сколько кадров в секунду «даёт камера» при каждом открытии с
+  /// замером (шаг 35, BUG-66); кончились — 30.
+  late List<double> openFps;
   Map<String, Object?>? checkReply;
 
   /// На какой команде падает спутник по номеру запуска; `null` — ни на
@@ -69,6 +73,7 @@ void main() {
     kit = SessionKit();
     qpc = FakeQpc();
     validations = <Map<String, Object?>>[];
+    openFps = <double>[];
     checkReply = null;
     exitFor = null;
     launcher = FakeEyeLauncher(
@@ -77,6 +82,7 @@ void main() {
         check: checkReply,
         exitOn: exitFor?.call(n),
         validateReplies: List<Map<String, Object?>>.of(validations),
+        openFps: List<double>.of(openFps),
       ),
     );
     window = FakeEyeWindow();
@@ -756,4 +762,131 @@ void main() {
       1.0,
     );
   });
+
+  /// События `eye.camera.fps` журнала по порядку.
+  List<Map<String, Object?>> rates(List<Map<String, Object?>> events) =>
+      <Map<String, Object?>>[
+        for (final Map<String, Object?> e in events)
+          if (e['type'] == 'eye.camera.fps') dataOf(e),
+      ];
+
+  testWidgets('BUG-66: камера даёт 10 кадров — открыта заново, снова 10: до '
+      'первой точки калибровки предупреждение; «Повторить» — 30, '
+      'калибровка идёт', (WidgetTester tester) async {
+    openFps = <double>[10, 10, 30];
+    await started(tester);
+    await runUntil(
+      tester,
+      () => view()?.slowCamera != null,
+      limit: const Duration(seconds: 10),
+    );
+    await settle(tester);
+    expect(view()!.phase, EyeRecordingPhase.result);
+    // Камеру открыли дважды с замером, калибровка не начиналась.
+    expect(
+      sent('open').map((Map<String, Object?> c) => c['measure']),
+      <Object?>[kOpenMeasureSeconds, kOpenMeasureSeconds],
+    );
+    expect(sent('calibrate'), isEmpty);
+    expect(sat().targetIds, isEmpty);
+    expect(
+      find.text('Камера даёт 10,0 кадра в секунду — взгляд не записать'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('eye-recording-slow-advice')), findsOneWidget);
+    expect(find.byKey(const Key('eye-recording-begin')), findsNothing);
+    expect(find.byKey(const Key('eye-recording-without')), findsOneWidget);
+    expect(kit.session.studyPending, isTrue);
+
+    await tester.tap(find.byKey(const Key('eye-recording-retry')));
+    await settle(tester);
+    await calibrated(tester);
+    expect(view()!.slowCamera, isNull);
+    expect(sent('open'), hasLength(3));
+    expect(sent('calibrate').single['attempt'], 1);
+    expect(find.text('Принято.'), findsOneWidget);
+
+    final List<Map<String, Object?>> events = await journal(tester);
+    final List<Map<String, Object?>> fps = rates(events);
+    expect(fps.map((Map<String, Object?> d) => d['fps']), <Object?>[
+      10.0,
+      10.0,
+      30.0,
+    ]);
+    expect(fps.map((Map<String, Object?> d) => d['slow']), <Object?>[
+      true,
+      true,
+      false,
+    ]);
+    expect(fps.map((Map<String, Object?> d) => d['seg']), <Object?>[0, 1, 2]);
+    expect(fps.first['fourcc'], 'MJPG');
+    expect(fps.first['warn'], 25.0);
+    expect(
+      typesOf(events),
+      containsAllInOrder(<String>[
+        'eye.check',
+        'eye.camera.fps',
+        'eye.camera.fps',
+        'eye.camera.fps',
+        'eye.calibration.start',
+      ]),
+    );
+    expect(eye.info.camera!['fps'], 30.0);
+    expect(eye.info.camera!['n'], 3);
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets('BUG-66: второй заход сам дал 30 кадров — '
+      'предупреждения нет', (WidgetTester tester) async {
+    openFps = <double>[10, 30];
+    await started(tester);
+    await calibrated(tester);
+    expect(view()!.slowCamera, isNull);
+    expect(sent('open'), hasLength(2));
+    expect(find.text('Принято.'), findsOneWidget);
+    final List<Map<String, Object?>> fps = rates(await journal(tester));
+    expect(fps.map((Map<String, Object?> d) => d['slow']), <Object?>[
+      true,
+      false,
+    ]);
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  testWidgets('BUG-66: камера так и не дала кадров — организатор удержанием '
+      'выбирает «Без взгляда»', (WidgetTester tester) async {
+    openFps = <double>[9, 9];
+    await started(tester);
+    await runUntil(
+      tester,
+      () => view()?.slowCamera != null,
+      limit: const Duration(seconds: 10),
+    );
+    await settle(tester);
+    await holdOn(tester, 'eye-recording-without');
+    expect(sat().inputClosed, isTrue);
+    expect(kit.store.removed[kit.folder], <String>['eye']);
+    expect(kit.session.studyPending, isFalse);
+    expect(find.byType(EyeRecordingScreen), findsNothing);
+    final List<Map<String, Object?>> events = await journal(tester);
+    expect(one(events, 'eye.skip'), <String, Object?>{
+      'by': 'experimenter',
+      'write': false,
+      'failures': 0,
+      'slow_camera': true,
+      'fps': 9.0,
+    });
+    await kit.session.stop(StopReason.experimenter);
+    await settle(tester);
+    final Map<String, Object?> block =
+        kit.store.json(kit.folder, kRecordingFile)['eye_tracker']!
+            as Map<String, Object?>;
+    expect(block['present'], isFalse);
+    expect(block['reason'], 'slow_camera');
+    expect((block['camera']! as Map<String, Object?>)['fps'], 9.0);
+    expect(
+      describeGaze(block),
+      'Взгляд не записан: камера давала мало кадров в секунду',
+    );
+    await unmount(tester);
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }

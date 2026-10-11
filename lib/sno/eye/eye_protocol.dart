@@ -561,6 +561,62 @@ class EyeScreen {
   };
 }
 
+/// Порог частоты камеры, ниже которого взгляд не записать (BUG-66), —
+/// `fps.warn` самопроверки; спутник называет его в ответах, а это —
+/// запас на случай, если не назвал.
+const double kEyeFpsWarn = 25;
+
+/// Ответ `open` (шаг 35, BUG-66): размер кадра, формат и — если её
+/// мерили — сколько кадров в секунду камера отдаёт на самом деле.
+class EyeOpened {
+  /// Создаёт ответ.
+  const EyeOpened({this.frame, this.fourcc, this.fps, this.fpsWarn});
+
+  /// Ответ из строки спутника.
+  factory EyeOpened.fromMessage(Map<String, Object?> message) {
+    final Object? frame = message['frame'];
+    final Object? fourcc = message['fourcc'];
+    return EyeOpened(
+      frame:
+          frame is List<Object?> &&
+              frame.length == 2 &&
+              frame.every((Object? v) => v is int)
+          ? <int>[frame[0]! as int, frame[1]! as int]
+          : null,
+      fourcc: fourcc is String && fourcc.isNotEmpty ? fourcc : null,
+      fps: _num(message['fps']),
+      fpsWarn: _num(message['fps_warn']),
+    );
+  }
+
+  /// Размер кадра камеры `[ширина, высота]`; `null` — спутник не назвал.
+  final List<int>? frame;
+
+  /// Формат кадров: `MJPG`, `YUY2`…; `null` — не известен.
+  final String? fourcc;
+
+  /// Кадров в секунду от камеры; `null` — не мерили.
+  final double? fps;
+
+  /// Порог частоты самопроверки; `null` — спутник не назвал.
+  final double? fpsWarn;
+
+  /// Камера даёт меньше кадров, чем нужно взгляду.
+  bool get slow {
+    final double? measured = fps;
+    return measured != null && measured < (fpsWarn ?? kEyeFpsWarn);
+  }
+
+  /// Поля события `eye.camera.fps`.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'fps': ?fps,
+    'warn': fpsWarn ?? kEyeFpsWarn,
+    'fourcc': fourcc,
+    'frame': ?frame,
+    'slow': slow,
+  };
+}
+
 /// Ответ `samples`: сколько годных кадров у каждой точки калибровки.
 class EyeSamples {
   /// Создаёт ответ.
@@ -855,6 +911,8 @@ class EyeValidation {
     this.acceptDeg = 2.5,
     this.worstMaxDeg = 5,
     this.excluded = const <String>[],
+    this.fps,
+    this.fpsWarn,
     this.raw = const <String, Object?>{},
   });
 
@@ -876,6 +934,8 @@ class EyeValidation {
       acceptDeg: _num(thresholds['accept_deg']) ?? 2.5,
       worstMaxDeg: _num(thresholds['worst_deg']) ?? 5,
       excluded: _ids(message['excluded']),
+      fps: _num(message['fps']),
+      fpsWarn: _num(message['fps_warn']),
       raw: message,
     );
   }
@@ -909,6 +969,13 @@ class EyeValidation {
 
   /// Точки проверки без годных кадров.
   final List<String> excluded;
+
+  /// Сколько кадров в секунду обрабатывалось к концу проверки (BUG-66);
+  /// `null` — спутник не сказал.
+  final double? fps;
+
+  /// Порог частоты самопроверки; `null` — спутник не назвал.
+  final double? fpsWarn;
 
   /// Ответ как есть — для файлов и журнала.
   final Map<String, Object?> raw;

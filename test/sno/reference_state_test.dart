@@ -693,7 +693,8 @@ void main() {
       expect(
         describeReset(report),
         'Сброшено. Нет файла у книг: 1 — «Атлас». '
-        'Добавьте архив с литературой ещё раз.',
+        'Добавьте архив с литературой ещё раз; если этих книг в нём нет — '
+        '«Забыть эталон», добавьте архив и сбросьте снова.',
       );
       // Надгробие осталось — книга вернётся той же строкой (BUG-30).
       expect((await data.library.removedBookByHash('hash-a9'))!.id, 'a9');
@@ -743,6 +744,89 @@ void main() {
       expect(await shelf(), archiveOrder);
     });
 
+    test('BUG-67: эталон помнит прежний архив — сброс не возвращает его '
+        'пустых категорий и называет выход', () async {
+      // Архив A — прежняя литература: две категории.
+      await category('ang', 'Ангиология', 0);
+      await category('math', 'Математика', 1);
+      final Book g1 = await book('g1', categoryId: 'ang', title: 'Сосуды');
+      final Book m1 = await book('m1', categoryId: 'math', title: 'Анализ');
+      await keeper().remember(<ArchivePlacement>[
+        laid('g1', 'Ангиология', title: 'Сосуды'),
+        laid('m1', 'Математика', title: 'Анализ'),
+      ]);
+      // Книги A сняты с полки, их копий на устройстве больше нет; разложен
+      // архив B с другими категориями — эталон его дополнил.
+      await data.library.delete('g1');
+      await data.library.delete('m1');
+      files.gone
+        ..add(g1.source)
+        ..add(m1.source);
+      await category('lit', 'Литература', 2);
+      await category('anat', 'Анатомия', 3);
+      await book('l1', categoryId: 'lit');
+      await book('a1', categoryId: 'anat');
+      await book('a2', categoryId: 'anat', position: 1);
+      await book('a3', categoryId: 'anat', position: 2);
+      await keeper().remember(archive);
+      expect((await keeper().reference())!.shelf.categories, <String>[
+        'Ангиология',
+        'Математика',
+        'Литература',
+        'Анатомия',
+      ]);
+
+      final ResetReport report = await keeper().reset();
+
+      // До правки сброс возвращал «Ангиологию» и «Математику» пустыми над
+      // категориями архива — участник видел их на полке.
+      expect(await shelf(), archiveOrder);
+      expect(report.dropped, <String>['Ангиология', 'Математика']);
+      expect(report.missing, <String>['Сосуды', 'Анализ']);
+      expect(report.matches, isFalse, reason: 'эталон помнит книги A');
+      expect(describeReset(report), contains('«Забыть эталон»'));
+
+      // «Забыть эталон» → тот же архив ещё раз → сброс: совпадает.
+      await keeper().forget();
+      expect(await keeper().reference(), isNull);
+      // Книги, их места и надгробия забывание не трогает.
+      expect(await shelf(), archiveOrder);
+      expect((await data.library.removedBookByHash('hash-g1'))!.id, 'g1');
+      final ReferenceState? fresh = await keeper().remember(archive);
+      expect(fresh!.shelf.categories, <String>['Литература', 'Анатомия']);
+
+      final ResetReport again = await keeper().reset();
+
+      expect(again.matches, isTrue);
+      expect(again.missing, isEmpty);
+      expect(again.dropped, isEmpty);
+      expect(await shelf(), archiveOrder);
+      expect(
+        describeReset(again),
+        'Сброшено. Состояние совпадает с эталоном.',
+      );
+    });
+
+    test('BUG-67: книга на полке без файла держит свою категорию', () async {
+      await archiveShelf();
+      await keeper().remember(archive);
+      // Единственная книга «Литературы» стоит на полке, файла нет:
+      // категория не пустая и возвращается.
+      files.gone.add(testBook(id: 'l1').source);
+
+      final ResetReport report = await keeper().reset();
+
+      expect(report.dropped, isEmpty);
+      expect(await shelf(), archiveOrder);
+    });
+
+    test('BUG-67: забыть эталон, которого нет, — ничего не случилось', () async {
+      await archiveShelf();
+      await keeper().forget();
+      expect(await keeper().reference(), isNull);
+      expect(await shelf(), archiveOrder);
+    });
+
     test('SNO-F-CFG-04: без эталона сбрасывать не к чему', () async {
       await archiveShelf();
       await data.reading.savePosition(
@@ -784,7 +868,19 @@ void main() {
           ),
         ),
         'Сброшено. Нет файла у книг: 5 — «А», «Б», «В» и ещё 2. '
-        'Добавьте архив с литературой ещё раз.',
+        'Добавьте архив с литературой ещё раз; если этих книг в нём нет — '
+        '«Забыть эталон», добавьте архив и сбросьте снова.',
+      );
+      expect(
+        describeReset(
+          ResetReport(
+            at: at,
+            matches: false,
+            dropped: const <String>['Ангиология', 'Математика'],
+          ),
+        ),
+        'Сброшено. Пустые категории эталона не возвращены: «Ангиология», '
+        '«Математика».',
       );
     });
 

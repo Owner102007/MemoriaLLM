@@ -11,7 +11,9 @@
 /// ([extendReference]): из одного архива у всех устройств он выходит
 /// одинаковым, а расставленный руками — нет. Перестановки после
 /// распаковки в эталон не попадают; второй архив его дополняет, а не
-/// заменяет.
+/// заменяет. Эталон, в котором остался прежний архив, забывается
+/// удержанием «Забыть эталон» ([ReferenceKeeper.forget], BUG-67):
+/// следующий разложенный архив запомнится новым.
 ///
 /// **Сброс** ([ReferenceKeeper.reset]) стирает всё, что оставил
 /// предыдущий тестировщик, — прогресс, цитаты, заметки, закладки,
@@ -412,6 +414,7 @@ class ResetReport {
     required this.matches,
     this.missing = const <String>[],
     this.extra = const <String>[],
+    this.dropped = const <String>[],
   });
 
   /// Когда сброшено.
@@ -427,6 +430,11 @@ class ResetReport {
   /// Книги на полке, которых в эталоне нет: они пришли не из архива с
   /// литературой. Сброс их не снимает — ставит в «Без категории».
   final List<String> extra;
+
+  /// Категории эталона, в которых не встало ни одной книги, — их сброс
+  /// не вернул (BUG-67): это след архива, которого на устройстве больше
+  /// нет.
+  final List<String> dropped;
 }
 
 /// Сколько книг без файла названо в итоге сброса поимённо.
@@ -441,9 +449,19 @@ String describeReset(ResetReport report) {
   }
   final List<String> lines = <String>['Сброшено.'];
   if (report.missing.isNotEmpty) {
+    // BUG-67: если этих книг в архиве нет, повторное добавление их не
+    // вернёт — выход назван.
     lines.add(
       'Нет файла у книг: ${report.missing.length} — '
-      '${_named(report.missing)}. Добавьте архив с литературой ещё раз.',
+      '${_named(report.missing)}. Добавьте архив с литературой ещё раз; '
+      'если этих книг в нём нет — «Забыть эталон», добавьте архив и '
+      'сбросьте снова.',
+    );
+  }
+  if (report.dropped.isNotEmpty) {
+    lines.add(
+      'Пустые категории эталона не возвращены: '
+      '${_named(report.dropped)}.',
     );
   }
   if (report.extra.isNotEmpty) {
@@ -721,6 +739,13 @@ class ReferenceKeeper {
     return reference;
   }
 
+  /// Забывает эталон (BUG-67, SNO-ALG-CFG-02): следующий разложенный
+  /// архив запомнится новым эталоном целиком. Книги, их файлы, текст
+  /// страниц, карта и следы читателя не трогаются — следы стирает сброс.
+  Future<void> forget() async {
+    await _data.settings.remove(SnoSettingsKeys.reference);
+  }
+
   /// Сбрасывает устройство к эталону.
   ///
   /// Одной транзакцией: половина сброса хуже, чем его отсутствие.
@@ -771,6 +796,23 @@ class ReferenceKeeper {
     final Set<String> kept = <String>{
       for (final BookRow row in placed.values) row.id,
     };
+    // BUG-67: категория эталона, в которой после сброса не встанет ни
+    // одной книги, — след архива, которого на устройстве больше нет:
+    // пустой она не возвращается.
+    final Set<String> filled = <String>{
+      for (final ShelfBook book in reference.shelf.books)
+        if (book.category != null &&
+            _stands(placed[book.fingerprint], revived))
+          book.category!.toLowerCase(),
+    };
+    final List<String> restored = <String>[
+      for (final String title in reference.shelf.categories)
+        if (filled.contains(title.toLowerCase())) title,
+    ];
+    final List<String> dropped = <String>[
+      for (final String title in reference.shelf.categories)
+        if (!filled.contains(title.toLowerCase())) title,
+    ];
     // Книги сверх эталона на полке остаются — в «Без категории», за
     // книгами эталона: сброс стирает следы читателя, а не библиотеку.
     final List<BookRow> loose = <BookRow>[
@@ -783,7 +825,7 @@ class ReferenceKeeper {
       await _eraseTraces(db);
       final Map<String, String> categoryIds = await _restoreCategories(
         db,
-        reference.shelf.categories,
+        restored,
         moment,
       );
 
@@ -861,6 +903,7 @@ class ReferenceKeeper {
       matches: matches,
       missing: missing,
       extra: <String>[for (final BookRow row in loose) row.title],
+      dropped: dropped,
     );
   }
 
@@ -930,6 +973,12 @@ class ReferenceKeeper {
     }
     return ids;
   }
+}
+
+/// Встанет ли книга эталона на полку после сброса: строка есть и не снята
+/// — или снята, но файл цел и она возвращается (BUG-67).
+bool _stands(BookRow? row, Set<String> revived) {
+  return row != null && (!row.isDeleted || revived.contains(row.id));
 }
 
 /// Какая из двух строк одной книги отвечает за неё при сбросе.

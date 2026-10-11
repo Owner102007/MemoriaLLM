@@ -236,6 +236,11 @@ enum SnoEventType {
   /// оговоркой или нет, и что не так (SNO-F-EYE-01).
   eyeCheck('eye.check'),
 
+  /// Камера открыта для записи: сколько кадров в секунду она отдаёт на
+  /// самом деле, в каком формате и хватает ли этого взгляду (шаг 35,
+  /// BUG-66).
+  eyeCameraFps('eye.camera.fps'),
+
   /// Началась попытка калибровки участника (SNO-F-EYE-01).
   eyeCalibrationStart('eye.calibration.start'),
 

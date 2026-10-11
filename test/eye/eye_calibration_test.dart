@@ -544,4 +544,86 @@ void main() {
       expect(s.full, isFalse);
     });
   });
+
+  group('BUG-66: камера даёт мало кадров', () {
+    test('BUG-66: «мало годных кадров» называет частоту камеры', () {
+      final EyeValidation few = EyeValidation.fromMessage(<String, Object?>{
+        'accepted': false,
+        'reason': 'few_points',
+        'fps': 10.0,
+        'fps_warn': 25,
+      });
+      expect(few.fps, 10.0);
+      expect(few.fpsWarn, 25.0);
+      expect(
+        rejectAdvice(few),
+        'Камера даёт 10,0 кадра в секунду (нужно не меньше 25) — на '
+        'точках проверки мало кадров',
+      );
+      // Кадров хватало — прежние слова про посадку и свет.
+      final EyeValidation enough = EyeValidation.fromMessage(<String, Object?>{
+        'accepted': false,
+        'reason': 'few_points',
+        'fps': 29.8,
+        'fps_warn': 25,
+      });
+      expect(rejectAdvice(enough), contains('мало видела глаза'));
+      // Спутник прежней версии частоты не называет.
+      final EyeValidation old = EyeValidation.fromMessage(<String, Object?>{
+        'accepted': false,
+        'reason': 'few_points',
+      });
+      expect(old.fps, isNull);
+      expect(rejectAdvice(old), contains('мало видела глаза'));
+    });
+
+    test('BUG-66: ответ open — формат и частота; мало кадров словами', () {
+      final EyeOpened slow = EyeOpened.fromMessage(<String, Object?>{
+        'reply': 'open',
+        'frame': <Object?>[1280, 720],
+        'fourcc': 'YUY2',
+        'fps': 10.0,
+        'fps_warn': 25,
+      });
+      expect(slow.frame, <int>[1280, 720]);
+      expect(slow.fourcc, 'YUY2');
+      expect(slow.slow, isTrue);
+      expect(slow.toJson(), <String, Object?>{
+        'fps': 10.0,
+        'warn': 25.0,
+        'fourcc': 'YUY2',
+        'frame': <int>[1280, 720],
+        'slow': true,
+      });
+      expect(
+        slowCameraLine(slow),
+        'Камера даёт 10,0 кадра в секунду — взгляд не записать',
+      );
+      expect(slowCameraAdvice(slow), contains('Кадры идут без сжатия (YUY2)'));
+      expect(slowCameraAdvice(slow), startsWith('Нужно не меньше 25.'));
+
+      final EyeOpened fast = EyeOpened.fromMessage(<String, Object?>{
+        'reply': 'open',
+        'frame': <Object?>[1280, 720],
+        'fourcc': 'MJPG',
+        'fps': 29.9,
+        'fps_warn': 25,
+      });
+      expect(fast.slow, isFalse);
+      // Без замера — частоты нет, и мало её не бывает.
+      final EyeOpened unmeasured = EyeOpened.fromMessage(<String, Object?>{
+        'reply': 'open',
+        'frame': <Object?>[1920, 1080],
+      });
+      expect(unmeasured.fps, isNull);
+      expect(unmeasured.fourcc, isNull);
+      expect(unmeasured.slow, isFalse);
+      // Порога спутник не назвал — запасной, 25.
+      expect(const EyeOpened(fps: 24.9).slow, isTrue);
+      expect(
+        slowCameraAdvice(const EyeOpened(fps: 12, fourcc: 'MJPG')),
+        isNot(contains('без сжатия')),
+      );
+    });
+  });
 }
