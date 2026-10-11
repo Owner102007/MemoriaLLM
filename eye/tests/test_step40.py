@@ -467,7 +467,8 @@ def test_alg_res_09_study_writes_p5_and_moments_csv(planted, tmp_path):
                                                            "чтение"]
     assert len({len(r) for r in rows}) == 1
     src = json.loads((out / "исходные.json").read_text(encoding="utf-8"))
-    assert src["script"] == "40.0"
+    # Скрипт шага 40 или новее: номер поднимает каждый следующий шаг.
+    assert float(src["script"]) >= 40.0
     assert src["thresholds"]["study"]["portrait"]["look_share"] == 0.8
 
 
