@@ -7,3 +7,6 @@ av==19.0.1
 numpy
 psutil
 cv2-enumerate-cameras
+# Шаг 40 (АЛ1 (а)): страница книги на снимке П5 «Сравнения ветвей» — тот же
+# движок PDFium, что у приложения; BSD-3-Clause и Apache-2.0.
+pypdfium2==5.13.0

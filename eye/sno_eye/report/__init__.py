@@ -299,6 +299,15 @@ def analyse(record: arc.Record, cfg: dict, limits: dict) -> dict:
     # (SNO-ALG-RES-07) и время годного взгляда на экране — из тех же
     # кадров с видами, что доли и минуты.
     result["_labels"] = labels
+    # Шаг 40: карта внимания (SNO-ALG-RES-09) пишет, далеко ли момент
+    # от опоры поправки дрейфа — неявной точки или проверки на краю
+    # изучения.
+    anchors = [p.t for p in pairs]
+    if start is not None:
+        anchors.append(line.study_start)
+    if end is not None:
+        anchors.append(line.study_end)
+    result["_anchors"] = sorted(anchors)
     return result
 
 

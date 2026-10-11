@@ -15,6 +15,10 @@
 * OpenCV (opencv-contrib-python) — Apache-2.0. https://opencv.org/
 * PyAV — BSD-3-Clause; входящий в колесо FFmpeg собран с libx264
   (GPL-2.0-or-later). https://github.com/PyAV-Org/PyAV
+* pypdfium2 — BSD-3-Clause и Apache-2.0; входящий в колесо PDFium —
+  BSD-3-Clause и Apache-2.0 (Google), тот же движок, что у приложения.
+  https://github.com/pypdfium2-team/pypdfium2 — рисует страницу книги
+  на снимке П5 «Сравнения ветвей».
 * NumPy — BSD-3-Clause; psutil — BSD-3-Clause;
   cv2-enumerate-cameras — MIT; matplotlib — PSF-совместимая лицензия
   matplotlib; Pillow — MIT-CMU; fontTools — MIT; contourpy, kiwisolver,

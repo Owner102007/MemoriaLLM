@@ -354,3 +354,48 @@ def robustness(result: dict, path: Path) -> None:
     write(path, ["мера", "название", "сценарий", "что в нём",
                  "II: n_eff", "I: n_eff", "δ (II против I)", "δ: 2,5 %",
                  "δ: 97,5 %", "p", "данных хватает", "вывод по мере"], rows)
+
+
+def moments(entries: list[dict], path: Path) -> None:
+    """`моменты.csv` (шаг 40, SNO-ALG-RES-09): строка на отрезок без
+    действий не короче порога — взятый моментом П5 и отвергнутый, с
+    причиной; у фазы без момента — строка с причиной."""
+    from . import moments as mo
+    rows = []
+    for e in entries:
+        own = _gd(e, "portrait", "moments")
+        if not own:
+            continue
+        lo = own.get("study_start") or 0.0
+        head = [e.get("participant"), e.get("branch"), e.get("in_stats")]
+        taken = own.get("moments") or {}
+        titles = own.get("titles") or {}
+        for c in own.get("candidates") or []:
+            m = taken.get(c["phase"]) if c.get("taken") else None
+            frame = (m or {}).get("frame") or {}
+            sheet = frame.get("sheet") or {}
+            pages = [p.get("page") for p in sheet.get("pages") or []]
+            rows.append(head + [
+                mo.PHASE_WORDS[c["phase"]],
+                "взят — П5" if c.get("taken") else
+                "не взят: " + mo.STATUS_WORDS[c["status"]]
+                if c["status"] != mo.OK else "не взят: есть дольше",
+                (c["a"] - lo) / 1000, c["length_ms"] / 1000,
+                c["looked_ms"] / 1000, c["share"], c["fix_count"],
+                None if m is None else m.get("screen"),
+                None if m is None else titles.get(frame.get("book") or ""),
+                None if not pages else pages,
+                None if m is None else m.get("accuracy_deg"),
+                None if m is None else m.get("sigma_deg"),
+                None if m is None else m.get("hover_share"),
+                None if m is None else m.get("anchor_s")])
+        for phase, reason in (own.get("reasons") or {}).items():
+            if taken.get(phase) is None:
+                rows.append(head + [mo.PHASE_WORDS[phase],
+                                    f"момента нет: {reason}"]
+                            + [None] * 12)
+    write(path, ["код участника", "ветвь", "участник в статистике",
+                 "фаза", "итог", "от начала изучения, с", "длина, с",
+                 "смотрел, с", "доля смотрения", "фиксаций", "экран",
+                 "книга", "страница", "точность, °", "σ пятна, °",
+                 "мышь двигалась, доля", "до опоры дрейфа, с"], rows)

@@ -828,7 +828,21 @@ jobs:
       # наборе есть поток взгляда и кадры раскладки — меры
       # беспорядочности, средний взгляд и научение (Р6–Р12), ссылки на
       # файлы отчёта (BUG-68). Шаг 38: энтропия по ходу сессии (Р16),
-      # ленты участников (Р17) и портрет каждого участника.
+      # ленты участников (Р17) и портрет каждого участника. Шаг 40:
+      # моменты долгого взгляда без действий (`моменты.csv`, П5) и
+      # pypdfium2 — страница книги на снимке — из папки сборки.
+      - name: pypdfium2 встраиваемым Python (шаг 40)
+        shell: pwsh
+        run: |
+          $eye = (Resolve-Path build/eye).Path
+          Push-Location $eye
+          & (Join-Path $eye 'python.exe') -I -c "import pypdfium2 as p; d = p.PdfDocument.new(); d.new_page(200, 300); a = d[0].render(scale=1, rev_byteorder=True).to_numpy(); print('pypdfium2', p.version.PYPDFIUM_INFO, 'PDFium', p.version.PDFIUM_INFO, a.shape); assert a.shape[:2] == (300, 200)"
+          $code = $LASTEXITCODE
+          Pop-Location
+          if ($code -ne 0) {
+            Write-Output "::error title=SNO-ALG-RES-09::pypdfium2 не рисует страницу во встраиваемом Python"
+            exit 1
+          }
       - name: Сравнение ветвей встраиваемым Python
         shell: pwsh
         env:
@@ -854,6 +868,7 @@ jobs:
           }
           $need = @('index.html', 'участники.csv', 'походы.csv', 'ответы_теста.csv',
                     'сравнение.csv', 'устойчивость.csv', 'исходные.json',
+                    'моменты.csv',
                     'рисунки/Р1_состав.png', 'рисунки/Р4_нагрузка.svg',
                     'рисунки/Р6_беспорядочность.png', 'рисунки/Р7_переходы.png',
                     'рисунки/Р8_доли_времени.png', 'рисунки/Р9_по_минутам.png',

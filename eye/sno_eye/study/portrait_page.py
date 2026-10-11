@@ -34,7 +34,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 
 from ..report.html import STYLE as BASE_STYLE  # noqa: E402
-from . import charts, dwell, honesty, portrait, table  # noqa: E402
+from . import charts, dwell, honesty, moments, portrait, screen_shot  # noqa
+from . import table  # noqa: E402
 from .charts import (AXIS, BRANCH, GRID, GROUP_COLOURS, INK, INK_2,  # noqa
                      MUTED, SEQUENTIAL, SURFACE)
 
@@ -444,6 +445,67 @@ def _p4_journal(e: dict, look: dict, nav: dict, folder: Path) -> str:
     return _save(fig, folder, "П4_чтение_назад")
 
 
+# --- П5. Момент долгого взгляда без действий ---------------------------------
+
+P5_NAMES = {moments.READING: "П5_чтение", moments.SEARCH: "П5_поиск"}
+
+
+def figure_p5(e: dict, data: dict, folder: Path, library) -> dict:
+    """П5 — по рисунку на момент чтения и поиска (SNO-ALG-RES-09).
+    Ответ — `{"П5_чтение": (имя PNG, почему страницы нет), …}`."""
+    own = data.get("moments") or {}
+    out = {}
+    titles = own.get("titles") or {}
+    categories = own.get("categories") or {}
+    for phase in moments.PHASES:
+        moment = (own.get("moments") or {}).get(phase)
+        if moment is None:
+            continue
+        out[P5_NAMES[phase]] = screen_shot.figure(
+            moment, moments.PHASE_WORDS[phase], titles, categories,
+            library, folder, P5_NAMES[phase])
+    return out
+
+
+def _p5_block(data: dict, figures: dict, folder: Path, sub: str) -> str:
+    """Раздел П5 страницы: два момента или почему момента нет."""
+    own = data.get("moments") or {}
+    parts = ["<h2>П5. Внимание в момент долгого взгляда без действий</h2>",
+             "<p>Отрезок, где участник дольше всего <b>смотрел</b> на "
+             "экран и ничего не делал: ни нажатий, ни прокрутки, ни "
+             "клавиш, а раскладка стояла. Экран восстановлен по кадру "
+             "раскладки, страница — из архива литературы. Пятно — доля "
+             "времени взгляда; ширина пятна — точность в этот миг вместе "
+             "с фовеа (1°). Сами картинки не сравниваются: у каждого "
+             "свой экран.</p>"]
+    for phase in moments.PHASES:
+        moment = (own.get("moments") or {}).get(phase)
+        words = moments.PHASE_WORDS[phase]
+        if moment is None:
+            reason = (own.get("reasons") or {}).get(phase) or \
+                "момента нет"
+            parts.append(f"<p class='later'>{_e(words.capitalize())}: "
+                         f"{_e(reason)}.</p>")
+            continue
+        name, why = figures.get(P5_NAMES[phase]) or (None, None)
+        parts.append(_img(folder, name, f"П5. {words.capitalize()}", sub))
+        notes = []
+        if why:
+            notes.append(f"страница на снимке не нарисована: {why}")
+        if moment.get("stare_longer") is not None:
+            notes.append(
+                f"был отрезок длиннее ({_num(moment['stare_longer'] / 1000, 1)}"
+                " с смотрения), но взгляд в нём стоял — фиксаций меньше "
+                "порога: возможно, задумался; он не взят")
+        if moment.get("anchor_s") is not None and moment["anchor_s"] > 120:
+            notes.append("до ближайшей опоры поправки дрейфа больше двух "
+                         "минут — место пятна здесь наименее надёжно")
+        if notes:
+            parts.append("<ul>" + "".join(f"<li>{_e(n)}</li>" for n in notes)
+                         + "</ul>")
+    return "".join(parts)
+
+
 # --- таблицы участника -------------------------------------------------------
 
 def _csv_windows(data: dict, path: Path) -> None:
@@ -529,6 +591,9 @@ NUMBER_ROWS = (
     ("portrait.page_backs_per_min", "Возвраты на страницу назад, в минуту "
      "чтения"),
     ("portrait.misflips", "Промахов листания"),
+    ("portrait.search_still_s", "Самый долгий взгляд без действий в поиске, "
+     "с"),
+    ("portrait.search_still_share", "Доля поиска во взглядах без действий"),
 )
 
 
@@ -582,6 +647,8 @@ def page(e: dict, data: dict | None, numbers: dict, figures: dict,
     body.append(_img(folder, figures.get("П4"),
                      "П4. Взгляд назад при чтении и возвраты на страницу",
                      sub))
+    if data is not None:
+        body.append(_p5_block(data, figures, folder, sub))
     rows = "".join(
         f"<tr><td>{_e(words)}</td><td class='num'>{_num(numbers.get(key))}"
         "</td></tr>" for key, words in NUMBER_ROWS
@@ -638,6 +705,8 @@ def write_all(run: dict, folder: Path) -> list[dict]:
             _csv_windows(data, own / "окна_энтропии.csv")
             _csv_dwell(data, own / "заходы.csv")
         figures["П4"] = figure_p4(e, data or {}, own)
+        if data is not None:
+            figures.update(figure_p5(e, data, own, run.get("_library")))
         _csv_back(e, data or {}, own / "взгляд_назад.csv")
         numbers = portrait.numbers(e)
         text = page(e, data, numbers, figures, sub, own, cfg)

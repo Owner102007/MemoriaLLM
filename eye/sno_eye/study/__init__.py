@@ -15,8 +15,11 @@
   средний взгляд ветви, научение, портреты участников, сводка «I
   против II», держится ли вывод при другом отборе, «Как читать»;
 * `Портреты\\<код>.html` — портрет каждого участника (лента сессии,
-  переходы, возвраты, взгляд назад при чтении) и `Портреты\\<код>\\` —
+  переходы, возвраты, взгляд назад при чтении, внимание в момент
+  долгого взгляда без действий — П5, шаг 40) и `Портреты\\<код>\\` —
   его рисунки и таблицы;
+* `моменты.csv` — моменты долгого взгляда без действий: взятые и
+  отвергнутые, с причиной;
 * `участники.csv`, `походы.csv`, `ответы_теста.csv`, `сравнение.csv`,
   `устойчивость.csv` — для Excel;
 * `рисунки\\*.png`, `*.svg` — для статьи;
@@ -54,13 +57,19 @@
 |              |     | зонами, ожидание без памяти, лента |                    |
 | `reading_    | 7а  | взгляд назад при чтении, возвраты  | —                  |
 | back.py`     |     | на страницу назад по журналу       |                    |
+| `moments.py` | 7б  | момент долгого взгляда без         | bisect             |
+|              |     | действий: разрезы, «смотрел»,      |                    |
+|              |     | два момента, два числа (шаг 40)    |                    |
 | `table.py`   | 8   | таблицы CSV                        | csv                |
 | `stats.py`,  | 9   | δ Клиффа по слоям, бутстреп,       | numpy              |
 | `compare.py` |     | перестановки, Холм, сценарии;      |                    |
 |              |     | кластеры по ходу сессии            |                    |
 | `charts.py`  | 10  | рисунки Р1–Р14, Р16, Р17           | matplotlib (Agg)   |
-| `portrait_   | 10а | страница портрета, рисунки П1–П4,  | matplotlib, html,  |
+| `portrait_   | 10а | страница портрета, рисунки П1–П5,  | matplotlib, html,  |
 | page.py`     |     | таблицы участника                  | base64, csv        |
+| `screen_     | 10б | снимок экрана момента: зоны кадра, | pypdfium2, numpy,  |
+| shot.py`     |     | страница из архива литературы,     | matplotlib         |
+|              |     | пятно и путь фиксаций (П5)         |                    |
 | `page.py`    | 11  | отчёт `index.html`                 | html, base64       |
 
 Скрипт не пересчитывает того, что уже считается: годность архива —
@@ -76,7 +85,13 @@
 
 Встроенный Python спутника: numpy и matplotlib пришли в папку `eye/`
 зависимостями MediaPipe (`eye/requirements.lock`) — ставить ничего не
-нужно. pandas и scipy нет и не нужно.
+нужно. pandas и scipy нет и не нужно. pypdfium2 — страница книги на
+снимке П5 — внесён в замок намеренно (шаг 40, решение владельца АЛ1
+(а)); без него снимок рисуется схемой зон.
+
+Страница книги на снимке берётся из архива литературы: его кладут
+рядом с архивами записей (или называют ключом `--literature`); книга
+находится по отпечатку файла, как в приложении.
 """
 
 from __future__ import annotations
@@ -95,8 +110,9 @@ from ..report import settings as report_settings
 # Версия скрипта сравнения — в `исходные.json`: по ней видно, каким
 # кодом считали. Шаг 36 — часть 1, шаг 37 — меры взгляда, шаг 38 —
 # портрет участника, шаг 39 — сглаживание и пропуск по доле в фиксациях
-# (BUG-70), поправка ширины экрана.
-SCRIPT_VERSION = "39.0"
+# (BUG-70), поправка ширины экрана; шаг 40 — момент долгого взгляда без
+# действий (П5).
+SCRIPT_VERSION = "40.0"
 
 OUT_FOLDER = "Сравнение ветвей СНО2026"
 
@@ -278,6 +294,7 @@ def analyse(paths: list[str], *, series: str | None = None,
     result["warnings"] = (compare.warnings(entries, result, no_filter)
                           + pc_notes)
     return {"entries": entries, "result": result, "cfg": cfg,
+            "paths": [str(p) for p in paths],
             "limits": limits, "fingerprint": print_, "series": series,
             "no_filter": no_filter, "archives": [str(a) for a in archives],
             "gaze_version": report_cfg["version"]}
@@ -294,7 +311,8 @@ def sources(run: dict) -> dict:
         "step": "шаг 36 — отбор, тест нагрузки, действия; шаг 37 — "
                 "беспорядочность, средний взгляд, научение; шаг 38 — "
                 "портрет участника; шаг 39 — сглаживание и пропуск по "
-                "доле в фиксациях (BUG-70), ширина экрана",
+                "доле в фиксациях (BUG-70), ширина экрана; шаг 40 — "
+                "момент долгого взгляда без действий (П5)",
         "series": run["series"], "no_filter": run["no_filter"],
         "gaze_version": run["gaze_version"],
         "fingerprint": run["fingerprint"],
@@ -374,18 +392,25 @@ FILES = (
     ("сравнение.csv", "строка на меру: средние ветвей, δ, интервал, p, p "
      "по Холму, вывод"),
     ("устойчивость.csv", "главные меры в шести сценариях отбора"),
+    ("моменты.csv", "строка на момент долгого взгляда без действий: "
+     "взятые и отвергнутые, с причиной (П5)"),
     ("исходные.json", "что разобрано и чем: архивы с SHA-256, пороги, "
      "версии, зёрна"),
 )
 
 
-def write(run: dict, folder: Path, portraits: bool = True) -> list[Path]:
+def write(run: dict, folder: Path, portraits: bool = True,
+          literature: list[str] | None = None) -> list[Path]:
     """Кладёт отчёт, таблицы, рисунки, портреты участников и исходные в
     [folder]; [portraits] False — без страниц портретов (ключ
-    `--no-portraits`)."""
-    from . import charts, page, portrait_page, table
+    `--no-portraits`). Книги для снимков П5 ищутся в [literature] и среди
+    папок прогона (шаг 40)."""
+    from . import charts, page, portrait_page, screen_shot, table
     folder.mkdir(parents=True, exist_ok=True)
     entries, result = run["entries"], run["result"]
+    run["_library"] = screen_shot.Library(
+        list(literature or []) + list(run.get("paths") or []))
+    table.moments(entries, folder / "моменты.csv")
     table.participants(entries, folder / "участники.csv")
     table.trips(entries, folder / "походы.csv")
     table.answers(entries, folder / "ответы_теста.csv")
@@ -486,7 +511,8 @@ def open_folder(folder: Path) -> bool:
 def main(paths: list[str], *, series: str | None = None,
          no_filter: bool = False, out: str | None = None,
          as_json: bool = False, version: str | None = None,
-         open_folder: bool = False, portraits: bool = True) -> int:
+         open_folder: bool = False, portraits: bool = True,
+         literature: list[str] | None = None) -> int:
     """Вход `python -I -m sno_eye study`. Код выхода: 0 — отчёт готов,
     3 — сравнивать нечего, 4 — отчёт не записался."""
     _matplotlib_cache()
@@ -510,7 +536,7 @@ def main(paths: list[str], *, series: str | None = None,
                   progress=progress, version=version)
     folder = out_folder(out, no_filter)
     try:
-        write(run, folder, portraits=portraits)
+        write(run, folder, portraits=portraits, literature=literature)
     except OSError as e:
         print(f"Отчёт записать не удалось: {e}")
         return 4

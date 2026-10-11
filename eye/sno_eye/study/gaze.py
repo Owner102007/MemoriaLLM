@@ -17,7 +17,8 @@
 (`study.collect.gaze`), по шуму — `study.disorder.gate`.
 Вход → выход: запись, её ход и походы → `gaze_data` записи: доли,
 минуты, сырьё мер беспорядочности, схема полки, тепловая карта; с шага
-38 — портрет участника (`study.portrait.prepare`).
+38 — портрет участника (`study.portrait.prepare`), с шага 40 — момент
+dолгого взгляда без действий (`study.moments.prepare`).
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import hashlib
 
 from .. import report
 from ..report.measures import FALLBACK_DEG
-from . import disorder, portrait, stats
+from . import disorder, moments, portrait, stats
 from .actions import SEARCH_SCREENS, Trip
 
 # Фиксации «вне категорий» в матрице переходов поиска.
@@ -67,6 +68,10 @@ def read(record, trips: list[Trip], cfg: dict, report_cfg: dict,
     done = data["disorder"].pop("_done")
     data["portrait"] = portrait.prepare(fixes, done, res, record, line,
                                         screen, cfg, report_cfg, sha)
+    # Шаг 40: момент долгого взгляда без действий (SNO-ALG-RES-09) —
+    # на фиксациях «Разбора записи», порогом сессии.
+    data["portrait"]["moments"] = moments.prepare(res, record, cfg,
+                                                  report_cfg)
     # Клетка сетки меньше двух запасов точности сессии — пометка
     # (SNO-ALG-RES-03, «Зоны для переходов»): взгляд у границы клетки
     # уходит в соседнюю от одного шума.

@@ -68,6 +68,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="study: открыть папку отчёта в Проводнике")
     ap.add_argument("--no-portraits", action="store_true",
                     help="study: без страниц портретов участников")
+    ap.add_argument("--literature", action="append", default=[],
+                    help="study: архив литературы или папка с книгами для "
+                         "снимков П5 (можно несколько раз); без него "
+                         "книги ищутся среди названных папок")
     ap.add_argument("--no-files", action="store_true",
                     help="report: только итог, без папки разбора")
     ap.add_argument("--csv", help="check: куда положить сводную таблицу")
@@ -128,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
                      no_filter=args.no_filter, out=args.out,
                      as_json=args.json, version=args.gaze_version,
                      open_folder=args.open,
-                     portraits=not args.no_portraits)
+                     portraits=not args.no_portraits,
+                     literature=args.literature)
 
     from .runtime import Runtime, SingleInstance
 

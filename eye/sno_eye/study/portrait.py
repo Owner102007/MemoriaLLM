@@ -70,6 +70,12 @@ DEFAULTS = {
     "front_window": 10,
     "column_jump_share": 0.25,
     "misflip_s": 2.0,
+    # Шаг 40, момент долгого взгляда без действий (SNO-ALG-RES-09):
+    # доля отрезка, где годный взгляд на экране, не меньше; фиксаций в
+    # нём не меньше; отрезок не короче, секунд.
+    "look_share": 0.8,
+    "moment_min_fix": 3,
+    "moment_min_s": 5,
 }
 
 SESSION = "session"
@@ -332,6 +338,11 @@ def finish(entries: list[dict], cfg: dict, *, no_filter: bool) -> None:
         data = (e.get("gaze_data") or {}).get("portrait")
         if not data:
             continue
+        # Шаг 40 (SNO-ALG-RES-09): самый долгий взгляд без действий в
+        # поиске и доля поиска в таких отрезках — у всех со взглядом,
+        # на фиксациях порогом сессии: шум их не дробит в ноль.
+        still = (data.get("moments") or {}).get("numbers") or {}
+        own.update(still)
         look = data.get("lookback") or {}
         if not look.get("reason"):
             own["portrait.lookbacks_per_min"] = look.get("per_min")
