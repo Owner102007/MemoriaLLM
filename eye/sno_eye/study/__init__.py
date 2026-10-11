@@ -31,6 +31,9 @@
 |--------------|-----|------------------------------------|--------------------|
 | `collect.py` | 1   | обход папок, годность («Проверка   | pathlib, zipfile,  |
 |              |     | записи»), паспорт, эталон, повторы | json, hashlib      |
+| `screen_fix  | 1   | ширина экрана, названная файлом    | re, math           |
+| .py`         |     | организатора (АМ2): углы записи в  |                    |
+|              |     | верной шкале                       |                    |
 | `clt.py`     | 2   | ответы теста, шкалы, сверка с      | json, statistics   |
 |              |     | приложением                        |                    |
 | `honesty.py` | 3   | цвет искренности и вес             | —                  |
@@ -39,6 +42,9 @@
 | `actions.py` | 5   | походы за книгой, меры действий    | statistics         |
 | `disorder.py`| 6   | беспорядочность: фиксации общим    | numpy              |
 |              |     | порогом, энтропии, K, путь, NNI    |                    |
+| `noise.py`   | 6   | медиана трёх кадров, доля времени  | —                  |
+|              |     | в фиксациях, шум от кадра к кадру  |                    |
+|              |     | (BUG-70)                           |                    |
 | `average.py` | 7   | средний взгляд ветви, матрицы,     | numpy              |
 |              |     | тепловая карта, научение; кривые   |                    |
 |              |     | энтропии по ходу (Р16), ленты      |                    |
@@ -88,8 +94,9 @@ from ..report import settings as report_settings
 
 # Версия скрипта сравнения — в `исходные.json`: по ней видно, каким
 # кодом считали. Шаг 36 — часть 1, шаг 37 — меры взгляда, шаг 38 —
-# портрет участника.
-SCRIPT_VERSION = "38.0"
+# портрет участника, шаг 39 — сглаживание и пропуск по доле в фиксациях
+# (BUG-70), поправка ширины экрана.
+SCRIPT_VERSION = "39.0"
 
 OUT_FOLDER = "Сравнение ветвей СНО2026"
 
@@ -116,6 +123,14 @@ DEFAULTS = {
     "alpha": 0.05,
     # АК12: общий порог фиксаций для мер беспорядочности, градусы.
     "idt_deg": 4.5,
+    # BUG-70 (АМ1 (а)): перед фиксациями мер беспорядочности и портрета
+    # — медиана стольких кадров; при частоте ниже — без сглаживания.
+    "smooth_frames": 3,
+    "smooth_min_fps": 25,
+    # BUG-70: доля времени изучения на экране в фиксациях ниже —
+    # фиксации дробятся шумом, сессия в меры беспорядочности не идёт
+    # (лесенка шума, `tests/noise_ladder.py`).
+    "min_fix_share": 0.85,
     # Сетка окна для энтропии поиска: столбцов × строк.
     "grid": [4, 3],
     # Пол числа переходов: поиск, чтение, всё изучение.
@@ -215,7 +230,7 @@ def analyse(paths: list[str], *, series: str | None = None,
             version: str | None = None) -> dict:
     """Весь сводный анализ без записи файлов: записи, отбор, меры
     взгляда, сравнение, средние ветвей."""
-    from . import average, collect, compare, disorder, portrait
+    from . import average, collect, compare, disorder, portrait, screen_fix
     cfg = cfg or settings()
     limits = limits or rc.thresholds()
     # Версия взгляда для мер — та же, что у «Разбора записи»
@@ -224,12 +239,19 @@ def analyse(paths: list[str], *, series: str | None = None,
     if version in ("raw", "drift"):
         report_cfg["version"] = version
     archives = collect.find(paths)
+    # Шаг 39 (АМ2): ширина экрана, названная организатором файлом
+    # `ширина экрана.txt` рядом с архивами.
+    widths, width_notes = screen_fix.read(paths)
     entries = []
     for i, path in enumerate(archives, start=1):
         if progress:
             progress(i, len(archives), path)
-        entries.append(collect.load(path, limits, cfg, report_cfg))
-    pc_notes = collect.name_strata(entries)
+        entries.append(collect.load(path, limits, cfg, report_cfg, widths))
+    pc_notes = collect.name_strata(entries) + width_notes
+    for e in entries:
+        if e.get("screen_fix"):
+            pc_notes.append(f"{e.get('participant') or e['archive']}: "
+                            + screen_fix.note(e["screen_fix"]))
     collect.mark_repeats(entries)
     compare.unify_scenarios(entries)
     compare.admit(entries, cfg, no_filter, series)
@@ -271,7 +293,8 @@ def sources(run: dict) -> dict:
         "script": SCRIPT_VERSION,
         "step": "шаг 36 — отбор, тест нагрузки, действия; шаг 37 — "
                 "беспорядочность, средний взгляд, научение; шаг 38 — "
-                "портрет участника",
+                "портрет участника; шаг 39 — сглаживание и пропуск по "
+                "доле в фиксациях (BUG-70), ширина экрана",
         "series": run["series"], "no_filter": run["no_filter"],
         "gaze_version": run["gaze_version"],
         "fingerprint": run["fingerprint"],
@@ -281,7 +304,11 @@ def sources(run: dict) -> dict:
                                        "clt.ecl"),
         "archives": [{"archive": e["archive"], "path": e["path"],
                       "sha256": e.get("sha256"), "status": e["status"],
-                      "reason": e.get("reason")} for e in run["entries"]],
+                      "reason": e.get("reason"),
+                      # Шаг 39 (АМ2): ширина экрана, исправленная файлом
+                      # организатора, — по ней прогон повторяется.
+                      "screen_fix": e.get("screen_fix")}
+                     for e in run["entries"]],
         "thresholds": {"study": run["cfg"], "record_check": run["limits"],
                        "report": report_settings()},
         # Меры беспорядочности (SNO-ALG-RES-03): число переходов
@@ -400,6 +427,9 @@ def summary(run: dict) -> dict:
             "out": e.get("out"), "etalon": e.get("etalon"),
             "gaze_included": (e.get("gaze") or {}).get("included"),
             "disorder_gate": e.get("disorder_gate"),
+            "fix_share": ((e.get("gaze_data") or {}).get("disorder")
+                          or {}).get("fix_share"),
+            "screen_fix": e.get("screen_fix"),
             "search_mode": e.get("search_mode"),
         } for e in entries],
         "primary": rows,

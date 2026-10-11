@@ -27,7 +27,7 @@ from pathlib import Path
 from .. import record_check as rc
 from ..report import archive as arc
 from ..report import timeline as tl
-from . import actions, clt, reading_back
+from . import actions, clt, reading_back, screen_fix
 from . import gaze as gaze_part
 
 # Эталон словами (SNO-ALG-RES-01, шаг 7).
@@ -234,13 +234,16 @@ def gaze(record: arc.Record, limits: dict) -> dict:
 
 
 def load(path: Path, limits: dict, cfg: dict,
-         report_cfg: dict | None = None) -> dict:
+         report_cfg: dict | None = None,
+         widths: dict[str, float] | None = None) -> dict:
     """Одна запись: всё, что нужно сравнению, без самого архива.
 
     Негодный архив не роняет прогон: он назван с причиной
     (`status: bad`). Взгляд записи (шаг 37) разбирает «Разбор записи»
     версией [report_cfg]; упал разбор взгляда — тест и действия у
-    записи остаются, причина названа."""
+    записи остаются, причина названа. [widths] — ширина экрана,
+    названная организатором (`screen_fix.read`, АМ2): запись с другой
+    шириной в «Месте записи» читается в верной шкале."""
     entry: dict = {"archive": path.name, "path": str(path),
                    "sha256": None, "status": "ok", "reason": None}
     try:
@@ -256,12 +259,22 @@ def load(path: Path, limits: dict, cfg: dict,
     except Exception as e:  # noqa: BLE001 — одна запись не роняет пачку
         entry.update(status="bad", reason=f"разбор архива упал: {e!r}")
         return entry
+    # Шаг 39 (АМ2): ширина экрана из файла организатора — до всего,
+    # что читает градусы и миллиметры записи.
+    fix = None
+    width = screen_fix.width_for(widths or {}, record.check.get(
+        "participant"), path.name)
+    if width is not None:
+        fix = screen_fix.apply(record, width)
     try:
         with zipfile.ZipFile(path) as archive:
             files = clt.load_files(archive, archive.namelist())
         line = tl.build(record)
         info = passport(record)
+        if fix is not None:
+            info["check_notes"].append(screen_fix.note(fix))
         entry.update(info)
+        entry["screen_fix"] = fix
         entry["study_s"] = actions.study_ms(record, line) / 1000
         entry["etalon"], entry["etalon_reasons"] = etalon(record)
         entry["gaze"] = gaze(record, limits)

@@ -100,6 +100,15 @@ def _gd(e: dict, *path):
 def _transitions(e: dict, phase: str):
     return (e.get("gaze_measures") or {}).get(f"{phase}.transitions")
 
+
+def _width_fix(e: dict):
+    """Шаг 39 (АМ2): ширина экрана, исправленная файлом организатора."""
+    fix = e.get("screen_fix")
+    if not fix:
+        return None
+    return " → ".join(f"{round(v, 1):g}".replace(".", ",")
+                      for v in (fix["from_mm"], fix["to_mm"]))
+
 PARTICIPANT_COLUMNS = [
     ("код участника", lambda e: e.get("participant")),
     ("архив", lambda e: e.get("archive")),
@@ -130,6 +139,7 @@ PARTICIPANT_COLUMNS = [
     ("средняя точность, °", lambda e: (e.get("gaze") or {}).get("mean_deg")),
     ("прецизионность, °", lambda e: (e.get("gaze") or {})
      .get("precision_deg")),
+    ("ширина экрана исправлена, мм", _width_fix),
     ("взгляд в анализе", lambda e: (e.get("gaze") or {}).get("included")),
     ("почему взгляд не в анализе", lambda e: (e.get("gaze") or {})
      .get("reason")),
@@ -173,6 +183,17 @@ PARTICIPANT_COLUMNS = [
     ("версия взгляда", lambda e: _gd(e, "version")),
     ("порог фиксаций сессии, °", lambda e: _gd(e, "idt_session_deg")),
     ("общий порог фиксаций, °", lambda e: _gd(e, "disorder", "idt_deg")),
+    # BUG-70 (шаг 39): сглаживание перед фиксациями мер беспорядочности,
+    # доля времени в фиксациях — по ней пропуск, шум от кадра к кадру.
+    ("кадров в медиане перед фиксациями",
+     lambda e: _gd(e, "disorder", "smooth_frames")),
+    ("кадров в секунду", lambda e: _gd(e, "disorder", "fps")),
+    ("доля времени на экране в фиксациях",
+     lambda e: _gd(e, "disorder", "fix_share")),
+    ("шум от кадра к кадру, ° (как записано)",
+     lambda e: _gd(e, "disorder", "s2s_raw_deg")),
+    ("шум от кадра к кадру после сглаживания, °",
+     lambda e: _gd(e, "disorder", "s2s_deg")),
     ("меры беспорядочности — почему нет",
      lambda e: None if e.get("disorder_live") else e.get("disorder_gate")),
     ("переходов в поиске", lambda e: _transitions(e, "search")),

@@ -1,7 +1,8 @@
 """Шаг 37, SNO-ALG-RES-03: меры беспорядочности взгляда на придуманных
 числах — энтропия, подвыборка и случайный уровень, `k` по S0 с полом,
 коэффициент K, ряды переходов и фазы, путь и прямота по содержимому,
-возвраты, кучность (NNI), отбор по шуму.
+возвраты, кучность (NNI), отбор по шуму (с шага 39 — по доле времени в
+фиксациях, BUG-70).
 """
 
 from __future__ import annotations
@@ -88,7 +89,7 @@ def _phase(trans, pairs=()):
 
 
 def fake(code, search, *, colour="green", precision=0.5, pairs=None,
-         branch="I", reading=250):
+         branch="I", reading=250, share=0.95):
     rng = random.Random(code)
     trans = [(rng.randrange(13), rng.randrange(13)) for _ in range(search)]
     read = [(rng.randrange(9), rng.randrange(9)) for _ in range(reading)]
@@ -106,7 +107,7 @@ def fake(code, search, *, colour="green", precision=0.5, pairs=None,
             "precision_deg": precision, "layout": True,
             "shares": {"page": 0.5, "shelf": 0.2, "no_frames": 0.3},
             "disorder": {
-                "idt_deg": 4.5, "cell_deg": [7.6, 6.3],
+                "idt_deg": 4.5, "cell_deg": [7.6, 6.3], "fix_share": share,
                 "phases": {"search": _phase(trans, pairs),
                            "reading": _phase(read, pairs),
                            "all": _phase(every, pairs)},
@@ -166,11 +167,16 @@ def test_sno_alg_res_03_k_coefficient_with_known_z():
 
 
 def test_sno_alg_res_03_noisy_session_leaves_only_m1_to_m7():
-    noisy = fake("n", 120, precision=2.0)
-    clean = fake("a", 120)
+    # BUG-70: шумная сессия — та, у которой фиксации дробятся (доля
+    # времени в фиксациях ниже порога), а не та, у которой большая
+    # прецизионность калибровки.
+    noisy = fake("n", 120, precision=2.0, share=0.6)
+    clean = fake("a", 120, precision=2.2)
     disorder.finish([clean, noisy], cfg(), fingerprint="f",
                     no_filter=False, series=None)
-    assert "три прецизионности 6,0°" in noisy["disorder_gate"]
+    assert clean["disorder_gate"] is None and clean["disorder_live"]
+    assert noisy["disorder_gate"] == \
+        "фиксации дробятся: в фиксациях 60 % времени, нужно 85 %"
     assert not noisy.get("disorder_live")
     assert not any(k.startswith(("search.", "reading.", "all."))
                    for k in noisy["gaze_measures"])
@@ -178,15 +184,15 @@ def test_sno_alg_res_03_noisy_session_leaves_only_m1_to_m7():
     assert noisy["gaze_measures"]["share.reading"] == 0.5
     # Проверочный прогон отбора по шуму не делает — сессия помечена,
     # но меры получает.
-    again = fake("n", 120, precision=2.0)
+    again = fake("n", 120, precision=2.0, share=0.6)
     disorder.finish([fake("a", 120), again], cfg(), fingerprint="f",
                     no_filter=True, series=None)
     assert again["disorder_gate"] and again["disorder_live"]
     assert "search.H_t" in again["gaze_measures"]
-    unknown = fake("u", 120, precision=None)
+    unknown = fake("u", 120, share=None)
     disorder.finish([unknown], cfg(), fingerprint="f", no_filter=False,
                     series=None)
-    assert "неизвестна" in unknown["disorder_gate"]
+    assert "доли в фиксациях нет" in unknown["disorder_gate"]
 
 
 # --- ряды переходов ----------------------------------------------------------

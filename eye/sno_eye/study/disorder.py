@@ -36,8 +36,22 @@
 
 **Один порог фиксаций на всё исследование** (`study.idt_deg`, АК12):
 порог «Разбора записи» у каждой сессии свой (три прецизионности), и
-число и длина фиксаций мерили бы камеру. Сессия, у которой три
-прецизионности больше общего порога, в меры М1–М7 не идёт.
+число и длина фиксаций мерили бы камеру.
+
+**Сглаживание и пропуск по доле в фиксациях** (BUG-70, шаг 39; решение
+владельца АМ1 (а) от 11.10.2026; `study.noise`): перед фиксациями — у
+всех записей одинаково медиана `study.smooth_frames` кадров по каждой
+оси (при частоте ниже `study.smooth_min_fps` — без неё). Сессия идёт в
+меры М1–М7 и в портрет, если на сглаженных данных в фиксациях не
+меньше `study.min_fix_share` времени взгляда на экране. Прежний пропуск
+— три прецизионности калибровки не больше общего порога — на веб-камерах
+10–11.10.2026 (прецизионность 1,3–2,5°) не пускал четыре записи из
+пяти. Порог доли — с лесенки шума (`tests/noise_ladder.py`):
+синтетический поиск по клеткам 4 × 3 с белым шумом от 0 до 3° по оси;
+выше 0,85 энтропия поиска уходит от бесшумной не больше чем на 0,05 на
+шкале «доля случайного уровня» (последняя доля с уходом больше — 0,835,
+у упорядоченного поиска), без сглаживания тот же уход наступал при шуме
+вдвое меньшем.
 """
 
 from __future__ import annotations
@@ -52,7 +66,7 @@ from .. import layout
 from ..report import idt
 from ..report.measures import MINUTE_GROUPS
 from ..report.zones import bucket_of
-from . import stats
+from . import noise, stats
 from .actions import SEARCH_SCREENS, Trip, _overlap, _screen_time
 
 SEARCH = "search"
@@ -284,11 +298,19 @@ def prepare(samples: list, spans: list, frames: list[dict], screen,
     outside_px = screen.px_for_deg(float(report_cfg["outside_deg"]))
     gap_ms = float(cfg["transition_gap_ms"])
     frame_times = [float(f["t"]) for f in frames]
-    fixes_raw = idt.fixations(samples, screen.px_for_deg(idt_deg), spans,
-                              report_cfg, frame_times)
     lo = line.study_start
     hi = line.study_end if line.window_changed is None else \
         min(line.study_end, line.window_changed)
+    # BUG-70 (АМ1 (а)): перед фиксациями — медиана трёх кадров, у всех
+    # записей одинаково; пропуск сессии — по доле времени в фиксациях
+    # на её же данных, а не по прецизионности калибровки (`gate`).
+    smoothed, used, fps = noise.smooth(
+        samples, int(cfg["smooth_frames"]), float(cfg["smooth_min_fps"]))
+    fixes_raw = idt.fixations(smoothed, screen.px_for_deg(idt_deg), spans,
+                              report_cfg, frame_times)
+    quiet = noise.fix_share(smoothed, fixes_raw, lo, hi, spans,
+                            line.away_at, float(report_cfg["sample_cap_ms"]),
+                            screen, outside_px)
     at = Frames(frames)
     # Выбор наш: поиск — только доведённые походы, и во все меры фазы
     # поиска (М1–М7) идут одни и те же фиксации: недоведённый последний
@@ -330,6 +352,9 @@ def prepare(samples: list, spans: list, frames: list[dict], screen,
              ALL: ALL_ZONES}
     key = {SEARCH: "cell", READING: "rzone", ALL: "group"}
     out: dict = {"idt_deg": idt_deg, "grid": list(grid),
+                 "smooth_frames": used, "fps": fps, "fix_share": quiet,
+                 "s2s_raw_deg": noise.s2s_deg(samples, fixes_raw, screen),
+                 "s2s_deg": noise.s2s_deg(smoothed, fixes_raw, screen),
                  "cell_deg": [screen.deg_for_px(screen.w / grid[0]),
                               screen.deg_for_px(screen.h / grid[1])],
                  "phases": {}}
@@ -630,20 +655,31 @@ def shares(soft: dict) -> dict:
             "share.off": groups["off"]}
 
 
+def _percent(share: float) -> str:
+    return f"{share * 100:.0f} %"
+
+
 def gate(e: dict, cfg: dict) -> str | None:
-    """Почему сессия не идёт в М1–М7: шум дробил бы фиксации."""
+    """Почему сессия не идёт в М1–М7 и в портрет: шум дробит фиксации.
+
+    BUG-70 (АМ1 (а)): решает доля времени изучения в фиксациях на
+    сглаженных данных самой сессии (`study.min_fix_share`), а не
+    прецизионность калибровки — она меряет разброс за полторы секунды
+    точки вместе с медленным дрейфом и о дроблении фиксаций говорит
+    плохо: у веб-камер 10–11.10.2026 при прецизионности 1,3–2,5° в
+    фиксациях было 84–99 % времени."""
     data = e.get("gaze_data")
     if not data:
         return (e.get("gaze") or {}).get("reason") or "взгляда нет"
     if not data.get("layout"):
         return "кадров раскладки нет — зон нет"
-    precision = data.get("precision_deg")
-    limit = float(cfg["idt_deg"])
-    if precision is None:
-        return "прецизионность неизвестна — шум проверить нечем"
-    if 3 * precision > limit:
-        return (f"три прецизионности {3 * precision:.1f}° больше общего "
-                f"порога фиксаций {limit:.1f}°").replace(".", ",")
+    share = (data.get("disorder") or {}).get("fix_share")
+    limit = float(cfg["min_fix_share"])
+    if share is None:
+        return "годного взгляда в изучении нет — доли в фиксациях нет"
+    if share < limit:
+        return (f"фиксации дробятся: в фиксациях {_percent(share)} "
+                f"времени, нужно {_percent(limit)}")
     return None
 
 

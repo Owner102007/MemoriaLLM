@@ -350,7 +350,7 @@ def test_sno_alg_res_03_who_gets_gaze_measures(run):
     assert poor.code in {p[5] for p in row(run, "clt.ecl")["points"]}
     # Шумная камера: доли зон есть, мер беспорядочности нет.
     e = by[noisy.code]
-    assert "общего порога" in e["disorder_gate"]
+    assert e["disorder_gate"].startswith("фиксации дробятся")
     assert "search.H_t" not in e["gaze_measures"]
     assert noisy.code in {p[5] for p in
                           gaze_row(run, "share.reading")["points"]}

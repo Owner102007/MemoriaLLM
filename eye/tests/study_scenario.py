@@ -243,6 +243,9 @@ class Person:
     # опознаётся ПК (BUG-69) — код устройства у каждой ветви свой.
     camera_path: str | None = None
     screen_mm: float | None = None
+    # Ширина экрана, с которой спутник считал градусы
+    # (`eye/calibration.json`); без неё — экран синтетики `SCREEN`.
+    calib_screen_mm: float | None = None
     phone: bool = False
     colour: str = "green"
     gaze: bool = True
@@ -711,8 +714,12 @@ class Builder:
                 self.scores(answers, name), ensure_ascii=False).encode()
         if self.watched:
             files["eye/gaze.jsonl"] = jsonl(self.gaze_rows())
+            screen = dict(SCREEN)
+            if p.calib_screen_mm:
+                screen["w_mm"] = p.calib_screen_mm
+                screen["h_mm"] = p.calib_screen_mm * H / W
             files["eye/calibration.json"] = json.dumps({
-                "schema": "sno2026-eyecal/2", "screen": SCREEN,
+                "schema": "sno2026-eyecal/2", "screen": screen,
                 "attempts": [{"attempt": 1, "kind": "full",
                               "fit": {"latency_ms": LATENCY},
                               "validation": {
@@ -904,9 +911,11 @@ def default_plan(*, confounded: bool = False) -> list[Person]:
     people[10].ecl = 6.8
     people[10].choice_s = 20.0
     people[3].start_deg, people[3].end_deg = 3.5, 5.5
-    # Шумная камера: три прецизионности (6°) больше общего порога
-    # фиксаций — в меры беспорядочности не идёт, доли зон остаются.
+    # Шумная камера: шум кадра 3° по оси — фиксации дробятся и после
+    # медианы трёх кадров (в фиксациях меньше 85 % времени), в меры
+    # беспорядочности не идёт, доли зон остаются (BUG-70, шаг 39).
     people[5].precision_deg = 2.0
+    people[5].noise = 3 * 39.4
     people[12].etalon = "not_reset"
     # Портрет (шаг 38): поиск упорядочивается по ходу сессии; взгляд
     # назад на известной секунде; возврат на страницу и промах.
