@@ -27,6 +27,18 @@ I — синий `#2a78d6`, ветвь II — оранжевый `#eb6834`; ис
 и таблицей в отчёте.
 Вход → выход: прогон (`study.analyse`) → файлы `рисунки/Р*.png` и
 `*.svg`; ответ — номер рисунка → (подпись, имя PNG).
+
+Шаг 42 — рисунки Р1–Р14 по образцу журналов (SNO-F-RES-06; что
+меняется и почему — «Сводный анализ — графика и сравнение по образцу
+журналов», раздел 2): **ПК — форма точки** (круг, квадрат, треугольник…),
+заливка — цвет искренности, как на Р15; у долей (Р8) — точки участников
+со средним и интервалом; у хода по минутам (Р9) — интервал 95 % среднего
+и линии участников; у научения (Р12) — логарифмические оси, линии
+участников и прямая ветви с интервалом наклона; рядом с матрицами
+ветвей (Р7) — их разница. **Под каждым рисунком — строка подписи**: n по
+ветвям, что за интервал и как он посчитан, какой тест (Weissgerber T. L.
+и др. «Beyond bar and line graphs: time for a new data presentation
+paradigm». PLoS Biol, 2015, 13: e1002128).
 """
 
 from __future__ import annotations
@@ -39,10 +51,10 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm  # noqa
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
-from matplotlib.ticker import FuncFormatter  # noqa: E402
+from matplotlib.ticker import FuncFormatter, LogLocator  # noqa: E402
 
 from . import compare, honesty  # noqa: E402
 from .collect import (ETALON_NO, ETALON_NOT_RESET, ETALON_UNKNOWN,  # noqa
@@ -76,6 +88,11 @@ SEQUENTIAL = LinearSegmentedColormap.from_list(
 # серым (проверено `validate_palette.js`: CVD ΔE ≥ 9).
 GROUP_COLOURS = {"reading": "#2a78d6", "shelf": "#eb6834",
                  "galaxy": "#1baf7a", "off": "#eda100", "other": "#b9b7b0"}
+# Разница «II − I» (Р7, шаг 42) — расходящаяся шкала с нулём посередине:
+# синий — больше у ветви I, оранжевый — больше у ветви II (концы — шаги
+# 500 и 700 цветов ветвей палитры, середина — поверхность).
+DIVERGING = LinearSegmentedColormap.from_list(
+    "sno_diff", ["#1c5cab", "#86b6ef", SURFACE, "#f3a37f", "#b84a1d"])
 
 DPI = 200
 
@@ -101,8 +118,15 @@ plt.rcParams.update({
 })
 
 
-def _save(fig, folder: Path, name: str) -> str:
+def _save(fig, folder: Path, name: str, note: str | None = None) -> str:
+    """[note] — строка подписи под рисунком (шаг 42): n, интервал, тест.
+    Она встаёт под нижний край фигуры, а `bbox_inches="tight"` забирает
+    её в файл."""
     folder.mkdir(parents=True, exist_ok=True)
+    if note:
+        width = max(70, int(fig.get_size_inches()[0] * 14))
+        fig.text(0.01, -0.01, "\n".join(textwrap.wrap(note, width)),
+                 ha="left", va="top", fontsize=7, color=INK_2)
     fig.savefig(folder / f"{name}.png", dpi=DPI, bbox_inches="tight")
     fig.savefig(folder / f"{name}.svg", bbox_inches="tight",
                 metadata={"Date": None})
@@ -159,6 +183,69 @@ def _shape_legend(red: str = "🔴 красный (только S3 и прове
         Line2D([], [], marker="x", ls="", color=INK_2, label=red,
                markersize=6),
     ]
+
+
+def _point(colour: str | None, edge: str, pc, markers: dict) -> dict:
+    """Шаг 42: точка участника — ПК формой ([markers], `_pc_marker`),
+    искренность заливкой; 🔴 — крестик при любом ПК."""
+    style = _marker(colour, edge)
+    if colour != honesty.RED:
+        style["marker"] = markers.get(pc, "o")
+    return style
+
+
+def _pc_handles(markers: dict) -> list:
+    return [Line2D([], [], marker=mk, ls="", color=INK_2,
+                   label=_wrap(f"ПК {pc}", 44), markersize=6)
+            for pc, mk in markers.items()]
+
+
+def _fill_handles() -> list:
+    return [
+        Line2D([], [], marker="o", ls="", color=INK_2,
+               label="зелёный (вес 1)", markersize=6),
+        Line2D([], [], marker="o", ls="", markerfacecolor=SURFACE,
+               markeredgecolor=INK_2,
+               label="жёлтый и неизвестно (вес меньше)", markersize=6),
+        Line2D([], [], marker="x", ls="", color=INK_2,
+               label="красный (только S3 и проверочный прогон)",
+               markersize=6),
+    ]
+
+
+def _n_range(values: list[int]) -> str:
+    values = sorted(set(values))
+    if not values:
+        return "0"
+    return str(values[0]) if len(values) == 1 else \
+        f"{values[0]}–{values[-1]}"
+
+
+def _adjust_words(run: dict) -> str:
+    return "Холм" if str(run["cfg"].get("fdr", "bh")) == "holm" \
+        else "Бенджамини — Хохберг"
+
+
+def _measures_note(run: dict, keys: list[str]) -> str:
+    """Подпись Р4–Р6 (шаг 42): n по ветвям — участников с весом больше
+    нуля, по мерам рисунка; интервал; тест и поправка."""
+    rows = _branch_rows(run)
+    ns: dict[str, list[int]] = {"I": [], "II": []}
+    for key in keys:
+        r = rows.get(key)
+        if not r or not r.get("points"):
+            continue
+        for g in ns:
+            ns[g].append(sum(1 for x, w, group, *_ in r["points"]
+                             if group == g and w > 0))
+    return (f"n по мерам рисунка: ветвь I — {_n_range(ns['I'])}, ветвь II "
+            f"— {_n_range(ns['II'])} (в статистике, вес больше нуля). "
+            "Интервал 95 % взвешенного среднего — бутстреп участников "
+            f"внутри ветви, {run['cfg']['bootstrap']} повторов. Тест — "
+            "δ Клиффа по слоям ПК, p перестановками внутри ПК; поправка — "
+            f"Холм у главных мер, {_adjust_words(run)} в остальных семьях. "
+            "Числа — «сравнение.csv», разница средних в единицах меры — "
+            "Р15, Р18 и «матрица.csv».")
 
 
 def _labels_safe(labels: list) -> list:
@@ -224,7 +311,12 @@ def figure_1(run: dict, folder: Path) -> str:
                                          if out else ""),
                  x=0.01, ha="left", fontweight="bold", color=INK)
     fig.tight_layout()
-    return _save(fig, folder, "Р1_состав")
+    n = {b: sum(1 for e in entries if e.get("branch") == b)
+         for b in branches}
+    return _save(fig, folder, "Р1_состав",
+                 f"n: годных архивов ветви I — {n['I']}, ветви II — "
+                 f"{n['II']}; не годны — {out}. Сколько участников в каждой "
+                 "группе — числа на полосах. Описание, не тест.")
 
 
 # --- Р2. Шкала лжи ------------------------------------------------------
@@ -278,7 +370,19 @@ def figure_2(run: dict, folder: Path) -> str:
     ax.set_title("Р2. Шкала лжи и цвет искренности", loc="left")
     _spines(ax)
     fig.tight_layout()
-    return _save(fig, folder, "Р2_шкала_лжи")
+    shown = {b: 0 for b in ("I", "II")}
+    for e in run["entries"]:
+        lie = (e.get("test") or {}).get("lie") or {} \
+            if e["status"] == "ok" else {}
+        if lie.get("lie.defer", {}).get("value") is not None and \
+                lie.get("lie.late", {}).get("value") is not None and \
+                e.get("branch") in shown:
+            shown[e["branch"]] += 1
+    return _save(fig, folder, "Р2_шкала_лжи",
+                 f"n: ответили на оба пункта — ветвь I {shown['I']}, ветвь "
+                 f"II {shown['II']}. Сдвиг точки вбок — от кода участника, "
+                 "чтобы одинаковые ответы не слипались; зоны — правило "
+                 "цвета (АК2). Описание, не тест.")
 
 
 # --- Р3. Качество взгляда по ПК ----------------------------------------
@@ -340,23 +444,34 @@ def figure_3(run: dict, folder: Path) -> str | None:
                  "сессиям, группами по ПК", loc="left", pad=18)
     _spines(ax)
     fig.tight_layout()
-    return _save(fig, folder, "Р3_качество_взгляда")
+    n = {b: sum(1 for e in rows if e.get("branch") == b)
+         for b in ("I", "II")}
+    return _save(fig, folder, "Р3_качество_взгляда",
+                 f"n: сессий со взглядом — ветвь I {n['I']}, ветвь II "
+                 f"{n['II']}. Точность — средняя ошибка на точках проверки "
+                 "после калибровки (полый кружок) и в конце (закрашенный), "
+                 f"градусы; линия — порог {limit:g}° (Т19). Описание, не "
+                 "тест.")
 
 
 # --- Р4, Р5. Меры по ветвям -------------------------------------------
 
-def _measure_panel(ax, row: dict, title: str, ylim=None) -> None:
+def _measure_panel(ax, row: dict, title: str, ylim=None,
+                   markers: dict | None = None) -> None:
+    """Панель меры (Р4–Р6): точки участников — ветвь цветом, ПК формой
+    (шаг 42), искренность заливкой; взвешенное среднее и интервал."""
     groups = row["groups"]
     second, first = groups
     order = [first, second]
+    markers = markers or {}
     for k, g in enumerate(order):
         color = GROUP.get(g, INK_2)
         for point in row.get("points") or []:
-            x, w, group, _, colour, code = point
+            x, w, group, pc, colour, code = point
             if group != g:
                 continue
             ax.scatter([k + _jitter(code)], [x], zorder=3,
-                       **_marker(colour, color))
+                       **_point(colour, color, pc, markers))
         desc = row["result"].describe.get(g) or {}
         mean = desc.get("mean")
         ci = (row.get("means_ci") or {}).get(g)
@@ -387,10 +502,12 @@ def _branch_rows(run: dict) -> dict:
 def figure_measures(run: dict, folder: Path, keys: list[tuple],
                     title: str, name: str, cols: int) -> str:
     rows = _branch_rows(run)
+    markers = _pc_marker(run)
     n = len(keys)
     lines = (n + cols - 1) // cols
+    legend_in = 0.2 * ((len(markers) + 5 + 2) // 3) + 0.25
     fig, axes = plt.subplots(lines, cols, figsize=(2.55 * cols,
-                                                    2.35 * lines + 0.6),
+                                                    2.35 * lines + legend_in),
                              squeeze=False)
     for ax, (key, ylim) in zip(axes.flat, keys):
         row = rows.get(key)
@@ -398,10 +515,10 @@ def figure_measures(run: dict, folder: Path, keys: list[tuple],
         if row is None:
             ax.set_axis_off()
             continue
-        _measure_panel(ax, row, f"{m.title}, {m.unit}", ylim)
+        _measure_panel(ax, row, f"{m.title}, {m.unit}", ylim, markers)
     for ax in list(axes.flat)[n:]:
         ax.set_axis_off()
-    handles = _labels_safe(_shape_legend()) + [
+    handles = _pc_handles(markers) + _fill_handles() + [
         Line2D([], [], color=INK, lw=2, label="взвешенное среднее"),
         Line2D([], [], color=INK, lw=1.2,
                label="интервал 95 % (бутстреп)")]
@@ -409,8 +526,8 @@ def figure_measures(run: dict, folder: Path, keys: list[tuple],
                bbox_to_anchor=(0.5, 0.0))
     fig.suptitle(title, x=0.01, ha="left", fontweight="bold", color=INK)
     height = fig.get_size_inches()[1]
-    fig.tight_layout(rect=(0, 0.6 / height, 1, 1))
-    return _save(fig, folder, name)
+    fig.tight_layout(rect=(0, legend_in / height, 1, 1))
+    return _save(fig, folder, name, _measures_note(run, [k for k, _ in keys]))
 
 
 LOAD_KEYS = [("clt.ecl", (1, 7)), ("clt.raw_tlx", (0, 100)),
@@ -470,7 +587,15 @@ def figure_13(run: dict, folder: Path) -> str:
                  "закрашено — вывод держится после поправки", loc="left")
     _spines(ax)
     fig.tight_layout()
-    return _save(fig, folder, "Р13_сводка")
+    return _save(fig, folder, "Р13_сводка",
+                 "δ — взвешенная δ Клиффа, сведённая по слоям ПК; интервал "
+                 "95 % — бутстреп участников внутри ПК и ветви, "
+                 f"{run['cfg']['bootstrap']} повторов; p — перестановки "
+                 "меток ветвей внутри ПК; поправка — Холм у главных мер "
+                 f"(жирные), {_adjust_words(run)} в остальных семьях. Слова "
+                 f"— только при n_eff ≥ {_num(run['cfg']['n_eff_min'], 0)} "
+                 "в обеих ветвях. n каждой меры — «сравнение.csv»; разница "
+                 "в единицах меры — Р15, Р18, Р19.")
 
 
 # --- Р14. Устойчивость ---------------------------------------------------
@@ -504,14 +629,22 @@ def figure_14(run: dict, folder: Path) -> str | None:
         ax.set_title(_wrap(f"{item['measure'].title}: {item['verdict']}",
                            44), loc="left", fontsize=8.5)
         _spines(ax)
-    fig.suptitle(_wrap("Р14. Устойчивость главных мер: S0 — основной, S1 — "
+    fig.suptitle(_wrap("Р14. Устойчивость главных мер — «мультивселенная» "
+                       "правил отбора: S0 — основной, S1 — "
                        "жёлтые с весом 1, S2 — без них, S3 — и красные с "
                        "весом 1, S4 — взгляд хуже 3° с весом, S5 — только с "
                        "эталона", 95),
                  x=0.01, ha="left", fontsize=8.5, fontweight="bold",
                  color=INK)
     fig.tight_layout()
-    return _save(fig, folder, "Р14_устойчивость")
+    return _save(fig, folder, "Р14_устойчивость",
+                 "Каждый сценарий — тот же расчёт δ (по слоям ПК, интервал "
+                 f"95 % бутстрепом, {run['cfg']['bootstrap']} повторов) на "
+                 "другом правиле отбора; вывод держится, если направление "
+                 "одно во всех сценариях, где данных хватает. Мультивселенная "
+                 "— Steegen S. и др. «Increasing transparency through a "
+                 "multiverse analysis». Perspect Psychol Sci, 2016, 11: "
+                 "702–712. n в каждом сценарии — «устойчивость.csv».")
 
 
 # --- Р6. Беспорядочность ---------------------------------------------------
@@ -537,7 +670,8 @@ def figure_6(run: dict, folder: Path) -> str | None:
 
 # --- Р7. Матрицы переходов ------------------------------------------------
 
-def _matrix_panel(ax, zones: list, p: list, title: str) -> None:
+def _matrix_panel(ax, zones: list, p: list, title: str,
+                  row_n: list | None = None) -> None:
     import numpy as np
     arr = np.array(p, dtype=float) if p else np.zeros((0, 0))
     if arr.size == 0:
@@ -560,48 +694,119 @@ def _matrix_panel(ax, zones: list, p: list, title: str) -> None:
     ax.set_xticks(range(n))
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=6.5)
     ax.set_yticks(range(n))
-    ax.set_yticklabels(labels, fontsize=6.5)
+    # Шаг 42: у строки — участников с переходами из неё.
+    ax.set_yticklabels(labels if not row_n else
+                       [_wrap(f"{z} (n {k})", 18)
+                        for z, k in zip(zones, row_n)], fontsize=6.5)
     ax.set_xlabel("куда", fontsize=7)
     ax.set_ylabel("откуда", fontsize=7)
     ax.grid(False)
     ax.set_title(_wrap(title, 40), loc="left", fontsize=8.5)
 
 
+def _diff_panel(ax, diff: dict, title: str) -> None:
+    """Шаг 42, Р7 — разница матриц «II − I» расходящейся шкалой с нулём
+    посередине; строка, где в одной из ветвей меньше трёх участников с
+    переходами, — серая, без чисел (`average.matrix_difference`)."""
+    import numpy as np
+    zones = diff["zones"]
+    n = len(zones)
+    if not n:
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, "нет данных", ha="center", va="center",
+                color=MUTED, transform=ax.transAxes)
+        ax.set_title(_wrap(title, 40), loc="left", fontsize=8.5)
+        return
+    arr = np.array([[np.nan if v is None else v for v in row]
+                    for row in diff["d"]], dtype=float)
+    top = max(0.05, float(np.nanmax(np.abs(arr))) if np.isfinite(
+        arr).any() else 0.05)
+    ax.imshow(np.nan_to_num(arr, nan=0.0), cmap=DIVERGING,
+              norm=TwoSlopeNorm(0.0, -top, top), aspect="equal")
+    for i in range(n):
+        for k in range(n):
+            v = arr[i, k]
+            if v != v:
+                ax.add_patch(Rectangle((k - 0.5, i - 0.5), 1, 1, color=GRID,
+                                       lw=0))
+                continue
+            text = "0,00" if round(v, 2) == 0 else \
+                f"{v:+.2f}".replace(".", ",").replace("-", "−")
+            ax.text(k, i, text,
+                    ha="center", va="center", fontsize=6.5,
+                    color=SURFACE if abs(v) > 0.7 * top else INK)
+    ax.set_xticks(range(n))
+    ax.set_xticklabels([_wrap(str(z), 14) for z in zones], rotation=45,
+                       ha="right", fontsize=6.5)
+    ax.set_yticks(range(n))
+    ax.set_yticklabels([_wrap(f"{z} (n {a}/{b})", 18) for z, a, b in
+                        zip(zones, diff["n_first"], diff["n_second"])],
+                       fontsize=6.5)
+    ax.set_xlabel("куда", fontsize=7)
+    ax.grid(False)
+    ax.set_title(_wrap(title, 40), loc="left", fontsize=8.5)
+
+
 def figure_7(run: dict, folder: Path) -> str | None:
+    """Р7 — матрицы переходов ветвей и (шаг 42) их разница «II − I»;
+    у строки — число участников ветви с переходами из неё."""
+    from .average import matrix_difference
     avg = run["result"].get("average") or {}
     branches = [b for b in ("I", "II")
                 if (avg.get("matrix", {}).get(b) or {}).get("n")]
     if not branches:
         return None
-    fig, axes = plt.subplots(2, len(branches),
-                             figsize=(4.4 * len(branches), 8.4),
+    both = len(branches) == 2
+    cols = 3 if both else len(branches)
+    min_n = int(run["cfg"]["min_minute_participants"])
+    fig, axes = plt.subplots(2, cols, figsize=(4.6 * cols, 9.0),
                              squeeze=False)
-    for k, b in enumerate(branches):
-        m = avg["matrix"][b]
-        _matrix_panel(axes[0][k], m["zones"], m["p"],
-                      f"Ветвь {b}: всё изучение, группы видов времени "
-                      f"(участников {m['n']})")
-        c = avg["categories"][b]
-        _matrix_panel(axes[1][k], c["zones"], c["p"],
-                      f"Ветвь {b}: поиск, категории полки и группы карты "
-                      f"(участников {c['n']})")
+    for line, (key, words) in enumerate((
+            ("matrix", "всё изучение, группы видов времени"),
+            ("categories", "поиск, категории полки и группы карты"))):
+        for k, b in enumerate(branches):
+            m = avg[key][b]
+            _matrix_panel(axes[line][k], m["zones"], m["p"],
+                          f"Ветвь {b}: {words} (участников {m['n']})",
+                          m.get("row_n"))
+        if both:
+            diff = matrix_difference(avg[key]["I"], avg[key]["II"], min_n)
+            _diff_panel(axes[line][2], diff,
+                        f"Разница II − I: {words}")
     fig.suptitle(_wrap("Р7. Матрица переходов ветви: доля переходов из "
-                       "строки в столбец; строка — откуда, столбец — куда",
-                       90), x=0.01, ha="left", fontweight="bold", color=INK)
+                       "строки в столбец; строка — откуда, столбец — куда"
+                       + ("; справа — разница II − I (оранжевый — чаще у "
+                          "II, синий — чаще у I)" if both else ""),
+                       110), x=0.01, ha="left", fontweight="bold",
+                 color=INK)
     fig.tight_layout()
-    return _save(fig, folder, "Р7_переходы")
+    return _save(fig, folder, "Р7_переходы",
+                 "n в строке — участники ветви, у которых из этой зоны были "
+                 "переходы (у разницы — I/II). Матрица ветви — взвешенное "
+                 "среднее матриц участников, каждая нормирована к сумме 1, "
+                 "потом строки делятся на свои суммы. Разница — только в "
+                 f"строках, где в обеих ветвях не меньше {min_n} участников "
+                 "(серым — нет). Описание, не тест: различие проверяют меры "
+                 "беспорядочности (Р6, Р13).")
 
 
 # --- Р8. Доли времени по группам -------------------------------------------
 
 def figure_8(run: dict, folder: Path) -> str | None:
+    """Р8 — доли времени по группам: обзор полосой и (шаг 42) точки
+    участников со взвешенным средним и интервалом 95 % по каждой группе."""
     from .average import GROUP_WORDS
     avg = run["result"].get("average") or {}
     shares = avg.get("shares") or {}
     branches = [b for b in ("I", "II") if shares.get(b)]
     if not branches:
         return None
-    fig, ax = plt.subplots(figsize=(6.4, 1.1 + 0.7 * len(branches)))
+    markers = _pc_marker(run)
+    fig = plt.figure(figsize=(10.4, 2.0 + 0.6 * len(branches) + 4.4))
+    grid = fig.add_gridspec(2, 1, height_ratios=(0.9 + 0.45 *
+                                                 len(branches), 3.4),
+                            hspace=0.45)
+    ax = fig.add_subplot(grid[0])
     for y, b in enumerate(branches):
         left = 0.0
         groups = shares[b]["groups"]
@@ -626,19 +831,71 @@ def figure_8(run: dict, folder: Path) -> str | None:
     ax.invert_yaxis()
     handles = [Rectangle((0, 0), 1, 1, color=GROUP_COLOURS[k],
                          label=GROUP_WORDS[k]) for k in GROUP_COLOURS]
-    ax.legend(handles=handles, loc="upper center", ncol=3, fontsize=7,
-              bbox_to_anchor=(0.5, -0.25))
-    ax.set_title(_wrap("Р8. Доли времени изучения по группам видов "
-                       "времени (мягко), взвешенное среднее ветви", 70),
-                 loc="left")
+    ax.legend(handles=handles, loc="upper center", ncol=5, fontsize=7,
+              bbox_to_anchor=(0.5, -0.3))
+    ax.set_title("Обзор: взвешенное среднее ветви", loc="left",
+                 fontsize=8.5)
     _spines(ax)
-    fig.tight_layout()
-    return _save(fig, folder, "Р8_доли_времени")
+    # Шаг 42 — точки участников по группам.
+    pts = fig.add_subplot(grid[1])
+    keys = list(GROUP_COLOURS)
+    shift = {"I": -0.18, "II": 0.18} if len(branches) == 2 else \
+        {branches[0]: 0.0}
+    for i, key in enumerate(keys):
+        for b in branches:
+            own = shares[b]
+            x0 = i + shift[b]
+            for person in own.get("people") or []:
+                pts.scatter([x0 + _jitter(person["code"], 0.07)],
+                            [person["groups"].get(key, 0.0)], zorder=3,
+                            **_point(person["colour"], BRANCH[b],
+                                     person["pc"], markers))
+            mean = own["groups"].get(key)
+            if mean is not None:
+                pts.plot([x0 - 0.1, x0 + 0.1], [mean, mean], color=INK,
+                         lw=2, zorder=4)
+            ci = (own.get("ci") or {}).get(key)
+            if ci:
+                pts.plot([x0 + 0.13] * 2, ci, color=INK, lw=1.2, zorder=4)
+    pts.set_xticks(range(len(keys)))
+    pts.set_xticklabels([_wrap(GROUP_WORDS[k], 18) for k in keys],
+                        fontsize=8)
+    pts.set_xlim(-0.6, len(keys) - 0.4)
+    pts.set_ylim(-0.02, 1.02)
+    pts.yaxis.set_major_formatter(FuncFormatter(
+        lambda v, _: f"{round(v * 100)} %"))
+    pts.grid(axis="x", visible=False)
+    pts.set_title("Участники: доля времени изучения в группе" +
+                  ("; слева в паре — ветвь I, справа — II"
+                   if len(branches) == 2 else ""), loc="left", fontsize=8.5)
+    _spines(pts)
+    handles = _pc_handles(markers) + _fill_handles() + [
+        Line2D([], [], color=INK, lw=2,
+               label="взвешенное среднее и интервал 95 %")] + [
+        Line2D([], [], marker="o", ls="", color=BRANCH[b],
+               label=f"ветвь {b}") for b in branches]
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=7.5,
+               bbox_to_anchor=(0.5, 0.0))
+    fig.suptitle(_wrap("Р8. Доли времени изучения по группам видов "
+                       "времени (мягко)", 70), x=0.01, ha="left",
+                 fontweight="bold", color=INK)
+    rows_legend = (len(handles) + 2) // 3
+    fig.subplots_adjust(bottom=0.06 + 0.035 * rows_legend, top=0.92)
+    n = {b: shares[b]["n"] for b in branches}
+    return _save(fig, folder, "Р8_доли_времени",
+                 "n: " + ", ".join(f"ветвь {b} — {n[b]}" for b in branches)
+                 + " (со взглядом и кадрами раскладки); доли участника в "
+                 "сумме дают 1. Интервал 95 % взвешенного среднего — "
+                 "бутстреп участников внутри ветви, "
+                 f"{run['cfg']['minute_bootstrap']} повторов. Описание, не "
+                 "тест: сравнение долей — меры «Доля …» в «сравнение.csv».")
 
 
 # --- Р9. Ход по минутам --------------------------------------------------
 
 def figure_9(run: dict, folder: Path) -> str | None:
+    """Р9 — ход по минутам: среднее ветви, (шаг 42) интервал 95 %
+    среднего вместо полосы процентилей и тонкие линии участников."""
     from .average import GROUP_WORDS
     avg = run["result"].get("average") or {}
     minutes = avg.get("minutes") or {}
@@ -646,35 +903,53 @@ def figure_9(run: dict, folder: Path) -> str | None:
     if not any(minutes.get(b, {}).get(k) for b in ("I", "II")
                for k in keys):
         return None
-    fig, axes = plt.subplots(1, len(keys), figsize=(11.5, 3.1),
+    fig, axes = plt.subplots(1, len(keys), figsize=(11.5, 3.3),
                              squeeze=False)
     for ax, key in zip(axes.flat, keys):
         for b in ("I", "II"):
-            rows = (minutes.get(b) or {}).get(key) or []
+            own = minutes.get(b) or {}
+            rows = own.get(key) or []
             if not rows:
                 continue
+            for person in own.get("people") or []:
+                line = person["series"].get(key) or []
+                if line:
+                    ax.plot([r[0] for r in line], [r[1] for r in line],
+                            color=BRANCH[b], lw=0.6, alpha=0.25, zorder=1)
             xs = [r[0] for r in rows]
             ax.fill_between(xs, [r[2] for r in rows], [r[3] for r in rows],
-                            color=BRANCH[b], alpha=0.15, lw=0)
+                            color=BRANCH[b], alpha=0.22, lw=0, zorder=2)
             ax.plot(xs, [r[1] for r in rows], color=BRANCH[b], lw=2,
-                    label=f"ветвь {b}")
+                    label=f"ветвь {b}", zorder=3)
         ax.set_ylim(-0.02, 1.02)
         ax.yaxis.set_major_formatter(FuncFormatter(
             lambda v, _: f"{round(v * 100)} %"))
         ax.set_xlabel("минута изучения")
         ax.set_title(_wrap(GROUP_WORDS[key], 26), loc="left", fontsize=8.5)
         _spines(ax)
-    handles = [Line2D([], [], color=BRANCH[b], lw=2, label=f"ветвь {b}")
-               for b in ("I", "II")] + [
-        Rectangle((0, 0), 1, 1, color=INK_2, alpha=0.15,
-                  label="между 25-м и 75-м процентилями")]
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=7.5,
+    handles = [Line2D([], [], color=BRANCH[b], lw=2,
+                      label=f"ветвь {b}: среднее") for b in ("I", "II")]
+    handles += [Rectangle((0, 0), 1, 1, color=INK_2, alpha=0.22,
+                          label="интервал 95 % среднего (бутстреп)"),
+                Line2D([], [], color=INK_2, lw=0.6, alpha=0.5,
+                       label="участники")]
+    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=7.5,
                bbox_to_anchor=(0.5, 0.0))
-    fig.suptitle("Р9. Ход по минутам: доля минуты по группам, средняя "
-                 "ветви с полосой", x=0.01, ha="left", fontweight="bold",
-                 color=INK)
-    fig.tight_layout(rect=(0, 0.12, 1, 1))
-    return _save(fig, folder, "Р9_по_минутам")
+    fig.suptitle("Р9. Ход по минутам: доля минуты в группе — среднее "
+                 "ветви, его интервал и линии участников", x=0.01,
+                 ha="left", fontweight="bold", color=INK)
+    fig.tight_layout(rect=(0, 0.1, 1, 1))
+    n = {b: len((minutes.get(b) or {}).get("people") or [])
+         for b in ("I", "II")}
+    return _save(fig, folder, "Р9_по_минутам",
+                 f"n: ветвь I — {n['I']}, ветвь II — {n['II']}; минута, где "
+                 "участников меньше "
+                 f"{run['cfg']['min_minute_participants']}, не рисуется. "
+                 "Полоса — интервал 95 % взвешенного среднего: бутстреп "
+                 "участников этой минуты внутри ветви, "
+                 f"{run['cfg']['minute_bootstrap']} повторов, зерно — от "
+                 "отпечатка набора. Описание; различие ветвей по ходу "
+                 "сессии проверяет Р16.")
 
 
 # --- Р10. Тепловая карта «Галактики» ---------------------------------------
@@ -721,7 +996,24 @@ def figure_10(run: dict, folder: Path) -> str | None:
                        "дольше; кружки — звёзды", 95), x=0.01, ha="left",
                  fontweight="bold", color=INK, fontsize=9)
     fig.tight_layout()
-    return _save(fig, folder, "Р10_тепловая_карта")
+    sigma = sorted(s for item in heat for s in item.get("sigma_deg") or [])
+    if sigma:
+        mid = sigma[len(sigma) // 2] if len(sigma) % 2 else \
+            (sigma[len(sigma) // 2 - 1] + sigma[len(sigma) // 2]) / 2
+        width = (f"медиана {_num(mid, 1)}° (от {_num(sigma[0], 1)}° до "
+                 f"{_num(sigma[-1], 1)}°)")
+    else:
+        width = "неизвестна"
+    n = {b: sum(item["branches"][b]["n"] for item in heat
+                if b in item["branches"]) for b in ("I", "II")}
+    return _save(fig, folder, "Р10_тепловая_карта",
+                 f"n: участников с фиксациями на карте — ветвь I {n['I']}, "
+                 f"ветвь II {n['II']}. Величина — доля времени поиска на "
+                 "полотне карты: фиксация — гауссово пятно весом в её "
+                 "длительность, σ пятна — точность сессии, "
+                 f"{width}; карта участника нормирована к 1, карта ветви — "
+                 "взвешенное среднее; шкала у каждой панели от её "
+                 "наибольшего. Описание, не тест.")
 
 
 # --- Р11. Схема полки ---------------------------------------------------
@@ -783,48 +1075,138 @@ def figure_11(run: dict, folder: Path) -> str | None:
                        "категории ни у кого не было", 110), x=0.01,
                  ha="left", fontweight="bold", color=INK, fontsize=9)
     fig.tight_layout()
-    return _save(fig, folder, "Р11_схема_полки")
+    return _save(fig, folder, "Р11_схема_полки",
+                 "n: " + ", ".join(f"ветвь {b} — {shelves[b]['n']}"
+                                   for b in branches)
+                 + " (со взглядом и кадрами раскладки). Величина — доля "
+                 "времени поиска на полке: время фиксаций доведённых "
+                 "походов на книге или шапке категории от всего времени "
+                 "поиска участника, затем взвешенное среднее участников; "
+                 "шкала цвета одна на обе ветви. Описание, не тест.")
 
 
 # --- Р12. Научение -------------------------------------------------------
 
+def branch_line(lines: dict, mean: dict | None, n_max: float,
+                minimum: int) -> dict | None:
+    """Шаг 42, Р12 — прямая ветви в логарифмах (SNO-ALG-RES-04):
+    `log y = ȳ + b̄ · (log n − x̄)`, (x̄, ȳ) — середина ветви
+    (`average._lines`), b̄ и его интервал — из свода средних меры наклона
+    (`learn.*_slope`, тот же бутстреп, что в «сравнение.csv»). Полоса —
+    прямые с наклоном на краях интервала через ту же середину. Наклонов
+    у участников меньше [minimum] — прямой нет: средний наклон одного-
+    двух человек выглядел бы законом ветви."""
+    import numpy as np
+    if not lines or lines.get("centre") is None or not mean or \
+            mean.get("mean") is None or lines.get("fitted", 0) < minimum:
+        return None
+    xm, ym = lines["centre"]
+    n = np.exp(np.linspace(0.0, np.log(max(n_max, 2.0)), 60))
+    x = np.log(n)
+    b = float(mean["mean"])
+    out = {"n": n.tolist(), "y": np.exp(ym + b * (x - xm)).tolist(),
+           "b": b, "ci": mean.get("ci"), "lo": None, "hi": None}
+    if mean.get("ci"):
+        ya = np.exp(ym + mean["ci"][0] * (x - xm))
+        yb = np.exp(ym + mean["ci"][1] * (x - xm))
+        out["lo"] = np.minimum(ya, yb).tolist()
+        out["hi"] = np.maximum(ya, yb).tolist()
+    return out
+
+
 def figure_12(run: dict, folder: Path) -> str | None:
+    """Р12 — научение (шаг 42): оси в логарифмах (закон степени —
+    прямая), линии участников, прямая ветви с интервалом наклона;
+    пунктир — медиана повторных походов по их номеру."""
     avg = run["result"].get("average") or {}
     curve = avg.get("curve") or {}
     if not any(curve.get(b, {}).get(k) for b in ("I", "II")
                for k in ("choice", "path")):
         return None
-    fig, axes = plt.subplots(1, 2, figsize=(10.2, 3.4), squeeze=False)
-    panels = (("choice", "Время до выбора книги, с", "repeat"),
-              ("path", "Путь взгляда до книги, °", None))
-    for ax, (key, title, extra) in zip(axes.flat, panels):
+    rows = _branch_rows(run)
+    minimum = int(run["cfg"]["min_minute_participants"])
+    fig, axes = plt.subplots(1, 2, figsize=(10.6, 3.9), squeeze=False)
+    panels = (("choice", "Время до выбора книги, с", "repeat",
+               "learn.choice_slope"),
+              ("path", "Путь взгляда до книги, °", None,
+               "learn.path_slope"))
+    counts: dict = {}
+    lost = 0
+    for ax, (key, title, extra, measure) in zip(axes.flat, panels):
+        drawn = False
         for b in ("I", "II"):
-            rows = (curve.get(b) or {}).get(key) or []
-            if rows:
-                ax.plot([r[0] for r in rows], [r[1] for r in rows],
-                        color=BRANCH[b], lw=2, marker="o", markersize=4,
-                        label=f"ветвь {b}")
-            more = (curve.get(b) or {}).get(extra) if extra else None
+            own = curve.get(b) or {}
+            lines = (own.get("lines") or {}).get(key) or {}
+            counts[(key, b)] = lines.get("fitted", 0)
+            lost += lines.get("dropped", 0)
+            n_max = 1.0
+            for person in lines.get("people") or []:
+                pts = person.get("points") or []
+                if len(pts) < 2:
+                    continue
+                ax.plot([n for n, _ in pts], [y for _, y in pts],
+                        color=BRANCH[b], lw=0.7, alpha=0.3, marker="o",
+                        markersize=2, zorder=1)
+                n_max = max(n_max, max(n for n, _ in pts))
+                drawn = True
+            mean = (((rows.get(measure) or {}).get("means") or {})
+                    .get("branch") or {}).get(b)
+            line = branch_line(lines, mean, n_max, minimum)
+            if line:
+                if line["lo"]:
+                    ax.fill_between(line["n"], line["lo"], line["hi"],
+                                    color=BRANCH[b], alpha=0.18, lw=0,
+                                    zorder=2)
+                label = f"ветвь {b}: b = {_num(line['b'])}"
+                if line["ci"]:
+                    label += f" {_ci(line['ci'])}"
+                ax.plot(line["n"], line["y"], color=BRANCH[b], lw=2.2,
+                        label=label, zorder=3)
+                drawn = True
+            more = own.get(extra) if extra else None
+            if more:
+                more = [r for r in more if r[1] is not None and r[1] > 0]
             if more:
                 ax.plot([r[0] for r in more], [r[1] for r in more],
-                        color=BRANCH[b], lw=1.2, ls="--",
-                        label=f"ветвь {b}: повторные походы")
-        ax.set_xlabel("номер похода за книгой")
-        _comma(ax, "y")
-        ax.set_title(title, loc="left", fontsize=8.5)
+                        color=BRANCH[b], lw=1.2, ls="--", zorder=3,
+                        label=f"ветвь {b}: повторные походы (медиана)")
+        ax.set_xlabel("номер похода за книгой (логарифм)")
+        ax.set_title(title + " (логарифм)", loc="left", fontsize=8.5)
+        if drawn:
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            # Деления 1, 2, 5 каждой декады — на логарифмической оси
+            # одно «10» на панель не читается.
+            for axis in (ax.xaxis, ax.yaxis):
+                axis.set_major_locator(LogLocator(10, subs=(1.0, 2.0, 5.0)))
+                axis.set_major_formatter(_COMMA)
+                axis.set_minor_formatter(FuncFormatter(lambda v, _: ""))
         if ax.get_legend_handles_labels()[0]:
             ax.legend(fontsize=7)
-        else:
+        elif not drawn:
             ax.text(0.5, 0.5, "нет данных", ha="center", va="center",
                     color=MUTED, transform=ax.transAxes)
         _spines(ax)
-    fig.suptitle(_wrap("Р12. Кривая научения: медиана ветви по номеру "
-                       "похода (номер, где участников меньше трёх, не "
-                       "рисуется); пунктир — походы к уже открывавшейся "
-                       "книге по их номеру", 110), x=0.01, ha="left",
+    fig.suptitle(_wrap("Р12. Научение: закон степени — прямая в "
+                       "логарифмах; линии участников, прямая ветви с "
+                       "интервалом наклона", 110), x=0.01, ha="left",
                  fontweight="bold", color=INK, fontsize=9)
     fig.tight_layout()
-    return _save(fig, folder, "Р12_научение")
+    return _save(fig, folder, "Р12_научение",
+                 "n с наклоном: время до выбора — ветвь I "
+                 f"{counts.get(('choice', 'I'), 0)}, ветвь II "
+                 f"{counts.get(('choice', 'II'), 0)}; путь взгляда — ветвь I "
+                 f"{counts.get(('path', 'I'), 0)}, ветвь II "
+                 f"{counts.get(('path', 'II'), 0)}; меньше "
+                 f"{run['cfg']['min_visits_curve']} доведённых походов — "
+                 "наклона нет, участников с наклоном меньше "
+                 f"{minimum} — прямой ветви нет. Прямая ветви — log y = ȳ + "
+                 "b̄ · (log n − x̄): b̄ — взвешенное среднее наклонов "
+                 "участников, полоса — его интервал 95 % (бутстреп, "
+                 f"{run['cfg']['bootstrap']} повторов, как в "
+                 "«сравнение.csv»); тест наклона — меры «Научение» там же. "
+                 "Походов с нулём, не легших на логарифмическую ось: "
+                 f"{lost}.")
 
 
 # --- Р16. Энтропия по ходу сессии: ветви ---------------------------------
@@ -1007,10 +1389,8 @@ def _estimation_panel(fig, spec, row: dict, markers: dict,
         for x, w, group, pc, colour, code in row.get("points") or []:
             if group != g:
                 continue
-            style = _marker(colour, color)
-            if colour != honesty.RED:
-                style["marker"] = markers.get(pc, "o")
-            ax.scatter([k + _jitter(code, 0.16)], [x], zorder=3, **style)
+            ax.scatter([k + _jitter(code, 0.16)], [x], zorder=3,
+                       **_point(colour, color, pc, markers))
         b = (mm.get("branch") or {}).get(g) or {}
         if b.get("mean") is not None:
             ax.scatter([k + 0.38], [b["mean"]], color=INK, s=40, zorder=4)

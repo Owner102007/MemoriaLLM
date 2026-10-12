@@ -76,6 +76,8 @@
 | `compare.py` |     | перестановки, Холм, сценарии;      |                    |
 |              |     | кластеры по ходу сессии            |                    |
 | `charts.py`  | 10  | рисунки Р1–Р19                     | matplotlib (Agg)   |
+|              |     | (Р1–Р14 по образцу журналов — ПК   |                    |
+|              |     | формой точки, подписи n, шаг 42)   |                    |
 | `portrait_   | 10а | страница портрета, рисунки П1–П5,  | matplotlib, html,  |
 | page.py`     |     | таблицы участника                  | base64, csv        |
 | `screen_     | 10б | снимок экрана момента: зоны кадра, | pypdfium2, numpy,  |
@@ -123,8 +125,9 @@ from ..report import settings as report_settings
 # портрет участника, шаг 39 — сглаживание и пропуск по доле в фиксациях
 # (BUG-70), поправка ширины экрана; шаг 40 — момент долгого взгляда без
 # действий (П5); шаг 41 — свод средних, матрица, итог (SNO-ALG-RES-10),
-# BUG-71, BUG-72; 41.1 — при малом n_eff только средние.
-SCRIPT_VERSION = "41.1"
+# BUG-71, BUG-72; 41.1 — при малом n_eff только средние; 42.0 — рисунки
+# Р1–Р14 по образцу журналов.
+SCRIPT_VERSION = "42.0"
 
 OUT_FOLDER = "Сравнение ветвей СНО2026"
 
@@ -188,6 +191,9 @@ DEFAULTS = {
     "log_zero_share": 0.2,
     "merge_rho": 0.7,
     "hier_bootstrap": 2000,
+    # Шаг 42: повторов бутстрепа интервала среднего по каждой минуте
+    # (Р9) и по каждой группе долей (Р8) — рисунок, не вывод.
+    "minute_bootstrap": 2000,
     # АЛ6: направление «лучше» по мерам — `thresholds.json`; меры, которых
     # там нет, — «—».
     "better": {},
@@ -312,7 +318,8 @@ def analyse(paths: list[str], *, series: str | None = None,
     result = compare.run(entries, cfg, fingerprint=print_,
                          no_filter=no_filter, series=series)
     result["gaze_info"] = gaze_info
-    result["average"] = average.build(entries, cfg, no_filter, series)
+    result["average"] = average.build(entries, cfg, no_filter, series,
+                                      print_)
     result["average"]["entropy"] = average.entropy_curves(
         entries, cfg, no_filter, series, print_)
     result["average"]["ribbons"] = average.ribbons(entries)

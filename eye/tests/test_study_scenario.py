@@ -686,3 +686,55 @@ def test_sno_alg_res_10_matrix_figures_and_summary_section(run, tmp_path):
     assert "Ветвь II сильнее ветви I" in page
     assert "разницы не видно" not in page
     assert "матрица.csv" in page
+
+
+# --- шаг 42: рисунки Р1–Р14 по образцу журналов ------------------------------
+
+def test_sno_f_res_06_figures_follow_the_journal_pattern(run, tmp_path,
+                                                          monkeypatch):
+    """Шаг 42: ПК — форма точки, у Р7 — разница ветвей, у Р9 — линии
+    участников и полоса среднего, у Р12 — логарифмические оси, под каждым
+    рисунком Р1–Р14 — подпись с n, интервалом и тестом."""
+    from sno_eye.study import charts
+    seen: dict = {}
+    real = charts._save
+
+    def spy(fig, folder, name, note=None):
+        seen[name.split("_")[0]] = (fig, note)
+        return real(fig, folder, name, note)
+
+    monkeypatch.setattr(charts, "_save", spy)
+    charts.draw_all(run, tmp_path)
+    for n in range(1, 15):
+        fig, note = seen[f"Р{n}"]
+        assert note and "n" in note, n
+    for n in (4, 5, 6, 8, 9, 13, 14):
+        assert "интервал" in seen[f"Р{n}"][1].lower(), n
+    assert "Steegen" in seen["Р14"][1]
+    # Р4: в легенде — оба ПК, точки разной формы.
+    fig4 = seen["Р4"][0]
+    labels = [t.get_text() for leg in fig4.legends for t in leg.get_texts()]
+    strata = {e["stratum"] for e in run["entries"] if e.get("stratum")}
+    assert len(strata) == 2
+    for name in strata:
+        assert any(name.split(" ·")[0] in text for text in labels), name
+    shapes = set()
+    for ax in fig4.axes:
+        for coll in ax.collections:
+            for path in coll.get_paths():
+                shapes.add(len(path.vertices))
+    assert len(shapes) >= 2
+    # Р7: обе ветви и третья панель — разница.
+    titles = [ax.get_title(loc="left") for ax in seen["Р7"][0].axes]
+    assert sum("Разница II − I" in t for t in titles) == 2
+    # Р9: тонкие линии участников — больше, чем средних.
+    ax9 = seen["Р9"][0].axes[0]
+    thin = [ln for ln in ax9.get_lines() if ln.get_linewidth() < 1]
+    assert len(thin) >= 10
+    # Р12: логарифмические оси и прямая ветви с наклоном в подписи.
+    ax12 = seen["Р12"][0].axes[0]
+    assert ax12.get_xscale() == "log" and ax12.get_yscale() == "log"
+    legend = [t.get_text() for t in ax12.get_legend().get_texts()]
+    assert any(t.startswith("ветвь II: b = ") for t in legend)
+    # Р8: под полосами — точки участников.
+    assert any(ax.collections for ax in seen["Р8"][0].axes[1:])

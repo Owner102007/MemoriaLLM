@@ -18,6 +18,16 @@ Erlbaum, 1981, с. 1–55: `log y = a + b · log(номер похода)`, `b` 
 наклон участника.
 Вход → выход: записи после отбора → средние ветвей для рисунков
 Р7–Р12 и наклоны научения участников (`learn.*`) для сравнения.
+
+Шаг 42 (рисунки по образцу журналов, SNO-ALG-RES-04): у долей и у хода
+по минутам — точки и линии участников и интервал 95 % взвешенного
+среднего бутстрепом участников внутри ветви (`stats.mean_interval`,
+Efron и Tibshirani, 1993; зерно — от отпечатка набора, `stats.seed_for`),
+а не полоса между 25-м и 75-м процентилями: полоса процентилей говорит
+о разбросе людей, а не о том, насколько точно известно среднее, и
+сравнивать по ней ветви нельзя. У матриц — число участников в строке;
+у научения — сдвиг `a` и середина `x̄` прямой участника, чтобы прямую
+ветви провести через её середину, и линии участников.
 """
 
 from __future__ import annotations
@@ -39,12 +49,18 @@ HEAT_CELLS = 160
 
 # --- наклон научения ---------------------------------------------------------
 
-def slope(values: list[tuple[int, float]], minimum: int) -> float | None:
-    """Наклон `b` прямой `log y = a + b · log n` наименьшими квадратами;
-    [values] — пары (номер похода, y). Нуль и меньше в логарифм не идут.
-    Меньше [minimum] точек — пусто."""
+def fit(values: list[tuple[int, float]],
+        minimum: int) -> tuple[float, float, float] | None:
+    """Прямая `log y = a + b · log n` наименьшими квадратами; [values] —
+    пары (номер похода, y). Номер и y — нуль и меньше — в логарифм не
+    идут. Меньше [minimum] точек или меньше двух разных номеров —
+    пусто (у одного номера наклона нет; проверка по номерам, а не по
+    `sxx`: при равных номерах округление оставляет `sxx` около 1e-31,
+    и наклон выходил бы из шума — найдено независимой проверкой шага 42).
+    Ответ — (a, b, x̄), x̄ — среднее `log n` точек участника: прямая
+    проходит через (x̄, ȳ)."""
     pts = [(n, y) for n, y in values if n > 0 and y is not None and y > 0]
-    if len(pts) < minimum:
+    if len(pts) < minimum or len({n for n, _ in pts}) < 2:
         return None
     x = np.log([n for n, _ in pts])
     y = np.log([v for _, v in pts])
@@ -52,7 +68,20 @@ def slope(values: list[tuple[int, float]], minimum: int) -> float | None:
     sxx = float(((x - xm) ** 2).sum())
     if sxx <= 0:
         return None
-    return float(((x - xm) * (y - y.mean())).sum() / sxx)
+    b = float(((x - xm) * (y - y.mean())).sum() / sxx)
+    return float(y.mean() - b * xm), b, float(xm)
+
+
+def slope(values: list[tuple[int, float]], minimum: int) -> float | None:
+    """Наклон `b` прямой `log y = a + b · log n` (см. `fit`)."""
+    line = fit(values, minimum)
+    return None if line is None else line[1]
+
+
+def dropped(values: list[tuple[int, float]]) -> int:
+    """Сколько походов с нулём (или меньше) не легло на логарифмическую
+    ось — их число подписывается под Р12."""
+    return sum(1 for _, y in values if y is not None and y <= 0)
 
 
 def choice_series(e: dict) -> list[tuple[int, float]]:
@@ -119,11 +148,21 @@ def _wmean(x, w) -> float | None:
     return sum(a * b for a, b in zip(x, w)) / sw if sw > 0 else None
 
 
+def who(e: dict, w: float) -> dict:
+    """Участник на рисунке: код (сдвиг точки вбок), вес, цвет
+    искренности (заливка точки) и ПК (форма точки) — шаг 42."""
+    return {"code": str(e.get("participant") or e.get("archive") or ""),
+            "w": w, "colour": e.get("colour"), "pc": e.get("stratum")}
+
+
 def build(entries: list[dict], cfg: dict, no_filter: bool,
-          series: str | None) -> dict:
-    """Средний взгляд ветвей и кривые научения — для рисунков Р7–Р12."""
+          series: str | None, fingerprint: str = "") -> dict:
+    """Средний взгляд ветвей и кривые научения — для рисунков Р7–Р12.
+    [fingerprint] — отпечаток набора: от него зёрна интервалов (шаг 42),
+    тот же набор даёт тот же рисунок."""
     from .compare import scenario_weight
     min_n = int(cfg["min_minute_participants"])
+    reps = int(cfg.get("minute_bootstrap", 2000))
 
     def gaze_weight(e):
         # Доли и минуты — по кадрам раскладки: без них зон нет.
@@ -142,8 +181,9 @@ def build(entries: list[dict], cfg: dict, no_filter: bool,
                 if e.get("branch") == b and e.get("status") == "ok"]
         part = [(e, w) for e, w in part if w > 0]
         out["n_gaze"][b] = len(part)
-        out["shares"][b] = _shares(part)
-        out["minutes"][b] = _minutes(part, min_n)
+        out["shares"][b] = _shares(part, (fingerprint, "shares", b), reps)
+        out["minutes"][b] = _minutes(part, min_n,
+                                     (fingerprint, "minutes", b), reps)
         # Матрица фазы «всё изучение» — на фиксациях общим порогом:
         # сессия, отсечённая по шуму (`disorder_gate`), в неё не идёт.
         out["matrix"][b] = _matrix([(e, w) for e, w in part
@@ -153,43 +193,69 @@ def build(entries: list[dict], cfg: dict, no_filter: bool,
         plain = [(e, plain_weight(e)) for e in entries
                  if e.get("branch") == b and e.get("status") == "ok"]
         plain = [(e, w) for e, w in plain if w > 0]
+        live = [(e, w) for e, w in part if e.get("disorder_live")]
+        minimum = int(cfg["min_visits_curve"])
         out["curve"][b] = {
             "choice": _curve([(choice_series(e), w) for e, w in plain],
                              min_n),
             "repeat": _curve([(repeat_series(e), w) for e, w in plain
                               if len(repeat_series(e)) >=
                               int(cfg["min_repeat_visits"])], min_n),
-            "path": _curve([(path_series(e), w) for e, w in part
-                            if e.get("disorder_live")],
+            "path": _curve([(path_series(e), w) for e, w in live],
                            min_n),
+            # Шаг 42: линии участников и середина прямой ветви (Р12).
+            "lines": {
+                "choice": _lines(plain, choice_series, minimum),
+                "path": _lines(live, path_series, minimum)},
         }
     out["heat"] = _heat(entries, gaze_weight)
     return out
 
 
-def _shares(part: list) -> dict:
+def _groups_of(shares: dict) -> dict:
+    """Доли по видам зон → доли по пяти группам; сумма та же."""
+    groups = {key: 0.0 for key in GROUP_WORDS}
+    for k, _ in BUCKETS:
+        groups[GROUP_OF.get(k, "other")] += shares.get(k, 0.0) or 0.0
+    return groups
+
+
+def _shares(part: list, seed_parts: tuple = ("",),
+            repeats: int = 2000) -> dict:
     """Шаг 1 — доли времени изучения по видам зон и по пяти группам
-    (мягко); сумма долей ветви остаётся равной 1."""
+    (мягко); сумма долей ветви остаётся равной 1. Шаг 42 — доли каждого
+    участника по группам и интервал 95 % взвешенного среднего группы
+    (Р8, точки участников)."""
+    from .stats import mean_interval, seed_for
     if not part:
         return {}
     w = [x for _, x in part]
     kinds = {k: _wmean([e["gaze_data"]["shares"].get(k, 0.0)
                         for e, _ in part], w) for k, _ in BUCKETS}
-    groups = {key: 0.0 for key in GROUP_WORDS}
-    for k, v in kinds.items():
-        groups[GROUP_OF.get(k, "other")] += v or 0.0
-    return {"kinds": kinds, "groups": groups, "n": len(part)}
+    groups = _groups_of(kinds)
+    people = [dict(who(e, x), groups=_groups_of(e["gaze_data"]["shares"]))
+              for e, x in part]
+    ci = {key: mean_interval([p["groups"][key] for p in people], w,
+                             seed_for(*seed_parts, key), repeats)
+          for key in GROUP_WORDS}
+    return {"kinds": kinds, "groups": groups, "n": len(part),
+            "people": people, "ci": ci}
 
 
-def _minutes(part: list, min_n: int) -> dict:
-    """Шаг 2 — ход по минутам: взвешенное среднее и полоса между 25-м и
-    75-м процентилями; минута, где участников меньше [min_n], не
-    рисуется."""
+def _minutes(part: list, min_n: int, seed_parts: tuple = ("",),
+             repeats: int = 2000) -> dict:
+    """Шаг 2 — ход по минутам: строка группы — (минута, взвешенное
+    среднее, нижний и верхний край интервала 95 % среднего, участников);
+    минута, где участников меньше [min_n], не рисуется. Шаг 42: полоса —
+    интервал среднего бутстрепом участников этой минуты, а не 25-й и
+    75-й процентили (SNO-ALG-RES-04); рядом — ряды участников
+    (`people`) для тонких линий Р9."""
+    from .stats import mean_interval, seed_for
     by_minute: dict[int, list] = {}
     for e, w in part:
         for row in e["gaze_data"]["minutes"]:
             by_minute.setdefault(int(row["minute"]), []).append((row, w))
-    out = {key: [] for key in GROUP_WORDS}
+    out: dict = {key: [] for key in GROUP_WORDS}
     for minute in sorted(by_minute):
         rows = by_minute[minute]
         if len(rows) < min_n:
@@ -197,8 +263,17 @@ def _minutes(part: list, min_n: int) -> dict:
         ws = [w for _, w in rows]
         for key in GROUP_WORDS:
             xs = [r.get(key, 0.0) for r, _ in rows]
-            out[key].append((minute, _wmean(xs, ws), wquantile(xs, ws, 0.25),
-                             wquantile(xs, ws, 0.75), len(rows)))
+            mean = _wmean(xs, ws)
+            ci = mean_interval(xs, ws, seed_for(*seed_parts, key, minute),
+                               repeats)
+            lo, hi = ci if ci is not None else (mean, mean)
+            out[key].append((minute, mean, lo, hi, len(rows)))
+    out["people"] = [
+        dict(who(e, w), series={
+            key: [(int(r["minute"]), r.get(key, 0.0))
+                  for r in e["gaze_data"]["minutes"]]
+            for key in GROUP_WORDS})
+        for e, w in part]
     return out
 
 
@@ -212,6 +287,10 @@ def _matrix(part: list) -> dict:
     n = len(zones)
     total = np.zeros((n, n))
     used = 0
+    # Шаг 42: участников, у которых из строки были переходы (Р7, разница
+    # ветвей — только у строк, где их не меньше `min_minute_participants`
+    # в обеих).
+    row_n = np.zeros(n, dtype=int)
     for e, w in part:
         trans = e["gaze_data"]["disorder"]["phases"][disorder.ALL][
             "transitions"]
@@ -221,12 +300,13 @@ def _matrix(part: list) -> dict:
         counts = np.bincount(arr[:, 0] * n + arr[:, 1],
                              minlength=n * n).reshape(n, n).astype(float)
         total += w * counts / counts.sum()
+        row_n += counts.sum(axis=1) > 0
         used += 1
     rows = total.sum(axis=1, keepdims=True)
     with np.errstate(invalid="ignore", divide="ignore"):
         p = np.where(rows > 0, total / np.where(rows > 0, rows, 1), np.nan)
     return {"zones": [GROUP_WORDS[z] for z in zones], "p": p.tolist(),
-            "n": used}
+            "n": used, "row_n": row_n.tolist()}
 
 
 def _category_matrix(part: list) -> dict:
@@ -242,10 +322,11 @@ def _category_matrix(part: list) -> dict:
     names.sort(key=lambda x: (x == NO_CATEGORY, x))
     n = len(names)
     if not n:
-        return {"zones": [], "p": [], "n": 0}
+        return {"zones": [], "p": [], "n": 0, "row_n": []}
     index = {x: i for i, x in enumerate(names)}
     total = np.zeros((n, n))
     used = 0
+    row_n = np.zeros(n, dtype=int)
     for e, w in part:
         pairs = e["gaze_data"]["category_pairs"]
         if not pairs:
@@ -254,11 +335,13 @@ def _category_matrix(part: list) -> dict:
         for a, b in pairs:
             counts[index[a], index[b]] += 1
         total += w * counts / counts.sum()
+        row_n += counts.sum(axis=1) > 0
         used += 1
     rows = total.sum(axis=1, keepdims=True)
     with np.errstate(invalid="ignore", divide="ignore"):
         p = np.where(rows > 0, total / np.where(rows > 0, rows, 1), np.nan)
-    return {"zones": names, "p": p.tolist(), "n": used}
+    return {"zones": names, "p": p.tolist(), "n": used,
+            "row_n": row_n.tolist()}
 
 
 def _shelf(part: list) -> dict:
@@ -323,6 +406,39 @@ def _curve(series: list[tuple[list, float]], min_n: int) -> list:
     return out
 
 
+def _lines(part: list, series_of, minimum: int) -> dict:
+    """Шаг 42, Р12 — линии участников и середина прямой ветви.
+
+    У каждого участника — его ряд (только y > 0 и номер больше нуля: оси
+    логарифмические) и
+    прямая `fit`, если походов хватает. Середина ветви — точка
+    (x̄, ȳ): x̄ — взвешенное среднее середин участников, ȳ — взвешенное
+    среднее их прямых в своих серединах, `a + b · x̄ᵢ`. Наклон ветви и его
+    интервал рисунок берёт из свода средних (`learn.*_slope`,
+    SNO-ALG-RES-10) — тем же правилом, что в «сравнение.csv»; прямая
+    ветви — `log y = ȳ + b̄ · (log n − x̄)`."""
+    people = []
+    xs, ys, ws = [], [], []
+    lost = 0
+    for e, w in part:
+        values = series_of(e)
+        lost += dropped(values)
+        line = fit(values, minimum)
+        people.append(dict(who(e, w), points=[
+            (n, y) for n, y in values if n > 0 and y is not None and y > 0],
+            fit=line))
+        if line is not None:
+            a, b, xm = line
+            xs.append(xm)
+            ys.append(a + b * xm)
+            ws.append(w)
+    centre = None
+    if ws and sum(ws) > 0:
+        centre = (_wmean(xs, ws), _wmean(ys, ws))
+    return {"people": people, "centre": centre, "fitted": len(ws),
+            "dropped": lost}
+
+
 def _heat(entries: list[dict], weight) -> list[dict]:
     """Шаг 4 — тепловая карта «Галактики»: фиксации поиска на полотне
     карты в координатах карты (приближение и сдвиг карты не мешают),
@@ -341,6 +457,10 @@ def _heat(entries: list[dict], weight) -> list[dict]:
             "key": known["key"], "points": known["points"], "people": {}})
         own["people"].setdefault(e.get("branch"), []).append(
             (e, w, data["map_fix"]))
+        # Шаг 42: σ пятна — точность сессии в градусах (подпись Р10).
+        if data.get("accuracy_deg") is not None:
+            own.setdefault("sigma_deg", []).append(
+                float(data["accuracy_deg"]))
     out = []
     for key in sorted(maps):
         item = maps[key]
@@ -383,7 +503,8 @@ def _heat(entries: list[dict], weight) -> list[dict]:
                                     "not_reference": marked}
         if branches:
             out.append({"key": key, "points": item["points"],
-                        "extent": [x0, x1, y0, y1], "branches": branches})
+                        "extent": [x0, x1, y0, y1], "branches": branches,
+                        "sigma_deg": sorted(item.get("sigma_deg") or [])})
     return out
 
 
@@ -485,3 +606,49 @@ def ribbons(entries: list[dict]) -> list[dict]:
                     "study_s": (data.get("study_ms") or 0) / 1000})
     out.sort(key=lambda r: (str(r["branch"]), r["code"]))
     return out
+
+
+# --- разница матриц ветвей (Р7, шаг 42) ------------------------------------
+
+def matrix_difference(first: dict, second: dict, min_n: int) -> dict:
+    """Шаг 42, Р7 — разница матриц переходов «II − I» (SNO-ALG-RES-04).
+
+    Зоны — объединение зон обеих ветвей (у категорий наборы могут не
+    совпасть): порядок — как у ветви I, новые — следом. Зона, которой у
+    ветви нет в столбцах, — доля 0: переходов в неё у её участников не
+    было. Строка считается, только если в **обеих** ветвях из неё
+    переходили не меньше [min_n] участников (`row_n`): разница строк,
+    где за ветвь говорят один-два человека, выглядела бы находкой.
+    Ответ — зоны, разница (`None` — не считается) и `row_n` обеих
+    ветвей по зонам ответа."""
+    zones = list(first.get("zones") or [])
+    for z in second.get("zones") or []:
+        if z not in zones:
+            zones.append(z)
+    i1 = {z: i for i, z in enumerate(first.get("zones") or [])}
+    i2 = {z: i for i, z in enumerate(second.get("zones") or [])}
+    rn1 = first.get("row_n") or []
+    rn2 = second.get("row_n") or []
+    n = len(zones)
+    d: list[list] = [[None] * n for _ in range(n)]
+    n1 = [rn1[i1[z]] if z in i1 and i1[z] < len(rn1) else 0 for z in zones]
+    n2 = [rn2[i2[z]] if z in i2 and i2[z] < len(rn2) else 0 for z in zones]
+    # Строки без единого участника нет ни при каком пороге.
+    min_n = max(int(min_n), 1)
+
+    def share(m: dict, idx: dict, a: str, b: str) -> float | None:
+        if b not in idx:
+            return 0.0
+        v = m["p"][idx[a]][idx[b]]
+        return None if v is None or v != v else float(v)
+
+    for i, a in enumerate(zones):
+        if min(n1[i], n2[i]) < min_n:
+            continue
+        for j, b in enumerate(zones):
+            p1 = share(first, i1, a, b)
+            p2 = share(second, i2, a, b)
+            if p1 is None or p2 is None:
+                continue
+            d[i][j] = p2 - p1
+    return {"zones": zones, "d": d, "n_first": n1, "n_second": n2}
