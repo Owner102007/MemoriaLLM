@@ -151,6 +151,12 @@ def test_sno_f_res_06_small_n_eff_gives_no_words(tmp_path):
     r = row(result, "clt.ecl")
     assert not r["result"].enough
     assert "больше" not in r["words"] and "меньше" not in r["words"]
+    # Правка v0.47.1 (ALG-RES-10, краевые случаи): при малом n_eff —
+    # только средние ветвей, без разницы, интервала и g.
+    mm = r["means"]
+    assert mm["branch"]["I"]["mean"] is not None
+    assert mm["diff"]["value"] is None and mm["diff"]["ci"] is None
+    assert mm["g"] is None and mm["hier"] is None
 
 
 def test_sno_f_res_06_files_of_the_report(run, tmp_path):

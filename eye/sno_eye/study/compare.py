@@ -469,15 +469,28 @@ def _scenario_cases(entries, m, cfg, fingerprint, no_filter, series,
 
 
 def _means_row(entries, m, rows, cfg, fingerprint, no_filter, series,
-               rep, perm, exact) -> dict:
+               rep, perm, exact, enough: bool = True) -> dict:
     """Свод средних меры (SNO-ALG-RES-10, шаги 1–4, 8): шкала, средние
-    ветвей и ПК, разница или отношение, g, интервал по походам."""
+    ветвей и ПК, разница или отношение, g, интервал по походам.
+
+    n_eff меньше порога хоть в одной ветви ([enough] — False) — только
+    средние, без разницы, g и интервала по походам (ALG-RES-10, краевые
+    случаи; правка `v0.47.1`): при одном-двух участниках интервал
+    бутстрепа вырождается в точку и выглядит как точный ответ."""
     plain = [r[:4] for r in rows]
     scale, why = means.scale_of(m, [r[0] for r in plain], cfg)
     out = {"scale": scale, "scale_why": why}
     out.update(means.branch_means(
         plain, scale, seed_parts=(fingerprint, BRANCH, "mean", m.key),
         repeats=rep))
+    if not enough:
+        out["diff"] = {"value": None, "ci": None, "p": None,
+                       "exact": None, "pooled": None, "log": None,
+                       "kind": "отношение" if scale == "log"
+                       else "разница", "why": "мало данных"}
+        out["g"] = None
+        out["hier"] = None
+        return out
     out["diff"] = means.difference(
         plain, scale, seed=stats.seed_for(fingerprint, BRANCH, "diff",
                                           m.key),
@@ -530,9 +543,10 @@ def run(entries: list[dict], cfg: dict, *, fingerprint: str,
                     for g in groups}
                 row["points"] = rows
                 if name == BRANCH:
-                    row["means"] = _means_row(entries, m, rows, cfg,
-                                              fingerprint, no_filter,
-                                              series, rep, perm, exact)
+                    row["means"] = _means_row(
+                        entries, m, rows, cfg, fingerprint, no_filter,
+                        series, rep, perm, exact,
+                        enough=row["result"].enough)
             part.append(row)
         # Поправка внутри семьи. Главная семья — Холм, с недостающей
         # мерой как p = 1: главная мера, у которой мало данных, остаётся

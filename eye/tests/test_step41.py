@@ -518,3 +518,20 @@ def test_sno_alg_res_10_zero_mean_difference_is_not_agreement():
     assert compare.words(_res(0.6, (0.2, 0.9), 0.0), 0.01, 0.05,
                          ("II", "I"), diff=0.0) == \
         "разница не доказана: среднее и ранги говорят разное"
+
+
+def test_sno_alg_res_10_small_n_eff_gives_only_branch_means():
+    """Правка v0.47.1: одна-два участника в ветви — разница с интервалом
+    бутстрепа вырождается в точку ([x; x]) и выглядит точной; по
+    ALG-RES-10 при n_eff < 3 — только средние."""
+    rows = [(5.0, 1.0, "II", "A", None, "a"), (7.0, 1.0, "II", "B", None,
+                                                "b"),
+            (1.0, 1.0, "I", "A", None, "c"), (3.0, 1.0, "I", "B", None,
+                                               "d")]
+    cfg = {"log_zero_share": 0.2, "primary": []}
+    out = compare._means_row([], compare.BY_KEY["clt.ecl"], rows, cfg,
+                             "x", False, None, 200, 200, 1000,
+                             enough=False)
+    assert out["branch"]["II"]["mean"] == pytest.approx(6.0)
+    assert out["diff"]["value"] is None and out["diff"]["ci"] is None
+    assert out["g"] is None and out["hier"] is None

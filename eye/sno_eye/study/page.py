@@ -786,7 +786,10 @@ def _verdicts(run: dict) -> str:
     rows = [r for r in run["result"]["table"]
             if r["comparison"] == compare.BRANCH and not r["pending"]]
     rows.sort(key=lambda r: order.index(r["family"]))
-    warn = run["result"]["warnings"]
+    # Пометка проверочного прогона уже стоит рамкой — второй раз её не
+    # повторяем.
+    warn = [w for w in run["result"]["warnings"]
+            if not w.startswith("проверочный прогон")]
     parts = [_check_banner(run)]
     if warn:
         parts.append("<div class='warn'><ul>" + "".join(
@@ -802,8 +805,8 @@ def _verdicts(run: dict) -> str:
         own = [r for r in rows if r.get("verdict") == key]
         if key in ("сильнее", "слабее"):
             if not own:
-                parts.append(f"<h3>{_e(title)}</h3><p>Ни по одной мере "
-                             "вывод не держится.</p>")
+                parts.append(f"<h3>{_e(title)}</h3><p>Не доказано ни по "
+                             "одной мере.</p>")
                 continue
             items = []
             for r in own:
