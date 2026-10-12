@@ -68,7 +68,8 @@ def reading_minutes(line) -> float:
 
 # --- возвраты на страницу назад — по журналу ----------------------------
 
-def page_backs(events: list[dict], line, misflip_s: float) -> dict:
+def page_backs(events: list[dict], line, misflip_s: float,
+               reread_min_s: float = 1.5) -> dict:
     """Возвраты на страницу (или полосу) назад внутри одного открытия
     книги — по событиям `page.shown`.
 
@@ -76,13 +77,35 @@ def page_backs(events: list[dict], line, misflip_s: float) -> dict:
     страница, но полоса выше. Переход по оглавлению, к найденному и к
     пометке — навигация, отдельной строкой. Вперёд и сразу назад быстрее
     [misflip_s] на то же место — «промах листания», отдельный счётчик.
+
+    BUG-74 (шаг 43): шаг назад — **возврат** (перечитывание), только
+    если на показанной странице задержались не меньше [reread_min_s]
+    (до следующего показа, закрытия книги или конца изучения). Подряд
+    идущие шаги назад без задержки — **перемотка**: одна на цепочку, а
+    страница, где цепочка остановилась, — её конец, а не возврат.
+    Перемотка сразу после открытия книги не на первой странице (вперёд
+    ещё не листали) до первой страницы — **возврат к началу**: она о
+    том, где книгу оставил прежний читатель, а не о читателе. Одиночный
+    быстрый шаг назад — «мельком», не возврат.
     """
     lo, hi = line.study_start, line.study_end
     rows: list[dict] = []
     shows = 0
+    opened_mid = 0
     book = None
     place = None
     forward = None          # (миг, откуда) последнего показа вперёд
+    pending: dict | None = None   # последний шаг назад — ждёт задержки
+    run = 0                 # номер цепочки шагов назад подряд
+    moved = False           # листали ли вперёд после открытия
+    open_page = None
+
+    def settle(t: float) -> None:
+        nonlocal pending
+        if pending is not None:
+            pending["dwell_s"] = max(0.0, (t - pending["t"]) / 1000)
+            pending = None
+
     for e in events:
         if e.get("phase") == "post":
             continue
@@ -91,13 +114,23 @@ def page_backs(events: list[dict], line, misflip_s: float) -> dict:
             continue
         kind = e["type"]
         if kind == "book.open":
+            settle(t)
             book, place, forward = e.get("book"), None, None
+            data = e.get("data") if isinstance(e.get("data"), dict) else {}
+            open_page = _int(data.get("page"))
+            if open_page is not None and open_page > 1:
+                opened_mid += 1
+            moved = False
+            run += 1
             continue
         if kind == "book.close":
+            settle(t)
             book, place, forward = None, None, None
+            run += 1
             continue
         if kind != "page.shown" or book is None:
             continue
+        settle(t)
         data = e.get("data") if isinstance(e.get("data"), dict) else {}
         page = _int(e.get("page"))
         strip = _int(e.get("strip")) or 1
@@ -118,6 +151,8 @@ def page_backs(events: list[dict], line, misflip_s: float) -> dict:
         if now > before:
             if cause not in NOT_A_FLIP and cause not in NAVIGATION:
                 forward = (t, before)
+                moved = True
+            run += 1
             continue
         if cause in NOT_A_FLIP:
             what = "не листание"
@@ -129,10 +164,18 @@ def page_backs(events: list[dict], line, misflip_s: float) -> dict:
         else:
             what = "назад"
         forward = None
-        rows.append({"t": t, "book": book, "page": page, "strip": strip,
-                     "from_page": before[0], "from_strip": before[1],
-                     "pages": before[0] - page, "cause": cause,
-                     "kind": what})
+        row = {"t": t, "book": book, "page": page, "strip": strip,
+               "from_page": before[0], "from_strip": before[1],
+               "pages": before[0] - page, "cause": cause, "kind": what,
+               "dwell_s": None, "run": run, "moved": moved,
+               "open_page": open_page}
+        rows.append(row)
+        if what == "назад":
+            pending = row
+        else:
+            run += 1
+    settle(hi)
+    rewinds, to_start = _rewinds(rows, reread_min_s)
     minutes = reading_minutes(line)
     back = [r for r in rows if r["kind"] == "назад"]
     causes: dict = {}
@@ -147,8 +190,53 @@ def page_backs(events: list[dict], line, misflip_s: float) -> dict:
         if back else None,
         "navigation": sum(1 for r in rows if r["kind"] == "навигация"),
         "misflips": sum(1 for r in rows if r["kind"] == "промах листания"),
+        "glances": sum(1 for r in rows if r["kind"] == "мельком"),
+        "rewinds": rewinds,
+        "rewind_pages": sum(r["pages"] for r in rows
+                            if r["kind"] == "перемотка"),
+        "to_start": to_start,
+        "opened_mid": opened_mid,
+        "reread_min_s": reread_min_s,
         "causes": causes,
     }
+
+
+def _rewinds(rows: list[dict], reread_min_s: float) -> tuple[int, int]:
+    """BUG-74: шаги «назад» по цепочкам — подряд, без показа вперёд и без
+    другого шага между ними. Цепочка кончается шагом с задержкой не
+    меньше [reread_min_s] (там остановились) или последним шагом.
+    Цепочка из одного шага: с задержкой — возврат, без — «мельком».
+    Длиннее — перемотка (все её шаги), и возврат к началу, если она
+    начата до первого листания вперёд после открытия книги не на первой
+    странице и кончилась на первой. Ответ — (перемоток, из них к
+    началу); виды шагов правятся в [rows]."""
+    chains: list[list[dict]] = []
+    for r in rows:
+        if r["kind"] != "назад":
+            continue
+        last = chains[-1] if chains else None
+        if last and last[-1]["run"] == r["run"] and \
+                (last[-1]["dwell_s"] or 0.0) < reread_min_s:
+            last.append(r)
+        else:
+            chains.append([r])
+    rewinds = to_start = 0
+    for chain in chains:
+        if len(chain) == 1:
+            r = chain[0]
+            if (r["dwell_s"] or 0.0) < reread_min_s:
+                r["kind"] = "мельком"
+            continue
+        rewinds += 1
+        for r in chain:
+            r["kind"] = "перемотка"
+        head, tail = chain[0], chain[-1]
+        if not head["moved"] and (head["open_page"] or 1) > 1 and \
+                tail["page"] <= 1:
+            to_start += 1
+            for r in chain:
+                r["to_start"] = True
+    return rewinds, to_start
 
 
 # --- взгляд назад по тексту — по взгляду --------------------------------
@@ -240,14 +328,21 @@ class _Show:
 
 def lookbacks(samples: list, spans: list, frames: list[dict], screen,
               line, implicit_deg: float | None, portrait_cfg: dict,
-              report_cfg: dict) -> dict:
+              report_cfg: dict, smooth_frames: int = 3,
+              smooth_min_fps: float = 25.0) -> dict:
     """Взгляд назад к прочитанному внутри одного показа страницы.
 
-    1. Фиксации — одним порогом разброса на всё исследование
-       (`portrait.reading_idt_deg`): сессия, у которой три
-       прецизионности больше, взгляда назад не получает.
-    2. Порог скачка назад `L = max(lookback_min_deg, 3 × прецизионность,
-       остаток неявных точек)`, в пункты страницы — масштабом листа.
+    1. Выборки — после медианы [smooth_frames] кадров (`study.noise`,
+       как у мер беспорядочности); фиксации — одним порогом разброса на
+       всё исследование (`portrait.reading_idt_deg`).
+       BUG-73 (шаг 43): сессия получает взгляд назад, если в фиксациях
+       лежит не меньше `portrait.reading_fix_share` времени её взгляда
+       на экране чтения, — а не по прецизионности калибровки: у
+       веб-камер три прецизионности 4–7,4°, и прежнее правило гасило
+       меру у всех записей.
+    2. Порог скачка назад `L = max(lookback_min_deg, k × шум от кадра к
+       кадру после сглаживания, остаток неявных точек)`, `k` —
+       `portrait.lookback_noise_k`; в пункты страницы — масштабом листа.
     3. Фронт чтения — `front_quantile` глубины последних `front_window`
        фиксаций (не во взгляде назад); фронт только опускается. Первая
        фиксация нового показа на том же месте, где взгляд был до смены
@@ -262,19 +357,40 @@ def lookbacks(samples: list, spans: list, frames: list[dict], screen,
        прежней колонке; эпизод длится до возврата к фронту ближе `L` или
        ухода со страницы; короче `lookback_min_ms` — не считается.
     """
-    precision = line.precision_deg
+    from . import noise
     limit = float(portrait_cfg["reading_idt_deg"])
     out: dict = {"episodes": [], "shows": [], "points": [], "reason": None,
-                 "idt_deg": limit}
-    if precision is None:
-        out["reason"] = "прецизионность неизвестна — шум проверить нечем"
+                 "idt_deg": limit, "fix_share": None, "s2s_deg": None}
+    times = [float(f["t"]) for f in frames]
+    smoothed, used, fps = noise.smooth(samples, smooth_frames,
+                                       smooth_min_fps)
+    out["smooth_frames"] = used
+    fixes = idt.fixations(smoothed, screen.px_for_deg(limit), spans,
+                          report_cfg, times)
+    lo = line.study_start
+    hi = line.study_end if line.window_changed is None else \
+        min(line.study_end, line.window_changed)
+
+    def not_reading(t: float) -> bool:
+        return line.away_at(t) or line.screen_at(t) != "reader"
+
+    share = noise.fix_share(
+        smoothed, fixes, lo, hi, spans, not_reading,
+        float(report_cfg["sample_cap_ms"]), screen,
+        screen.px_for_deg(float(report_cfg["outside_deg"])))
+    s2s = noise.s2s_deg(smoothed, fixes, screen)
+    out["fix_share"], out["s2s_deg"] = share, s2s
+    least = float(portrait_cfg["reading_fix_share"])
+    if share is None:
+        out["reason"] = "годного взгляда на экране чтения нет"
         return out
-    if 3 * precision > limit:
-        out["reason"] = (f"шум больше порога: три прецизионности "
-                         f"{3 * precision:.1f}° больше "
-                         f"{limit:.1f}°").replace(".", ",")
+    if share < least:
+        out["reason"] = (f"шум дробит фиксации чтения: в фиксациях "
+                         f"{share:.0%} времени взгляда на странице — "
+                         f"меньше {least:.0%}").replace(".", ",")
         return out
-    L_deg = max(float(portrait_cfg["lookback_min_deg"]), 3 * precision,
+    L_deg = max(float(portrait_cfg["lookback_min_deg"]),
+                float(portrait_cfg["lookback_noise_k"]) * (s2s or 0.0),
                 implicit_deg or 0.0)
     out["L_deg"] = L_deg
     L_px = screen.px_for_deg(L_deg)
@@ -282,12 +398,6 @@ def lookbacks(samples: list, spans: list, frames: list[dict], screen,
     window = int(portrait_cfg["front_window"])
     jump = float(portrait_cfg["column_jump_share"])
     min_ms = float(portrait_cfg["lookback_min_ms"])
-    times = [float(f["t"]) for f in frames]
-    fixes = idt.fixations(samples, screen.px_for_deg(limit), spans,
-                          report_cfg, times)
-    lo = line.study_start
-    hi = line.study_end if line.window_changed is None else \
-        min(line.study_end, line.window_changed)
     shows: list[_Show] = []
     cur: _Show | None = None
     still_px = screen.px_for_deg(limit)

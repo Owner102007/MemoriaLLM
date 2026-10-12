@@ -689,3 +689,86 @@ def cluster_test(rows: list[dict], *, threshold: float, min_n: int,
     out["clusters"] = found
     out["permutations"] = int(best.size)
     return out
+
+
+# --- проверки одной группы (SNO-ALG-RES-12, шаг 43) --------------------
+
+# Точный перебор знаков — до стольких участников (2¹⁶ = 65 536
+# разметок); больше — розыгрыши.
+SIGN_EXACT_N = 16
+
+
+def sign_flip_p(d, w, seed: int, repeats: int) -> float | None:
+    """Точная знаковая перестановка — рандомизационный тест Фишера для
+    отклонений от точки отсчёта (Good P., 2005, гл. 3; Fisher R. A.
+    «The Design of Experiments», 1935, § 21): при нуле знак каждого
+    `dᵢ` равновероятен; статистика — `Σ wᵢ dᵢ`; p двусторонний — доля
+    разметок знаков, у которых |Σ ± wᵢ dᵢ| не меньше настоящего.
+    До `SIGN_EXACT_N` участников перебираются все `2ⁿ` разметок, больше
+    — [repeats] розыгрышей с зерном [seed] и p = (b + 1) / (B + 1)."""
+    d = np.asarray(d, dtype=float)
+    w = np.asarray(w, dtype=float)
+    keep = w > 0
+    d, w = d[keep], w[keep]
+    n = d.size
+    if n == 0:
+        return None
+    z = w * d
+    observed = abs(float(z.sum()))
+    tol = 1e-9 * max(1.0, float(np.abs(z).sum()))
+    if n <= SIGN_EXACT_N:
+        signs = 1 - 2 * ((np.arange(2 ** n)[:, None] >> np.arange(n)) & 1)
+        sums = np.abs(signs @ z)
+        return float(np.mean(sums >= observed - tol))
+    rng = np.random.default_rng(seed)
+    hits = 0
+    for lo in range(0, repeats, _CHUNK):
+        hi = min(repeats, lo + _CHUNK)
+        signs = rng.choice((-1.0, 1.0), size=(hi - lo, n))
+        hits += int(np.sum(np.abs(signs @ z) >= observed - tol))
+    return (hits + 1) / (repeats + 1)
+
+
+def binom_p(k: int, n: int) -> float | None:
+    """Точный двусторонний биномиальный p при вероятности ½: сумма
+    вероятностей исходов не вероятнее наблюдённого — справочно рядом со
+    «сколько из скольких»."""
+    if n <= 0:
+        return None
+    probs = [math.comb(n, i) / 2 ** n for i in range(n + 1)]
+    own = probs[k]
+    return min(1.0, sum(p for p in probs if p <= own * (1 + 1e-12)))
+
+
+def median_interval(x, w, seed: int, repeats: int) -> tuple | None:
+    """Интервал 95 % взвешенной медианы — процентильный бутстреп
+    участников (Efron, Tibshirani, 1993): участники вытягиваются с
+    возвращением равновероятно, вес идёт в медиану."""
+    x = np.asarray(x, dtype=float)
+    w = np.asarray(w, dtype=float)
+    if x.size < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    out = np.empty(repeats)
+    order = np.argsort(x, kind="stable")
+    x, w = x[order], w[order]
+    for lo in range(0, repeats, _CHUNK):
+        hi = min(repeats, lo + _CHUNK)
+        idx = np.sort(rng.integers(0, x.size, size=(hi - lo, x.size)),
+                      axis=1)
+        ww = w[idx]
+        acc = np.cumsum(ww, axis=1)
+        half = acc[:, -1:] / 2
+        # Первое место, где накопленный вес переходит половину; ровно
+        # половина — середина между ним и следующим (`weighted_median`).
+        over = np.argmax(acc > half + 1e-12 * np.maximum(1.0, half),
+                         axis=1)
+        exact = np.abs(acc - half) <= 1e-12 * np.maximum(1.0, half)
+        at = np.argmax(exact, axis=1)
+        has = exact.any(axis=1) & (at + 1 < x.size)
+        rows = np.arange(hi - lo)
+        value = x[idx[rows, over]]
+        mid = (x[idx[rows, at]] + x[idx[rows, np.minimum(at + 1,
+                                                          x.size - 1)]]) / 2
+        out[lo:hi] = np.where(has, mid, value)
+    return float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))

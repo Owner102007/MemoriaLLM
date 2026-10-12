@@ -70,6 +70,16 @@ DEFAULTS = {
     "front_window": 10,
     "column_jump_share": 0.25,
     "misflip_s": 2.0,
+    # BUG-73 (шаг 43): взгляд назад — по сглаженным выборкам; сессия
+    # идёт в него, если в фиксациях порога `reading_idt_deg` не меньше
+    # этой доли времени взгляда на странице; порог скачка — не меньше
+    # стольких шумов от кадра к кадру после сглаживания (лесенка шума
+    # чтения, `tests/reading_ladder.py`).
+    "reading_fix_share": 0.7,
+    "lookback_noise_k": 3.0,
+    # BUG-74 (шаг 43): шаг назад — возврат, если на странице задержались
+    # не меньше, секунд; быстрее — перемотка или «мельком».
+    "reread_min_s": 1.5,
     # Шаг 40, момент долгого взгляда без действий (SNO-ALG-RES-09):
     # доля отрезка, где годный взгляд на экране, не меньше; фиксаций в
     # нём не меньше; отрезок не короче, секунд.
@@ -309,7 +319,8 @@ def prepare(fixes: list[dict], done: list, res: dict, record, line, screen,
                                pc),
         "lookback": reading_back.lookbacks(
             res.get("_samples") or [], spans, record.frames, screen, line,
-            residual, pc, report_cfg),
+            residual, pc, report_cfg, int(cfg["smooth_frames"]),
+            float(cfg["smooth_min_fps"])),
         "study_ms": line.study_ms,
         "opens": [(float(e["t"]) - lo) / 1000 for e in record.events
                   if e["type"] == "book.open" and e.get("phase") != "post"

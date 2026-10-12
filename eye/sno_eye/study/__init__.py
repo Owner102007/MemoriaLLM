@@ -5,6 +5,14 @@
 структурированная матрица, итог «в чём ветвь II сильнее и в чём
 слабее», SNO-ALG-RES-10).
 
+С шага 43 (решения владельца АО15, АО16 от 12.10.2026) главный анализ —
+режим `--interface` («Анализ по интерфейсу», SNO-F-RES-09): группа —
+интерфейс, которым участник выбирал книги, полка — против случая и
+самой себя, первый контакт с «Галактикой» — против ожиданий, записанных
+до данных; ярлык `eye\\Анализ по интерфейсу.cmd`, отчёт — в «Документы\\
+Анализ по интерфейсу СНО2026». Сравнение ветвей остаётся режимом по
+умолчанию.
+
 Организатор перетаскивает папку с архивами — с обоих ПК и с телефонов,
 можно по подпапкам — на `eye\\Сравнение ветвей.cmd`. Ставить ничего не
 нужно, сеть не нужна. В «Документах» появляется
@@ -84,6 +92,19 @@
 | shot.py`     |     | страница из архива литературы,     | matplotlib         |
 |              |     | пятно и путь фиксаций (П5)         |                    |
 | `page.py`    | 11  | отчёт `index.html`                 | html, base64       |
+| `order.py`   | 7в  | порядок обхода: ρ с полкой и с     | numpy              |
+|              |     | высотой звезды, маршрут против     |                    |
+|              |     | случайных перестановок (шаг 43)    |                    |
+| `blinks.py`  | 1   | моргания по потоку взгляда, по     | —                  |
+|              |     | третям изучения (шаг 43)           |                    |
+| `single.py`  | 9   | анализ по интерфейсу: группы,      | numpy (`stats`)    |
+|              |     | проверки против случая и себя,     |                    |
+|              |     | знаковая перестановка, итог тремя  |                    |
+|              |     | списками (шаг 43)                  |                    |
+| `prereg.py`  | 9   | «Галактика»: М1–М10, опора на      | —                  |
+|              |     | ориентиры, вердикт предрегистрации |                    |
+| `interface_  | 10–11 | рисунки Р20–Р22, отчёт и таблицы | matplotlib, html   |
+| charts.py`, `interface_page.py` | | анализа по интерфейсу |          |
 
 Скрипт не пересчитывает того, что уже считается: годность архива —
 «Проверка записи» (`record_check`), чтение архива, ход сессии, версии
@@ -126,8 +147,10 @@ from ..report import settings as report_settings
 # (BUG-70), поправка ширины экрана; шаг 40 — момент долгого взгляда без
 # действий (П5); шаг 41 — свод средних, матрица, итог (SNO-ALG-RES-10),
 # BUG-71, BUG-72; 41.1 — при малом n_eff только средние; 42.0 — рисунки
-# Р1–Р14 по образцу журналов.
-SCRIPT_VERSION = "42.0"
+# Р1–Р14 по образцу журналов; 43.0 — анализ по интерфейсу (режим
+# `--interface`), порядок обхода, вердикт предрегистрации, моргания,
+# BUG-73, BUG-74, BUG-75.
+SCRIPT_VERSION = "43.0"
 
 OUT_FOLDER = "Сравнение ветвей СНО2026"
 
@@ -200,6 +223,10 @@ DEFAULTS = {
 }
 
 
+# Шаг 43: разделы `study` со своими словарями порогов.
+NESTED = ("order", "single", "prereg")
+
+
 def settings(path: Path | None = None) -> dict:
     """Пороги сравнения: `study` из `thresholds.json` поверх значений по
     умолчанию; пороги портрета участника (шаг 38) — `portrait`, ключом
@@ -207,6 +234,8 @@ def settings(path: Path | None = None) -> dict:
     from . import portrait
     values = dict(DEFAULTS)
     values["portrait"] = portrait.settings(None)
+    for key in NESTED:
+        values[key] = {}
     if path is None:
         path = Path(__file__).resolve().parent.parent.parent / \
             "thresholds.json"
@@ -228,18 +257,25 @@ def settings(path: Path | None = None) -> dict:
             elif isinstance(value, (int, float)) and \
                     not isinstance(value, bool):
                 values[key] = value
+        # Шаг 43: разделы порядка обхода, проверок одной группы и
+        # предрегистрации — свои словари; их пороги читают `order`,
+        # `single` и `prereg`.
+        for key in NESTED:
+            if isinstance(own.get(key), dict):
+                values[key] = dict(own[key])
     except (OSError, ValueError, AttributeError):
         pass
     return values
 
 
-def _documents() -> Path:
+def _documents(name: str = OUT_FOLDER) -> Path:
     home = Path(os.environ.get("USERPROFILE") or Path.home())
     docs = home / "Documents"
-    return (docs if docs.is_dir() else home) / OUT_FOLDER
+    return (docs if docs.is_dir() else home) / name
 
 
-def out_folder(out: str | None, no_filter: bool) -> Path:
+def out_folder(out: str | None, no_filter: bool,
+               mode: str = "compare") -> Path:
     """Куда класть отчёт: [out] как есть или «Документы\\Сравнение
     ветвей СНО2026\\<дата-время>». Не в папку `Записи` приложения: она
     приняла бы такую папку за запись."""
@@ -248,6 +284,9 @@ def out_folder(out: str | None, no_filter: bool) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     if no_filter:
         stamp += "-проверочный"
+    if mode == "interface":
+        from .interface_page import OUT_FOLDER as INTERFACE_FOLDER
+        return _documents(INTERFACE_FOLDER) / stamp
     return _documents() / stamp
 
 
@@ -275,10 +314,14 @@ def fingerprint(entries: list[dict]) -> str:
 def analyse(paths: list[str], *, series: str | None = None,
             no_filter: bool = False, cfg: dict | None = None,
             limits: dict | None = None, progress=None,
-            version: str | None = None) -> dict:
+            version: str | None = None, mode: str = "compare") -> dict:
     """Весь сводный анализ без записи файлов: записи, отбор, меры
-    взгляда, сравнение, средние ветвей."""
-    from . import average, collect, compare, disorder, portrait, screen_fix
+    взгляда, порядок обхода и — по [mode] — сравнение ветвей со
+    средними (`compare`) или анализ по интерфейсу (`interface`, шаг 43:
+    полка против случая и самой себя, «Галактика» против
+    предрегистрации)."""
+    from . import (average, collect, compare, disorder, order, portrait,
+                   screen_fix, single)
     cfg = cfg or settings()
     limits = limits or rc.thresholds()
     # Версия взгляда для мер — та же, что у «Разбора записи»
@@ -315,6 +358,19 @@ def analyse(paths: list[str], *, series: str | None = None,
     # Шаг 7а — числа портрета участника (семья «Д»): энтропия по ходу,
     # заходы и возвраты, взгляд назад, возвраты на страницу.
     portrait.finish(entries, cfg, no_filter=no_filter)
+    # Шаг 43 — порядок обхода библиотеки (SNO-ALG-RES-11).
+    order.finish(entries, cfg, print_)
+    if mode == "interface":
+        result = single.run(entries, cfg, fingerprint=print_,
+                            no_filter=no_filter, series=series)
+        result["gaze_info"] = gaze_info
+        result["warnings"] = pc_notes + interface_warnings(entries)
+        return {"entries": entries, "result": result, "cfg": cfg,
+                "paths": [str(p) for p in paths], "limits": limits,
+                "fingerprint": print_, "series": series,
+                "no_filter": no_filter, "mode": mode,
+                "archives": [str(a) for a in archives],
+                "gaze_version": report_cfg["version"]}
     result = compare.run(entries, cfg, fingerprint=print_,
                          no_filter=no_filter, series=series)
     result["gaze_info"] = gaze_info
@@ -330,7 +386,27 @@ def analyse(paths: list[str], *, series: str | None = None,
             "paths": [str(p) for p in paths],
             "limits": limits, "fingerprint": print_, "series": series,
             "no_filter": no_filter, "archives": [str(a) for a in archives],
-            "gaze_version": report_cfg["version"]}
+            "gaze_version": report_cfg["version"], "mode": mode}
+
+
+def interface_warnings(entries: list[dict]) -> list[str]:
+    """Оговорки анализа по интерфейсу: книги, открытые не с начала
+    (сброса к эталону не было — BUG-74), записи без группы."""
+    out = []
+    for e in entries:
+        if e.get("status") != "ok":
+            continue
+        who = e.get("participant") or e["archive"]
+        nav = e.get("reading_nav") or {}
+        if nav.get("opened_mid"):
+            out.append(f"{who}: книги открывались не с начала "
+                       f"({nav['opened_mid']} раз) — сброса к эталону "
+                       "не было; перемотка к началу считается отдельно, "
+                       "не возвратом")
+        if e.get("interface") is None:
+            out.append(f"{who}: книг не открывали — интерфейс выбора не "
+                       "определён, запись ни в одной группе")
+    return out
 
 
 def sources(run: dict) -> dict:
@@ -346,7 +422,12 @@ def sources(run: dict) -> dict:
                 "портрет участника; шаг 39 — сглаживание и пропуск по "
                 "доле в фиксациях (BUG-70), ширина экрана; шаг 40 — "
                 "момент долгого взгляда без действий (П5); шаг 41 — "
-                "свод средних, матрица, итог «сильнее / слабее»",
+                "свод средних, матрица, итог «сильнее / слабее»; шаг 42 — "
+                "рисунки по образцу журналов; шаг 43 — анализ по "
+                "интерфейсу: порядок обхода, проверки одной группы, "
+                "вердикт предрегистрации «Галактики», моргания, BUG-73, "
+                "BUG-74, BUG-75",
+        "mode": run.get("mode", "compare"),
         "series": run["series"], "no_filter": run["no_filter"],
         "gaze_version": run["gaze_version"],
         "fingerprint": run["fingerprint"],
@@ -443,6 +524,9 @@ def write(run: dict, folder: Path, portraits: bool = True,
     [folder]; [portraits] False — без страниц портретов (ключ
     `--no-portraits`). Книги для снимков П5 ищутся в [literature] и среди
     папок прогона (шаг 40)."""
+    if run.get("mode") == "interface":
+        from . import interface_page
+        return interface_page.write(run, folder, portraits, literature)
     from . import charts, page, portrait_page, screen_shot, table
     folder.mkdir(parents=True, exist_ok=True)
     entries, result = run["entries"], run["result"]
@@ -468,8 +552,44 @@ def write(run: dict, folder: Path, portraits: bool = True,
     return [folder / "index.html"]
 
 
+def interface_summary(run: dict) -> dict:
+    """Итог анализа по интерфейсу для `--json` и консоли (шаг 43)."""
+    res = run["result"]
+    entries = run["entries"]
+    return {
+        "mode": "interface",
+        "archives": len(entries),
+        "bad": [e["archive"] for e in entries if e["status"] != "ok"],
+        "groups": res["groups"],
+        "participants": [{
+            "participant": e.get("participant"), "branch": e.get("branch"),
+            "interface": e.get("interface"), "colour": e.get("colour"),
+            "in_stats": e.get("in_stats"), "out": e.get("out"),
+            "strategy": (e.get("order") or {}).get("strategy"),
+            "route_shelf": (e.get("order") or {}).get("route_shelf"),
+            "route_map": (e.get("order") or {}).get("route_map"),
+            "blinks_change": (e.get("blinks_measures") or {}).get(
+                "blinks.change"),
+            "lookback_reason": ((e.get("gaze_data") or {}).get(
+                "portrait") or {}).get("lookback", {}).get("reason"),
+        } for e in entries],
+        "checks": [{"question": r["check"].question,
+                    "measure": r["check"].key, "n": r["n"],
+                    "toward": r.get("toward"), "median": r.get("median"),
+                    "ci": r.get("ci"), "p": r.get("p"),
+                    "p_adj": r.get("p_adj"), "words": r["words"]}
+                   for r in res["table"]],
+        "verdict": res["prereg"]["verdict"],
+        "established": [x["words"] for x in res["summary"]["established"]],
+        "warnings": res["warnings"],
+        "fingerprint": run["fingerprint"],
+    }
+
+
 def summary(run: dict) -> dict:
     """Итог для `--json` и консоли."""
+    if run.get("mode") == "interface":
+        return interface_summary(run)
     entries = run["entries"]
     rows = []
     for r in run["result"]["table"]:
@@ -510,6 +630,8 @@ def summary(run: dict) -> dict:
 def describe(run: dict, folder: Path | None) -> list[str]:
     """Итог строками для консоли."""
     from . import honesty
+    if run.get("mode") == "interface":
+        return describe_interface(run, folder)
     lines = []
     for w in run["result"]["warnings"]:
         lines.append(f"! {w}")
@@ -544,6 +666,38 @@ def describe(run: dict, folder: Path | None) -> list[str]:
     return lines
 
 
+def describe_interface(run: dict, folder: Path | None) -> list[str]:
+    """Итог анализа по интерфейсу строками для консоли (шаг 43)."""
+    from . import honesty
+    from .interface_page import FILES as INTERFACE_FILES
+    lines = [f"! {w}" for w in run["result"]["warnings"]]
+    for e in run["entries"]:
+        if e["status"] != "ok":
+            lines.append(f"{e['archive']} — не годен: {e.get('reason')}")
+            continue
+        mark = honesty.SHORT.get(e.get("colour"), "·")
+        where = "в статистике" if e.get("in_stats") else \
+            "вне статистики: " + "; ".join(e.get("out") or [])
+        lines.append(f"{mark} {e.get('participant')} · "
+                     f"{e.get('interface') or 'без группы'} · "
+                     f"{(e.get('order') or {}).get('strategy')} · {where}")
+    for r in run["result"]["table"]:
+        if r["check"].main:
+            lines.append(f"  {r['check'].question} {r['check'].key}: "
+                         f"{r['words']}")
+    v = run["result"]["prereg"]["verdict"]
+    lines.append(f"  «Галактика», первый контакт: {v['word']} "
+                 f"(в вердикте {v['n']})")
+    if folder is not None:
+        lines.append("")
+        lines.append(f"Папка отчёта: {folder}")
+        lines.append("  index.html — отчёт, открыть в браузере")
+        for name, words in INTERFACE_FILES:
+            lines.append(f"  {name} — {words}")
+        lines.append("  рисунки\\ — рисунки отчёта, PNG и SVG")
+    return lines
+
+
 def open_folder(folder: Path) -> bool:
     """Открывает папку отчёта в Проводнике (BUG-68, ярлыки `--open`).
     Не Windows или не вышло — молча: путь уже напечатан."""
@@ -561,7 +715,8 @@ def main(paths: list[str], *, series: str | None = None,
          no_filter: bool = False, out: str | None = None,
          as_json: bool = False, version: str | None = None,
          open_folder: bool = False, portraits: bool = True,
-         literature: list[str] | None = None) -> int:
+         literature: list[str] | None = None,
+         mode: str = "compare") -> int:
     """Вход `python -I -m sno_eye study`. Код выхода: 0 — отчёт готов,
     3 — сравнивать нечего, 4 — отчёт не записался."""
     _matplotlib_cache()
@@ -573,7 +728,9 @@ def main(paths: list[str], *, series: str | None = None,
                 print(f"  {folder}")
     from . import collect
     if not collect.find(paths):
-        print("Архивов записи не нашлось. Перетащите на «Сравнение ветвей» "
+        word = "Анализ по интерфейсу" if mode == "interface" else \
+            "Сравнение ветвей"
+        print(f"Архивов записи не нашлось. Перетащите на «{word}» "
               "папку с архивами sno2026_….zip (можно с подпапками).")
         return 3
 
@@ -582,8 +739,8 @@ def main(paths: list[str], *, series: str | None = None,
             print(f"[{i}/{n}] {path.name}", flush=True)
 
     run = analyse(paths, series=series, no_filter=no_filter,
-                  progress=progress, version=version)
-    folder = out_folder(out, no_filter)
+                  progress=progress, version=version, mode=mode)
+    folder = out_folder(out, no_filter, mode)
     try:
         write(run, folder, portraits=portraits, literature=literature)
     except OSError as e:

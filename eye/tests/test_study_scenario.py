@@ -306,7 +306,9 @@ def test_sno_f_res_06_thresholds_section():
     assert own["yellow_weight"] == 0.5
     assert own["primary"] == ["search.H_t", "clt.ecl",
                               "actions.time_to_choice"]
-    assert set(own) == set(study.DEFAULTS)
+    # Шаг 43: разделы порядка обхода, проверок одной группы и
+    # предрегистрации — свои словари (`study.NESTED`).
+    assert set(own) == set(study.DEFAULTS) | set(study.NESTED)
 
 
 # --- шаг 37: меры взгляда -----------------------------------------------

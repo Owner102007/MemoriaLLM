@@ -27,7 +27,7 @@ from pathlib import Path
 from .. import record_check as rc
 from ..report import archive as arc
 from ..report import timeline as tl
-from . import actions, clt, reading_back, screen_fix
+from . import actions, blinks, clt, reading_back, screen_fix
 from . import gaze as gaze_part
 
 # Эталон словами (SNO-ALG-RES-01, шаг 7).
@@ -291,9 +291,21 @@ def load(path: Path, limits: dict, cfg: dict,
         # Шаг 38: возвраты на страницу назад — по журналу, у каждой
         # записи, и с телефона (SNO-ALG-RES-08).
         entry["reading_nav"] = reading_back.page_backs(
-            record.events, line, float(cfg["portrait"]["misflip_s"]))
+            record.events, line, float(cfg["portrait"]["misflip_s"]),
+            float(cfg["portrait"]["reread_min_s"]))
         entry["study_ms"] = line.study_ms
         entry["study_start"] = line.study_start
+        # Шаг 43: карта записи (если «Галактику» открывали) — порядок
+        # обхода меряется на ней и у тех, кто шёл полкой
+        # (SNO-ALG-RES-11); моргания — по потоку взгляда
+        # (SNO-ALG-RES-15).
+        entry["map"] = gaze_part.map_of(record.events)
+        blink = blinks.measure(record.gaze, line.study_start,
+                               line.study_end) if record.gaze else None
+        entry["blinks"] = blink
+        entry["blinks_measures"] = {} if blink is None else {
+            "blinks.per_min": blink["per_min"],
+            "blinks.change": blink["change"]}
     except Exception as e:  # noqa: BLE001
         entry.update(status="bad", reason=f"разбор записи упал: {e!r}")
         return entry

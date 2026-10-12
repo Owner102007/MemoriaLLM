@@ -8,7 +8,8 @@
 искренности (`study.honesty`) по правилу сценария S0
 (`study.compare.scenario_weight`).
 Технология: numpy — взвешенные средние, матрицы, сетка тепловой карты
-с гауссовыми пятнами, наклон прямой наименьшими квадратами.
+с гауссовыми пятнами, наклон прямой методом Тейла — Сена без первого
+похода (BUG-75, шаг 43).
 Метод: среднее ветви везде взвешенное, `Σ wᵢ · xᵢ / Σ wᵢ`; у 🔴 вес 0.
 Это описание ветви, а не сравнение: слои ПК здесь не учитываются.
 Кривая научения — закон степени научения: Newell A., Rosenbloom P.
@@ -51,29 +52,45 @@ HEAT_CELLS = 160
 
 def fit(values: list[tuple[int, float]],
         minimum: int) -> tuple[float, float, float] | None:
-    """Прямая `log y = a + b · log n` наименьшими квадратами; [values] —
-    пары (номер похода, y). Номер и y — нуль и меньше — в логарифм не
-    идут. Меньше [minimum] точек или меньше двух разных номеров —
-    пусто (у одного номера наклона нет; проверка по номерам, а не по
-    `sxx`: при равных номерах округление оставляет `sxx` около 1e-31,
-    и наклон выходил бы из шума — найдено независимой проверкой шага 42).
+    """Прямая `log y = a + b · log n` **без первого похода** — методом
+    Тейла — Сена (BUG-75): наклон — медиана наклонов всех пар точек,
+    сдвиг — медиана `log y − b · log n` (Sen P. K. «Estimates of the
+    regression coefficient based on Kendall's tau», JASA, 1968,
+    63:1379). [values] — пары (номер похода, y).
+
+    Первый поход идёт сразу после калибровки: участник впервые видит
+    полку или карту, и этот поход — вход в интерфейс, а не точка
+    научения. У него самый далёкий от середины `log n` номер, и
+    наименьшие квадраты отдавали наклон ему (у девяти участников ветви
+    II наклон с ним отрицателен у всех, без него — у трёх). Поэтому он
+    в прямую не идёт, а меряется отдельно (`learn.entry_s`), и наклон —
+    медианой пар, которой одна далёкая точка не решает.
+
+    Номер и y — нуль и меньше — в логарифм не идут. Меньше [minimum]
+    точек без первого похода или меньше двух разных номеров — пусто.
     Ответ — (a, b, x̄), x̄ — среднее `log n` точек участника: прямая
-    проходит через (x̄, ȳ)."""
-    pts = [(n, y) for n, y in values if n > 0 and y is not None and y > 0]
+    проходит через (x̄, a + b · x̄)."""
+    pts = [(n, y) for n, y in values
+           if n > 1 and y is not None and y > 0]
     if len(pts) < minimum or len({n for n, _ in pts}) < 2:
         return None
     x = np.log([n for n, _ in pts])
     y = np.log([v for _, v in pts])
-    xm = x.mean()
-    sxx = float(((x - xm) ** 2).sum())
-    if sxx <= 0:
+    slopes = []
+    for i in range(len(x)):
+        for j in range(i + 1, len(x)):
+            if x[j] != x[i]:
+                slopes.append((y[j] - y[i]) / (x[j] - x[i]))
+    if not slopes:
         return None
-    b = float(((x - xm) * (y - y.mean())).sum() / sxx)
-    return float(y.mean() - b * xm), b, float(xm)
+    b = float(np.median(slopes))
+    a = float(np.median(y - b * x))
+    return a, b, float(x.mean())
 
 
 def slope(values: list[tuple[int, float]], minimum: int) -> float | None:
-    """Наклон `b` прямой `log y = a + b · log n` (см. `fit`)."""
+    """Наклон `b` прямой `log y = a + b · log n` без первого похода (см.
+    `fit`)."""
     line = fit(values, minimum)
     return None if line is None else line[1]
 
@@ -105,16 +122,62 @@ def path_series(e: dict) -> list[tuple[int, float]]:
     return [(t["i"], t["path_deg"]) for t in trips]
 
 
+def _median(values: list[float]) -> float | None:
+    return float(np.median(values)) if values else None
+
+
+def thirds_ratio(values: list[tuple[int, float]], minimum: int
+                 ) -> float | None:
+    """BUG-75: ln(медиана последней трети / медиана первой трети)
+    походов **без первого** — ускорение по ходу сессии без прямой и без
+    закона степени. Походов меньше [minimum] или медиана не больше нуля
+    — пусто."""
+    # Порядок — по номеру похода, равные номера — как пришли (сортировка
+    # пар целиком падала бы на y = None при равных номерах).
+    ys = [y for n, y in sorted(values, key=lambda v: v[0])
+          if n > 1 and y is not None]
+    if len(ys) < minimum:
+        return None
+    k = len(ys) // 3
+    first, last = _median(ys[:k]), _median(ys[-k:])
+    if not first or not last or first <= 0 or last <= 0:
+        return None
+    return float(np.log(last / first))
+
+
 def learning(entries: list[dict], cfg: dict) -> None:
-    """Наклоны научения участников — мера участника, идёт в
-    сравнение: по времени до выбора книги (есть у всех, из журнала) и по
-    пути взгляда (у вошедших со взглядом)."""
+    """Меры научения участника (BUG-75): вход в интерфейс — первый
+    поход отдельно (`learn.entry_s`); выбор после него — медиана
+    остальных (`learn.after_first_s`); наклон закона степени без первого
+    похода, Тейл — Сен (`learn.choice_slope`, `learn.path_slope`);
+    последняя треть против первой (`learn.choice_thirds`); повторное
+    обращение к книге против первого — когда повторов не меньше
+    `study.min_repeat_visits` (`learn.repeat_vs_first`). Время до
+    выбора есть у всех (журнал), путь — у вошедших со взглядом."""
     minimum = int(cfg["min_visits_curve"])
+    repeats_min = int(cfg["min_repeat_visits"])
     for e in entries:
         own = e.setdefault("learn", {})
         if e.get("status") != "ok":
             continue
-        own["learn.choice_slope"] = slope(choice_series(e), minimum)
+        series = choice_series(e)
+        first = next((y for n, y in series if n == 1), None)
+        own["learn.entry_s"] = first
+        rest = [y for n, y in series if n > 1 and y is not None]
+        own["learn.after_first_s"] = _median(rest)
+        own["learn.choice_slope"] = slope(series, minimum)
+        own["learn.choice_thirds"] = thirds_ratio(series, minimum)
+        rows = [t for t in e.get("trips") or [] if t.get("complete")]
+        again = [t["time_to_choice_s"] for t in rows[1:]
+                 if t.get("first_time") is False
+                 and t.get("time_to_choice_s")]
+        fresh = [t["time_to_choice_s"] for t in rows[1:]
+                 if t.get("first_time") is True
+                 and t.get("time_to_choice_s")]
+        own["learn.repeats"] = len(again)
+        own["learn.repeat_vs_first"] = (
+            float(np.log(_median(again) / _median(fresh)))
+            if len(again) >= repeats_min and fresh else None)
         # Путь — на фиксациях общим порогом: у сессии вне М1–М7
         # (`disorder_gate`) наклона пути нет.
         if e.get("disorder_live"):

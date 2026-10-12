@@ -252,6 +252,14 @@ def read(files: dict, manifest: dict, events: list[dict],
         answer = by_item.get(item)
         result["measures"][key] = None if answer is None or state != DONE \
             else _num(answer.get("value"))
+    # АО7 (шаг 43): Raw TLX без пункта «успешность» — справочно: шкалу
+    # «0 — отлично, 100 — провал» часть участников, похоже, поняла
+    # наоборот. Среднее остальных пяти, не меньше трёх ответов.
+    five = [result["measures"][key] for key, _, _ in TLX_ITEMS
+            if key != "clt.tlx.performance"
+            and result["measures"][key] is not None]
+    result["measures"]["clt.raw_tlx5"] = (sum(five) / len(five)
+                                          if len(five) >= 3 else None)
 
     # Шкала лжи: отметка приложения главнее пересчёта.
     checks = _dict(_dict(scores).get("checks"))

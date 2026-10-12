@@ -917,6 +917,45 @@ jobs:
             exit 1
           }
 
+      # Шаг 43, SNO-F-RES-09: «Анализ по интерфейсу» встраиваемым Python
+      # на том же наборе — группы по интерфейсу, порядок обхода, проверки
+      # одной группы, вердикт предрегистрации «Галактики».
+      - name: Анализ по интерфейсу встраиваемым Python
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'Результаты СНО\Набор (II + I)'
+          $out = Join-Path $env:RUNNER_TEMP 'Анализ по интерфейсу СНО2026\прогон'
+          $eye = (Resolve-Path build/eye).Path
+          Push-Location $eye
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          & (Join-Path $eye 'python.exe') -I -m sno_eye study $root --interface --no-portraits --out $out 2>&1 |
+            Tee-Object -FilePath (Join-Path $env:GITHUB_WORKSPACE 'eye-logs/eye-interface.txt')
+          $code = $LASTEXITCODE
+          $sw.Stop()
+          Pop-Location
+          "ЗАМЕР Анализ по интерфейсу: 16 архивов за $([math]::Round($sw.Elapsed.TotalSeconds, 1)) с" |
+            Tee-Object -Append -FilePath eye-logs/eye-interface.txt
+          if ($code -ne 0) {
+            Write-Output "::error title=SNO-F-RES-09::«Анализ по интерфейсу» вернул $code"
+            exit 1
+          }
+          $need = @('index.html', 'маршруты.csv', 'итог.csv', 'предрегистрация.csv',
+                    'участники.csv', 'исходные.json',
+                    'рисунки/Р20_маршруты.png', 'рисунки/Р21_проверки.png')
+          foreach ($f in $need) {
+            if (-not (Test-Path -LiteralPath (Join-Path $out $f))) {
+              Write-Output "::error title=SNO-F-RES-09::в отчёте нет $f"
+              exit 1
+            }
+          }
+          $page = Get-Content -LiteralPath (Join-Path $out 'index.html') -Raw -Encoding utf8
+          if ($page -notmatch 'первый контакт против предрегистрации') {
+            Write-Output '::error title=SNO-F-RES-09::в отчёте нет раздела «Галактики»'
+            exit 1
+          }
+
       - name: Выложить папку eye/
         uses: actions/upload-artifact@v7
         with:
@@ -1103,7 +1142,7 @@ jobs:
         run: |
           $eye = 'build/windows/x64/runner/Release/eye'
           if ($env:SNO_BRANCH) {
-            foreach ($f in @('python.exe', 'sno_eye/__main__.py', 'sno_eye/record_check.py', 'sno_eye/study/__init__.py', 'models/face_landmarker.task', 'Проверка камеры.cmd', 'Проверка записи.cmd', 'Сравнение ветвей.cmd', 'Инструкция организатора.txt')) {
+            foreach ($f in @('python.exe', 'sno_eye/__main__.py', 'sno_eye/record_check.py', 'sno_eye/study/__init__.py', 'models/face_landmarker.task', 'Проверка камеры.cmd', 'Проверка записи.cmd', 'Сравнение ветвей.cmd', 'Анализ по интерфейсу.cmd', 'Инструкция организатора.txt')) {
               if (-not (Test-Path (Join-Path $eye $f))) {
                 Write-Output "::error title=Спутник взгляда::в сборке ветви нет eye/$f"
                 exit 1
@@ -1329,6 +1368,7 @@ jobs:
 
           need = ['eye/Проверка записи.cmd', 'eye/Инструкция организатора.txt',
                   'eye/sno_eye/record_check.py', 'eye/Сравнение ветвей.cmd',
+                  'eye/Анализ по интерфейсу.cmd',
                   'eye/sno_eye/study/__init__.py',
                   # BUG-65: ZIP запускается на ПК без пакета Visual C++.
                   'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll']

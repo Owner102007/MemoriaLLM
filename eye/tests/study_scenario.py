@@ -277,6 +277,9 @@ class Person:
     # возврат на страницу назад и промах листания.
     lookback: bool = False
     page_back: bool = False
+    # Шаг 43: самооценка ориентации (`orient.1`, `orient.2`) — среднее
+    # шкалы 1–7.
+    orient: float = 5.0
 
 
 class Builder:
@@ -593,8 +596,8 @@ class Builder:
             values[i] = likert(p.icl)
         for i in ("gcl.1", "gcl.2"):
             values[i] = likert(5.5)
-        values["orient.1"] = likert(5)
-        values["orient.2"] = likert(5)
+        values["orient.1"] = likert(p.orient)
+        values["orient.2"] = likert(p.orient)
         values["orient.3"] = likert(3)
         values["chk.focus"] = 3
         values["chk.books"] = 1

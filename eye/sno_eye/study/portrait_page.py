@@ -404,7 +404,8 @@ def figure_p4(e: dict, data: dict, folder: Path) -> str | None:
                 f"{_num((look.get('share') or 0) * 100, 0)} % времени "
                 f"чтения; порог {_num(look.get('L_deg'), 1)}°)")
     ax.set_title(f"П4. Чтение: {head};\nвозвратов на страницу назад "
-                 f"{nav.get('backs', 0)} (◄), промахов листания "
+                 f"{nav.get('backs', 0)} (◄), перемоток "
+                 f"{nav.get('rewinds', 0)}, промахов листания "
                  f"{nav.get('misflips', 0)}, переходов назад по оглавлению "
                  f"и найденному {nav.get('navigation', 0)}", loc="left",
                  fontsize=9)
@@ -420,7 +421,9 @@ def _p4_journal(e: dict, look: dict, nav: dict, folder: Path) -> str:
     lo = e.get("study_start") or 0.0
     kinds = (("назад", "на страницу назад", "<"),
              ("промах листания", "промах листания", "x"),
-             ("навигация", "навигация назад", "o"))
+             ("навигация", "навигация назад", "o"),
+             # BUG-74 (шаг 43): перемотка — цепочка быстрых шагов назад.
+             ("перемотка", "перемотка (BUG-74)", "v"))
     fig, ax = plt.subplots(figsize=(11.0, 2.6))
     for y, (kind, _, marker) in enumerate(kinds):
         xs = [(r["t"] - lo) / 60_000 for r in nav.get("rows") or []

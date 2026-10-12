@@ -1144,9 +1144,18 @@ def figure_12(run: dict, folder: Path) -> str | None:
                 pts = person.get("points") or []
                 if len(pts) < 2:
                     continue
-                ax.plot([n for n, _ in pts], [y for _, y in pts],
+                # BUG-75 (шаг 43): первый поход — вход в интерфейс —
+                # полой точкой; линия и прямая — по остальным.
+                rest = [(n, y) for n, y in pts if n > 1]
+                first = [(n, y) for n, y in pts if n == 1]
+                ax.plot([n for n, _ in rest], [y for _, y in rest],
                         color=BRANCH[b], lw=0.7, alpha=0.3, marker="o",
                         markersize=2, zorder=1)
+                if first:
+                    ax.scatter([n for n, _ in first], [y for _, y in first],
+                               s=16, facecolors="none",
+                               edgecolors=BRANCH[b], linewidths=0.8,
+                               alpha=0.7, zorder=2)
                 n_max = max(n_max, max(n for n, _ in pts))
                 drawn = True
             mean = (((rows.get(measure) or {}).get("means") or {})
@@ -1189,8 +1198,10 @@ def figure_12(run: dict, folder: Path) -> str | None:
         _spines(ax)
     fig.suptitle(_wrap("Р12. Научение: закон степени — прямая в "
                        "логарифмах; линии участников, прямая ветви с "
-                       "интервалом наклона", 110), x=0.01, ha="left",
-                 fontweight="bold", color=INK, fontsize=9)
+                       "интервалом наклона; первый поход (вход в "
+                       "интерфейс) — полой точкой, в прямую не идёт",
+                       110), x=0.01, ha="left", fontweight="bold",
+                 color=INK, fontsize=9)
     fig.tight_layout()
     return _save(fig, folder, "Р12_научение",
                  "n с наклоном: время до выбора — ветвь I "

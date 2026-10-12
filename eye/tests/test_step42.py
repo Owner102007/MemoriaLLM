@@ -187,7 +187,8 @@ def test_sno_alg_res_04_fit_of_a_power_law():
     a, b, xm = average.fit(values, 6)
     assert b == pytest.approx(-0.4)
     assert a == pytest.approx(math.log(30.0))
-    assert xm == pytest.approx(np.mean(np.log(range(1, 9))))
+    # BUG-75 (шаг 43): первый поход в прямую не идёт.
+    assert xm == pytest.approx(np.mean(np.log(range(2, 9))))
     assert average.slope(values, 6) == pytest.approx(b)
     assert average.fit(values[:5], 6) is None
     assert average.dropped([(1, 0.0), (2, 3.0), (3, None), (4, -1)]) == 2
@@ -210,7 +211,8 @@ def test_sno_alg_res_04_branch_centre_and_participant_lines():
     assert [p["code"] for p in lines["people"]] == ["x", "y", "мало"]
     assert lines["people"][2]["fit"] is None
     assert all(y > 0 for p in lines["people"] for _, y in p["points"])
-    xs = [np.mean(np.log(range(1, 8))), np.mean(np.log(range(1, 9)))]
+    # BUG-75 (шаг 43): середина участника — без первого похода.
+    xs = [np.mean(np.log(range(2, 8))), np.mean(np.log(range(2, 9)))]
     ys = [math.log(30) - 0.5 * xs[0], math.log(20) - 0.1 * xs[1]]
     assert lines["centre"] == pytest.approx((np.mean(xs), np.mean(ys)))
 
@@ -284,8 +286,10 @@ def test_sno_alg_res_04_heat_keeps_sigma_in_degrees():
 # --- по независимой проверке шага 42 ---------------------------------------
 
 def test_sno_alg_res_04_fit_needs_minimum_points_and_two_numbers():
-    values = [(n, 10.0 / n) for n in range(1, 7)]
+    # BUG-75 (шаг 43): [minimum] — без первого похода.
+    values = [(n, 10.0 / n) for n in range(1, 8)]
     assert average.fit(values, 6) is not None        # ровно [minimum]
+    assert average.fit(values[:6], 6) is None
     # Один номер похода — наклона нет, сколько бы точек ни было.
     assert average.fit([(3, float(k + 1)) for k in range(12)], 6) is None
     assert average.fit([(0, 1.0), (-1, 2.0)] + values[:4], 6) is None
@@ -296,13 +300,14 @@ def test_sno_alg_res_04_branch_centre_is_weighted():
         e = entry(code, colour=colour)
         e["trips"] = [{"complete": True,
                        "time_to_choice_s": math.exp(a) * n ** b}
-                      for n in range(1, 7)]
+                      for n in range(1, 8)]
         return e
     x = person("x", "green", math.log(30.0), -0.5)
     y = person("y", "yellow", math.log(10.0), -0.1)
     lines = average.build([x, y], cfg(min_visits_curve=6), False, None,
                           FP)["curve"]["I"]["lines"]["choice"]
-    xm = float(np.mean(np.log(range(1, 7))))
+    # BUG-75 (шаг 43): середина — без первого похода.
+    xm = float(np.mean(np.log(range(2, 8))))
     ya = math.log(30.0) - 0.5 * xm
     yb = math.log(10.0) - 0.1 * xm
     # 🟡 весит 0,5.

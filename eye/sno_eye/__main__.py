@@ -64,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-filter", action="store_true",
                     help="study: проверочный прогон — все годные архивы "
                          "с весом 1, не для выводов")
+    ap.add_argument("--interface", action="store_true",
+                    help="study: анализ по интерфейсу — полка против "
+                         "случая и самой себя, «Галактика» против "
+                         "предрегистрации (шаг 43), а не сравнение ветвей")
     ap.add_argument("--open", action="store_true",
                     help="study: открыть папку отчёта в Проводнике")
     ap.add_argument("--no-portraits", action="store_true",
@@ -133,7 +137,8 @@ def main(argv: list[str] | None = None) -> int:
                      as_json=args.json, version=args.gaze_version,
                      open_folder=args.open,
                      portraits=not args.no_portraits,
-                     literature=args.literature)
+                     literature=args.literature,
+                     mode="interface" if args.interface else "compare")
 
     from .runtime import Runtime, SingleInstance
 

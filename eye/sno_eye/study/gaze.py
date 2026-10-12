@@ -80,6 +80,10 @@ def read(record, trips: list[Trip], cfg: dict, report_cfg: dict,
     views = search_views(res, record, trips, screen,
                          accuracy if accuracy is not None else FALLBACK_DEG)
     data.update(views)
+    # Шаг 43 (SNO-ALG-RES-14): опора на ориентиры перед выбором звезды
+    # и её случайный уровень — по «Перед нажатием» «Разбора записи».
+    from . import prereg
+    data["landmark"] = prereg.landmark(res)
     return data
 
 

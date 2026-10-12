@@ -134,20 +134,26 @@ def test_sno_alg_res_08_second_column_is_not_a_lookback():
 
 
 def test_sno_alg_res_08_noisy_session_gets_nothing_with_reason():
+    """BUG-73 (шаг 43): сессию гасит шум, дробящий фиксации чтения, а
+    не прецизионность калибровки: шум кадра 2,4° — меры нет, с причиной;
+    тихие кадры при «плохой» прецизионности — мера есть."""
     looks, t = reading(back_at=8)
-    out = run(looks, [frame(0)], t + 100, precision=1.2)
-    assert out["count"] if "count" in out else True
+    out = reading_back.lookbacks(
+        samples_of(looks, noise=SCREEN.px_for_deg(2.4)), [], [frame(0)],
+        SCREEN, line_of(t + 100), None, PC, report.settings())
     assert out["episodes"] == []
-    assert "шум больше порога" in out["reason"]
-    out = run(looks, [frame(0)], t + 100, precision=None)
-    assert "неизвестна" in out["reason"]
+    assert "шум дробит фиксации чтения" in out["reason"]
+    for precision in (2.2, None):
+        out = run(looks, [frame(0)], t + 100, precision=precision)
+        assert out["reason"] is None and out["count"] == 1
 
 
-def test_sno_alg_res_08_threshold_grows_with_precision_and_residual():
+def test_sno_alg_res_08_threshold_grows_with_frame_noise_and_residual():
+    """BUG-73 (шаг 43): порог скачка — от шума кадра после сглаживания
+    и остатка неявных точек, а не от прецизионности калибровки."""
     looks, t = reading()
     assert run(looks, [frame(0)], t, precision=0.5)["L_deg"] == 2.0
-    assert run(looks, [frame(0)], t, precision=0.9)["L_deg"] == \
-        pytest.approx(2.7)
+    assert run(looks, [frame(0)], t, precision=0.9)["L_deg"] == 2.0
     assert run(looks, [frame(0)], t, precision=0.5,
                implicit=3.2)["L_deg"] == pytest.approx(3.2)
     # Большой порог гасит взгляд на пять строк вверх (225 пикселей ≈
