@@ -8,7 +8,9 @@ library;
 
 import '../library/stable_hash.dart';
 import 'book_bag.dart';
+import 'map_categories.dart';
 import 'map_layout.dart';
+import 'map_names.dart';
 import 'map_vectors.dart';
 
 /// Версия расчёта карты (ALG-DATA-09).
@@ -17,12 +19,28 @@ import 'map_vectors.dart';
 /// Поменялся расчёт — число растёт, и карта, посчитанная прежней
 /// версией, считается заново. Число входит и в ключ набора книг
 /// (`MapBuilder.keyOf`).
-const int kBookMapVersion = 1;
+///
+/// 2 — S56: группы карты складывает адаптивный резонанс, а не полки
+/// (F-MAP-16), у созвездий есть имена (F-MAP-03).
+const int kBookMapVersion = 2;
+
+/// Группа раскладки по номеру созвездия: `art:0000`, `art:0001` …;
+/// у книги без созвездия — пустая строка (раскладка не тянет её ни к
+/// какому центру). Ноли впереди — чтобы группы шли по порядку и как
+/// строки: раскладка перебирает их по алфавиту.
+String constellationGroup(int constellation) =>
+    constellation < 0 ? '' : 'art:${constellation.toString().padLeft(4, '0')}';
 
 /// Место одной книги на карте.
 class MapPoint {
   /// Создаёт точку.
-  const MapPoint({required this.key, required this.x, required this.y});
+  const MapPoint({
+    required this.key,
+    required this.x,
+    required this.y,
+    this.constellation = kNoCategory,
+    this.name = '',
+  });
 
   /// Отпечаток файла книги.
   final String key;
@@ -33,15 +51,27 @@ class MapPoint {
   /// Ордината, от −1 до 1.
   final double y;
 
+  /// Созвездие книги (F-MAP-16): 0, 1, 2 …; −1 — без созвездия (у книги
+  /// нет значимых слов).
+  final int constellation;
+
+  /// Имя созвездия (F-MAP-03); у книги без созвездия — пусто.
+  final String name;
+
   @override
   bool operator ==(Object other) =>
-      other is MapPoint && other.key == key && other.x == x && other.y == y;
+      other is MapPoint &&
+      other.key == key &&
+      other.x == x &&
+      other.y == y &&
+      other.constellation == constellation &&
+      other.name == name;
 
   @override
-  int get hashCode => Object.hash(key, x, y);
+  int get hashCode => Object.hash(key, x, y, constellation, name);
 
   @override
-  String toString() => 'MapPoint($key, $x, $y)';
+  String toString() => 'MapPoint($key, $x, $y, $constellation, $name)';
 }
 
 /// Посчитанная карта.
@@ -68,8 +98,8 @@ class BookMap {
   /// Сколько рёбер между книгами.
   final int edges;
 
-  /// Сколько групп на карте — категорий, в которых есть книги; книги
-  /// без категории — тоже группа.
+  /// Сколько групп на карте — созвездий; книги без созвездия — тоже
+  /// группа.
   final int groups;
 }
 
@@ -118,13 +148,27 @@ BookMap? buildBookMap(List<BookBag> bags) {
   final List<SparseRow> rows = bm25Rows(sorted, vocabulary);
   final LatentRows latent = latentRows(gramOf(rows), n);
   final MapEdges edges = edgesOf(neighboursOf(latent));
+  // Созвездия складывает адаптивный резонанс (F-MAP-16, D-029); группа
+  // раскладки — созвездие, а не категория полки.
+  final List<int> constellations = artCategories(rows, vocabulary.terms.length);
+  final List<String> names = constellationNames(
+    sorted,
+    vocabulary,
+    constellations,
+  );
   final List<String> groups = <String>[
-    for (final BookBag bag in sorted) bag.group,
+    for (final int c in constellations) constellationGroup(c),
   ];
   final MapCoordinates place = layoutBooks(latent, edges, groups);
   final List<MapPoint> points = <MapPoint>[
     for (int i = 0; i < n; i++)
-      MapPoint(key: sorted[i].key, x: place.xs[i], y: place.ys[i]),
+      MapPoint(
+        key: sorted[i].key,
+        x: place.xs[i],
+        y: place.ys[i],
+        constellation: constellations[i],
+        name: constellations[i] < 0 ? '' : names[constellations[i]],
+      ),
   ];
   return BookMap(
     points: points,

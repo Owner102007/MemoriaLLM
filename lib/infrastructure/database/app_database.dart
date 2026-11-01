@@ -22,7 +22,7 @@ part 'app_database.g.dart';
 /// устройства, тоже производное и тоже без полей CRDT. 12 — места книг
 /// на карте «Галактика» (шаг 21, F-MAP-02): третья таблица устройства
 /// с производным.
-const int appSchemaVersion = 12;
+const int appSchemaVersion = 13;
 
 /// База данных приложения.
 ///
@@ -141,6 +141,14 @@ class AppDatabase extends _$AppDatabase {
           // Таблица заводится пустой: карту неоткуда перенести, она
           // считается по тексту книг, когда он прочитан.
           await m.createTable(mapPoints);
+        }
+        if (from >= 12 && from < 13) {
+          // Созвездия карты (F-MAP-16, F-MAP-03). Колонки добавляются,
+          // только если таблица уже была: из версий до 12 она заводится
+          // выше сразу с ними. Старые места переносить незачем: версия
+          // расчёта карты поднялась, и карта считается заново.
+          await m.addColumn(mapPoints, mapPoints.constellation);
+          await m.addColumn(mapPoints, mapPoints.constellationName);
         }
       },
       beforeOpen: (OpeningDetails details) async {

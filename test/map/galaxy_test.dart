@@ -97,28 +97,32 @@ void main() {
       expect(first.ms, 0);
     });
 
-    test('SNO-F-MAP-01: группа звезды — категория полки', () async {
-      await seedGalaxy(data, <ShelfStar>[
-        ...kTwoGroups,
-        const ShelfStar('z1', 'Ничья книга', 0, 0.9),
-      ]);
-      final Galaxy galaxy = await load();
+    test(
+      'F-MAP-16: группа звезды — её созвездие, без созвездия — «Без категории»',
+      () async {
+        await seedGalaxy(data, <ShelfStar>[
+          ...kTwoGroups,
+          const ShelfStar('z1', 'Ничья книга', 0, 0.9),
+        ]);
+        final Galaxy galaxy = await load();
 
-      expect(
-        <String, String>{
-          for (final GalaxyStar star in galaxy.stars) star.book.id: star.group,
-        },
-        <String, String>{
-          'a1': 'Ангиология',
-          'a2': 'Ангиология',
-          'a3': 'Ангиология',
-          'm1': 'Математика',
-          'm2': 'Математика',
-          'm3': 'Математика',
-          'z1': kUncategorizedTitle,
-        },
-      );
-    });
+        expect(
+          <String, String>{
+            for (final GalaxyStar star in galaxy.stars)
+              star.book.id: star.group,
+          },
+          <String, String>{
+            'a1': 'Ангиология',
+            'a2': 'Ангиология',
+            'a3': 'Ангиология',
+            'm1': 'Математика',
+            'm2': 'Математика',
+            'm3': 'Математика',
+            'z1': kUncategorizedTitle,
+          },
+        );
+      },
+    );
 
     test('SNO-F-MAP-01: у звезды — время, проведённое в её книге', () async {
       await seedGalaxy(data, kTwoGroups);

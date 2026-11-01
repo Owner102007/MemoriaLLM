@@ -23,9 +23,9 @@ class GalaxyStar {
   /// Ордината на карте, от −1 до 1.
   final double y;
 
-  /// Название категории книги; у книги без категории —
-  /// [kUncategorizedTitle]. Группа на карте — категория полки (решение
-  /// владельца Э4 от 05.10.2026).
+  /// Созвездие книги — его имя (F-MAP-03); у книги без созвездия —
+  /// [kUncategorizedTitle]. С S56 группы на карте складывает сама система
+  /// адаптивным резонансом (F-MAP-16, D-029), а не полки.
   final String group;
 
   /// Сколько времени читатель провёл в книге, в миллисекундах.
@@ -90,10 +90,6 @@ Future<Galaxy> loadGalaxy({
   if (stored == null || stored.version != kBookMapVersion) {
     return Galaxy(status: GalaxyStatus.noMap, books: books.length);
   }
-  final Map<String, String> titles = <String, String>{
-    for (final BookCategory category in await categories.categories())
-      category.id: category.title,
-  };
   final List<GalaxyStar> stars = <GalaxyStar>[];
   for (final Book book in books) {
     final MapPoint? point = stored.points[book.id];
@@ -105,7 +101,7 @@ Future<Galaxy> loadGalaxy({
         book: book,
         x: point.x,
         y: point.y,
-        group: titles[book.categoryId] ?? kUncategorizedTitle,
+        group: point.constellation < 0 ? kUncategorizedTitle : point.name,
         ms: times[book.id] ?? 0,
       ),
     );

@@ -279,7 +279,8 @@ void main() {
     });
   });
 
-  group('ALG-MAP-07: притяжение к категории', () {
+  // С S56 группа раскладки — созвездие (F-MAP-16), а не категория полки.
+  group('ALG-MAP-07: притяжение к созвездию', () {
     double spreadOf(List<MapPoint> points) {
       double x = 0;
       double y = 0;
@@ -298,7 +299,7 @@ void main() {
       return worst;
     }
 
-    test('ALG-MAP-07: у книги ближайший сосед — из её категории', () {
+    test('ALG-MAP-07: у книги ближайший сосед — из её созвездия', () {
       // Худший случай: слова у обеих категорий общие — тексты похожи,
       // и одни соседи по смыслу категории не разделят.
       final List<_Volume> volumes = <_Volume>[
@@ -324,9 +325,10 @@ void main() {
           },
         ),
       )!;
-      final Map<String, String> groupOf = <String, String>{
-        for (final _Volume volume in volumes) volume.key: volume.group,
+      final Map<String, int> groupOf = <String, int>{
+        for (final MapPoint point in map.points) point.key: point.constellation,
       };
+      expect(groupOf.values.toSet().length, greaterThan(1));
       for (final MapPoint point in map.points) {
         MapPoint? nearest;
         for (final MapPoint other in map.points) {
@@ -369,7 +371,9 @@ void main() {
       expect(spreadOf(second), lessThan(1));
     });
 
-    test('ALG-MAP-07: скан без текста стоит при своей категории', () {
+    // Скан без единого слова созвездия не получает: его место по названию
+    // и автору — F-MAP-18, шаг S58. Пока у него только точка на карте.
+    test('F-MAP-16: скан без текста — без созвездия, но с точкой на карте', () {
       final List<_Volume> volumes = _library();
       final List<BookBag> bags = _corpus(volumes)
         ..add(
@@ -382,25 +386,19 @@ void main() {
           ),
         );
       final BookMap map = buildBookMap(bags)!;
-      final Map<String, String> groupOf = <String, String>{
-        for (final _Volume volume in volumes) volume.key: volume.group,
-        'hash-scan': 'Математика',
-      };
       final MapPoint scan = map.points.firstWhere(
         (MapPoint point) => point.key == 'hash-scan',
       );
       expect(scan.x.isFinite && scan.y.isFinite, isTrue);
-      MapPoint? nearest;
-      for (final MapPoint other in map.points) {
-        if (other.key == scan.key) {
-          continue;
-        }
-        if (nearest == null ||
-            _distance(scan, other) < _distance(scan, nearest)) {
-          nearest = other;
+      expect(scan.constellation, -1);
+      expect(scan.name, isEmpty);
+      // Остальные книги созвездия получили, и их имена не пусты.
+      for (final MapPoint point in map.points) {
+        if (point.key != scan.key) {
+          expect(point.constellation, greaterThanOrEqualTo(0));
+          expect(point.name, isNotEmpty);
         }
       }
-      expect(groupOf[nearest!.key], 'Математика');
     });
   });
 

@@ -31,7 +31,13 @@ class DriftBookMapRepository implements BookMapRepository {
         for (final MapPointRow row in rows)
           if (row.layoutKey == first.layoutKey &&
               row.algorithmVersion == first.algorithmVersion)
-            row.bookId: MapPoint(key: row.fingerprint, x: row.x, y: row.y),
+            row.bookId: MapPoint(
+              key: row.fingerprint,
+              x: row.x,
+              y: row.y,
+              constellation: row.constellation,
+              name: row.constellationName,
+            ),
       },
     );
   }
@@ -50,6 +56,8 @@ class DriftBookMapRepository implements BookMapRepository {
               fingerprint: Value<String>(entry.value.key),
               layoutKey: Value<String>(map.layoutKey),
               algorithmVersion: Value<int>(map.version),
+              constellation: Value<int>(entry.value.constellation),
+              constellationName: Value<String>(entry.value.name),
             ),
         ]);
       });

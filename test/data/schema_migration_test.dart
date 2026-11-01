@@ -58,6 +58,16 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 12: созвездий на карте тогда не было.
+  Future<void> undoConstellations(AppData data) async {
+    await data.database.customStatement(
+      'ALTER TABLE map_points DROP COLUMN constellation_name',
+    );
+    await data.database.customStatement(
+      'ALTER TABLE map_points DROP COLUMN constellation',
+    );
+  }
+
   /// Откатывает базу к версии 11: мест книг на карте тогда не было.
   Future<void> undoMapPoints(AppData data) async {
     await data.database.customStatement('DROP TABLE map_points');
@@ -166,6 +176,44 @@ void main() {
     );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('F-MAP-16: база версии 12 доезжает до 13 с созвездиями', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await undoConstellations(first);
+    await first.database.customStatement('PRAGMA user_version = 12');
+    expect(
+      await columnsOf(first, 'map_points'),
+      isNot(contains('constellation')),
+    );
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(
+      await columnsOf(second, 'map_points'),
+      containsAll(<String>['constellation', 'constellation_name']),
+    );
+    await second.bookMap.replace(
+      const StoredBookMap(
+        layoutKey: 'набор',
+        version: kBookMapVersion,
+        points: <String, MapPoint>{
+          'book-1': MapPoint(
+            key: 'hash-1',
+            x: 0.25,
+            y: -0.5,
+            constellation: 2,
+            name: 'аневризма · сосуды',
+          ),
+        },
+      ),
+    );
+    final StoredBookMap? stored = await second.bookMap.load();
+    expect(stored?.points['book-1']?.constellation, 2);
+    expect(stored?.points['book-1']?.name, 'аневризма · сосуды');
+    await second.close();
   });
 
   test('F-MAP-02: база версии 11 доезжает до 12 с местами на карте', () async {
