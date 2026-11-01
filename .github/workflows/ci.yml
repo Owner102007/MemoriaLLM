@@ -176,19 +176,6 @@ jobs:
           done
           exit "$status"
 
-      # Принцип 4: номер сессии выдаётся один раз и имеет статус. Оба
-      # уже случившихся сбоя — S4.1 и S5.4, выданные дважды, — эта
-      # проверка поймала бы в день, когда их написали. План лежит вне
-      # репозитория, поэтому в CI сверяется только реестр в
-      # `PROGRESS.md`; локально, когда папка `docs/` на месте,
-      # проверяются оба файла.
-      - name: Номера сессий
-        id: sessions
-        if: '!cancelled()'
-        run: |
-          set -o pipefail
-          dart run tool/check_session_numbers.dart 2>&1 | tee /tmp/sessions.txt
-
       # Сводка видна только авторизованным, а аннотации — всем, поэтому при
       # падении вывод дублируется ещё и аннотацией.
       - name: Ошибки в аннотации
@@ -210,8 +197,7 @@ jobs:
                       'Анализ:/tmp/analyze.txt' \
                       'Упавшие тесты:/tmp/failures.txt' \
                       'Тесты:/tmp/tests.txt' \
-                      'Тесты ветвей:/tmp/sno.txt' \
-                      'Номера сессий:/tmp/sessions.txt'; do
+                      'Тесты ветвей:/tmp/sno.txt'; do
             title="${pair%%:*}"
             file="${pair#*:}"
             [ -s "$file" ] || continue
@@ -241,8 +227,7 @@ jobs:
                       'codegen:/tmp/codegen.txt' \
                       'analyze:/tmp/analyze.txt' \
                       'tests:/tmp/tests.txt' \
-                      'sno:/tmp/sno.txt' \
-                      'sessions:/tmp/sessions.txt'; do
+                      'sno:/tmp/sno.txt'; do
             file="${pair#*:}"
             [ -s "$file" ] && cp "$file" "/tmp/report/${pair%%:*}.txt"
           done
@@ -256,7 +241,7 @@ jobs:
               > /tmp/report/failures.txt
             # Замеры скорости (F-READ-02) корпус-тесты печатают строками
             # «ЗАМЕР». Идут они в середине прогона и в хвост вывода не
-            # попадают, а числа нужны в PROGRESS.md — поэтому вынимаются
+            # попадают, а числа нужны в заметке шага — поэтому вынимаются
             # отдельным файлом и уезжают в отчёт своим разделом.
             { grep -a 'ЗАМЕР' /tmp/tests.txt 2>/dev/null || true; } \
               > /tmp/report/measures.txt
@@ -281,8 +266,7 @@ jobs:
                         'Кодогенерация:/tmp/codegen.txt' \
                         'Анализ:/tmp/analyze.txt' \
                         'Тесты:/tmp/tests.txt' \
-                        'Тесты ветвей:/tmp/sno.txt' \
-                        'Номера сессий:/tmp/sessions.txt'; do
+                        'Тесты ветвей:/tmp/sno.txt'; do
               title="${pair%%:*}"
               file="${pair#*:}"
               echo "### $title"
@@ -1291,7 +1275,7 @@ jobs:
             echo "- страница прогона:"
             echo "  $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > out/report.md
-          for name in failures analyze format codegen measures tests sno sessions \
+          for name in failures analyze format codegen measures tests sno \
               eye-tests eye-windows eye-selftest; do
             file="logs/$name.txt"
             [ -s "$file" ] || continue
