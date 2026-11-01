@@ -167,8 +167,6 @@ class MapBuilder {
       text
         ..write(source.book.fileHash)
         ..write('\u001f')
-        ..write(source.group)
-        ..write('\u001f')
         ..write(source.book.title)
         ..write('\u001f')
         ..write(source.book.author ?? '')
@@ -240,13 +238,15 @@ class MapBuilder {
     return MapOutcome(
       kind: MapOutcomeKind.built,
       books: points.length,
-      groups: _groupsOf(sources),
+      groups: _groupsOf(points),
       fingerprint: mapFingerprint(points),
     );
   }
 
-  int _groupsOf(List<MapSource> sources) {
-    return <String>{for (final MapSource source in sources) source.group}
+  /// Сколько групп на карте — созвездий; книги без созвездия — тоже
+  /// группа (F-MAP-16).
+  int _groupsOf(List<MapPoint> points) {
+    return <int>{for (final MapPoint point in points) point.constellation}
         .length;
   }
 

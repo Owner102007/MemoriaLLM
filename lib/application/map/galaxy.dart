@@ -78,7 +78,6 @@ class Galaxy {
 /// в миллисекундах (`BookTimes.times`).
 Future<Galaxy> loadGalaxy({
   required LibraryRepository library,
-  required CategoryRepository categories,
   required BookMapRepository store,
   Map<String, int> times = const <String, int>{},
 }) async {

@@ -16,6 +16,18 @@ import 'package:memoria/domain/map/map_categories.dart';
 import 'package:memoria/domain/map/map_names.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
 
+/// Созвездия по строкам книг: матрица Грама — как в расчёте карты.
+List<int> _labels(
+  List<SparseRow> rows, {
+  List<int>? order,
+  Map<int, int> pinned = const <int, int>{},
+}) => artCategories(
+  gramOf(rows),
+  rows.length,
+  order: order,
+  pinned: pinned,
+).labels;
+
 /// Мешок из словаря «слово → сколько раз».
 BookBag _bag(String key, Map<String, int> words, {List<String>? forms}) {
   final List<String> terms = words.keys.toList()..sort();
@@ -127,10 +139,7 @@ void main() {
         _bag('d', const <String, int>{}),
       ];
       final MapVocabulary vocabulary = vocabularyOf(bags);
-      final List<int> labels = artCategories(
-        bm25Rows(bags, vocabulary),
-        vocabulary.terms.length,
-      );
+      final List<int> labels = _labels(bm25Rows(bags, vocabulary));
       expect(labels.last, kNoCategory);
       expect(labels.sublist(0, 3).toSet(), <int>{0});
     });
@@ -140,11 +149,11 @@ void main() {
         Int32List.fromList(<int>[word]),
         Float64List.fromList(<double>[1]),
       );
-      final List<int> labels = artCategories(<SparseRow>[
+      final List<int> labels = _labels(<SparseRow>[
         row(0),
         row(1),
         SparseRow(Int32List(0), Float64List(0)),
-      ], 2);
+      ]);
       expect(labels, <int>[0, 0, kNoCategory]);
     });
 
@@ -164,7 +173,7 @@ void main() {
               if (i != j) sparseDot(rows[i], rows[j]),
           ].reduce((double p, double q) => p > q ? p : q),
       ]..sort();
-      expect(libraryMeasure(rows), best[1]);
+      expect(libraryMeasure(gramOf(rows), rows.length), best[1]);
     });
   });
 
@@ -178,16 +187,14 @@ void main() {
     ];
     final int n = bags.length;
     final Stopwatch watch = Stopwatch()..start();
-    final List<int> straight = artCategories(rows, vocabulary.terms.length);
+    final List<int> straight = _labels(rows);
     final int ms = watch.elapsedMilliseconds;
-    final List<int> backward = artCategories(
+    final List<int> backward = _labels(
       rows,
-      vocabulary.terms.length,
       order: <int>[for (int i = n - 1; i >= 0; i--) i],
     );
-    final List<int> mixed = artCategories(
+    final List<int> mixed = _labels(
       rows,
-      vocabulary.terms.length,
       order: <int>[for (int i = 0; i < n; i++) (i * 97) % n],
     );
     final double score = _ari(straight, truth);

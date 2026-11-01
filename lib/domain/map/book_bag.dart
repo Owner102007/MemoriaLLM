@@ -61,9 +61,10 @@ class BookBag {
 
   /// Полная форма каждого из [terms] — та, что чаще всего встретилась в
   /// книге (F-MAP-03): в мешке слово стоит без окончания («анатоми»), а
-  /// в имени созвездия его показывают целым («анатомия»). `null` —
-  /// формы не собирались, показывается само слово мешка.
-  final List<String>? forms;
+  /// в имени созвездия его показывают целым («анатомия»). Элемент `null`
+  /// — форма совпадает со словом мешка; весь список `null` — формы не
+  /// собирались. Так в изолят не уходят тысячи лишних строк.
+  final List<String?>? forms;
 
   /// Полная форма слова номер [i].
   String formAt(int i) => forms?[i] ?? terms[i];
@@ -231,7 +232,7 @@ class BagBuilder {
         for (final MapEntry<String, int> entry in entries) entry.value,
       ],
       length: _length,
-      forms: <String>[
+      forms: <String?>[
         for (final MapEntry<String, int> entry in entries) _formOf(entry.key),
       ],
     );
@@ -239,7 +240,8 @@ class BagBuilder {
 
   /// Самая частая целая форма слова; при равном счёте — первая по
   /// алфавиту, чтобы не зависеть от порядка, в котором формы встретились.
-  String _formOf(String token) {
+  /// `null` — форма совпадает с самим словом.
+  String? _formOf(String token) {
     String best = token;
     int top = -1;
     final Map<String, int> forms = _forms[token] ?? const <String, int>{};
@@ -250,7 +252,7 @@ class BagBuilder {
         top = entry.value;
       }
     }
-    return best;
+    return best == token ? null : best;
   }
 }
 

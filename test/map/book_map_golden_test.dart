@@ -11,6 +11,18 @@ import 'package:memoria/domain/map/map_layout.dart';
 import 'package:memoria/domain/map/map_names.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
 
+/// Созвездия по строкам книг: матрица Грама — как в расчёте карты.
+List<int> _labels(
+  List<SparseRow> rows, {
+  List<int>? order,
+  Map<int, int> pinned = const <int, int>{},
+}) => artCategories(
+  gramOf(rows),
+  rows.length,
+  order: order,
+  pinned: pinned,
+).labels;
+
 /// Эталон: посчитан `tool/make_map_goldens.py` — другой реализацией.
 const String _goldenPath = 'test/goldens/book_map.json';
 
@@ -216,7 +228,12 @@ void main() {
     final MapVocabulary vocabulary = vocabularyOf(bags);
     final List<SparseRow> rows = bm25Rows(bags, vocabulary);
     final List<int> expected = listOf('categories').cast<int>();
-    expect(artCategories(rows, vocabulary.terms.length), expected);
+    expect(_labels(rows), expected);
+    // Дробные числа — мерка и сплочённость созвездий: на них расхождение
+    // реализаций видно сразу, а не только на пороге.
+    final ArtResult result = artCategories(gramOf(rows), rows.length);
+    expect(result.measure, numberOf(golden['measure']));
+    expect(result.cohesions, listOf('cohesions').map(numberOf).toList());
     final BookMap map = buildBookMap(bags)!;
     expect(<int>[
       for (final MapPoint point in map.points) point.constellation,
@@ -255,7 +272,6 @@ void main() {
   group('ALG-MAP-16: малые наборы другой реализации', () {
     late Map<String, Object?> art;
     late List<SparseRow> rows;
-    late int dimensions;
 
     setUpAll(() {
       art = golden['art']! as Map<String, Object?>;
@@ -265,11 +281,15 @@ void main() {
       ];
       final MapVocabulary vocabulary = vocabularyOf(books);
       rows = bm25Rows(books, vocabulary);
-      dimensions = vocabulary.terms.length;
     });
 
     test('ALG-MAP-16: мерка библиотеки c₀ та же', () {
-      expect(libraryMeasure(rows), numberOf(art['c0']));
+      expect(libraryMeasure(gramOf(rows), rows.length), numberOf(art['c0']));
+      final ArtResult result = artCategories(gramOf(rows), rows.length);
+      expect(
+        result.cohesions,
+        (art['cohesions']! as List<Object?>).map(numberOf).toList(),
+      );
     });
 
     test(
@@ -279,7 +299,7 @@ void main() {
         final List<Object?> labels = art['labels']! as List<Object?>;
         for (int k = 0; k < orders.length; k++) {
           final List<int> order = (orders[k]! as List<Object?>).cast<int>();
-          final List<int> got = artCategories(rows, dimensions, order: order);
+          final List<int> got = _labels(rows, order: order);
           expect(got, (labels[k]! as List<Object?>).cast<int>());
           expect(got, (labels.first! as List<Object?>).cast<int>());
         }
@@ -297,7 +317,7 @@ void main() {
             ((pair! as List<Object?>)[0]! as int):
                 (pair as List<Object?>)[1]! as int,
         };
-        final List<int> got = artCategories(rows, dimensions, pinned: pinned);
+        final List<int> got = _labels(rows, pinned: pinned);
         expect(got, (art['pinnedLabels']! as List<Object?>).cast<int>());
         // Две книги разных тем, поставленные вместе, — в одном созвездии.
         final List<int> keys = pinned.keys.toList();

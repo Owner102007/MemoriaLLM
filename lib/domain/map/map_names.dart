@@ -100,9 +100,19 @@ List<String> constellationNames(
       ].join(' · '),
     );
   }
-  final Map<String, int> seen = <String, int>{};
-  return <String>[
-    for (final String name in names)
-      (seen[name] = (seen[name] ?? 0) + 1) == 1 ? name : '$name ${seen[name]}',
-  ];
+  // Повтор имени получает номер; номер берётся такой, чтобы и с ним имя
+  // не совпало ни с одним уже выданным.
+  final Set<String> used = <String>{};
+  final List<String> out = <String>[];
+  for (final String name in names) {
+    String candidate = name;
+    int number = 2;
+    while (used.contains(candidate)) {
+      candidate = '$name $number';
+      number++;
+    }
+    used.add(candidate);
+    out.add(candidate);
+  }
+  return out;
 }

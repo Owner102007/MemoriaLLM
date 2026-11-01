@@ -17,12 +17,7 @@ void main() {
   tearDown(() async => data.close());
 
   Future<Galaxy> load({Map<String, int> times = const <String, int>{}}) {
-    return loadGalaxy(
-      library: data.library,
-      categories: data.categories,
-      store: data.bookMap,
-      times: times,
-    );
+    return loadGalaxy(library: data.library, store: data.bookMap, times: times);
   }
 
   group('F-MAP-11: когда карты нет', () {

@@ -176,7 +176,6 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     try {
       galaxy = await loadGalaxy(
         library: widget.services.data.library,
-        categories: widget.services.data.categories,
         store: widget.services.data.bookMap,
         times: widget.services.bookTimes?.times ?? const <String, int>{},
       );

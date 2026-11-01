@@ -24,6 +24,18 @@ import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
 import 'package:pdfrx/pdfrx.dart' show pdfrxInitialize;
 
+/// Созвездия по строкам книг: матрица Грама — как в расчёте карты.
+List<int> _labels(
+  List<SparseRow> rows, {
+  List<int>? order,
+  Map<int, int> pinned = const <int, int>{},
+}) => artCategories(
+  gramOf(rows),
+  rows.length,
+  order: order,
+  pinned: pinned,
+).labels;
+
 /// Папка с литературой — рядом с репозиторием, в данных проекта.
 const String _root = '../_данные/Книги в архиве для тестирования (2 версия)';
 
@@ -108,11 +120,7 @@ void main() {
       final Map<String, int> seen = <String, int>{};
       final Map<String, List<int>> sample = <String, List<int>>{};
       for (final List<int> order in orders) {
-        final List<int> labels = artCategories(
-          rows,
-          vocabulary.terms.length,
-          order: order,
-        );
+        final List<int> labels = _labels(rows, order: order);
         final String text = labels.join(',');
         seen[text] = (seen[text] ?? 0) + 1;
         sample[text] = labels;
@@ -132,11 +140,7 @@ void main() {
       // (резонанс.py) на тех же строках даёт то же самое — это свойство
       // правила, а не переноса; вопрос владельцу — В-019.
       for (final List<int> order in orders) {
-        final List<int> labels = artCategories(
-          rows,
-          vocabulary.terms.length,
-          order: order,
-        );
+        final List<int> labels = _labels(rows, order: order);
         final Map<int, Set<String>> foldersOf = <int, Set<String>>{};
         final Map<String, Set<int>> ofFolder = <String, Set<int>>{};
         for (int i = 0; i < n; i++) {

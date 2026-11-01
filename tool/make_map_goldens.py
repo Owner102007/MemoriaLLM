@@ -479,27 +479,14 @@ def layout(rows, edges, groups, epochs=EPOCHS):
 # --- Созвездия: адаптивный резонанс (ALG-MAP-16) -------------------------
 #
 # Та же логика, что в lib/domain/map/map_categories.dart, и тот же порядок
-# сложений: категория — сумма векторов S (плотный список), число книг n и
-# |S|². Эталон правила — резонанс.py шага 45 (описание проекта).
+# сложений. Всё считается по матрице Грама книг g: x·S — сумма косинусов
+# книги с книгами категории, |S|² — сумма всех косинусов внутри неё.
+# Эталон правила — резонанс.py шага 45 (описание проекта).
 
 ART_RHO = 0.6
 ART_PHI = 0.4
 ART_COHESION_BOOKS = 3
 ART_ROUNDS = 10
-
-
-def self_dot(row):
-    total = 0.0
-    for _, w in row:
-        total += w * w
-    return total
-
-
-def dense_dot(a, b):
-    total = 0.0
-    for d in range(len(a)):
-        total += a[d] * b[d]
-    return total
 
 
 def canon(labels):
@@ -515,12 +502,24 @@ def canon(labels):
     return out
 
 
+def has_words(g, i):
+    return g[i][i] > 0.0
+
+
+def within(g, a, b):
+    total = 0.0
+    for i in a:
+        for j in b:
+            total += g[i][j]
+    return total
+
+
 class Cats:
-    def __init__(self, dims, c0, floor):
-        self.dims = dims
+    def __init__(self, g, c0, floor):
+        self.g = g
         self.c0 = c0
         self.floor = floor
-        self.sums = []
+        self.members = []
         self.counts = []
         self.squares = []
 
@@ -530,65 +529,57 @@ class Cats:
             return self.c0
         return (self.squares[j] - n) / (n * (n - 1))
 
-    def dot(self, j, row):
-        s = self.sums[j]
+    def dot(self, j, i):
         total = 0.0
-        for i, w in row:
-            total += s[i] * w
+        for m in self.members[j]:
+            total += self.g[i][m]
         return total
 
-    def add(self, j, row):
-        self.squares[j] += 2.0 * self.dot(j, row) + self_dot(row)
-        s = self.sums[j]
-        for i, w in row:
-            s[i] += w
+    def add(self, j, i):
+        self.squares[j] += 2.0 * self.dot(j, i) + self.g[i][i]
+        members = self.members[j]
+        at = len(members)
+        while at > 0 and members[at - 1] > i:
+            at -= 1
+        members.insert(at, i)
         self.counts[j] += 1
 
-    def open(self, row):
-        s = [0.0] * self.dims
-        for i, w in row:
-            s[i] = w
-        self.sums.append(s)
+    def open(self, i):
+        self.members.append([i])
         self.counts.append(1)
-        self.squares.append(self_dot(row))
+        self.squares.append(self.g[i][i])
         return len(self.counts) - 1
 
     @classmethod
-    def of(cls, rows, labels, dims, c0, floor):
-        out = cls(dims, c0, floor)
+    def of(cls, g, labels, c0, floor):
+        out = cls(g, c0, floor)
         k = 0
         for label in labels:
             k = max(k, label + 1)
         for _ in range(k):
-            out.sums.append([0.0] * dims)
+            out.members.append([])
             out.counts.append(0)
             out.squares.append(0.0)
-        for i, row in enumerate(rows):
-            label = labels[i]
-            if label < 0:
-                continue
-            s = out.sums[label]
-            for t, w in row:
-                s[t] += w
-            out.counts[label] += 1
+        for i, label in enumerate(labels):
+            if label >= 0:
+                out.members[label].append(i)
+                out.counts[label] += 1
         for j in range(k):
-            out.squares[j] = dense_dot(out.sums[j], out.sums[j])
+            out.squares[j] = within(g, out.members[j], out.members[j])
         return out
 
 
-def library_measure(rows):
-    present = [i for i, row in enumerate(rows) if row]
+def library_measure(g):
+    n = len(g)
+    present = [i for i in range(n) if has_words(g, i)]
     if len(present) < 2:
         return 0.0
     best = []
     for i in present:
         top = -math.inf
         for j in present:
-            if i == j:
-                continue
-            value = sparse_dot(rows[i], rows[j])
-            if value > top:
-                top = value
+            if i != j and g[i][j] > top:
+                top = g[i][j]
         best.append(top)
     best.sort()
     m = len(best)
@@ -597,11 +588,11 @@ def library_measure(rows):
     return (best[m // 2 - 1] + best[m // 2]) / 2.0
 
 
-def art_choose(cats, row, own=None, sticky=False):
+def art_choose(cats, i, own=None, sticky=False):
     k = len(cats.counts)
     if k == 0:
         return None
-    dots = [cats.dot(j, row) for j in range(k)]
+    dots = [cats.dot(j, i) for j in range(k)]
     c = [dots[j] / cats.counts[j] for j in range(k)]
     q = [cats.cohesion(j) for j in range(k)]
     skip = None
@@ -610,10 +601,11 @@ def art_choose(cats, row, own=None, sticky=False):
         if m == 1:
             skip = own
         else:
-            c[own] = (dots[own] - 1.0) / (m - 1)
+            self_value = cats.g[i][i]
+            c[own] = (dots[own] - self_value) / (m - 1)
             rest = m - 1
             if rest >= ART_COHESION_BOOKS:
-                square = cats.squares[own] - 2.0 * dots[own] + 1.0
+                square = cats.squares[own] - 2.0 * dots[own] + self_value
                 q[own] = (square - rest) / (rest * (rest - 1))
             else:
                 q[own] = cats.c0
@@ -631,41 +623,39 @@ def art_choose(cats, row, own=None, sticky=False):
     return None
 
 
-def art_day(rows, order, c0, dims, floor):
-    cats = Cats(dims, c0, floor)
-    labels = [-1] * len(rows)
+def art_day(g, order, c0, floor):
+    cats = Cats(g, c0, floor)
+    labels = [-1] * len(g)
     for i in order:
-        row = rows[i]
-        if not row:
+        if not has_words(g, i):
             continue
-        j = art_choose(cats, row)
+        j = art_choose(cats, i)
         if j is None:
-            labels[i] = cats.open(row)
+            labels[i] = cats.open(i)
         else:
-            cats.add(j, row)
+            cats.add(j, i)
             labels[i] = j
     return labels, cats
 
 
-def art_merge(rows, raw, c0, dims, held_books, floor):
+def art_merge(g, raw, c0, held_books, floor):
     labels = canon(raw)
-    sch = Cats.of(rows, labels, dims, c0, floor)
+    sch = Cats.of(g, labels, c0, floor)
     k = len(sch.counts)
     if k < 2:
         return labels
     held = {labels[i] for i in held_books if labels[i] >= 0}
     alive = [True] * k
-    members = [[i for i in range(len(labels)) if labels[i] == j]
-               for j in range(k)]
-    g = [[dense_dot(sch.sums[a], sch.sums[b]) for b in range(k)]
-         for a in range(k)]
+    cross = [[sch.squares[a] if a == b
+              else within(g, sch.members[a], sch.members[b])
+              for b in range(k)] for a in range(k)]
     while True:
         live = [j for j in range(k) if alive[j] and j not in held]
         q = {j: sch.cohesion(j) for j in live}
         best = None
         for ai, a in enumerate(live):
             for b in live[ai + 1:]:
-                cab = g[a][b] / (sch.counts[a] * sch.counts[b])
+                cab = cross[a][b] / (sch.counts[a] * sch.counts[b])
                 if cab < floor or q[a] * q[b] <= 0.0:
                     continue
                 r = cab / math.sqrt(q[a] * q[b])
@@ -674,68 +664,73 @@ def art_merge(rows, raw, c0, dims, held_books, floor):
         if best is None:
             break
         _, a, b = best
-        sa = sch.sums[a]
-        sb = sch.sums[b]
-        for d in range(len(sa)):
-            sa[d] += sb[d]
-        sch.counts[a] += sch.counts[b]
-        sch.squares[a] = dense_dot(sa, sa)
-        members[a] = sorted(members[a] + members[b])
-        alive[b] = False
+        square = cross[a][a] + 2.0 * cross[a][b] + cross[b][b]
         for j in range(k):
-            value = dense_dot(sch.sums[j], sa)
-            g[a][j] = value
-            g[j][a] = value
+            if j != a and j != b:
+                value = cross[a][j] + cross[b][j]
+                cross[a][j] = value
+                cross[j][a] = value
+        cross[a][a] = square
+        sch.squares[a] = square
+        sch.counts[a] += sch.counts[b]
+        sch.members[a] = sorted(sch.members[a] + sch.members[b])
+        alive[b] = False
     out = list(labels)
     for j in range(k):
         if alive[j]:
-            for i in members[j]:
+            for i in sch.members[j]:
                 out[i] = j
     return canon(out)
 
 
-def art_consolidate(rows, start, c0, dims, order, pinned, floor):
+def art_consolidate(g, start, c0, order, pinned, floor):
     labels = canon(start)
-    n = len(rows)
+    n = len(g)
     for sticky in (False, True):
         for _ in range(ART_ROUNDS):
             labels = canon(labels)
-            sch = Cats.of(rows, labels, dims, c0, floor)
+            sch = Cats.of(g, labels, c0, floor)
             held = {labels[i] for i in pinned if labels[i] >= 0}
             new = list(labels)
             low = []
             for i in range(n):
-                row = rows[i]
-                if not row or i in pinned or labels[i] in held:
+                if not has_words(g, i) or i in pinned or labels[i] in held:
                     continue
-                j = art_choose(sch, row, own=labels[i], sticky=sticky)
+                j = art_choose(sch, i, own=labels[i], sticky=sticky)
                 if j is None:
                     low.append(i)
                 else:
                     new[i] = j
             if low:
                 wait = set(low)
-                seeds, _ = art_day(rows, [i for i in order if i in wait],
-                                   c0, dims, floor)
+                seeds, _ = art_day(g, [i for i in order if i in wait],
+                                   c0, floor)
                 for i in low:
                     new[i] = len(sch.counts) + seeds[i]
-            merged = art_merge(rows, new, c0, dims, pinned, floor)
+            merged = art_merge(g, new, c0, pinned, floor)
             if merged == labels:
                 return labels
             labels = merged
     return labels
 
 
-def art_categories(rows, dims, order=None, pinned=None):
-    n = len(rows)
+def cohesions_of(g, labels, c0):
+    cats = Cats.of(g, labels, c0, 0.0)
+    return [cats.cohesion(j) for j in range(len(cats.counts))]
+
+
+def art_categories(g, order=None, pinned=None):
+    """Возвращает (созвездия, c₀, сплочённости) — как ArtResult в Dart."""
+    n = len(g)
     order = list(range(n)) if order is None else order
     pinned = pinned or {}
-    present = [i for i in range(n) if rows[i]]
+    present = [i for i in range(n) if has_words(g, i)]
+    c0 = library_measure(g)
     if len(present) < ART_COHESION_BOOKS:
-        return [0 if rows[i] else -1 for i in range(n)]
-    c0 = library_measure(rows)
+        labels = [0 if has_words(g, i) else -1 for i in range(n)]
+        return labels, c0, cohesions_of(g, labels, c0)
     floor = ART_PHI * c0
-    labels, _ = art_day(rows, order, c0, dims, floor)
+    labels, _ = art_day(g, order, c0, floor)
     held = set()
     if pinned:
         nxt = 0
@@ -745,15 +740,15 @@ def art_categories(rows, dims, order=None, pinned=None):
         of_group = {}
         for i in range(n):
             group = pinned.get(i)
-            if group is None or not rows[i]:
+            if group is None or not has_words(g, i):
                 continue
             if group not in of_group:
                 of_group[group] = nxt
                 nxt += 1
             labels[i] = of_group[group]
             held.add(i)
-    labels = art_consolidate(rows, labels, c0, dims, order, held, floor)
-    return canon(labels)
+    labels = canon(art_consolidate(g, labels, c0, order, held, floor))
+    return labels, c0, cohesions_of(g, labels, c0)
 
 
 def group_of(label):
@@ -809,11 +804,16 @@ def constellation_names(books, kept, labels):
             scored.append((share * ln_exact(1.0 + average / f[i]), i))
         scored.sort(key=lambda item: (-item[0], item[1]))
         names.append(' · '.join(form[label][i][1] for _, i in scored[:2]))
-    seen = {}
+    used = set()
     out = []
     for name in names:
-        seen[name] = seen.get(name, 0) + 1
-        out.append(name if seen[name] == 1 else '%s %d' % (name, seen[name]))
+        candidate = name
+        number = 2
+        while candidate in used:
+            candidate = '%s %d' % (name, number)
+            number += 1
+        used.add(candidate)
+        out.append(candidate)
     return out
 
 
@@ -852,7 +852,7 @@ def build(books):
     components, values = latent(g)
     near, sims = neighbours(components)
     edges = edges_of(near, sims)
-    categories = art_categories(rows, len(kept))
+    categories, measure, cohesions = art_categories(g)
     names = constellation_names(books, kept, categories)
     if len(books) >= MIN_MAP_BOOKS:
         xs, ys = layout(components, edges, [group_of(c) for c in categories])
@@ -868,6 +868,8 @@ def build(books):
         'neighbours': near,
         'edges': edges,
         'categories': categories,
+        'measure': measure,
+        'cohesions': cohesions,
         'names': names,
         'xs': xs,
         'ys': ys,
@@ -973,6 +975,7 @@ def art_cases():
     books.sort(key=lambda book: book['key'])
     kept, df = vocabulary(books)
     rows, _ = bm25_rows(books, kept, df)
+    g = gram(rows)
     n = len(books)
     orders = [list(range(n)), list(range(n - 1, -1, -1))]
     shuffle = Mulberry(7)
@@ -985,11 +988,12 @@ def art_cases():
     pinned = {0: 1, 5: 1}
     return {
         'books': books,
-        'c0': library_measure(rows),
+        'c0': library_measure(g),
         'orders': orders,
-        'labels': [art_categories(rows, len(kept), order=o) for o in orders],
-        'pinned': [[i, g] for i, g in sorted(pinned.items())],
-        'pinnedLabels': art_categories(rows, len(kept), pinned=pinned),
+        'labels': [art_categories(g, order=o)[0] for o in orders],
+        'cohesions': art_categories(g)[2],
+        'pinned': [[i, group] for i, group in sorted(pinned.items())],
+        'pinnedLabels': art_categories(g, pinned=pinned)[0],
     }
 
 
@@ -1012,6 +1016,8 @@ def main():
         'neighbours': result['neighbours'],
         'edges': [[i, j, w] for i, j, w in result['edges']],
         'categories': result['categories'],
+        'measure': result['measure'],
+        'cohesions': result['cohesions'],
         'names': result['names'],
         'art': art_cases(),
         'points': [[x, y] for x, y in zip(result['xs'], result['ys'])],

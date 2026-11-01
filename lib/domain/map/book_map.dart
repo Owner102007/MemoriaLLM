@@ -6,6 +6,8 @@
 /// уходит в изолят (`application/map/map_builder.dart`).
 library;
 
+import 'dart:typed_data';
+
 import '../library/stable_hash.dart';
 import 'book_bag.dart';
 import 'map_categories.dart';
@@ -146,11 +148,12 @@ BookMap? buildBookMap(List<BookBag> bags) {
   final int n = sorted.length;
   final MapVocabulary vocabulary = vocabularyOf(sorted);
   final List<SparseRow> rows = bm25Rows(sorted, vocabulary);
-  final LatentRows latent = latentRows(gramOf(rows), n);
+  final Float64List gram = gramOf(rows);
+  final LatentRows latent = latentRows(gram, n);
   final MapEdges edges = edgesOf(neighboursOf(latent));
   // Созвездия складывает адаптивный резонанс (F-MAP-16, D-029); группа
   // раскладки — созвездие, а не категория полки.
-  final List<int> constellations = artCategories(rows, vocabulary.terms.length);
+  final List<int> constellations = artCategories(gram, n).labels;
   final List<String> names = constellationNames(
     sorted,
     vocabulary,

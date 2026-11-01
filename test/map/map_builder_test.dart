@@ -180,13 +180,12 @@ void main() {
     final MapPlan plan = await map.plan();
     await map.build(plan);
 
-    // Книга переехала в другую категорию.
+    // Книга переехала в другую категорию полки — с S56 карта от полок не
+    // зависит (созвездия складывает резонанс, F-MAP-16): пересчёт не нужен.
     await placeBook(data, 'a3', 'math');
     final MapPlan moved = await map.plan();
-    expect(moved.upToDate, isFalse);
-    expect(moved.key, isNot(plan.key));
-    await map.build(moved);
-    expect((await map.plan()).upToDate, isTrue);
+    expect(moved.upToDate, isTrue);
+    expect(moved.key, plan.key);
 
     // У книги запомнена ещё одна страница.
     await data.pageTexts.savePageTexts(
@@ -233,14 +232,16 @@ void main() {
     ], textVersion: 1);
     expect(desktop, phone);
     expect(phone, hasLength(64));
-    // А от категории, отпечатка и версии текста — зависит.
+    // От категории полки — нет: с S56 созвездия складывает резонанс
+    // (F-MAP-16), а не полки.
     expect(
       MapBuilder.keyOf(<MapSource>[
         source('pc-1', 'hash-1', 'Ангиология'),
         source('pc-2', 'hash-2', 'Ангиология'),
       ], textVersion: 1),
-      isNot(phone),
+      phone,
     );
+    // А от отпечатка и версии текста — зависит.
     expect(
       MapBuilder.keyOf(<MapSource>[
         source('pc-1', 'hash-1', 'Ангиология'),
