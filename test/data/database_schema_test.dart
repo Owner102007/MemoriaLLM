@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — тринадцатая: созвездия на карте', () {
+  test('версия схемы — четырнадцатая: паспорт файла (F-MAP-18)', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 13);
+    expect(appSchemaVersion, 14);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -64,6 +64,7 @@ void main() {
         'book_frames',
         'page_texts',
         'map_points',
+        'file_passports',
       ]),
     );
   });
@@ -168,7 +169,20 @@ void main() {
       'algorithm_version',
       'constellation',
       'constellation_name',
+      'reason',
     ]);
+  });
+
+  test('F-MAP-18: паспорт файла полей CRDT не несёт', () async {
+    // Паспорт и доверие — производное по отпечатку файла (D-010): в
+    // слияние и в облако не идут.
+    final List<String> columns = await _columnNames(
+      data.database,
+      'file_passports',
+    );
+    expect(columns, isNot(contains('hlc')));
+    expect(columns, isNot(contains('node_id')));
+    expect(columns.first, 'fingerprint');
   });
 
   test('цитата носит своё место в тексте страницы', () async {

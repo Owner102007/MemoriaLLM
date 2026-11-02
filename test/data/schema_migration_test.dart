@@ -11,6 +11,10 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/device_files.dart';
 import 'package:memoria/domain/map/book_map.dart';
+import 'package:memoria/domain/map/book_passport.dart';
+import 'package:memoria/domain/map/file_passport.dart';
+import 'package:memoria/domain/map/map_trusted.dart';
+import 'package:memoria/domain/map/text_trust.dart';
 import 'package:memoria/domain/prompts/selection_prompt.dart';
 import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reading.dart';
@@ -58,8 +62,18 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 13: ни паспорта файла, ни причины «без
+  /// созвездия» у точки карты тогда не было.
+  Future<void> undoPassports(AppData data) async {
+    await data.database.customStatement('DROP TABLE file_passports');
+    await data.database.customStatement(
+      'ALTER TABLE map_points DROP COLUMN reason',
+    );
+  }
+
   /// Откатывает базу к версии 12: созвездий на карте тогда не было.
   Future<void> undoConstellations(AppData data) async {
+    await undoPassports(data);
     await data.database.customStatement(
       'ALTER TABLE map_points DROP COLUMN constellation_name',
     );
@@ -70,6 +84,7 @@ void main() {
 
   /// Откатывает базу к версии 11: мест книг на карте тогда не было.
   Future<void> undoMapPoints(AppData data) async {
+    await data.database.customStatement('DROP TABLE file_passports');
     await data.database.customStatement('DROP TABLE map_points');
   }
 
@@ -172,10 +187,83 @@ void main() {
     );
     expect(
       await columnsOf(data, 'map_points'),
-      containsAll(<String>['book_id', 'x', 'y', 'layout_key']),
+      containsAll(<String>['book_id', 'x', 'y', 'layout_key', 'reason']),
+    );
+    expect(
+      await columnsOf(data, 'file_passports'),
+      containsAll(<String>['fingerprint', 'kind', 'trust', 'page_trust']),
     );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('F-MAP-18: база версии 13 доезжает до 14 с паспортом файла', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await undoPassports(first);
+    await first.database.customStatement('PRAGMA user_version = 13');
+    expect(await columnsOf(first, 'map_points'), isNot(contains('reason')));
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(await columnsOf(second, 'map_points'), contains('reason'));
+    await second.bookMap.replace(
+      const StoredBookMap(
+        layoutKey: 'набор',
+        version: kBookMapVersion,
+        points: <String, MapPoint>{
+          'book-1': MapPoint(
+            key: 'hash-1',
+            x: 0.25,
+            y: -0.5,
+            reason: MapReason.littleText,
+          ),
+        },
+      ),
+    );
+    expect(
+      (await second.bookMap.load())?.points['book-1']?.reason,
+      MapReason.littleText,
+    );
+    await second.passports.save(
+      PassportRecord(
+        fingerprint: 'hash-1',
+        version: kPassportVersion,
+        passport: passportOf(
+          const <PageFacts>[
+            PageFacts(chars: 0, imageShare: 0.98, dpi: 200, bitsPerPixel: 8),
+            PageFacts(chars: 0, imageShare: 0.97, dpi: 300, bitsPerPixel: 1),
+            PageFacts(chars: 2, imageShare: 0),
+          ],
+          producer: 'ScanSnap',
+          bookmarks: 3,
+        ),
+        trustTextVersion: 2,
+        trustPages: 3,
+        trustKind: TrustKind.littleText,
+        pageTrust: const <PageTrust>[
+          PageTrust.empty,
+          PageTrust.empty,
+          PageTrust.short,
+        ],
+      ),
+    );
+    final PassportRecord record = (await second.passports.load('hash-1'))!;
+    expect(record.passport!.pageKinds, <PageKind>[
+      PageKind.scanNoLayer,
+      PageKind.scanNoLayer,
+      PageKind.empty,
+    ]);
+    expect(record.passport!.kind, BookKind.scanNoLayer);
+    expect(record.passport!.dpiMedian, 300);
+    expect(record.passport!.producer, 'ScanSnap');
+    expect(record.passport!.bookmarks, 3);
+    expect(record.trustKind, TrustKind.littleText);
+    expect(record.trustPages, 3);
+    expect(record.pageTrust.last, PageTrust.short);
+    expect(await second.passports.load('hash-нет'), isNull);
+    await second.close();
   });
 
   test('F-MAP-16: база версии 12 доезжает до 13 с созвездиями', () async {
