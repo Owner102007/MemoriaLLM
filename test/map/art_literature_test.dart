@@ -1,4 +1,5 @@
-/// Созвездия на настоящих книгах исследования СНО2026 (F-MAP-16).
+/// Созвездия и порядок звёзд на настоящих книгах исследования СНО2026
+/// (F-MAP-16, F-MAP-17).
 ///
 /// Что проверяет. 18 книг тестовой литературы лежат в двух папках:
 /// «Аневризма» (медицина) и «Число Е» (математика). Адаптивный резонанс
@@ -13,11 +14,15 @@
 library;
 
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/map/book_bag.dart';
+import 'package:memoria/domain/map/exact_math.dart';
 import 'package:memoria/domain/map/map_categories.dart';
+import 'package:memoria/domain/map/map_order.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
@@ -74,26 +79,34 @@ void main() {
     );
   }
 
+  /// Мешки всех 18 книг, по возрастанию ключа; читаются один раз.
+  List<BookBag>? cached;
+  Future<List<BookBag>> literature() async {
+    if (cached != null) return cached!;
+    await tmp.create(recursive: true);
+    final List<BookBag> bags = <BookBag>[];
+    for (final String folder in _folders) {
+      final List<File> files =
+          Directory('$_root/$folder')
+              .listSync()
+              .whereType<File>()
+              .where((File f) => f.path.toLowerCase().endsWith('.pdf'))
+              .toList()
+            ..sort((File a, File b) => a.path.compareTo(b.path));
+      for (final File file in files) {
+        bags.add(await bagOf(file, folder));
+      }
+    }
+    bags.sort((BookBag a, BookBag b) => a.key.compareTo(b.key));
+    return cached = bags;
+  }
+
   test(
     'F-MAP-16: 18 книг литературы СНО2026 — созвездие не смешивает папки '
     'при любом порядке поступления',
     () async {
-      await tmp.create(recursive: true);
-      final List<BookBag> bags = <BookBag>[];
-      for (final String folder in _folders) {
-        final List<File> files =
-            Directory('$_root/$folder')
-                .listSync()
-                .whereType<File>()
-                .where((File f) => f.path.toLowerCase().endsWith('.pdf'))
-                .toList()
-              ..sort((File a, File b) => a.path.compareTo(b.path));
-        for (final File file in files) {
-          bags.add(await bagOf(file, folder));
-        }
-      }
+      final List<BookBag> bags = await literature();
       expect(bags, hasLength(18));
-      bags.sort((BookBag a, BookBag b) => a.key.compareTo(b.key));
       final MapVocabulary vocabulary = vocabularyOf(bags);
       final List<SparseRow> rows = bm25Rows(bags, vocabulary);
       final int n = bags.length;
@@ -165,4 +178,124 @@ void main() {
               'тест идёт только на ПК владельца',
     timeout: const Timeout(Duration(minutes: 5)),
   );
+
+  test(
+    'F-MAP-17: порядок устойчив к выбросу 5 % слов',
+    () async {
+      final List<BookBag> bags = await literature();
+      expect(bags, hasLength(18));
+      final int n = bags.length;
+      // Группа — папка: так считал расчёт шага 44 (ρ 0,99 и 0,97).
+      final List<int> labels = <int>[
+        for (final BookBag bag in bags) _folders.indexOf(bag.group),
+      ];
+      Float64List typicalOf(List<BookBag> set) {
+        final List<SparseRow> rows = bm25Rows(set, vocabularyOf(set));
+        return typicalities(gramOf(rows), n, labels);
+      }
+
+      final Float64List full = typicalOf(bags);
+      // Пять выбросов: из каждой книги выпадает каждое двадцатое слово
+      // (своё зерно на выброс), как при другой вёрстке или OCR.
+      for (int seed = 1; seed <= 5; seed++) {
+        final MapRandom random = MapRandom(seed);
+        final List<BookBag> thinned = <BookBag>[
+          for (final BookBag bag in bags) _thin(bag, random),
+        ];
+        final Float64List part = typicalOf(thinned);
+        for (int g = 0; g < _folders.length; g++) {
+          final List<int> members = <int>[
+            for (int i = 0; i < n; i++)
+              if (labels[i] == g) i,
+          ];
+          final double rho = _spearman(
+            <double>[for (final int i in members) full[i]],
+            <double>[for (final int i in members) part[i]],
+          );
+          stdout.writeln(
+            'ЗАМЕР F-MAP-17 | выброс 5 % слов, зерно $seed | '
+            '${_folders[g]} | ρ ${rho.toStringAsFixed(3)}',
+          );
+          expect(
+            rho,
+            greaterThanOrEqualTo(0.97),
+            reason: '${_folders[g]}, $seed',
+          );
+        }
+      }
+    },
+    skip: here
+        ? false
+        : 'нет литературы СНО2026 рядом с репозиторием (_данные) — '
+              'тест идёт только на ПК владельца',
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
+}
+
+/// Мешок книги, из которого выпало каждое двадцатое слово (5 %):
+/// каждое употребление слова выпадает с вероятностью 1/20.
+BookBag _thin(BookBag bag, MapRandom random) {
+  final List<String> terms = <String>[];
+  final List<int> counts = <int>[];
+  int length = 0;
+  for (int k = 0; k < bag.terms.length; k++) {
+    int kept = 0;
+    for (int c = 0; c < bag.counts[k]; c++) {
+      if (random.below(20) != 0) kept++;
+    }
+    if (kept > 0) {
+      terms.add(bag.terms[k]);
+      counts.add(kept);
+      length += kept;
+    }
+  }
+  return BookBag(
+    key: bag.key,
+    group: bag.group,
+    terms: terms,
+    counts: counts,
+    length: length,
+  );
+}
+
+/// Ранговая корреляция Спирмена: 1 — порядок тот же, 0 — не связан.
+/// Равные значения получают средний ранг.
+double _spearman(List<double> a, List<double> b) {
+  final List<double> ra = _ranks(a);
+  final List<double> rb = _ranks(b);
+  final int n = a.length;
+  double ma = 0;
+  double mb = 0;
+  for (int i = 0; i < n; i++) {
+    ma += ra[i] / n;
+    mb += rb[i] / n;
+  }
+  double top = 0;
+  double da = 0;
+  double db = 0;
+  for (int i = 0; i < n; i++) {
+    top += (ra[i] - ma) * (rb[i] - mb);
+    da += (ra[i] - ma) * (ra[i] - ma);
+    db += (rb[i] - mb) * (rb[i] - mb);
+  }
+  return da == 0 || db == 0 ? 1 : top / math.sqrt(da * db);
+}
+
+/// Ранги чисел (от нуля), равным — средний.
+List<double> _ranks(List<double> values) {
+  final List<int> order = <int>[for (int i = 0; i < values.length; i++) i]
+    ..sort((int x, int y) => values[x].compareTo(values[y]));
+  final List<double> ranks = List<double>.filled(values.length, 0);
+  int i = 0;
+  while (i < order.length) {
+    int j = i;
+    while (j + 1 < order.length && values[order[j + 1]] == values[order[i]]) {
+      j++;
+    }
+    for (int k = i; k <= j; k++) {
+      ranks[order[k]] = (i + j) / 2;
+    }
+    i = j + 1;
+  }
+  return ranks;
 }
