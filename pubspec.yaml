@@ -47,6 +47,13 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   flutter_test:
     sdk: flutter
+  # F-REL-09: сценарии на настоящем приложении (`integration_test/`).
+  integration_test:
+    sdk: flutter
+  # F-REL-11: агент управляет отладочной сборкой (Marionette MCP, LeanCode,
+  # Apache-2.0). Только точка входа `tool/agent/main_agent.dart` — в выпуск
+  # не попадает.
+  marionette_flutter: ^0.7.0
   msix: ^3.16.0
 
 flutter:
