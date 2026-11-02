@@ -75,6 +75,17 @@ class BookBag {
   /// Полная форма слова номер [i].
   String formAt(int i) => forms?[i] ?? terms[i];
 
+  /// Тот же мешок с доверием [value] (F-MAP-18).
+  BookBag withTrust(BookTrust value) => BookBag(
+    key: key,
+    group: group,
+    terms: terms,
+    counts: counts,
+    length: length,
+    forms: forms,
+    trust: value,
+  );
+
   /// Тот же мешок, но только со словами из [allowed] (F-MAP-18): у
   /// книги с ненадёжным текстом в карту идут лишь слова, которые есть у
   /// книг с надёжным, — общие ошибки распознавания нескольких плохих

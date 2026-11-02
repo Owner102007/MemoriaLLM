@@ -18,8 +18,10 @@ import '../infrastructure/files/archive_scanner.dart';
 import '../infrastructure/files/book_copy.dart';
 import '../infrastructure/files/cover_cache.dart';
 import '../infrastructure/files/fast_book_picker.dart';
+import '../infrastructure/files/lexicon_asset.dart';
 import '../infrastructure/files/local_book_storage.dart';
 import '../infrastructure/files/platform_storage_access.dart';
+import '../infrastructure/pdf/pdfium_passport.dart';
 import '../infrastructure/pdf/pdfrx_document.dart';
 import '../infrastructure/platform/android_volume_keys.dart';
 import '../infrastructure/platform/windows_full_screen.dart';
@@ -160,7 +162,7 @@ class AppServices {
       // II. Условие — константа сборки: в основное приложение и в
       // ветвь I проход по полке не попадает.
       shelfReading: Sno.galaxy
-          ? _shelfReadingFor(data, opener, recording)
+          ? _shelfReadingFor(data, opener, recording, storage)
           : null,
       bookTimes: bookTimes,
       // SNO-F-EYE-04: айтрекер — только сборка ветви на ПК.
@@ -206,6 +208,7 @@ class AppServices {
     AppData data,
     DocumentOpener opener,
     RecordingSession? recording,
+    BookStorage storage,
   ) {
     final ShelfReading reading = ShelfReading(
       library: data.library,
@@ -217,6 +220,11 @@ class AppServices {
         categories: data.categories,
         texts: data.pageTexts,
         store: data.bookMap,
+        // F-MAP-18: паспорт файла и доверие тексту — скан с ненадёжным
+        // текстом созвездий не заводит.
+        passports: data.passports,
+        passportReader: PdfiumPassportReader(storage: storage),
+        lexicon: loadLexicon,
       ),
       device: const PlatformDeviceStatus(),
       // Пока идёт запись, экран держит она: подготовка его не трогает.

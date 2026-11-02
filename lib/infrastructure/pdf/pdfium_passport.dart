@@ -23,10 +23,12 @@ import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
 import 'package:pdfium_dart/pdfium_dart.dart' as pdfium;
-import 'package:pdfrx/pdfrx.dart' show PdfrxEntryFunctions;
+import 'package:pdfrx/pdfrx.dart'
+    show PdfrxEntryFunctions, pdfrxFlutterInitialize;
 
 import '../../domain/library/book_source.dart';
 import '../../domain/library/book_storage.dart';
+import '../../domain/map/book_passport.dart';
 import '../../domain/map/file_passport.dart';
 import '../files/descriptor_book_handle.dart';
 
@@ -39,22 +41,23 @@ const int kMaxBookmarks = 100000;
 const int kMaxFormDepth = 15;
 
 /// Читает паспорт книги.
-class PdfiumPassportReader {
+class PdfiumPassportReader implements PassportReader {
   /// Создаёт чтение паспорта.
   ///
   /// [initialize] — тот же инициализатор pdfrx, что у открывателя книги
-  /// (`PdfrxDocumentOpener`): в приложении — Flutter, в тесте — свой.
+  /// (`PdfrxDocumentOpener`): по умолчанию — Flutter, в тесте — свой.
   PdfiumPassportReader({
     required BookStorage storage,
-    required Future<void> Function() initialize,
+    Future<void> Function()? initialize,
   }) : _storage = storage,
-       _initialize = initialize;
+       _initialize = initialize ?? pdfrxFlutterInitialize;
 
   final BookStorage _storage;
   final Future<void> Function() _initialize;
 
   /// Паспорт книги из [source]; `null` — файл не открылся (нет файла,
   /// пароль, битый) или до него нет пути.
+  @override
   Future<FilePassport?> read(BookSource source) async {
     final BookHandle book;
     try {

@@ -21,8 +21,10 @@ part 'app_database.g.dart';
 /// CRDT. 11 — текст страниц книги (шаг 09, F-TEXT-04): ещё одна таблица
 /// устройства, тоже производное и тоже без полей CRDT. 12 — места книг
 /// на карте «Галактика» (шаг 21, F-MAP-02): третья таблица устройства
-/// с производным.
-const int appSchemaVersion = 13;
+/// с производным. 13 — созвездие и его имя у точки карты (S56). 14 —
+/// паспорт файла и доверие тексту (S58, F-MAP-18): таблица устройства
+/// по отпечатку файла; причина «без созвездия» у точки карты.
+const int appSchemaVersion = 14;
 
 /// База данных приложения.
 ///
@@ -46,6 +48,7 @@ const int appSchemaVersion = 13;
     BookFrames,
     PageTexts,
     MapPoints,
+    FilePassports,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -149,6 +152,17 @@ class AppDatabase extends _$AppDatabase {
           // расчёта карты поднялась, и карта считается заново.
           await m.addColumn(mapPoints, mapPoints.constellation);
           await m.addColumn(mapPoints, mapPoints.constellationName);
+        }
+        if (from >= 12 && from < 14) {
+          // Причина «без созвездия» у точки карты (F-MAP-18). Из версий
+          // до 12 таблица заводится выше сразу с колонкой. Старые места
+          // переносить незачем: версия расчёта карты поднялась (4).
+          await m.addColumn(mapPoints, mapPoints.reason);
+        }
+        if (from < 14) {
+          // Паспорт файла и доверие тексту (F-MAP-18) заводятся пустыми:
+          // их считает расчёт карты, когда до книги дойдёт очередь.
+          await m.createTable(filePassports);
         }
       },
       beforeOpen: (OpeningDetails details) async {

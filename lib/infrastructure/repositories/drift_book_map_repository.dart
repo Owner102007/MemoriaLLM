@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../../domain/map/book_map.dart';
+import '../../domain/map/map_trusted.dart';
 import '../database/app_database.dart';
 
 /// Карта книг поверх drift (F-MAP-02, SNO-F-MAP-01).
@@ -37,6 +38,9 @@ class DriftBookMapRepository implements BookMapRepository {
               y: row.y,
               constellation: row.constellation,
               name: row.constellationName,
+              reason: row.reason < MapReason.values.length
+                  ? MapReason.values[row.reason]
+                  : MapReason.none,
             ),
       },
     );
@@ -58,6 +62,7 @@ class DriftBookMapRepository implements BookMapRepository {
               algorithmVersion: Value<int>(map.version),
               constellation: Value<int>(entry.value.constellation),
               constellationName: Value<String>(entry.value.name),
+              reason: Value<int>(entry.value.reason.index),
             ),
         ]);
       });

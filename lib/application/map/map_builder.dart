@@ -7,8 +7,12 @@ import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/map/book_bag.dart';
 import '../../domain/map/book_map.dart';
+import '../../domain/map/book_passport.dart';
+import '../../domain/map/file_passport.dart';
 import '../../domain/map/map_layout.dart';
+import '../../domain/map/map_trusted.dart';
 import '../../domain/map/map_vectors.dart';
+import '../../domain/map/text_trust.dart';
 import '../../domain/reading/page_text.dart';
 
 /// Собирает мешок слов одной книги.
@@ -39,6 +43,7 @@ class MapSource {
     required this.group,
     required this.cachedPages,
     required this.lastPage,
+    this.pageNumbers = const <int>[],
   });
 
   /// Книга полки.
@@ -52,6 +57,10 @@ class MapSource {
 
   /// Последняя запомненная страница; ноль — текста нет.
   final int lastPage;
+
+  /// Номера запомненных страниц по возрастанию — по ним вид страницы из
+  /// паспорта сопоставляется с её текстом (F-MAP-18).
+  final List<int> pageNumbers;
 }
 
 /// Что известно о карте до расчёта.
@@ -139,7 +148,13 @@ class MapBuilder {
     BagRunner bags = bagInIsolate,
     MapRunner layout = mapInIsolate,
     int textVersion = kPageTextVersion,
-  }) : _library = library,
+    PassportRepository? passports,
+    PassportReader? passportReader,
+    Future<Lexicon> Function()? lexicon,
+  }) : _passports = passports,
+       _passportReader = passportReader,
+       _lexiconLoader = lexicon,
+       _library = library,
        _categories = categories,
        _texts = texts,
        _store = store,
@@ -154,6 +169,13 @@ class MapBuilder {
   final BagRunner _bags;
   final MapRunner _layout;
   final int _textVersion;
+
+  /// Паспорт и доверие (F-MAP-18). Без хранилища и словаря текст не
+  /// судится — книги идут в карту как есть (так в тестах прежних шагов).
+  final PassportRepository? _passports;
+  final PassportReader? _passportReader;
+  final Future<Lexicon> Function()? _lexiconLoader;
+  Lexicon? _lexicon;
 
   /// Ключ набора книг: SHA-256 от версий и от каждой книги — отпечаток
   /// файла, группа, название, автор, сколько её страниц запомнено.
@@ -207,6 +229,7 @@ class MapBuilder {
           group: titles[book.categoryId] ?? '',
           cachedPages: cached.length,
           lastPage: last,
+          pageNumbers: cached.keys.toList()..sort(),
         ),
       );
     }
@@ -283,17 +306,19 @@ class MapBuilder {
         return const MapOutcome(kind: MapOutcomeKind.stopped);
       }
       final MapSource source = sources[i];
-      bags.add(
-        await _bags(
-          BagRequest(
-            key: source.book.fileHash,
-            group: source.group,
-            title: source.book.title,
-            author: source.book.author,
-            pages: await _pagesOf(source),
-          ),
+      final List<String> pages = await _pagesOf(source);
+      final PassportRecord? record = await _trustOf(source, pages);
+      final BookTrust trust = record?.bookTrust ?? const BookTrust.asIs();
+      final BookBag bag = await _bags(
+        BagRequest(
+          key: source.book.fileHash,
+          group: source.group,
+          title: source.book.title,
+          author: source.book.author,
+          pages: _trustedPages(pages, record),
         ),
       );
+      bags.add(bag.withTrust(trust));
       onProgress?.call(i + 1, sources.length);
     }
     if (stopped?.call() ?? false) {
@@ -324,6 +349,93 @@ class MapBuilder {
       groups: map.groups,
       fingerprint: map.fingerprint,
     );
+  }
+
+  /// Паспорт и доверие книги (F-MAP-18): из хранилища, а если их нет
+  /// или текст книги с тех пор дочитан — считаются и кладутся туда.
+  /// `null` — судить нечем (нет хранилища или словаря).
+  Future<PassportRecord?> _trustOf(MapSource source, List<String> pages) async {
+    final PassportRepository? store = _passports;
+    final Future<Lexicon> Function()? loader = _lexiconLoader;
+    if (store == null || loader == null) {
+      return null;
+    }
+    final String fingerprint = source.book.fileHash;
+    PassportRecord? record = await store.load(fingerprint);
+    if (record == null || record.version != kPassportVersion) {
+      // Паспорт — один проход по PDF; дальше он не повторяется.
+      FilePassport? passport;
+      try {
+        passport = await _passportReader?.read(source.book.source);
+      } on Object {
+        passport = null;
+      }
+      record = PassportRecord(
+        fingerprint: fingerprint,
+        version: kPassportVersion,
+        passport: passport,
+      );
+    } else if (record.trustFits(_textVersion, source.cachedPages)) {
+      return record;
+    }
+    // Судить текст можно, только когда он запомнен целиком: у книги,
+    // дочитанной до десятой страницы, «мало надёжного текста» значило бы
+    // «ещё не дочитали». До того книга идёт в карту как есть.
+    final int? total = source.book.pageCount;
+    if (total == null || total <= 0 || source.cachedPages < total) {
+      final PassportRecord pending = PassportRecord(
+        fingerprint: fingerprint,
+        version: kPassportVersion,
+        passport: record.passport,
+      );
+      await store.save(pending);
+      return pending;
+    }
+    final List<PageKind>? kinds = record.passport?.pageKinds;
+    final TextTrust? trust = hasLexiconScript(pages)
+        ? textTrustOf(
+            pages,
+            _lexicon ??= await loader(),
+            kinds: kinds == null ? null : _kindsOf(source, kinds),
+          )
+        : null;
+    record = record.withTrust(
+      trust,
+      textVersion: _textVersion,
+      pages: source.cachedPages,
+    );
+    await store.save(record);
+    return record;
+  }
+
+  /// Вид запомненных страниц по паспорту — в том же порядке, что их
+  /// тексты: запомнены могут быть не все страницы книги.
+  List<PageKind> _kindsOf(MapSource source, List<PageKind> kinds) {
+    return <PageKind>[
+      for (final int page in source.pageNumbers)
+        page - 1 < kinds.length ? kinds[page - 1] : PageKind.text,
+    ];
+  }
+
+  /// Какие страницы идут в мешок (F-MAP-18): у книги, чей текст судили,
+  /// — только «да» и «коротко»; без надёжного текста — ни одной (мешок
+  /// из названия и автора).
+  List<String> _trustedPages(List<String> pages, PassportRecord? record) {
+    if (record == null || record.trustKind == TrustKind.asIs) {
+      return pages;
+    }
+    if (record.trustKind == TrustKind.littleText) {
+      return const <String>[];
+    }
+    final List<PageTrust> states = record.pageTrust;
+    if (states.length != pages.length) {
+      return pages;
+    }
+    return <String>[
+      for (int i = 0; i < pages.length; i++)
+        if (states[i] == PageTrust.yes || states[i] == PageTrust.short)
+          pages[i],
+    ];
   }
 
   /// Запомненный текст страниц книги, по порядку страниц.

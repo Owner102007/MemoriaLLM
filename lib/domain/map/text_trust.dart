@@ -94,6 +94,34 @@ PageShare layerShare(String text, Lexicon lexicon) {
   return PageShare(words == 0 ? null : known / words, words);
 }
 
+/// Есть ли у словаря язык книги (ALG-MAP-19, краевой случай): не
+/// меньше половины слов от трёх букв — кириллица или латиница.
+///
+/// Словарь — русский и английский. Книгу на японском или арабском по
+/// нему не судят: её доля словарных слов около нуля не от плохого слоя,
+/// а от другого языка, — такая книга идёт в карту как есть. Ограничение:
+/// книга на французском или немецком (латиница) судится английским
+/// словарём и обычно выходит ненадёжной — встаёт по контрасту.
+bool hasLexiconScript(List<String> pageTexts) {
+  int words = 0;
+  int ours = 0;
+  for (final String text in pageTexts) {
+    for (final RegExpMatch match in _word.allMatches(text)) {
+      final String word = match[0]!;
+      if (word.runes.length < kMinWordLength) continue;
+      words++;
+      final int first = word.runes.first;
+      final bool latin =
+          (first >= 0x41 && first <= 0x5A) ||
+          (first >= 0x61 && first <= 0x7A) ||
+          (first >= 0xC0 && first <= 0x24F);
+      final bool cyrillic = first >= 0x400 && first <= 0x52F;
+      if (latin || cyrillic) ours++;
+    }
+  }
+  return words == 0 || ours * 2 >= words;
+}
+
 /// Состояние страницы.
 enum PageTrust {
   /// Слов нет — слоя нет.
