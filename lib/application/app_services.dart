@@ -91,7 +91,11 @@ class AppServices {
            );
 
   /// Настоящие службы для запущенного приложения.
-  factory AppServices.production(AppData data) {
+  ///
+  /// [picker] — подмена системного выбора файла для автосценариев
+  /// (F-REL-09): сценарий отдаёт подложенный PDF, не открывая диалог.
+  /// Без него — настоящий диалог, как всегда.
+  factory AppServices.production(AppData data, {BookFilePicker? picker}) {
     // Единственное место, где расходятся платформы. На Windows у книги
     // есть настоящий путь и посредники не нужны; на Android пути нет
     // вовсе, и книга читается по закреплённой ссылке.
@@ -126,7 +130,7 @@ class AppServices {
       data: data,
       storage: storage,
       opener: opener,
-      picker: const FastBookPicker(),
+      picker: picker ?? const FastBookPicker(),
       coverStore: FileCoverStore(),
       access: platformStorageAccess(),
       // Кнопки громкости есть только у телефона; на ПК ту же роль

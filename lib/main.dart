@@ -5,23 +5,37 @@ import 'package:flutter/widgets.dart';
 import 'application/app_services.dart';
 import 'application/data/app_data.dart';
 import 'application/theme/theme_controller.dart';
+import 'domain/library/book_file_picker.dart';
 import 'sno/index/shelf_reading.dart';
 import 'sno/recording/records.dart';
 import 'ui/app.dart';
 
 Future<void> main() async {
+  await startApp();
+}
+
+/// Запускает приложение: база, тема, службы, первый кадр.
+///
+/// Вынесено из [main], чтобы автосценарии (`integration_test/`, F-REL-09)
+/// запускали ровно то же приложение, подменив только системный выбор
+/// файла ([picker]). Возвращает службы — сценарий по ним проверяет, что
+/// книга легла в базу.
+Future<AppServices> startApp({BookFilePicker? picker}) async {
+  // Если привязку уже подняла точка входа агента (Marionette, F-REL-11),
+  // вызов вернёт её же: вторая привязка не создаётся.
   WidgetsFlutterBinding.ensureInitialized();
   final AppData data = await AppData.open();
   final ThemeController themeController = await ThemeController.restore(
     data.settings,
   );
-  final AppServices services = AppServices.production(data);
+  final AppServices services = AppServices.production(data, picker: picker);
   // SNO-F-REC-01: сессия записи поднимается до первого кадра — полка
   // незавершённой сессии встаёт под замок сразу.
   final bool restored = await restoreRecording(services);
   await recoverRecords(services, restored: restored);
   await prepareShelf(services);
   runApp(MemoriaApp(themeController: themeController, services: services));
+  return services;
 }
 
 /// Поднимает итог подготовки книг и продолжает её (SNO-F-IDX-04).
