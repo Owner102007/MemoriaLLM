@@ -10,6 +10,7 @@ import 'package:memoria/domain/map/map_categories.dart';
 import 'package:memoria/domain/map/map_layout.dart';
 import 'package:memoria/domain/map/map_names.dart';
 import 'package:memoria/domain/map/map_order.dart';
+import 'package:memoria/domain/map/map_trusted.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
 
 /// Созвездия по строкам книг: матрица Грама — как в расчёте карты.
@@ -410,7 +411,8 @@ void main() {
       expect(map.points[i].y, numberOf(point[1]), reason: 'порядок, $i');
     }
     expect(map.fingerprint, golden['fingerprint']);
-    expect(kBookMapVersion, 3);
+    // S57 подняла версию расчёта до 3 (дальше её поднимают следующие шаги).
+    expect(kBookMapVersion, greaterThanOrEqualTo(3));
   });
 
   test('F-MAP-17: места группы — то же множество', () {
@@ -461,6 +463,72 @@ void main() {
       );
     }
   });
+
+  group('F-MAP-18: доверие тексту — малый набор другой реализации', () {
+    late Map<String, Object?> trusted;
+    late List<BookBag> trustedBags;
+
+    setUpAll(() {
+      trusted = golden['trusted']! as Map<String, Object?>;
+      trustedBags = <BookBag>[
+        for (final Object? book in trusted['books']! as List<Object?>)
+          _bagOf(book! as Map<String, Object?>),
+      ];
+    });
+
+    test('F-MAP-18: книга с ненадёжным текстом не заводит категорию', () {
+      final BookMap map = buildBookMap(trustedBags)!;
+      expect(<int>[
+        for (final MapPoint point in map.points) point.constellation,
+      ], (trusted['categories']! as List<Object?>).cast<int>());
+      expect(<String>[
+        for (final MapPoint point in map.points) point.reason.name,
+      ], (trusted['reasons']! as List<Object?>).cast<String>());
+      // Шумная копия темы — в своей теме, смесь двух тем — «не уверены»,
+      // без надёжного текста — «мало текста»; своих созвездий нет.
+      final Map<String, MapPoint> byKey = <String, MapPoint>{
+        for (final MapPoint point in map.points) point.key: point,
+      };
+      expect(byKey['tr-noisy']!.constellation, byKey['tr-0-0']!.constellation);
+      expect(byKey['tr-mixed']!.reason, MapReason.unsure);
+      expect(byKey['tr-little']!.reason, MapReason.littleText);
+      expect(byKey['tr-little']!.constellation, kNoCategory);
+      expect(map.groups, 4);
+      final List<Object?> points = trusted['points']! as List<Object?>;
+      for (int i = 0; i < points.length; i++) {
+        final List<Object?> point = points[i]! as List<Object?>;
+        expect(map.points[i].x, numberOf(point[0]), reason: 'x $i');
+        expect(map.points[i].y, numberOf(point[1]), reason: 'y $i');
+      }
+      expect(map.fingerprint, trusted['fingerprint']);
+    });
+
+    test('F-MAP-18: в мешке ненадёжной книги — только слова надёжных', () {
+      final List<BookTrust> trust = <BookTrust>[
+        for (final BookBag bag in trustedBags) bag.trust,
+      ];
+      final List<int> builders = buildersOf(trust);
+      final Set<String> known = <String>{
+        for (final int i in builders) ...trustedBags[i].terms,
+      };
+      final List<int> kept = <int>[
+        for (int i = 0; i < trustedBags.length; i++)
+          builders.contains(i) || trust[i].littleText
+              ? trustedBags[i].terms.length
+              : trustedBags[i].onlyWords(known).terms.length,
+      ];
+      expect(kept, (trusted['kept']! as List<Object?>).cast<int>());
+      // Шумные слова шумной копии выпали.
+      final BookBag noisy = trustedBags.firstWhere(
+        (BookBag bag) => bag.key == 'tr-noisy',
+      );
+      expect(noisy.terms.any((String t) => t.startsWith('шум')), isTrue);
+      expect(
+        noisy.onlyWords(known).terms.any((String t) => t.startsWith('шум')),
+        isFalse,
+      );
+    });
+  });
 }
 
 BookBag _bagOf(Map<String, Object?> book) {
@@ -475,5 +543,14 @@ BookBag _bagOf(Map<String, Object?> book) {
       for (final Object? term in terms) (term! as List<Object?>)[1]! as int,
     ],
     length: book['length']! as int,
+    trust: _trustOf(book['trust']),
   );
+}
+
+/// Доверие книги эталона: нет поля или `null` — как есть, `little` —
+/// надёжного текста нет, число — T.
+BookTrust _trustOf(Object? value) {
+  if (value == null) return const BookTrust.asIs();
+  if (value == 'little') return const BookTrust.littleText();
+  return BookTrust.of((value as num).toDouble());
 }

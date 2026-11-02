@@ -8,6 +8,7 @@ import '../../domain/library/book_category.dart';
 import '../../domain/library/device_files.dart';
 import '../../domain/llm/llm_query.dart';
 import '../../domain/map/book_map.dart';
+import '../../domain/map/book_passport.dart';
 import '../../domain/prompts/selection_prompt.dart';
 import '../../domain/reading/page_text.dart';
 import '../../domain/reading/reading.dart';
@@ -24,6 +25,7 @@ import '../../infrastructure/repositories/drift_device_file_repository.dart';
 import '../../infrastructure/repositories/drift_library_repository.dart';
 import '../../infrastructure/repositories/drift_llm_history_repository.dart';
 import '../../infrastructure/repositories/drift_page_text_repository.dart';
+import '../../infrastructure/repositories/drift_passport_repository.dart';
 import '../../infrastructure/repositories/drift_prompt_repository.dart';
 import '../../infrastructure/repositories/drift_reading_repository.dart';
 
@@ -42,6 +44,7 @@ class AppData {
     required this.reading,
     required this.pageTexts,
     required this.bookMap,
+    required this.passports,
     required this.annotations,
     required this.llmHistory,
     required this.prompts,
@@ -78,6 +81,7 @@ class AppData {
       reading: DriftReadingRepository(database, clock),
       pageTexts: DriftPageTextRepository(database),
       bookMap: DriftBookMapRepository(database),
+      passports: DriftPassportRepository(database),
       annotations: DriftAnnotationRepository(database, clock),
       llmHistory: DriftLlmHistoryRepository(database, clock),
       prompts: prompts,
@@ -111,6 +115,10 @@ class AppData {
   /// Места книг на карте «Галактика»: производное, лежит только на этом
   /// устройстве и не синхронизируется (F-MAP-02).
   final BookMapRepository bookMap;
+
+  /// Паспорт файла и доверие тексту книги: производное по отпечатку,
+  /// лежит только на этом устройстве (F-MAP-18).
+  final PassportRepository passports;
 
   /// Цитаты, заметки и закладки.
   final AnnotationRepository annotations;

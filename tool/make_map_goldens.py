@@ -754,6 +754,101 @@ def art_categories(g, order=None, pinned=None):
     return labels, c0, cohesions_of(g, labels, c0)
 
 
+# --- Доверие тексту (F-MAP-18, `categorize`/`place` шага 46) -------------
+
+TRUST_LOW = 0.8
+TRUST_CONTRAST = 1.5
+MIN_TRUSTED_BUILDERS = 3
+
+
+def unreliable(trust):
+    """`trust`: None — как есть, 'little' — надёжного текста нет, число — T."""
+    return trust == 'little' or (trust is not None and trust < TRUST_LOW)
+
+
+def builders_of(trusts):
+    hi = [i for i, t in enumerate(trusts) if not unreliable(t)]
+    if len(hi) < MIN_TRUSTED_BUILDERS:
+        return list(range(len(trusts)))
+    return hi
+
+
+def place(g, i, built, c0, t):
+    """Куда встаёт книга с ненадёжным текстом — `place` шага 46."""
+    n = len(g)
+    if not g[i][i] > 0.0:
+        return -1
+    cats = sorted({label for label in built if label >= 0})
+    if not cats:
+        return -1
+    close = []
+    for c in cats:
+        total = 0.0
+        count = 0
+        for j in range(n):
+            if built[j] == c:
+                total += g[i][j]
+                count += 1
+        close.append(total / count)
+    best = 0
+    for k in range(1, len(cats)):
+        if close[k] > close[best]:
+            best = k
+    if len(cats) == 1 or close[best] < ART_PHI * c0 * t:
+        return -1
+    second = 1 if best == 0 else 0
+    for k in range(len(cats)):
+        if k != best and close[k] > close[second]:
+            second = k
+    return cats[best] if close[best] >= TRUST_CONTRAST * close[second] else -1
+
+
+def trusted_categories(g, trusts):
+    """Созвездия и причины: 'none', 'littleText', 'unsure'."""
+    n = len(g)
+    hi = builders_of(trusts)
+    reasons = ['none'] * n
+    if len(hi) == n:
+        return art_categories(g)[0], reasons
+    sub = [[g[a][b] for b in hi] for a in hi]
+    labels_hi, c0, _ = art_categories(sub)
+    labels = [-1] * n
+    for k, i in enumerate(hi):
+        labels[i] = labels_hi[k]
+    built = list(labels)
+    building = set(hi)
+    for i in range(n):
+        if i in building:
+            continue
+        if trusts[i] == 'little':
+            reasons[i] = 'littleText'
+            continue
+        labels[i] = place(g, i, built, c0, trusts[i] or 0.0)
+        if labels[i] == -1 and g[i][i] > 0.0:
+            reasons[i] = 'unsure'
+    return labels, reasons
+
+
+def restrict_untrusted(books):
+    """Мешок ненадёжной книги — только слова книг с надёжным текстом."""
+    trusts = [book.get('trust') for book in books]
+    hi = builders_of(trusts)
+    if len(hi) == len(books):
+        return books
+    known = set()
+    for i in hi:
+        known.update(term for term, _ in books[i]['terms'])
+    out = []
+    building = set(hi)
+    for i, book in enumerate(books):
+        if i in building or trusts[i] == 'little':
+            out.append(book)
+            continue
+        terms = [[t, c] for t, c in book['terms'] if t in known]
+        out.append(dict(book, terms=terms, length=sum(c for _, c in terms)))
+    return out
+
+
 def group_of(label):
     """Группа раскладки по номеру созвездия — как `constellationGroup`."""
     return '' if label < 0 else 'art:%04d' % label
@@ -909,14 +1004,17 @@ def quantum(value):
 
 
 def build(books):
-    books = sorted(books, key=lambda book: book['key'])
+    books = restrict_untrusted(sorted(books, key=lambda book: book['key']))
     kept, df = vocabulary(books)
     rows, idf = bm25_rows(books, kept, df)
     g = gram(rows)
     components, values = latent(g)
     near, sims = neighbours(components)
     edges = edges_of(near, sims)
-    categories, measure, cohesions = art_categories(g)
+    _, measure, cohesions = art_categories(g)
+    categories, reasons = trusted_categories(
+        g, [book.get('trust') for book in books],
+    )
     names = constellation_names(books, kept, categories)
     typical = typicalities(g, categories)
     if len(books) >= MIN_MAP_BOOKS:
@@ -936,6 +1034,7 @@ def build(books):
         'neighbours': near,
         'edges': edges,
         'categories': categories,
+        'reasons': reasons,
         'measure': measure,
         'cohesions': cohesions,
         'names': names,
@@ -1068,6 +1167,62 @@ def art_cases():
     }
 
 
+def trust_cases():
+    """Набор для доверия тексту (F-MAP-18): три темы по четыре книги и
+    три книги с ненадёжным текстом — шумная копия темы 0 (T 0,55),
+    смесь тем 1 и 2 (T 0,6) и книга без надёжного текста (только слова
+    «названия»). Ждём: шумная встаёт в свою тему, смесь — «не уверены»,
+    третья — «мало надёжного текста»; своих созвездий никто не заводит.
+    """
+    rng = Mulberry(58)
+
+    def draw(counts, words, times):
+        for _ in range(times):
+            share = rng.unit()
+            word = words[int(len(words) * share * share)]
+            counts[word] = counts.get(word, 0) + 1
+
+    def book(key, counts, trust):
+        terms = sorted(counts.items())
+        return {
+            'key': key, 'group': '',
+            'terms': [[t, c] for t, c in terms],
+            'length': sum(c for _, c in terms), 'trust': trust,
+        }
+
+    topics = [['тема%d_%02d' % (t, i) for i in range(12)] for t in range(3)]
+    common = ['общее%02d' % i for i in range(10)]
+    books = []
+    for t in range(3):
+        for k in range(4):
+            counts = {}
+            draw(counts, topics[t], 80)
+            draw(counts, common, 20)
+            books.append(book('tr-%d-%d' % (t, k), counts, None))
+    noisy = {}
+    draw(noisy, topics[0], 60)
+    draw(noisy, ['шум%02d' % i for i in range(30)], 40)
+    books.append(book('tr-noisy', noisy, 0.55))
+    mixed = {}
+    draw(mixed, topics[1], 40)
+    draw(mixed, topics[2], 40)
+    draw(mixed, common, 20)
+    books.append(book('tr-mixed', mixed, 0.6))
+    little = {}
+    draw(little, topics[2], 6)
+    books.append(book('tr-little', little, 'little'))
+    result = build(books)
+    return {
+        # Мешки — исходные, до отсева слов: отсев проверяется в Dart.
+        'books': sorted(books, key=lambda b: b['key']),
+        'kept': [len(b['terms']) for b in result['books']],
+        'categories': result['categories'],
+        'reasons': result['reasons'],
+        'points': [[x, y] for x, y in zip(result['xs'], result['ys'])],
+        'fingerprint': fingerprint(result['books'], result['xs'], result['ys']),
+    }
+
+
 def main():
     books = golden_corpus()
     result = build(books)
@@ -1091,6 +1246,7 @@ def main():
         'cohesions': result['cohesions'],
         'names': result['names'],
         'art': art_cases(),
+        'trusted': trust_cases(),
         'typical': result['typical'],
         'placed': [
             [x, y] for x, y in zip(result['placed_x'], result['placed_y'])

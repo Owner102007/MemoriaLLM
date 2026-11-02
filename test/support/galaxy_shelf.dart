@@ -3,6 +3,7 @@ import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/map/book_map.dart';
+import 'package:memoria/domain/map/map_trusted.dart';
 
 /// Книга полки с местом на карте — заготовка тестов «Галактики»
 /// (SNO-F-MAP-01).
@@ -15,6 +16,7 @@ class ShelfStar {
     this.y, {
     this.category,
     this.onMap = true,
+    this.reason = MapReason.none,
   });
 
   /// Идентификатор книги; отпечаток файла — `hash-<id>`.
@@ -34,6 +36,9 @@ class ShelfStar {
 
   /// Есть ли у книги место на карте.
   final bool onMap;
+
+  /// Почему книга без созвездия (F-MAP-18).
+  final MapReason reason;
 }
 
 /// Полка из двух категорий — как архив владельца: «Ангиология» слева,
@@ -117,6 +122,7 @@ Future<void> seedGalaxy(
                   ? -1
                   : ids.indexOf(star.category!),
               name: kGalaxyCategories[star.category] ?? '',
+              reason: star.reason,
             ),
       },
     ),

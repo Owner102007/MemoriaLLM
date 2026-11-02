@@ -31,6 +31,10 @@ class DescriptorBookHandle implements BookHandle {
   @override
   final int length;
 
+  /// Номер дескриптора. Паспорт файла (`pdfium_passport.dart`) открывает
+  /// по нему книгу сам, как путь `/proc/self/fd/N`.
+  int get descriptor => _fd;
+
   /// Пути у документа Android нет вовсе — движок обязан читать кусками.
   @override
   String? get path => null;

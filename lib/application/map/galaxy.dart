@@ -2,6 +2,7 @@ import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/map/book_map.dart';
 import '../../domain/map/map_layout.dart';
+import '../../domain/map/map_trusted.dart';
 
 /// Книга на карте — звезда (F-MAP-02, SNO-F-MAP-01).
 class GalaxyStar {
@@ -12,6 +13,7 @@ class GalaxyStar {
     required this.y,
     required this.group,
     required this.ms,
+    this.reason = MapReason.none,
   });
 
   /// Книга полки.
@@ -30,6 +32,9 @@ class GalaxyStar {
 
   /// Сколько времени читатель провёл в книге, в миллисекундах.
   final int ms;
+
+  /// Почему книга без созвездия (F-MAP-18) — строкой в карточке.
+  final MapReason reason;
 }
 
 /// Что раздел «Галактика» может показать.
@@ -102,6 +107,7 @@ Future<Galaxy> loadGalaxy({
         y: point.y,
         group: point.constellation < 0 ? kUncategorizedTitle : point.name,
         ms: times[book.id] ?? 0,
+        reason: point.reason,
       ),
     );
   }

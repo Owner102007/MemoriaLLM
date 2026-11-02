@@ -582,8 +582,79 @@ class MapPoints extends Table {
   TextColumn get constellationName =>
       text().withDefault(const Constant<String>(''))();
 
+  /// Почему книга без созвездия (F-MAP-18, схема 14): номер в
+  /// `MapReason` — 0 нет причины, 1 мало надёжного текста, 2 «не
+  /// уверены — поставьте сами».
+  IntColumn get reason => integer().withDefault(const Constant<int>(0))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId};
+}
+
+/// Паспорт файла книги и доверие её тексту (F-MAP-18, ALG-MAP-18,
+/// ALG-MAP-19; схема 14).
+///
+/// **По отпечатку файла, без полей CRDT** (D-010): это производное —
+/// его посчитал наш код из самого файла. В облако не уходит, на втором
+/// устройстве считается заново и выходит тем же. Пересчитывается только
+/// при смене правила (версия в строке) или текста книги (версия текста
+/// и число запомненных страниц) — проход по PDF не повторяется.
+@DataClassName('FilePassportRow')
+class FilePassports extends Table {
+  /// Отпечаток файла — ключ: один файл — один паспорт на любом
+  /// устройстве и у любой книги полки.
+  TextColumn get fingerprint => text()();
+
+  /// Версия правила паспорта и доверия.
+  IntColumn get algorithmVersion => integer()();
+
+  /// Паспорт прочитан: 0 — файл не открылся (пароль, битый), паспорта
+  /// нет, остальные поля паспорта пусты.
+  BoolColumn get hasPassport => boolean()();
+
+  /// Вид книги — номер в `BookKind`.
+  IntColumn get kind => integer().withDefault(const Constant<int>(0))();
+
+  /// Вид каждой страницы — номера `PageKind` строкой, знак на страницу
+  /// («0» текст, «1» скан со слоем, «2» скан без слоя, «3» пустая).
+  TextColumn get pageKinds => text().withDefault(const Constant<String>(''))();
+
+  /// Медиана разрешения сканов; пусто — сканов нет.
+  RealColumn get dpiMedian => real().nullable()();
+
+  /// Цветность сканов — номер в `ScanColor`; пусто — сканов нет.
+  IntColumn get color => integer().nullable()();
+
+  /// Программа, сохранившая файл.
+  TextColumn get producer => text().withDefault(const Constant<String>(''))();
+
+  /// Программа, создавшая документ.
+  TextColumn get creator => text().withDefault(const Constant<String>(''))();
+
+  /// Сколько закладок в файле.
+  IntColumn get bookmarks => integer().withDefault(const Constant<int>(0))();
+
+  /// Версия текста страниц, по которому считано доверие; пусто —
+  /// доверие ещё не считали.
+  IntColumn get trustTextVersion => integer().nullable()();
+
+  /// Сколько страниц текста было запомнено, когда считали доверие.
+  IntColumn get trustPages => integer().withDefault(const Constant<int>(0))();
+
+  /// Как судили текст — номер в `TrustKind`: 0 как есть, 1 посчитано T,
+  /// 2 надёжного текста нет.
+  IntColumn get trustKind => integer().withDefault(const Constant<int>(0))();
+
+  /// Доверие T, если посчитано.
+  RealColumn get trust => real().nullable()();
+
+  /// Состояние каждой запомненной страницы — номера `PageTrust` строкой,
+  /// знак на страницу по порядку номеров: по ним мешок книги собирается
+  /// без нового суда над текстом.
+  TextColumn get pageTrust => text().withDefault(const Constant<String>(''))();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{fingerprint};
 }
 
 /// Локальные настройки приложения. Без полей CRDT: они не

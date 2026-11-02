@@ -36,6 +36,10 @@ dependencies:
     sdk: flutter
   path: ^1.9.0
   path_provider: ^2.1.4
+  # Привязки к PDFium: приходят вместе с pdfrx, напрямую — только для
+  # паспорта файла (объекты страницы, ALG-MAP-18, RS-06). Версия — та,
+  # что выбрал pdfrx: подъём pdfrx поднимает и её (D-007).
+  pdfium_dart: 0.3.0
   pdfrx: ^2.4.7
   # Storage Access Framework: сведения о документе и файловый дескриптор.
   saf_util: ^3.1.0
@@ -62,6 +66,10 @@ flutter:
   # он не собирается, и слой фильтра сам переходит на цветовую матрицу.
   shaders:
     - shaders/reading_filter.frag
+  # Частотный словарь для доверия тексту сканов (ALG-MAP-19, D-047):
+  # данные wordfreq под CC BY-SA 4.0 — assets/lexicon/NOTICE.
+  assets:
+    - assets/lexicon/words.txt.gz
 
 # Упаковка для Microsoft Store. Значения identity_name и publisher —
 # заглушки до регистрации в Partner Center (сессия S13); подписывает MSIX

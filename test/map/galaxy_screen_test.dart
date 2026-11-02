@@ -10,6 +10,7 @@ import 'package:memoria/application/map/galaxy.dart';
 import 'package:memoria/application/reading/book_times.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/category_style.dart';
+import 'package:memoria/domain/map/map_trusted.dart';
 import 'package:memoria/domain/map/map_view.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/theme/app_palette.dart';
@@ -524,6 +525,39 @@ void main() {
   });
 
   group('F-MAP-08: карточка книги', () {
+    testWidgets('F-MAP-18: в карточке скана — почему он без созвездия', (
+      WidgetTester tester,
+    ) async {
+      await seedGalaxy(data, <ShelfStar>[
+        ...kTwoGroups,
+        const ShelfStar(
+          'scan',
+          'Атлас сосудов (скан)',
+          0.0,
+          0.9,
+          reason: MapReason.littleText,
+        ),
+        const ShelfStar(
+          'noisy',
+          'Записки (шумный слой)',
+          0.0,
+          -0.9,
+          reason: MapReason.unsure,
+        ),
+      ]);
+      await pumpGalaxy(tester, testServices(data: data));
+
+      await tapStar(tester, 'scan');
+      expect(find.text('Мало надёжного текста'), findsOneWidget);
+      await tapStar(tester, 'noisy');
+      expect(find.text('Не уверены — поставьте сами'), findsOneWidget);
+      // У книги в созвездии причины нет.
+      await tapStar(tester, 'a2');
+      expect(find.byKey(const Key('galaxy-card-reason')), findsNothing);
+
+      await unmount(tester);
+    });
+
     testWidgets('F-MAP-08: нажатие по точке — карточка этой книги, мимо '
         '— карточки нет', (WidgetTester tester) async {
       await seedGalaxy(data, kTwoGroups);
