@@ -12,6 +12,7 @@ library;
 
 import '../library/search_text.dart';
 import '../reading/text_search.dart';
+import 'map_trusted.dart';
 
 /// Короче этого слово в мешок не идёт (ALG-MAP-02): предлоги, союзы и
 /// обрывки формул.
@@ -41,6 +42,7 @@ class BookBag {
     required this.counts,
     required this.length,
     this.forms,
+    this.trust = const BookTrust.asIs(),
   });
 
   /// Чем книга опознаётся — отпечаток файла: он один и тот же на всех
@@ -66,8 +68,39 @@ class BookBag {
   /// собирались. Так в изолят не уходят тысячи лишних строк.
   final List<String?>? forms;
 
+  /// Доверие тексту книги (F-MAP-18): строит ли книга созвездия. По
+  /// умолчанию — «как есть», текст не судили.
+  final BookTrust trust;
+
   /// Полная форма слова номер [i].
   String formAt(int i) => forms?[i] ?? terms[i];
+
+  /// Тот же мешок, но только со словами из [allowed] (F-MAP-18): у
+  /// книги с ненадёжным текстом в карту идут лишь слова, которые есть у
+  /// книг с надёжным, — общие ошибки распознавания нескольких плохих
+  /// книг иначе стали бы их общими «словами». Длина — по оставшимся.
+  BookBag onlyWords(Set<String> allowed) {
+    final List<String> keptTerms = <String>[];
+    final List<int> keptCounts = <int>[];
+    final List<String?>? keptForms = forms == null ? null : <String?>[];
+    int total = 0;
+    for (int i = 0; i < terms.length; i++) {
+      if (!allowed.contains(terms[i])) continue;
+      keptTerms.add(terms[i]);
+      keptCounts.add(counts[i]);
+      keptForms?.add(forms![i]);
+      total += counts[i];
+    }
+    return BookBag(
+      key: key,
+      group: group,
+      terms: keptTerms,
+      counts: keptCounts,
+      length: total,
+      forms: keptForms,
+      trust: trust,
+    );
+  }
 }
 
 /// Буквы-двойники поиска — по кодам, а не по строкам: разбор идёт по

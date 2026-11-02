@@ -14,6 +14,7 @@ import 'map_categories.dart';
 import 'map_layout.dart';
 import 'map_names.dart';
 import 'map_order.dart';
+import 'map_trusted.dart';
 import 'map_vectors.dart';
 
 /// Версия расчёта карты (ALG-DATA-09).
@@ -26,7 +27,8 @@ import 'map_vectors.dart';
 /// 2 — S56: группы карты складывает адаптивный резонанс, а не полки
 /// (F-MAP-16), у созвездий есть имена (F-MAP-03).
 /// 3 — S57: внутри созвездия типичная книга ближе к центру (F-MAP-17).
-const int kBookMapVersion = 3;
+/// 4 — S58: книга с ненадёжным текстом созвездий не заводит (F-MAP-18).
+const int kBookMapVersion = 4;
 
 /// Группа раскладки по номеру созвездия: `art:0000`, `art:0001` …;
 /// у книги без созвездия — пустая строка (раскладка не тянет её ни к
@@ -44,6 +46,7 @@ class MapPoint {
     required this.y,
     this.constellation = kNoCategory,
     this.name = '',
+    this.reason = MapReason.none,
   });
 
   /// Отпечаток файла книги.
@@ -62,6 +65,10 @@ class MapPoint {
   /// Имя созвездия (F-MAP-03); у книги без созвездия — пусто.
   final String name;
 
+  /// Почему книга без созвездия (F-MAP-18): мало надёжного текста или
+  /// «не уверены — поставьте сами»; у остальных — [MapReason.none].
+  final MapReason reason;
+
   @override
   bool operator ==(Object other) =>
       other is MapPoint &&
@@ -69,13 +76,15 @@ class MapPoint {
       other.x == x &&
       other.y == y &&
       other.constellation == constellation &&
-      other.name == name;
+      other.name == name &&
+      other.reason == reason;
 
   @override
-  int get hashCode => Object.hash(key, x, y, constellation, name);
+  int get hashCode => Object.hash(key, x, y, constellation, name, reason);
 
   @override
-  String toString() => 'MapPoint($key, $x, $y, $constellation, $name)';
+  String toString() =>
+      'MapPoint($key, $x, $y, $constellation, $name, ${reason.name})';
 }
 
 /// Посчитанная карта.
@@ -148,14 +157,34 @@ BookMap? buildBookMap(List<BookBag> bags) {
   final List<BookBag> sorted = List<BookBag>.of(bags)
     ..sort((BookBag a, BookBag b) => a.key.compareTo(b.key));
   final int n = sorted.length;
+  // F-MAP-18: у книг с ненадёжным текстом в карту идут только слова,
+  // которые есть у книг с надёжным; книга без надёжного текста остаётся
+  // со словами названия и автора.
+  final List<BookTrust> trust = <BookTrust>[
+    for (final BookBag bag in sorted) bag.trust,
+  ];
+  final List<int> builders = buildersOf(trust);
+  if (builders.length < n) {
+    final Set<String> known = <String>{
+      for (final int i in builders) ...sorted[i].terms,
+    };
+    final Set<int> building = builders.toSet();
+    for (int i = 0; i < n; i++) {
+      if (!building.contains(i) && !trust[i].littleText) {
+        sorted[i] = sorted[i].onlyWords(known);
+      }
+    }
+  }
   final MapVocabulary vocabulary = vocabularyOf(sorted);
   final List<SparseRow> rows = bm25Rows(sorted, vocabulary);
   final Float64List gram = gramOf(rows);
   final LatentRows latent = latentRows(gram, n);
   final MapEdges edges = edgesOf(neighboursOf(latent));
-  // Созвездия складывает адаптивный резонанс (F-MAP-16, D-029); группа
-  // раскладки — созвездие, а не категория полки.
-  final List<int> constellations = artCategories(gram, n).labels;
+  // Созвездия складывает адаптивный резонанс (F-MAP-16, D-029) по книгам
+  // с надёжным текстом (F-MAP-18); группа раскладки — созвездие, а не
+  // категория полки.
+  final TrustedCategories categories = trustedCategories(gram, n, trust);
+  final List<int> constellations = categories.labels;
   final List<String> names = constellationNames(
     sorted,
     vocabulary,
@@ -179,6 +208,7 @@ BookMap? buildBookMap(List<BookBag> bags) {
         y: place.ys[i],
         constellation: constellations[i],
         name: constellations[i] < 0 ? '' : names[constellations[i]],
+        reason: categories.reasons[i],
       ),
   ];
   return BookMap(
