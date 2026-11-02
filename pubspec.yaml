@@ -66,6 +66,10 @@ flutter:
   # он не собирается, и слой фильтра сам переходит на цветовую матрицу.
   shaders:
     - shaders/reading_filter.frag
+  # Частотный словарь для доверия тексту сканов (ALG-MAP-19, D-047):
+  # данные wordfreq под CC BY-SA 4.0 — assets/lexicon/NOTICE.
+  assets:
+    - assets/lexicon/words.txt.gz
 
 # Упаковка для Microsoft Store. Значения identity_name и publisher —
 # заглушки до регистрации в Partner Center (сессия S13); подписывает MSIX

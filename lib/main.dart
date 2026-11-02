@@ -6,6 +6,7 @@ import 'application/app_services.dart';
 import 'application/data/app_data.dart';
 import 'application/theme/theme_controller.dart';
 import 'domain/library/book_file_picker.dart';
+import 'infrastructure/files/lexicon_asset.dart';
 import 'sno/index/shelf_reading.dart';
 import 'sno/recording/records.dart';
 import 'ui/app.dart';
@@ -24,6 +25,8 @@ Future<AppServices> startApp({BookFilePicker? picker}) async {
   // Если привязку уже подняла точка входа агента (Marionette, F-REL-11),
   // вызов вернёт её же: вторая привязка не создаётся.
   WidgetsFlutterBinding.ensureInitialized();
+  // D-047: авторство данных словаря (CC BY-SA 4.0) — в список лицензий.
+  registerLexiconLicense();
   final AppData data = await AppData.open();
   final ThemeController themeController = await ThemeController.restore(
     data.settings,

@@ -1,0 +1,15 @@
+words.txt.gz — частотный словарь для доверия тексту сканов (ALG-MAP-19).
+
+Срез данных wordfreq 3.1.1 — Robyn Speer и др.
+https://github.com/rspeer/wordfreq
+Источники wordfreq: Google Books Ngrams, SUBTLEX, Википедия, OpenSubtitles и др.
+(полный список — README wordfreq).
+
+Изменено: 200 000 самых частых форм русского и 100 000 английского; оставлены
+только формы из букв не короче трёх знаков; оба языка — одним списком, по
+кодам знаков, без повторов. Собрано tool/make_lexicon.py.
+
+Лицензия этого файла: Creative Commons Attribution-ShareAlike 4.0 International
+https://creativecommons.org/licenses/by-sa/4.0/
+Код приложения — под GPL-3.0 (совместимость BY-SA 4.0 → GPLv3, Creative
+Commons, 2015). Решение проекта — D-047.
