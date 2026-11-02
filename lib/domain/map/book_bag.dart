@@ -40,6 +40,7 @@ class BookBag {
     required this.terms,
     required this.counts,
     required this.length,
+    this.forms,
   });
 
   /// Чем книга опознаётся — отпечаток файла: он один и тот же на всех
@@ -57,6 +58,16 @@ class BookBag {
 
   /// Сколько слов в книге всего — вместе с теми, что в мешок не вошли.
   final int length;
+
+  /// Полная форма каждого из [terms] — та, что чаще всего встретилась в
+  /// книге (F-MAP-03): в мешке слово стоит без окончания («анатоми»), а
+  /// в имени созвездия его показывают целым («анатомия»). Элемент `null`
+  /// — форма совпадает со словом мешка; весь список `null` — формы не
+  /// собирались. Так в изолят не уходят тысячи лишних строк.
+  final List<String?>? forms;
+
+  /// Полная форма слова номер [i].
+  String formAt(int i) => forms?[i] ?? terms[i];
 }
 
 /// Буквы-двойники поиска — по кодам, а не по строкам: разбор идёт по
@@ -85,16 +96,27 @@ final List<String> _endings = <String>[
 /// слово, и на сорока учебниках это минуты. Согласие двух разборов
 /// проверяется тестом.
 void forEachMapToken(String raw, void Function(String token) take) {
+  forEachMapWord(raw, (String token, String word) => take(token));
+}
+
+/// То же, что [forEachMapToken], но вместе со словом мешка отдаёт и
+/// целое слово, с которого сняли окончание: `анатоми` и `анатомия`.
+void forEachMapWord(String raw, void Function(String token, String word) take) {
   final String lower = raw.toLowerCase();
   final List<int> word = <int>[];
+  // То же слово без свёртки букв-двойников — его и показывают читателю:
+  // свёрнутое «анатомия» записано наполовину латиницей.
+  final List<int> shown = <int>[];
 
   void flush() {
     if (word.isEmpty) {
       return;
     }
     final String token = String.fromCharCodes(word);
+    final String visible = String.fromCharCodes(shown);
     word.clear();
-    take(_stem(token));
+    shown.clear();
+    take(_stem(token), visible);
   }
 
   for (int i = 0; i < lower.length; i++) {
@@ -105,6 +127,7 @@ void forEachMapToken(String raw, void Function(String token) take) {
     final int folded = _folding[unit] ?? unit;
     if (isSearchWordRune(folded)) {
       word.add(folded);
+      shown.add(unit);
     } else {
       flush();
     }
@@ -154,6 +177,9 @@ bool isBagToken(String token) {
 /// Собирает мешок одной книги.
 class BagBuilder {
   final Map<String, int> _counts = <String, int>{};
+
+  /// Слово мешка → его целые формы и сколько раз встретилась каждая.
+  final Map<String, Map<String, int>> _forms = <String, Map<String, int>>{};
   int _length = 0;
 
   /// Добавляет слова текста [text]; каждое считается [weight] раз.
@@ -161,11 +187,16 @@ class BagBuilder {
     if (weight <= 0 || text.isEmpty) {
       return;
     }
-    forEachMapToken(text, (String token) {
+    forEachMapWord(text, (String token, String word) {
       if (!isBagToken(token)) {
         return;
       }
       _counts[token] = (_counts[token] ?? 0) + weight;
+      final Map<String, int> forms = _forms.putIfAbsent(
+        token,
+        () => <String, int>{},
+      );
+      forms[word] = (forms[word] ?? 0) + weight;
       _length += weight;
     });
   }
@@ -201,7 +232,27 @@ class BagBuilder {
         for (final MapEntry<String, int> entry in entries) entry.value,
       ],
       length: _length,
+      forms: <String?>[
+        for (final MapEntry<String, int> entry in entries) _formOf(entry.key),
+      ],
     );
+  }
+
+  /// Самая частая целая форма слова; при равном счёте — первая по
+  /// алфавиту, чтобы не зависеть от порядка, в котором формы встретились.
+  /// `null` — форма совпадает с самим словом.
+  String? _formOf(String token) {
+    String best = token;
+    int top = -1;
+    final Map<String, int> forms = _forms[token] ?? const <String, int>{};
+    for (final MapEntry<String, int> entry in forms.entries) {
+      if (entry.value > top ||
+          (entry.value == top && entry.key.compareTo(best) < 0)) {
+        best = entry.key;
+        top = entry.value;
+      }
+    }
+    return best == token ? null : best;
   }
 }
 

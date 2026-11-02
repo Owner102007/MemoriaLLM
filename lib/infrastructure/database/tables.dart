@@ -574,6 +574,14 @@ class MapPoints extends Table {
   /// Версия расчёта, которым карта посчитана.
   IntColumn get algorithmVersion => integer()();
 
+  /// Созвездие книги (F-MAP-16, схема 13): 0, 1, 2 …; −1 — без созвездия.
+  IntColumn get constellation =>
+      integer().withDefault(const Constant<int>(-1))();
+
+  /// Имя созвездия (F-MAP-03, схема 13); у книги без созвездия — пусто.
+  TextColumn get constellationName =>
+      text().withDefault(const Constant<String>(''))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId};
 }

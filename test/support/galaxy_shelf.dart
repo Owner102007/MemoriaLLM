@@ -98,6 +98,10 @@ Future<void> seedGalaxy(
   if (!withMap) {
     return;
   }
+  // Созвездия заготовок совпадают с категориями: созвездие номер — по
+  // порядку категорий, имя — название категории (с S56 группы карты
+  // складывает резонанс, F-MAP-16).
+  final List<String> ids = kGalaxyCategories.keys.toList();
   await data.bookMap.replace(
     StoredBookMap(
       layoutKey: 'набор',
@@ -105,7 +109,15 @@ Future<void> seedGalaxy(
       points: <String, MapPoint>{
         for (final ShelfStar star in stars)
           if (star.onMap)
-            star.id: MapPoint(key: hashOfStar(star.id), x: star.x, y: star.y),
+            star.id: MapPoint(
+              key: hashOfStar(star.id),
+              x: star.x,
+              y: star.y,
+              constellation: star.category == null
+                  ? -1
+                  : ids.indexOf(star.category!),
+              name: kGalaxyCategories[star.category] ?? '',
+            ),
       },
     ),
   );

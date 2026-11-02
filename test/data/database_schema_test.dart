@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — двенадцатая: места книг на карте', () {
+  test('версия схемы — тринадцатая: созвездия на карте', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 12);
+    expect(appSchemaVersion, 13);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -166,6 +166,8 @@ void main() {
       'fingerprint',
       'layout_key',
       'algorithm_version',
+      'constellation',
+      'constellation_name',
     ]);
   });
 
