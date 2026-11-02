@@ -24,7 +24,7 @@ import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 import 'package:pdfium_dart/pdfium_dart.dart' as pdfium;
 import 'package:pdfrx/pdfrx.dart'
-    show PdfrxEntryFunctions, pdfrxFlutterInitialize;
+    show Pdfrx, PdfrxEntryFunctions, pdfrxFlutterInitialize;
 
 import '../../domain/library/book_source.dart';
 import '../../domain/library/book_storage.dart';
@@ -55,15 +55,17 @@ class PdfiumPassportReader implements PassportReader {
   final BookStorage _storage;
   final Future<void> Function() _initialize;
 
-  /// Паспорт книги из [source]; `null` — файл не открылся (нет файла,
-  /// пароль, битый) или до него нет пути.
+  /// Паспорт книги из [source]; `null` — файл открыт, но PDFium его не
+  /// разобрал (битый, пароль). Файла нет или до него нет пути —
+  /// [PassportUnavailableException]: это может пройти, и паспорт
+  /// прочитают в другой раз.
   @override
   Future<FilePassport?> read(BookSource source) async {
     final BookHandle book;
     try {
       book = await _storage.open(source);
-    } on BookUnavailableException {
-      return null;
+    } on BookUnavailableException catch (error) {
+      throw PassportUnavailableException(source, cause: error);
     }
     try {
       // Путь для PDFium. У документа Android его нет, но есть дескриптор:
@@ -74,12 +76,19 @@ class PdfiumPassportReader implements PassportReader {
               ? '/proc/self/fd/${book.descriptor}'
               : null);
       if (path == null) {
-        return null;
+        throw PassportUnavailableException(source);
       }
       await _initialize();
+      // Инициализатор Flutter готовит только папки и шрифты; сам PDFium
+      // запускает `init` (FPDF_InitLibrary), а pdfrx зовёт его лишь при
+      // открытии книги. Без этого первый проход по незапущенному PDFium
+      // уронил бы приложение — например, когда весь текст уже в базе и
+      // ни одна книга до паспорта не открывалась. Повторный вызов ничего
+      // не делает.
+      await PdfrxEntryFunctions.instance.init();
       final _RawPassport? raw = await PdfrxEntryFunctions.instance.compute(
         _passOver,
-        path,
+        (path, Pdfrx.pdfiumModulePath),
       );
       if (raw == null) {
         return null;
@@ -109,10 +118,17 @@ class _RawPassport {
 /// Привязки PDFium в фоновом потоке — одни на поток.
 pdfium.PDFium? _library;
 
-/// Проход по файлу [path]. Работает в фоновом потоке pdfrx.
-_RawPassport? _passOver(String path) {
-  final pdfium.PDFium lib = _library ??= pdfium.getPdfium();
+/// Проход по файлу. Работает в фоновом потоке pdfrx; [job] — путь к
+/// файлу и путь к библиотеке PDFium, если pdfrx его задал (статические
+/// поля у каждого потока свои, поэтому путь передаётся явно — иначе в
+/// поток могла бы загрузиться вторая, другая библиотека).
+_RawPassport? _passOver((String, String?) job) {
+  final (String path, String? module) = job;
+  final pdfium.PDFium lib = _library ??= pdfium.getPdfium(modulePath: module);
   return using((Arena arena) {
+    // Память под рамку и сведения картинки — одна на весь проход: на
+    // скане в тысячу страниц не тысяча мелких выделений.
+    final _Scratch scratch = _Scratch(arena);
     final pdfium.FPDF_DOCUMENT document = lib.FPDF_LoadDocument(
       path.toNativeUtf8(allocator: arena).cast<Char>(),
       nullptr,
@@ -124,7 +140,7 @@ _RawPassport? _passOver(String path) {
       final int count = lib.FPDF_GetPageCount(document);
       final List<PageFacts> pages = <PageFacts>[
         for (int index = 0; index < count; index++)
-          _pageFacts(lib, document, index, arena),
+          _pageFacts(lib, document, index, scratch),
       ];
       return _RawPassport(
         pages,
@@ -136,6 +152,16 @@ _RawPassport? _passOver(String path) {
       lib.FPDF_CloseDocument(document);
     }
   });
+}
+
+/// Память, которую проход переиспользует.
+class _Scratch {
+  _Scratch(Arena arena)
+    : box = arena<Float>(4),
+      meta = arena<pdfium.FPDF_IMAGEOBJ_METADATA>();
+
+  final Pointer<Float> box;
+  final Pointer<pdfium.FPDF_IMAGEOBJ_METADATA> meta;
 }
 
 /// Счётчики одной страницы по ходу прохода.
@@ -155,7 +181,7 @@ PageFacts _pageFacts(
   pdfium.PDFium lib,
   pdfium.FPDF_DOCUMENT document,
   int index,
-  Arena arena,
+  _Scratch scratch,
 ) {
   final pdfium.FPDF_PAGE page = lib.FPDF_LoadPage(document, index);
   if (page == nullptr) {
@@ -168,7 +194,7 @@ PageFacts _pageFacts(
     final _Tally tally = _Tally();
     final int objects = lib.FPDFPage_CountObjects(page);
     for (int i = 0; i < objects; i++) {
-      _visit(lib, page, lib.FPDFPage_GetObject(page, i), tally, arena, 0);
+      _visit(lib, page, lib.FPDFPage_GetObject(page, i), tally, scratch, 0);
     }
     final pdfium.FPDF_TEXTPAGE text = lib.FPDFText_LoadPage(page);
     int chars = 0;
@@ -202,7 +228,7 @@ void _visit(
   pdfium.FPDF_PAGE page,
   pdfium.FPDF_PAGEOBJECT object,
   _Tally tally,
-  Arena arena,
+  _Scratch scratch,
   int depth,
 ) {
   if (object == nullptr) return;
@@ -216,7 +242,7 @@ void _visit(
           page,
           lib.FPDFFormObj_GetObject(object, i),
           tally,
-          arena,
+          scratch,
           depth + 1,
         );
       }
@@ -228,7 +254,7 @@ void _visit(
       }
     case pdfium.FPDF_PAGEOBJ_IMAGE:
       tally.images++;
-      final Pointer<Float> box = arena<Float>(4);
+      final Pointer<Float> box = scratch.box;
       if (lib.FPDFPageObj_GetBounds(object, box, box + 1, box + 2, box + 3) ==
           0) {
         return;
@@ -239,8 +265,7 @@ void _visit(
       if (area > tally.imageArea) tally.imageArea = area;
       if (area >= tally.bestArea) {
         tally.bestArea = area;
-        final Pointer<pdfium.FPDF_IMAGEOBJ_METADATA> meta =
-            arena<pdfium.FPDF_IMAGEOBJ_METADATA>();
+        final Pointer<pdfium.FPDF_IMAGEOBJ_METADATA> meta = scratch.meta;
         if (lib.FPDFImageObj_GetImageMetadata(object, page, meta) != 0) {
           tally.dpi = (meta.ref.horizontal_dpi + meta.ref.vertical_dpi) / 2;
           tally.bitsPerPixel = meta.ref.bits_per_pixel;

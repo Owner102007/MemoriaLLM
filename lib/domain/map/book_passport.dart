@@ -118,6 +118,24 @@ abstract interface class PassportRepository {
 
 /// Читает паспорт файла. Реализация — `infrastructure/pdf/` (PDFium).
 abstract interface class PassportReader {
-  /// Паспорт книги из [source]; `null` — файл не открылся.
+  /// Паспорт книги из [source]; `null` — файл открыт, но не разобран
+  /// (битый, пароль): это навсегда, и так и записывается. Файла нет или
+  /// до него нет пути — [PassportUnavailableException]: это проходит
+  /// (вернули карту памяти, дали доступ), и паспорт читают в другой раз.
   Future<FilePassport?> read(BookSource source);
+}
+
+/// До файла книги сейчас не добраться — паспорт прочитают позже.
+class PassportUnavailableException implements Exception {
+  /// Создаёт исключение.
+  const PassportUnavailableException(this.source, {this.cause});
+
+  /// Где книга.
+  final BookSource source;
+
+  /// Исходная ошибка, если была.
+  final Object? cause;
+
+  @override
+  String toString() => 'PassportUnavailableException($source, $cause)';
 }

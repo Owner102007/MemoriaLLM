@@ -15,6 +15,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io' show gzip;
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
@@ -100,12 +101,15 @@ class SortedLexicon implements Lexicon {
   }
 }
 
-/// Загружает словарь из сборки.
+/// Загружает словарь из сборки. Распаковка (845 КБ → 3 МБ) и разметка
+/// строк — в фоновом изоляте: на главном потоке это был бы рывок.
 Future<SortedLexicon> loadLexicon({AssetBundle? bundle}) async {
   final ByteData data = await (bundle ?? rootBundle).load(kLexiconAsset);
-  return SortedLexicon.compressed(
-    data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+  final Uint8List bytes = data.buffer.asUint8List(
+    data.offsetInBytes,
+    data.lengthInBytes,
   );
+  return Isolate.run(() => SortedLexicon.compressed(bytes));
 }
 
 /// Авторство и лицензия данных словаря — в общий список лицензий

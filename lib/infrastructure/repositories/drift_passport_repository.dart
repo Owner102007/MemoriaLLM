@@ -26,6 +26,17 @@ class DriftPassportRepository implements PassportRepository {
     if (row == null) {
       return null;
     }
+    try {
+      return _recordOf(row);
+    } on RangeError {
+      // Битая строка (номер вне перечисления): записи как будто нет —
+      // расчёт карты посчитает её заново и положит поверх.
+      return null;
+    }
+  }
+
+  /// Запись по строке; номер вне перечисления — [RangeError].
+  PassportRecord _recordOf(FilePassportRow row) {
     return PassportRecord(
       fingerprint: row.fingerprint,
       version: row.algorithmVersion,
@@ -33,11 +44,13 @@ class DriftPassportRepository implements PassportRepository {
           ? FilePassport(
               pageKinds: <PageKind>[
                 for (final int unit in row.pageKinds.codeUnits)
-                  PageKind.values[unit - 0x30],
+                  _of(PageKind.values, unit - 0x30),
               ],
-              kind: BookKind.values[row.kind],
+              kind: _of(BookKind.values, row.kind),
               dpiMedian: row.dpiMedian,
-              color: row.color == null ? null : ScanColor.values[row.color!],
+              color: row.color == null
+                  ? null
+                  : _of(ScanColor.values, row.color!),
               producer: row.producer,
               creator: row.creator,
               bookmarks: row.bookmarks,
@@ -45,13 +58,19 @@ class DriftPassportRepository implements PassportRepository {
           : null,
       trustTextVersion: row.trustTextVersion,
       trustPages: row.trustPages,
-      trustKind: TrustKind.values[row.trustKind],
+      trustKind: _of(TrustKind.values, row.trustKind),
       trust: row.trust,
       pageTrust: <PageTrust>[
         for (final int unit in row.pageTrust.codeUnits)
-          PageTrust.values[unit - 0x30],
+          _of(PageTrust.values, unit - 0x30),
       ],
     );
+  }
+
+  /// Значение перечисления по номеру с проверкой границ.
+  static T _of<T>(List<T> values, int index) {
+    RangeError.checkValidIndex(index, values);
+    return values[index];
   }
 
   @override

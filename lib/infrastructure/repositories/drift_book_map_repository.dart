@@ -38,7 +38,7 @@ class DriftBookMapRepository implements BookMapRepository {
               y: row.y,
               constellation: row.constellation,
               name: row.constellationName,
-              reason: row.reason < MapReason.values.length
+              reason: row.reason >= 0 && row.reason < MapReason.values.length
                   ? MapReason.values[row.reason]
                   : MapReason.none,
             ),

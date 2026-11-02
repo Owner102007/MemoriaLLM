@@ -21,10 +21,41 @@ typedef BagRunner = Future<BookBag> Function(BagRequest request);
 /// Считает карту по мешкам книг.
 typedef MapRunner = Future<BookMap?> Function(List<BookBag> bags);
 
+/// Судит текст книги (F-MAP-18): `null` — язык книги без словаря, она
+/// идёт в карту как есть.
+typedef TrustRunner = Future<TextTrust?> Function(
+  List<String> pages,
+  Lexicon lexicon,
+  List<PageKind>? kinds,
+);
+
 /// Мешок книги в фоновом изоляте: разбор текста толстого учебника —
 /// доли секунды чистого счёта, и на главном потоке это рывок полки.
 Future<BookBag> bagInIsolate(BagRequest request) {
   return Isolate.run(() => bagOfBook(request));
+}
+
+/// Суд над текстом книги в фоновом изоляте: регулярное выражение и
+/// поиск в словаре по каждому слову толстой книги — заметный рывок на
+/// главном потоке. Словарь уходит в изолят копией (~4 МБ байтов —
+/// миллисекунда).
+Future<TextTrust?> trustInIsolate(
+  List<String> pages,
+  Lexicon lexicon,
+  List<PageKind>? kinds,
+) {
+  return Isolate.run(() => judgeText(pages, lexicon, kinds));
+}
+
+/// Суд над текстом на месте: язык без словаря — `null`.
+TextTrust? judgeText(
+  List<String> pages,
+  Lexicon lexicon,
+  List<PageKind>? kinds,
+) {
+  return hasLexiconScript(pages)
+      ? textTrustOf(pages, lexicon, kinds: kinds)
+      : null;
 }
 
 /// Карта в фоновом изоляте: разложение и раскладка — секунды счёта.
@@ -151,7 +182,9 @@ class MapBuilder {
     PassportRepository? passports,
     PassportReader? passportReader,
     Future<Lexicon> Function()? lexicon,
-  }) : _passports = passports,
+    TrustRunner trust = trustInIsolate,
+  }) : _trust = trust,
+       _passports = passports,
        _passportReader = passportReader,
        _lexiconLoader = lexicon,
        _library = library,
@@ -175,6 +208,7 @@ class MapBuilder {
   final PassportRepository? _passports;
   final PassportReader? _passportReader;
   final Future<Lexicon> Function()? _lexiconLoader;
+  final TrustRunner _trust;
   Lexicon? _lexicon;
 
   /// Ключ набора книг: SHA-256 от версий и от каждой книги — отпечаток
@@ -184,7 +218,8 @@ class MapBuilder {
   /// книги в нём нет — он у каждого устройства свой, а карта общая.
   static String keyOf(List<MapSource> sources, {required int textVersion}) {
     final StringBuffer text = StringBuffer()
-      ..write('map/$kBookMapVersion/text/$textVersion\n');
+      ..write('map/$kBookMapVersion/text/$textVersion/passport/')
+      ..write('$kPassportVersion\n');
     for (final MapSource source in sources) {
       text
         ..write(source.book.fileHash)
@@ -356,19 +391,24 @@ class MapBuilder {
   /// `null` — судить нечем (нет хранилища или словаря).
   Future<PassportRecord?> _trustOf(MapSource source, List<String> pages) async {
     final PassportRepository? store = _passports;
-    final Future<Lexicon> Function()? loader = _lexiconLoader;
-    if (store == null || loader == null) {
+    if (store == null || _lexiconLoader == null) {
       return null;
     }
     final String fingerprint = source.book.fileHash;
     PassportRecord? record = await store.load(fingerprint);
+    // Записывать ли паспорт: прочитанный (или «файл битый») — да, это
+    // навсегда; «до файла не добраться» — нет, прочитаем в другой раз.
+    bool lasting = true;
     if (record == null || record.version != kPassportVersion) {
       // Паспорт — один проход по PDF; дальше он не повторяется.
       FilePassport? passport;
       try {
         passport = await _passportReader?.read(source.book.source);
       } on Object {
+        // Нет доступа к файлу, нет пути, сбой движка — всё это может
+        // пройти: без паспорта сейчас, без записи.
         passport = null;
+        lasting = false;
       }
       record = PassportRecord(
         fingerprint: fingerprint,
@@ -388,24 +428,47 @@ class MapBuilder {
         version: kPassportVersion,
         passport: record.passport,
       );
-      await store.save(pending);
+      if (lasting) await store.save(pending);
+      return pending;
+    }
+    final Lexicon? lexicon = await _lexiconOrNull();
+    if (lexicon == null) {
+      // Словарь не загрузился: судить нечем — книга как есть (изящная
+      // деградация, правило 5). Паспорт записывается, доверие — нет: оно
+      // посчитается, когда словарь загрузится.
+      final PassportRecord pending = PassportRecord(
+        fingerprint: fingerprint,
+        version: kPassportVersion,
+        passport: record.passport,
+      );
+      if (lasting) await store.save(pending);
       return pending;
     }
     final List<PageKind>? kinds = record.passport?.pageKinds;
-    final TextTrust? trust = hasLexiconScript(pages)
-        ? textTrustOf(
-            pages,
-            _lexicon ??= await loader(),
-            kinds: kinds == null ? null : _kindsOf(source, kinds),
-          )
-        : null;
+    final TextTrust? trust = await _trust(
+      pages,
+      lexicon,
+      kinds == null ? null : _kindsOf(source, kinds),
+    );
     record = record.withTrust(
       trust,
       textVersion: _textVersion,
       pages: source.cachedPages,
     );
-    await store.save(record);
+    if (lasting) await store.save(record);
     return record;
+  }
+
+  /// Словарь — загружается один раз за жизнь расчёта; не загрузился —
+  /// `null`, и попытка повторится при следующем расчёте.
+  Future<Lexicon?> _lexiconOrNull() async {
+    final Lexicon? have = _lexicon;
+    if (have != null) return have;
+    try {
+      return _lexicon = await _lexiconLoader!();
+    } on Object {
+      return null;
+    }
   }
 
   /// Вид запомненных страниц по паспорту — в том же порядке, что их
