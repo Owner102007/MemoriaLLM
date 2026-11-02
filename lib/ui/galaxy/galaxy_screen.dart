@@ -10,6 +10,7 @@ import '../../application/library/cover_service.dart';
 import '../../application/map/galaxy.dart';
 import '../../domain/library/book.dart';
 import '../../domain/map/map_layout.dart';
+import '../../domain/map/map_trusted.dart';
 import '../../domain/map/map_view.dart';
 import '../../domain/navigation/sections.dart';
 import '../../domain/reading/reading.dart';
@@ -417,6 +418,14 @@ List<String> describeTooFew(int books) {
     books == 0 ? 'На полке книг нет.' : 'Сейчас на полке: $books.',
   ];
 }
+
+/// Почему книга без созвездия — словами для карточки (F-MAP-18); пусто
+/// — причины нет.
+String describeMapReason(MapReason reason) => switch (reason) {
+  MapReason.none => '',
+  MapReason.littleText => 'Мало надёжного текста',
+  MapReason.unsure => 'Не уверены — поставьте сами',
+};
 
 /// Сколько времени провели в книге — словами для карточки; пусто —
 /// книгу не открывали.
@@ -1144,6 +1153,7 @@ class GalaxyBookCard extends StatelessWidget {
     final String? author = book.author;
     final double? read = progress;
     final String time = describeReadTime(star.ms);
+    final String reason = describeMapReason(star.reason);
     final List<String> facts = <String>[
       if (read != null && read > 0) 'прочитано ${(read * 100).round()} %',
       if (time.isNotEmpty) time,
@@ -1186,6 +1196,20 @@ class GalaxyBookCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall,
                   ),
+                  // F-MAP-18: почему книга без созвездия — честно, словами.
+                  if (reason.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        reason,
+                        key: const Key('galaxy-card-reason'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.secondary,
+                        ),
+                      ),
+                    ),
                   if (facts.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
