@@ -9,6 +9,7 @@ import 'package:memoria/domain/map/book_map.dart';
 import 'package:memoria/domain/map/map_categories.dart';
 import 'package:memoria/domain/map/map_layout.dart';
 import 'package:memoria/domain/map/map_names.dart';
+import 'package:memoria/domain/map/map_order.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
 
 /// Созвездия по строкам книг: матрица Грама — как в расчёте карты.
@@ -375,6 +376,90 @@ void main() {
     final MapCoordinates two = layoutBooks(latent, edges, groups);
     expect(two.xs, one.xs);
     expect(two.ys, one.ys);
+  });
+
+  test('ALG-MAP-17: типичность та же, что у другой реализации', () {
+    final List<SparseRow> rows = bm25Rows(bags, vocabularyOf(bags));
+    final Float64List typical = typicalities(
+      gramOf(rows),
+      rows.length,
+      listOf('categories').cast<int>(),
+    );
+    expect(typical.toList(), listOf('typical').map(numberOf).toList());
+  });
+
+  test('F-MAP-17: порядок совпадает с эталоном', () {
+    final List<SparseRow> rows = bm25Rows(bags, vocabularyOf(bags));
+    final LatentRows latent = latentRows(gramOf(rows), rows.length);
+    final MapEdges edges = edgesOf(neighboursOf(latent));
+    final List<int> labels = listOf('categories').cast<int>();
+    final MapCoordinates placed = layoutBooks(latent, edges, <String>[
+      for (final int c in labels) constellationGroup(c),
+    ]);
+    final List<Object?> before = listOf('placed');
+    for (int i = 0; i < before.length; i++) {
+      final List<Object?> point = before[i]! as List<Object?>;
+      expect(placed.xs[i], numberOf(point[0]), reason: 'раскладка, $i');
+      expect(placed.ys[i], numberOf(point[1]), reason: 'раскладка, $i');
+    }
+    final BookMap map = buildBookMap(bags)!;
+    final List<Object?> after = listOf('points');
+    for (int i = 0; i < after.length; i++) {
+      final List<Object?> point = after[i]! as List<Object?>;
+      expect(map.points[i].x, numberOf(point[0]), reason: 'порядок, $i');
+      expect(map.points[i].y, numberOf(point[1]), reason: 'порядок, $i');
+    }
+    expect(map.fingerprint, golden['fingerprint']);
+    expect(kBookMapVersion, 3);
+  });
+
+  test('F-MAP-17: места группы — то же множество', () {
+    final List<int> labels = listOf('categories').cast<int>();
+    final BookMap map = buildBookMap(bags)!;
+    final List<Object?> before = listOf('placed');
+    for (final int c in labels.toSet()) {
+      final Set<String> was = <String>{
+        for (int i = 0; i < labels.length; i++)
+          if (labels[i] == c) (before[i]! as List<Object?>).join(';'),
+      };
+      final Set<String> now = <String>{
+        for (final MapPoint point in map.points)
+          if (point.constellation == c) '${point.x};${point.y}',
+      };
+      expect(now, was, reason: 'созвездие $c');
+    }
+    // И хотя бы одна книга сменила звезду: иначе правило ничего не делает.
+    int moved = 0;
+    for (int i = 0; i < before.length; i++) {
+      final List<Object?> point = before[i]! as List<Object?>;
+      if (numberOf(point[0]) != map.points[i].x) moved++;
+    }
+    stdout.writeln('ЗАМЕР F-MAP-17 | эталон | книг пересажено | $moved');
+    expect(moved, greaterThan(0));
+  });
+
+  test('F-MAP-17: список созвездия идёт от типичной книги к особенной '
+      '(ближайшая к центру — самая типичная)', () {
+    final List<int> labels = listOf('categories').cast<int>();
+    final List<double> typical = listOf('typical').map(numberOf).toList();
+    final BookMap map = buildBookMap(bags)!;
+    for (final int c in labels.toSet()) {
+      final List<int> expected =
+          <int>[
+            for (int i = 0; i < labels.length; i++)
+              if (labels[i] == c) i,
+          ].toList()..sort((int a, int b) {
+            final int order = typical[b].compareTo(typical[a]);
+            return order != 0 ? order : a.compareTo(b);
+          });
+      expect(
+        <String>[
+          for (final MapPoint p in constellationOrder(map.points, c)) p.key,
+        ],
+        <String>[for (final int i in expected) bags[i].key],
+        reason: 'созвездие $c',
+      );
+    }
   });
 }
 
