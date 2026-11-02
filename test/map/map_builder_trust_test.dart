@@ -34,6 +34,18 @@ class _CountingReader implements PassportReader {
   }
 }
 
+/// Паспорт, до файла которого не добраться (нет доступа, нет карты
+/// памяти): «прочитать позже».
+class _AwayReader implements PassportReader {
+  int reads = 0;
+
+  @override
+  Future<FilePassport?> read(BookSource source) async {
+    reads++;
+    throw PassportUnavailableException(source);
+  }
+}
+
 /// Слова тем: сосуды и интегралы.
 const List<String> _angio = <String>[
   'артерия',
@@ -79,7 +91,10 @@ void main() {
     await data.close();
   });
 
-  MapBuilder builder() => MapBuilder(
+  MapBuilder builder({
+    PassportReader? passports,
+    Future<Lexicon> Function()? words,
+  }) => MapBuilder(
     library: data.library,
     categories: data.categories,
     texts: data.pageTexts,
@@ -87,8 +102,10 @@ void main() {
     bags: (BagRequest request) async => bagOfBook(request),
     layout: (List<BookBag> found) async => buildBookMap(found),
     passports: data.passports,
-    passportReader: reader,
-    lexicon: () async => lexicon,
+    passportReader: passports ?? reader,
+    lexicon: words ?? () async => lexicon,
+    trust: (List<String> pages, Lexicon lexicon, List<PageKind>? kinds) async =>
+        judgeText(pages, lexicon, kinds),
   );
 
   /// Книга с [pages] страницами текста; у книги всего [total] страниц.
@@ -118,8 +135,11 @@ void main() {
     }
   }
 
-  Future<StoredBookMap> build() async {
-    final MapBuilder map = builder();
+  Future<StoredBookMap> build({
+    PassportReader? passports,
+    Future<Lexicon> Function()? words,
+  }) async {
+    final MapBuilder map = builder(passports: passports, words: words);
     await map.build(await map.plan());
     return (await data.bookMap.load())!;
   }
@@ -197,4 +217,36 @@ void main() {
     await build();
     expect((await data.passports.load('hash-jp'))!.trustKind, TrustKind.asIs);
   });
+
+  test('F-MAP-18: до файла не добраться — паспорт прочитают позже', () async {
+    await addLibrary();
+    final _AwayReader away = _AwayReader();
+    await build(passports: away);
+    expect(away.reads, 6);
+    // Ничего не записано: «нет доступа» — не «битый файл».
+    expect(await data.passports.load('hash-a0'), isNull);
+    // Доступ вернулся — паспорт прочитан и лёг.
+    await data.bookMap.clear();
+    await build();
+    expect(reader.reads, 6);
+    expect((await data.passports.load('hash-a0'))!.passport, isNotNull);
+  });
+
+  test(
+    'F-MAP-18: словарь не загрузился — книги как есть, карта есть',
+    () async {
+      await addLibrary();
+      await addBook('scan', const <String>[]);
+      final StoredBookMap map = await build(
+        words: () async => throw StateError('нет файла словаря'),
+      );
+      expect(map.points, hasLength(7));
+      expect(map.points['scan']!.reason, MapReason.none);
+      expect(
+        (await data.passports.load('hash-scan'))!.trustTextVersion,
+        isNull,
+        reason: 'доверие не записано — посчитается со словарём',
+      );
+    },
+  );
 }

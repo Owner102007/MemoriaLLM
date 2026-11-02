@@ -11,10 +11,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/library/book_source.dart';
+import 'package:memoria/domain/map/book_passport.dart';
 import 'package:memoria/domain/map/file_passport.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/infrastructure/pdf/pdfium_passport.dart';
-import 'package:pdfrx/pdfrx.dart' show pdfrxInitialize;
+import 'package:pdfrx/pdfrx.dart' show Pdfrx, pdfrxInitialize;
 
 import '../support/descriptors.dart';
 
@@ -38,6 +39,26 @@ void main() {
   final PdfiumPassportReader reader = PdfiumPassportReader(
     storage: const LocalBookStorage(),
     initialize: initialize,
+  );
+
+  // Первым в файле: PDFium ещё никто не запускал. Так бывает в
+  // приложении — инициализатор Flutter готовит только папки, а книгу до
+  // паспорта не открывали (весь текст уже в базе). Без `init` в чтении
+  // паспорта первый же проход уронил бы процесс (вторая пара глаз S58).
+  test(
+    'ALG-MAP-18: паспорт сам запускает PDFium — без открытой книги',
+    () async {
+      await tmp.create(recursive: true);
+      final PdfiumPassportReader cold = PdfiumPassportReader(
+        storage: const LocalBookStorage(),
+        // Как pdfrxFlutterInitialize: папка кэша есть, PDFium не запущен.
+        initialize: () async => Pdfrx.cacheDirectoryPath ??= tmp.path,
+      );
+      final FilePassport? passport = await cold.read(
+        _fixture('basic_text.pdf'),
+      );
+      expect(passport?.kind, BookKind.digital);
+    },
   );
 
   test('ALG-MAP-18: набранная книга — электронный оригинал', () async {
@@ -93,7 +114,26 @@ void main() {
     expect(await reader.read(_fixture('not_a_pdf.pdf')), isNull);
     expect(await reader.read(_fixture('truncated.pdf')), isNull);
     expect(await reader.read(_fixture('encrypted.pdf')), isNull);
-    expect(await reader.read(_fixture('нет-такого.pdf')), isNull);
+  });
+
+  test('ALG-MAP-18: файла нет — «прочитать позже», а не «битый»', () async {
+    await expectLater(
+      reader.read(_fixture('нет-такого.pdf')),
+      throwsA(isA<PassportUnavailableException>()),
+    );
+  });
+
+  test('ALG-MAP-18: 1200 страниц — проход укладывается в секунды', () async {
+    final Stopwatch clock = Stopwatch()..start();
+    final FilePassport passport = (await reader.read(
+      _fixture('huge_1200_pages.pdf'),
+    ))!;
+    stdout.writeln(
+      'ЗАМЕР ALG-MAP-18 | 1200 страниц | паспорт | '
+      '${clock.elapsedMilliseconds} мс',
+    );
+    expect(passport.pageKinds, hasLength(1200));
+    expect(clock.elapsed, lessThan(const Duration(seconds: 10)));
   });
 
   test(
