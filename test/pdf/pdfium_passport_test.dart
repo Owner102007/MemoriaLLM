@@ -51,8 +51,16 @@ void main() {
       await tmp.create(recursive: true);
       final PdfiumPassportReader cold = PdfiumPassportReader(
         storage: const LocalBookStorage(),
-        // Как pdfrxFlutterInitialize: папка кэша есть, PDFium не запущен.
-        initialize: () async => Pdfrx.cacheDirectoryPath ??= tmp.path,
+        // Как pdfrxFlutterInitialize: папка кэша есть, путь к библиотеке
+        // известен (в CI на Linux — из PDFIUM_PATH, в приложении она
+        // лежит рядом с программой), но сам PDFium не запущен.
+        initialize: () async {
+          Pdfrx.cacheDirectoryPath ??= tmp.path;
+          final String? module = Platform.environment['PDFIUM_PATH'];
+          if (module != null && File(module).existsSync()) {
+            Pdfrx.pdfiumModulePath ??= module;
+          }
+        },
       );
       final FilePassport? passport = await cold.read(
         _fixture('basic_text.pdf'),
