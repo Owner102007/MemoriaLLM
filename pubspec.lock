@@ -677,7 +677,7 @@ packages:
     source: hosted
     version: "2.3.0"
   pdfium_dart:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: pdfium_dart
       sha256: ed25295fd2624bbf54b8e6bd3cd3d0fc644412d3d5e79ca2485cb36e65f20eb2

@@ -36,6 +36,10 @@ dependencies:
     sdk: flutter
   path: ^1.9.0
   path_provider: ^2.1.4
+  # Привязки к PDFium: приходят вместе с pdfrx, напрямую — только для
+  # паспорта файла (объекты страницы, ALG-MAP-18, RS-06). Версия — та,
+  # что выбрал pdfrx: подъём pdfrx поднимает и её (D-007).
+  pdfium_dart: 0.3.0
   pdfrx: ^2.4.7
   # Storage Access Framework: сведения о документе и файловый дескриптор.
   saf_util: ^3.1.0
