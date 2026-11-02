@@ -13,6 +13,7 @@ import 'book_bag.dart';
 import 'map_categories.dart';
 import 'map_layout.dart';
 import 'map_names.dart';
+import 'map_order.dart';
 import 'map_vectors.dart';
 
 /// Версия расчёта карты (ALG-DATA-09).
@@ -24,7 +25,8 @@ import 'map_vectors.dart';
 ///
 /// 2 — S56: группы карты складывает адаптивный резонанс, а не полки
 /// (F-MAP-16), у созвездий есть имена (F-MAP-03).
-const int kBookMapVersion = 2;
+/// 3 — S57: внутри созвездия типичная книга ближе к центру (F-MAP-17).
+const int kBookMapVersion = 3;
 
 /// Группа раскладки по номеру созвездия: `art:0000`, `art:0001` …;
 /// у книги без созвездия — пустая строка (раскладка не тянет её ни к
@@ -162,7 +164,13 @@ BookMap? buildBookMap(List<BookBag> bags) {
   final List<String> groups = <String>[
     for (final int c in constellations) constellationGroup(c),
   ];
-  final MapCoordinates place = layoutBooks(latent, edges, groups);
+  // Раскладка ставит группу на место, а порядок книг внутри неё задаёт
+  // правило: типичная — ближе к центру созвездия (F-MAP-17, D-044).
+  final MapCoordinates place = orderWithinGroups(
+    layoutBooks(latent, edges, groups),
+    typicalities(gram, n, constellations),
+    constellations,
+  );
   final List<MapPoint> points = <MapPoint>[
     for (int i = 0; i < n; i++)
       MapPoint(

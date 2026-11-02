@@ -19,10 +19,13 @@
 4. соседи по косинусу в пространстве главных компонент;
 5. созвездия адаптивным резонансом (ALG-MAP-16) и их имена c-TF-IDF
    (ALG-MAP-10); группа раскладки — созвездие, а не категория полки;
+   типичность книги — косинус со средним её созвездия (ALG-MAP-17);
 6. раскладка на плоскости: притяжение по рёбрам соседей, отталкивание
    случайной выборкой, притяжение к центру своей категории, слабое
    тяготение к центру карты, в конце — наименьший просвет между
-   точками.
+   точками;
+7. внутри созвездия книги пересаживаются по его же точкам: типичная —
+   ближе к центру, особенная — на край (F-MAP-17, D-044).
 
 **Только точные операции.** Сложение, вычитание, умножение, деление и
 квадратный корень в IEEE 754 дают один и тот же результат на любом
@@ -817,6 +820,67 @@ def constellation_names(books, kept, labels):
     return out
 
 
+# --- Порядок звёзд в созвездии (ALG-MAP-17, F-MAP-17) -------------------
+
+def members_of(labels):
+    """Номера книг каждой группы по возрастанию; группы — по номеру."""
+    out = {}
+    for key in sorted(set(labels)):
+        out[key] = [i for i, label in enumerate(labels) if label == key]
+    return out
+
+
+def typicalities(g, labels):
+    """Косинус строки книги со средним группы — по матрице Грама.
+
+    s_i — сумма G[i][j] по книгам группы, S — сумма s_i; косинус со
+    средним равен s_i / √S. Складываем по возрастанию номера.
+    """
+    out = [0.0] * len(labels)
+    for group in members_of(labels).values():
+        sums = []
+        total = 0.0
+        for i in group:
+            value = 0.0
+            for j in group:
+                value += g[i][j]
+            sums.append(value)
+            total += value
+        if not total > 0.0:
+            continue
+        length = math.sqrt(total)
+        for i, value in zip(group, sums):
+            out[i] = value / length
+    return out
+
+
+def from_center(xs, ys, group):
+    """Точки группы от центра к краю; при равенстве — выше, левее."""
+    sum_x = 0.0
+    sum_y = 0.0
+    for i in group:
+        sum_x += xs[i]
+        sum_y += ys[i]
+    cx = sum_x / len(group)
+    cy = sum_y / len(group)
+    far = {i: (xs[i] - cx) * (xs[i] - cx) + (ys[i] - cy) * (ys[i] - cy)
+           for i in group}
+    return sorted(group, key=lambda i: (far[i], ys[i], xs[i], i))
+
+
+def order_within_groups(xs, ys, typical, labels):
+    """Типичная книга — на точку ближе к центру группы, особенная — на край."""
+    new_x = [0.0] * len(labels)
+    new_y = [0.0] * len(labels)
+    for group in members_of(labels).values():
+        spots = from_center(xs, ys, group)
+        books = sorted(group, key=lambda i: (-typical[i], i))
+        for book, spot in zip(books, spots):
+            new_x[book] = xs[spot]
+            new_y[book] = ys[spot]
+    return new_x, new_y
+
+
 def stable_hash(text):
     """FNV-1a, 32 бита, по знакам строки — как `stableHash` в Dart."""
     value = 0x811C9DC5
@@ -854,10 +918,14 @@ def build(books):
     edges = edges_of(near, sims)
     categories, measure, cohesions = art_categories(g)
     names = constellation_names(books, kept, categories)
+    typical = typicalities(g, categories)
     if len(books) >= MIN_MAP_BOOKS:
-        xs, ys = layout(components, edges, [group_of(c) for c in categories])
+        placed_x, placed_y = layout(
+            components, edges, [group_of(c) for c in categories],
+        )
+        xs, ys = order_within_groups(placed_x, placed_y, typical, categories)
     else:
-        xs, ys = [], []
+        placed_x, placed_y, xs, ys = [], [], [], []
     return {
         'books': books,
         'vocabulary': kept,
@@ -871,6 +939,9 @@ def build(books):
         'measure': measure,
         'cohesions': cohesions,
         'names': names,
+        'typical': typical,
+        'placed_x': placed_x,
+        'placed_y': placed_y,
         'xs': xs,
         'ys': ys,
     }
@@ -1020,6 +1091,10 @@ def main():
         'cohesions': result['cohesions'],
         'names': result['names'],
         'art': art_cases(),
+        'typical': result['typical'],
+        'placed': [
+            [x, y] for x, y in zip(result['placed_x'], result['placed_y'])
+        ],
         'points': [[x, y] for x, y in zip(result['xs'], result['ys'])],
         'fingerprint': fingerprint(
             result['books'], result['xs'], result['ys'],
