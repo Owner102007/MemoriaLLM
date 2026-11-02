@@ -23,6 +23,8 @@ import 'package:memoria/infrastructure/files/app_directory.dart';
 import 'package:memoria/main.dart' as app;
 import 'package:path/path.dart' as p;
 
+import 'fixture_pdf.dart';
+
 /// Выбор файла без диалога: каждый раз отдаёт [files].
 class _FixturePicker implements BookFilePicker {
   _FixturePicker(this.files);
@@ -81,12 +83,13 @@ void main() {
         reason: 'папка данных должна быть новой: сценарий начинает с нуля',
       );
 
-      // Подложенная книга — копия образца рядом с папкой данных: так
-      // путь у книги настоящий и переживает весь прогон.
+      // Подложенная книга — образец, записанный рядом с папкой данных:
+      // путь у книги настоящий и переживает весь прогон. Байты вложены в
+      // код — на телефоне файлов с ПК нет.
       final Directory books = Directory('$kDataDirOverride-книги')
         ..createSync(recursive: true);
-      final File book = File(p.join('test', 'fixtures', 'basic_text.pdf'))
-          .copySync(p.join(books.path, 'Автопроверка.pdf'));
+      final File book = File(p.join(books.path, 'Автопроверка.pdf'))
+        ..writeAsBytesSync(basicTextPdf());
 
       final AppServices services = await app.startApp(
         picker: _FixturePicker(<PickedFile>[
