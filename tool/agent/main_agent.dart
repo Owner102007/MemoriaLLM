@@ -17,6 +17,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
@@ -44,8 +45,12 @@ Future<void> main() async {
   // `WidgetsFlutterBinding.ensureInitialized()` и получит эту же.
   MarionetteBinding.ensureInitialized();
   await app.startApp();
-  _alwaysVisible();
-  _keepFramesComing();
+  // Только на ПК: на телефоне сворачивание и возврат — настоящие события,
+  // по ним, например, «Устройство» заново ищет книги. Глушить их нельзя.
+  if (Platform.isWindows) {
+    _alwaysVisible();
+    _keepFramesComing();
+  }
 }
 
 /// Приложение агента всегда считает себя на экране.
