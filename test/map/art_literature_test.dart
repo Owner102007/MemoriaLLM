@@ -20,9 +20,11 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/map/book_bag.dart';
+import 'package:memoria/domain/map/book_map.dart';
 import 'package:memoria/domain/map/exact_math.dart';
 import 'package:memoria/domain/map/map_categories.dart';
 import 'package:memoria/domain/map/map_order.dart';
+import 'package:memoria/domain/map/map_trusted.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
 import 'package:memoria/domain/map/text_trust.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
@@ -300,6 +302,107 @@ void main() {
               'тест идёт только на ПК владельца',
     timeout: const Timeout(Duration(minutes: 5)),
   );
+
+  test(
+    'F-MAP-18: шумный слой встаёт в свою категорию и своей не заводит',
+    () async {
+      await tmp.create(recursive: true);
+      final SortedLexicon lexicon = SortedLexicon.compressed(
+        File(kLexiconAsset).readAsBytesSync(),
+      );
+      // Тексты всех книг и их чистые мешки.
+      final List<String> keys = <String>[];
+      final List<String> folders = <String>[];
+      final List<List<String>> texts = <List<String>>[];
+      for (final String folder in _folders) {
+        final List<File> files =
+            Directory('$_root/$folder')
+                .listSync()
+                .whereType<File>()
+                .where((File f) => f.path.toLowerCase().endsWith('.pdf'))
+                .toList()
+              ..sort((File a, File b) => a.path.compareTo(b.path));
+        for (final File file in files) {
+          keys.add('$folder/${file.uri.pathSegments.last}');
+          folders.add(folder);
+          texts.add(await pagesOf(file));
+        }
+      }
+      BookBag bagOf(int i, List<String> pages) {
+        final TextTrust trust = textTrustOf(pages, lexicon);
+        final BookBag bag = bagOfBook(
+          BagRequest(
+            key: keys[i],
+            group: folders[i],
+            title: keys[i].split('/').last.replaceAll('.pdf', ''),
+            pages: <String>[for (final int p in trust.usedPages) pages[p]],
+          ),
+        );
+        return bag.withTrust(
+          trust.noReliableText
+              ? const BookTrust.littleText()
+              : BookTrust.of(trust.trust!),
+        );
+      }
+
+      final List<BookBag> clean = <BookBag>[
+        for (int i = 0; i < keys.length; i++) bagOf(i, texts[i]),
+      ];
+      int home = 0;
+      int own = 0;
+      int wrong = 0;
+      for (int i = 0; i < keys.length; i++) {
+        final List<String> noisy = <String>[
+          for (int p = 0; p < texts[i].length; p++)
+            _noisyText(texts[i][p], 0.07, 1000 * i + p),
+        ];
+        final List<BookBag> bags = List<BookBag>.of(clean)
+          ..[i] = bagOf(i, noisy);
+        final BookMap map = buildBookMap(bags)!;
+        final MapPoint point = map.points.firstWhere(
+          (MapPoint p) => p.key == keys[i],
+        );
+        // Созвездие соседей по папке — самое частое у них.
+        final Map<int, int> votes = <int, int>{};
+        for (final MapPoint other in map.points) {
+          final int j = keys.indexOf(other.key);
+          if (j != i && folders[j] == folders[i] && other.constellation >= 0) {
+            votes[other.constellation] = (votes[other.constellation] ?? 0) + 1;
+          }
+        }
+        final Set<int> mates = votes.keys.toSet();
+        final int alone = map.points
+            .where((MapPoint p) => p.constellation == point.constellation)
+            .length;
+        if (mates.contains(point.constellation)) home++;
+        if (point.constellation >= 0 && !mates.contains(point.constellation)) {
+          wrong++;
+        }
+        if (point.constellation >= 0 && alone == 1) own++;
+        stdout.writeln(
+          'ЗАМЕР F-MAP-18 | шум 7 % | ${keys[i].split('/').last} | '
+          'созвездие ${point.constellation} (${point.reason.name}) | '
+          'папка: $mates',
+        );
+      }
+      stdout.writeln(
+        'ЗАМЕР F-MAP-18 | шум 7 % | в своей теме $home из ${keys.length} | '
+        'своё созвездие $own | в чужой теме $wrong',
+      );
+      // Гарантии правила: шумная книга не заводит созвездие из одной и
+      // не встаёт в чужую тему. Остальные — в своей теме или «не
+      // уверены». 02.11: 14 из 18 в своей теме при 5, 7 и 10 % ошибок;
+      // четыре медицинские книги — «не уверены» между двумя медицинскими
+      // созвездиями (D-045). Порог «не реже 80 %» — вопрос В-022.
+      expect(own, 0, reason: 'шумная книга не заводит созвездие из одной');
+      expect(wrong, 0, reason: 'шумная книга не встаёт в чужую тему');
+    },
+    skip: here
+        ? false
+        : 'нет литературы СНО2026 рядом с репозиторием (_данные) — '
+              'тест идёт только на ПК владельца',
+    timeout: const Timeout(Duration(minutes: 10)),
+  );
 }
 
 /// Мешок книги, из которого выпало каждое двадцатое слово (5 %):
@@ -368,4 +471,41 @@ List<double> _ranks(List<double> values) {
     i = j + 1;
   }
   return ranks;
+}
+
+/// Буквы русского алфавита — для порчи текста.
+const String _ruLetters = 'абвгдежзийклмнопрстуфхцчшщъыьэюя';
+
+/// Шум распознавания с долей ошибок в буквах [cer] — упрощённый
+/// перенос `ocr_noise` шага 46: замены, пропуски, вставки, разрывы и
+/// склейки слов.
+String _noisyText(String text, double cer, int seed) {
+  final MapRandom random = MapRandom(seed);
+  final StringBuffer out = StringBuffer();
+  for (final int rune in text.runes) {
+    final String ch = String.fromCharCode(rune);
+    final double u = random.unit();
+    final double kind = random.unit();
+    final int pick = random.below(_ruLetters.length);
+    if (ch == ' ') {
+      if (u >= cer / 3) out.write(ch);
+      continue;
+    }
+    if (!_ruLetters.contains(ch.toLowerCase()) || u >= cer) {
+      out.write(ch);
+    } else if (kind < 0.6) {
+      out.write(_ruLetters[pick]);
+    } else if (kind < 0.8) {
+      // пропуск
+    } else if (kind < 0.9) {
+      out
+        ..write(ch)
+        ..write(_ruLetters[pick]);
+    } else {
+      out
+        ..write(ch)
+        ..write(' ');
+    }
+  }
+  return out.toString();
 }
