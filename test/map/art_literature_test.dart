@@ -24,7 +24,9 @@ import 'package:memoria/domain/map/exact_math.dart';
 import 'package:memoria/domain/map/map_categories.dart';
 import 'package:memoria/domain/map/map_order.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
+import 'package:memoria/domain/map/text_trust.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
+import 'package:memoria/infrastructure/files/lexicon_asset.dart';
 import 'package:memoria/infrastructure/files/local_book_storage.dart';
 import 'package:memoria/infrastructure/pdf/pdfrx_document.dart';
 import 'package:pdfrx/pdfrx.dart' show pdfrxInitialize;
@@ -57,6 +59,19 @@ void main() {
     storage: const LocalBookStorage(),
     initialize: () => pdfrxInitialize(tmpPath: tmp.path),
   );
+
+  /// Тексты всех страниц книги.
+  Future<List<String>> pagesOf(File file) async {
+    final ReaderDocument document = await opener.open(
+      FilePathSource(file.absolute.path),
+    );
+    final List<String> pages = <String>[
+      for (int page = 1; page <= document.pageCount; page++)
+        await document.pageText(page),
+    ];
+    await document.close();
+    return pages;
+  }
 
   /// Мешок книги — как в приложении: название и текст всех страниц.
   Future<BookBag> bagOf(File file, String folder) async {
@@ -223,6 +238,61 @@ void main() {
           );
         }
       }
+    },
+    skip: here
+        ? false
+        : 'нет литературы СНО2026 рядом с репозиторием (_данные) — '
+              'тест идёт только на ПК владельца',
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
+
+  test(
+    'ALG-MAP-19: литература СНО2026 — у книг с текстом доверие не ниже 0,8, '
+    'книга без текста — «мало надёжного текста»',
+    () async {
+      await tmp.create(recursive: true);
+      final SortedLexicon lexicon = SortedLexicon.compressed(
+        File(kLexiconAsset).readAsBytesSync(),
+      );
+      final List<double> shares = <double>[];
+      int books = 0;
+      for (final String folder in _folders) {
+        final List<File> files =
+            Directory('$_root/$folder')
+                .listSync()
+                .whereType<File>()
+                .where((File f) => f.path.toLowerCase().endsWith('.pdf'))
+                .toList()
+              ..sort((File a, File b) => a.path.compareTo(b.path));
+        for (final File file in files) {
+          books++;
+          final List<String> pages = await pagesOf(file);
+          final TextTrust trust = textTrustOf(pages, lexicon);
+          for (final String page in pages) {
+            final PageShare share = layerShare(page, lexicon);
+            if (pageTrustOf(share) == PageTrust.yes) shares.add(share.share!);
+          }
+          final bool anyText = pages.any((String p) => p.trim().isNotEmpty);
+          stdout.writeln(
+            'ЗАМЕР ALG-MAP-19 | ${file.uri.pathSegments.last} | '
+            'T ${trust.trust?.toStringAsFixed(3) ?? 'нет'}',
+          );
+          if (anyText) {
+            expect(trust.unreliable, isFalse, reason: file.path);
+          } else {
+            expect(trust.noReliableText, isTrue, reason: file.path);
+          }
+        }
+      }
+      expect(books, 18);
+      shares.sort();
+      final double median = shares[shares.length ~/ 2];
+      stdout.writeln(
+        'ЗАМЕР ALG-MAP-19 | литература, страниц «да» ${shares.length} | '
+        'медиана доли ${median.toStringAsFixed(3)}',
+      );
+      // Шаг 46: медиана чистых страниц — 0,86.
+      expect(median, closeTo(kCleanTextShare, 0.05));
     },
     skip: here
         ? false
