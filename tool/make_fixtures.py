@@ -238,6 +238,45 @@ def make_scan_no_text() -> None:
     save(pdf, "scan_no_text.pdf")
 
 
+def make_scan_with_layer() -> None:
+    """Скан 200 dpi с невидимым слоем распознавания поверх (ALG-MAP-18).
+
+    Так выглядит книга, которую уже прогнали через OCR: страница —
+    картинка, а поверх неё — текст в режиме вывода 3 (невидим), чтобы
+    по нему работали поиск и выделение.
+    """
+    pdf = new_pdf()
+    # A4 при 200 dpi: 595 pt = 8,26 дюйма → 1653 точки.
+    width, height = 1653, 2339
+    font = simple_font(pdf)
+    lines = [
+        "Memoria scanned page %d recognised text layer line %d" % (p, i)
+        for p in (1, 2) for i in range(6)
+    ]
+    for page_no in (1, 2):
+        raw = scan_image_bytes(width, height, page_no)
+        image = Stream(pdf, zlib.compress(raw, 9))
+        image[Name.Type] = Name.XObject
+        image[Name.Subtype] = Name.Image
+        image[Name.Width] = width
+        image[Name.Height] = height
+        image[Name.ColorSpace] = Name.DeviceGray
+        image[Name.BitsPerComponent] = 8
+        image[Name.Filter] = Name.FlateDecode
+        resources = Dictionary(
+            XObject=Dictionary(Im0=pdf.make_indirect(image)),
+            Font=Dictionary(F1=font),
+        )
+        text = "".join(
+            "BT /F1 12 Tf 3 Tr 40 %d Td (%s) Tj ET\n" % (780 - 20 * i, line)
+            for i, line in enumerate(lines[(page_no - 1) * 6 : page_no * 6])
+        )
+        body = "q 595 0 0 842 0 0 cm /Im0 Do Q\n" + text
+        add_page(pdf, content(pdf, body), resources)
+    pdf.docinfo["/Title"] = String("Memoria Scan With Text Layer")
+    save(pdf, "scan_with_layer.pdf")
+
+
 # --------------------------------------------------------------------------
 # 5 и 6. CJK и RTL через Type0 + Identity-H + ToUnicode
 # --------------------------------------------------------------------------
@@ -636,6 +675,7 @@ def main() -> None:
     make_outline_nested()
     make_two_columns()
     make_scan_no_text()
+    make_scan_with_layer()
     make_cjk()
     make_rtl()
     make_rotated_pages()
