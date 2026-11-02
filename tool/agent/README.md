@@ -26,10 +26,10 @@ Marionette MCP (LeanCode, Apache-2.0): Claude видит кнопки, нажи�
 ```bash
 flutter run -d windows -t tool/agent/main_agent.dart --dart-define=MEMORIA_DATA_DIR=%TEMP%\memoria-auto\live
 ```
-В выводе `flutter run` — адрес `ws://127.0.0.1:…/ws`; его получает
-инструмент `connect` сервера `marionette`. Сервер ставится так:
-`dart pub global activate marionette_mcp 0.7.0`, строка в
-`TOOLS/TOOL Подключения/connectors.json`.
+В выводе `flutter run` — адрес VM service; его получает инструмент `connect`
+сервера `marionette`. Сам сервер, Flutter, Android SDK и эмулятор ставит
+инструмент экосистемы `TOOLS/TOOL Окружение Для Тестов` (`ПОДКЛЮЧИТЬ.cmd`,
+ECO-D-030); там же `agent/emulator.ps1` и `agent/marionette.mjs`.
 
 ## Чего здесь нет
 Настоящий диалог выбора файла Windows и системные окна Android Flutter не
