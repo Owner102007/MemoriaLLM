@@ -237,6 +237,10 @@ class AppServices {
           : null,
       // Пока идёт запись, экран держит она: подготовка его не трогает.
       screenBusy: () => recording?.recording ?? false,
+      // D-048: в основном приложении подготовка ждёт первого открытия
+      // «Галактики», а «Остановить» помнится. Ветвь II — как была.
+      openedKey: Sno.galaxy ? null : SettingsKeys.galaxyOpened,
+      stoppedKey: Sno.galaxy ? null : SettingsKeys.shelfReadingStopped,
     );
     if (recording != null) {
       // SNO-F-IDX-04: ход подготовки, идущей во время записи, — в её

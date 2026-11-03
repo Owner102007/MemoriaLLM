@@ -153,6 +153,10 @@ void main() {
           ? SnoSettingsKeys.shelfIndex
           : SettingsKeys.shelfReading,
       keepScreenOn: branch ? device.keepScreenOn : null,
+      // D-048: основное приложение помнит, что «Галактику» открывали и
+      // что читатель нажал «Остановить»; ветвь II не помнит.
+      openedKey: branch ? null : SettingsKeys.galaxyOpened,
+      stoppedKey: branch ? null : SettingsKeys.shelfReadingStopped,
       screenBusy: screenBusy,
       nowMs: nowMs,
       batch: batch,
@@ -758,6 +762,76 @@ void main() {
     final ShelfReading again = reading(branch: false);
     await again.restore();
     expect(again.summary!.complete, isTrue);
+  });
+
+  test('F-MAP-06: пока «Галактику» не открывали, подготовка сама не '
+      'начинается; открыли — начинается и со следующего запуска', () async {
+    await shelve('a', pagesOf('артерии', 2));
+    final ShelfReading pass = reading(branch: false);
+    await pass.restore();
+    expect(pass.wanted, isFalse);
+    pass.resume();
+    expect(pass.running, isFalse, reason: 'карта читателю ещё не нужна');
+
+    pass.want();
+    expect(settings.values[SettingsKeys.galaxyOpened], 'true');
+    pass.resume();
+    expect(pass.running, isTrue);
+    await pass.settled();
+    expect((await data.bookMap.load()), isNull, reason: 'книга одна');
+    expect(await data.pageTexts.cachedPages(keyOf('a')), hasLength(2));
+
+    // Перезапуск: память о разделе поднимается из настроек.
+    final ShelfReading again = reading(branch: false);
+    await again.restore();
+    expect(again.wanted, isTrue);
+    again.resume();
+    expect(again.running, isTrue);
+    await again.settled();
+  });
+
+  test('F-MAP-11: «Остановить» помнится после перезапуска; «Посчитать '
+      'карту» снимает остановку и в настройках', () async {
+    await shelve('a', pagesOf('артерии', 2));
+    final ShelfReading pass = reading(branch: false);
+    await pass.restore();
+    pass.want();
+    pass.stop();
+    await Future<void>.delayed(Duration.zero);
+    expect(settings.values[SettingsKeys.shelfReadingStopped], 'true');
+
+    final ShelfReading again = reading(branch: false);
+    await again.restore();
+    expect(again.stopped, isTrue);
+    again.resume();
+    expect(again.running, isFalse, reason: 'остановил читатель');
+
+    again.start();
+    expect(again.stopped, isFalse);
+    await again.settled();
+    expect(settings.values[SettingsKeys.shelfReadingStopped], isNull);
+    final ShelfReading third = reading(branch: false);
+    await third.restore();
+    expect(third.stopped, isFalse);
+  });
+
+  test('SNO-F-IDX-04: ветвь II не помнит ни раздела, ни остановки — '
+      'подготовка идёт при каждом запуске', () async {
+    await shelve('a', pagesOf('артерии', 2));
+    final ShelfReading pass = reading();
+    await pass.restore();
+    expect(pass.wanted, isTrue);
+    pass.stop();
+    await Future<void>.delayed(Duration.zero);
+    expect(settings.values[SettingsKeys.shelfReadingStopped], isNull);
+    expect(settings.values[SettingsKeys.galaxyOpened], isNull);
+
+    final ShelfReading again = reading();
+    await again.restore();
+    expect(again.stopped, isFalse);
+    again.resume();
+    expect(again.running, isTrue);
+    await again.settled();
   });
 
   test('SNO-F-IDX-04: отложенное начало ждёт своего срока', () async {

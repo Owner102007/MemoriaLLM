@@ -352,6 +352,30 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('F-MAP-06: «Галактику» не открывали — добавленные книги '
+        'для карты не читаются', (WidgetTester tester) async {
+      const String first = '/device/Книги/Онегин.pdf';
+      final ShownReading reading = ShownReading(data, wanted: false);
+      addTearDown(reading.dispose);
+      await pumpApp(
+        tester,
+        testServices(
+          data: data,
+          shelfReading: reading,
+          onDevice: <ScannedFile>[onDisk(first)],
+        ),
+      );
+      await open(tester, 'device');
+
+      await tester.tap(find.byKey(const Key('device-card-$first')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('device-add')));
+      await settle(tester);
+      expect(reading.starts, 0, reason: 'карта читателю ещё не нужна');
+
+      await unmount(tester);
+    });
+
     testWidgets('F-MAP-06: на широком окне «Галактика» — в верхней полосе '
         'слева', (WidgetTester tester) async {
       addTearDown(tester.view.resetPhysicalSize);
