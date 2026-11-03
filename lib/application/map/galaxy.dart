@@ -103,7 +103,6 @@ Future<Galaxy> loadGalaxy({
   }
   final List<GalaxyStar> stars = <GalaxyStar>[];
   final List<MapPoint> placed = <MapPoint>[];
-  final Map<String, GalaxyStar> byKey = <String, GalaxyStar>{};
   for (final Book book in books) {
     final MapPoint? point = stored.points[book.id];
     if (point == null || point.key != book.fileHash) {
@@ -118,11 +117,7 @@ Future<Galaxy> loadGalaxy({
       reason: point.reason,
     );
     stars.add(star);
-    // Две книги полки с одним файлом стоят на одной точке карты: в
-    // списке созвездия — обе, но порядок у них общий.
-    if (byKey.putIfAbsent(point.key, () => star) == star) {
-      placed.add(point);
-    }
+    placed.add(point);
   }
   if (stars.isEmpty) {
     return Galaxy(status: GalaxyStatus.noMap, books: books.length);
@@ -148,10 +143,11 @@ Map<String, List<GalaxyStar>> _constellationsOf(
   List<GalaxyStar> stars,
   List<MapPoint> placed,
 ) {
-  final Map<String, List<GalaxyStar>> byKey = <String, List<GalaxyStar>>{};
-  for (final GalaxyStar star in stars) {
-    byKey.putIfAbsent(star.book.fileHash, () => <GalaxyStar>[]).add(star);
-  }
+  // Место на карте у файла одно: две книги полки с одним файлом карта
+  // знает как одну (`MapBuilder.plan`), вторая звезды не получает.
+  final Map<String, GalaxyStar> byKey = <String, GalaxyStar>{
+    for (final GalaxyStar star in stars) star.book.fileHash: star,
+  };
   final Set<int> numbers = <int>{
     for (final MapPoint point in placed) point.constellation,
   };
@@ -159,8 +155,11 @@ Map<String, List<GalaxyStar>> _constellationsOf(
   for (final int number in numbers.toList()..sort()) {
     final List<GalaxyStar> ordered = <GalaxyStar>[
       for (final MapPoint point in constellationOrder(placed, number))
-        ...byKey[point.key]!,
+        byKey[point.key]!,
     ];
+    // Имена созвездий различаются номером («… 2»), и список по имени не
+    // затирает другой (ALG-MAP-10).
+    assert(!out.containsKey(ordered.first.group), 'имя созвездия повторилось');
     out[ordered.first.group] = List<GalaxyStar>.unmodifiable(ordered);
   }
   return out;

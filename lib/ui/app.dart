@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../application/app_services.dart';
+import '../application/map/shelf_reading.dart';
 import '../application/theme/theme_controller.dart';
 import '../domain/library/shelf.dart';
 import '../domain/navigation/sections.dart';
@@ -336,6 +337,13 @@ class _HomeShellState extends State<HomeShell> {
 
   /// Книги встали на полку: читатель хочет увидеть результат.
   void _booksAdded() {
+    // F-MAP-06: новые книги читаются для «Галактики» сразу, а не при
+    // следующем запуске. Подготовку, которую остановил читатель, это не
+    // будит.
+    final ShelfReading? reading = widget.services.shelfReading;
+    if (reading != null && !reading.stopped) {
+      reading.start();
+    }
     setState(() {
       _targetCategory = null;
       _section = AppSection.shelf;

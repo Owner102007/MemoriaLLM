@@ -40,6 +40,10 @@ class ShownReading extends ShelfReading {
   @override
   bool get stopped => _halted;
 
+  /// Показанный ход идёт — значит, и проход идёт, как у настоящего.
+  @override
+  bool get running => _shown.busy;
+
   @override
   void stop() {
     stops++;
@@ -56,6 +60,7 @@ class ShownReading extends ShelfReading {
   @override
   void start({Duration delay = Duration.zero}) {
     starts++;
+    _halted = false;
   }
 
   /// Показывает ход [progress] и итог [summary].

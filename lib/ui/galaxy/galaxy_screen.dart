@@ -10,6 +10,7 @@ import '../../application/library/cover_service.dart';
 import '../../application/map/galaxy.dart';
 import '../../application/map/shelf_reading.dart';
 import '../../domain/library/book.dart';
+import '../../domain/library/book_category.dart';
 import '../../domain/map/map_layout.dart';
 import '../../domain/map/map_trusted.dart';
 import '../../domain/map/map_view.dart';
@@ -107,6 +108,9 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
   int _run = 0;
   bool _wasBusy = false;
 
+  /// Фаза подготовки, которую экран видел последней.
+  ShelfReadingPhase? _lastPhase;
+
   /// Раздел открыли, а журнал записи об этом ещё не знает: скажет,
   /// когда карта прочитается, — размеры точек считаются по ней
   /// (SNO-F-MAP-01).
@@ -126,6 +130,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     super.initState();
     _reading?.addListener(_readingChanged);
     _wasBusy = _reading?.progress.busy ?? false;
+    _lastPhase = _reading?.progress.phase;
     if (widget.visible) {
       _sayOpen = true;
       unawaited(_load());
@@ -143,6 +148,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
       oldWidget.services.shelfReading?.removeListener(_readingChanged);
       _reading?.addListener(_readingChanged);
       _wasBusy = _reading?.progress.busy ?? false;
+      _lastPhase = _reading?.progress.phase;
     }
     if (widget.visible && !oldWidget.visible) {
       _sayOpen = true;
@@ -170,7 +176,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     if (!widget.mainApp ||
         reading == null ||
         reading.stopped ||
-        reading.progress.busy) {
+        reading.running) {
       return;
     }
     reading.start();
@@ -182,9 +188,26 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     if (!mounted) {
       return;
     }
-    final bool busy = _reading?.progress.busy ?? false;
-    final bool finished = _wasBusy && !busy;
+    final ShelfReadingProgress? progress = _reading?.progress;
+    final bool busy = progress?.busy ?? false;
+    final ShelfReadingPhase? phase = progress?.phase;
+    // Основное приложение: проход кончился — и тогда, когда хода видно не
+    // было (прошёл молча после «Остановить» и «Посчитать карту»): карта
+    // могла пересчитаться.
+    final bool finished =
+        (_wasBusy && !busy) ||
+        (widget.mainApp &&
+            phase == ShelfReadingPhase.done &&
+            _lastPhase != ShelfReadingPhase.done);
+    final bool changed = busy != _wasBusy || phase != _lastPhase;
     _wasBusy = busy;
+    _lastPhase = phase;
+    if (widget.mainApp && !changed && !finished) {
+      // Основное приложение: тик хода рисуют сами строка и надпись
+      // (`ListenableBuilder`) — карта на каждую страницу не
+      // перестраивается (вторая пара глаз S59).
+      return;
+    }
     setState(() {
       if (finished && widget.visible && !widget.mainApp) {
         // Ветвь II: прежняя карта посчитана до этой подготовки — на тот
@@ -389,16 +412,19 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
           lines: describeTooFew(galaxy.books),
         );
       case GalaxyStatus.noMap:
-        if (busy) {
+        if (busy && reading != null) {
           // Основное приложение, карты ещё нет: ход подготовки и
           // «Остановить» (F-MAP-11). Прочитанное не теряется.
-          return _Notice(
-            key: const Key('galaxy-preparing'),
-            icon: Icons.hourglass_empty,
-            lines: describeGalaxyPreparing(progress),
-            share: shelfReadingShare(progress),
-            action: 'Остановить',
-            onAction: reading?.stop,
+          return ListenableBuilder(
+            listenable: reading,
+            builder: (BuildContext context, Widget? child) => _Notice(
+              key: const Key('galaxy-preparing'),
+              icon: Icons.hourglass_empty,
+              lines: describeGalaxyPreparing(reading.progress),
+              share: shelfReadingShare(reading.progress),
+              action: 'Остановить',
+              onAction: reading.stop,
+            ),
           );
         }
         return _Notice(
@@ -415,28 +441,43 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
         return Column(
           children: <Widget>[
             Expanded(
-              child: GalaxyMap(
-                stars: galaxy.stars,
-                covers: widget.services.covers,
-                reading: widget.services.data.reading,
-                onOpen: (Book book) => unawaited(_openBook(book)),
-                log: _log,
-                opened: _opens,
-                constellations: widget.mainApp
-                    ? galaxy.constellations
-                    : const <String, List<GalaxyStar>>{},
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
+                    child: GalaxyMap(
+                      stars: galaxy.stars,
+                      covers: widget.services.covers,
+                      reading: widget.services.data.reading,
+                      onOpen: (Book book) => unawaited(_openBook(book)),
+                      log: _log,
+                      opened: _opens,
+                      constellations: widget.mainApp
+                          ? galaxy.constellations
+                          : const <String, List<GalaxyStar>>{},
+                    ),
+                  ),
+                  // Строка хода — поверх нижнего края карты, а не под ней:
+                  // карта не меняет высоту, когда строка появляется.
+                  if (busy && reading != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: _PreparingStrip(
+                        key: const Key('galaxy-preparing-strip'),
+                        reading: reading,
+                      ),
+                    ),
+                ],
               ),
             ),
-            if (busy && reading != null)
-              _PreparingStrip(
-                key: const Key('galaxy-preparing-strip'),
-                progress: progress,
-                onStop: reading.stop,
-              )
-            else if (galaxy.missing > 0)
+            if (!busy && galaxy.missing > 0)
               _MissingStrip(
                 key: const Key('galaxy-missing'),
                 missing: galaxy.missing,
+                // Основное приложение: дочитать книги без места можно
+                // сразу — и после «Остановить».
+                onRead: widget.mainApp ? reading?.start : null,
               ),
           ],
         );
@@ -570,18 +611,24 @@ class _Notice extends StatelessWidget {
 /// приложение): что делается, полоса хода и «Остановить». Карта над ней
 /// — прежняя: новая встанет, когда подготовка кончится.
 class _PreparingStrip extends StatelessWidget {
-  const _PreparingStrip({
-    required this.progress,
-    required this.onStop,
-    super.key,
-  });
+  const _PreparingStrip({required this.reading, super.key});
 
-  final ShelfReadingProgress progress;
-  final VoidCallback onStop;
+  final ShelfReading reading;
 
   @override
   Widget build(BuildContext context) {
+    // Ход меняется каждые несколько страниц: перерисовывается только эта
+    // строка, а не карта над ней.
+    return ListenableBuilder(
+      listenable: reading,
+      builder: (BuildContext context, Widget? child) =>
+          _strip(context, reading.progress),
+    );
+  }
+
+  Widget _strip(BuildContext context, ShelfReadingProgress progress) {
     final ThemeData theme = Theme.of(context);
+    final VoidCallback onStop = reading.stop;
     final List<String> lines = describeGalaxyPreparing(progress);
     return Material(
       color: theme.colorScheme.surface,
@@ -620,9 +667,12 @@ class _PreparingStrip extends StatelessWidget {
 
 /// Строка под картой: каких книг на ней нет.
 class _MissingStrip extends StatelessWidget {
-  const _MissingStrip({required this.missing, super.key});
+  const _MissingStrip({required this.missing, this.onRead, super.key});
 
   final int missing;
+
+  /// «Дочитать» — подготовка книг сейчас; `null` — кнопки нет.
+  final VoidCallback? onRead;
 
   @override
   Widget build(BuildContext context) {
@@ -642,6 +692,12 @@ class _MissingStrip extends StatelessWidget {
                 ),
               ),
             ),
+            if (onRead case final VoidCallback read)
+              TextButton(
+                key: const Key('galaxy-missing-read'),
+                onPressed: read,
+                child: const Text('Дочитать'),
+              ),
           ],
         ),
       ),
@@ -992,6 +1048,21 @@ class GalaxyMapState extends State<GalaxyMap> {
     return null;
   }
 
+  /// Звезда, в круг которой точно попала точка экрана [at]; `null` —
+  /// ни в одну.
+  int? _starUnder(Offset at) {
+    final GalaxyScene? scene = _scene;
+    if (scene == null) {
+      return null;
+    }
+    for (int i = 0; i < widget.stars.length && i < scene.radii.length; i++) {
+      if ((scene.placeOf(i) - at).distance <= scene.radii[i]) {
+        return i;
+      }
+    }
+    return null;
+  }
+
   /// Открывает список созвездия [name] (F-MAP-17); карточка книги,
   /// если была, закрывается.
   void _openGroup(String name) {
@@ -1053,16 +1124,20 @@ class GalaxyMapState extends State<GalaxyMap> {
       _sayView('double_tap');
       return;
     }
-    final String? name = groupAt(at);
+    // Точное попадание в звезду важнее имени созвездия: имя стоит над
+    // своими звёздами, и запас вокруг него не должен их закрывать.
+    final int? exact = _starUnder(at);
+    final String? name = exact == null ? groupAt(at) : null;
     if (name != null) {
       _openGroup(name);
       return;
     }
     if (_group != null) {
-      // Нажатие по карте мимо имени закрывает список созвездия.
+      // Нажатие по карте мимо имени только закрывает список созвездия.
       setState(() => _group = null);
+      return;
     }
-    final int? hit = starAt(at);
+    final int? hit = exact ?? starAt(at);
     final String? id = hit == null ? null : widget.stars[hit].book.id;
     final String? before = _selectedId;
     if (hit != null && _logging) {
@@ -1260,7 +1335,10 @@ class GalaxyMapState extends State<GalaxyMap> {
         left: 8,
         right: 8,
         bottom: 8,
-        height: math.max(160, size.height / 2 - 8),
+        height: math.max(
+          0,
+          math.min(size.height - 16, math.max(160, size.height / 2 - 8)),
+        ),
         child: list,
       );
     }
@@ -1379,7 +1457,9 @@ class GalaxyConstellationList extends StatelessWidget {
                         style: theme.textTheme.titleSmall,
                       ),
                       Text(
-                        describeConstellationCount(stars.length),
+                        name == kUncategorizedTitle
+                            ? describeUncategorizedCount(stars.length)
+                            : describeConstellationCount(stars.length),
                         style: theme.textTheme.bodySmall,
                       ),
                     ],
@@ -1430,7 +1510,16 @@ class GalaxyConstellationList extends StatelessWidget {
 
 /// Строка под именем созвездия: сколько в нём книг и в каком они
 /// порядке — «6 книг · от типичной к особенной».
-String describeConstellationCount(int books) {
+String describeConstellationCount(int books) =>
+    '${_booksWord(books)} · от типичной к особенной';
+
+/// Строка под «Без категории»: это не созвездие, и «типичной» книги у
+/// него нет — сверху те, что ближе к середине карты этих книг.
+String describeUncategorizedCount(int books) =>
+    '${_booksWord(books)} · без созвездия';
+
+/// «1 книга», «3 книги», «5 книг».
+String _booksWord(int books) {
   final int last = books % 10;
   final int lastTwo = books % 100;
   final String word = lastTwo >= 11 && lastTwo <= 14
@@ -1440,7 +1529,7 @@ String describeConstellationCount(int books) {
       : last >= 2 && last <= 4
       ? 'книги'
       : 'книг';
-  return '$books $word · от типичной к особенной';
+  return '$books $word';
 }
 
 /// Карточка книги у звезды (F-MAP-08, кадр SCR-04.3): обложка,

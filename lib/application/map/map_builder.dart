@@ -325,6 +325,7 @@ class MapBuilder {
     MapPlan plan, {
     void Function(int done, int total)? onProgress,
     bool Function()? stopped,
+    Future<bool> Function()? turn,
   }) async {
     final List<MapSource> sources = plan.sources;
     if (sources.length < kMinMapBooks) {
@@ -337,6 +338,11 @@ class MapBuilder {
     }
     final List<BookBag> bags = <BookBag>[];
     for (int i = 0; i < sources.length; i++) {
+      // Своя очередь к движку PDF (паспорт файла): пока открыта книга,
+      // расчёт ждёт; `false` — расчёт сняли.
+      if (turn != null && !await turn()) {
+        return const MapOutcome(kind: MapOutcomeKind.stopped);
+      }
       if (stopped?.call() ?? false) {
         return const MapOutcome(kind: MapOutcomeKind.stopped);
       }

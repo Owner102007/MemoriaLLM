@@ -686,6 +686,66 @@ void main() {
     },
   );
 
+  test('F-MAP-11: «Остановить» и сразу «Посчитать карту» — ход снова '
+      'виден, карта считается', () async {
+    final _Volume a = await shelve('a', pagesOf('артерии', 6));
+    await shelve('b', pagesOf('вены', 3));
+    await shelve('c', pagesOf('лимфу', 4));
+    final ShelfReading pass = reading(branch: false);
+    final List<ShelfReadingPhase> after = <ShelfReadingPhase>[];
+    bool restarted = false;
+    pass.addListener(() {
+      if (restarted && (after.isEmpty || after.last != pass.progress.phase)) {
+        after.add(pass.progress.phase);
+      }
+    });
+    a.onRead = (int page) async {
+      if (page == 3 && !restarted) {
+        // Проход ещё сворачивается, а читатель уже передумал.
+        pass.stop();
+        pass.start();
+        restarted = true;
+      }
+    };
+    pass.start();
+    await pass.settled();
+
+    expect(pass.stopped, isFalse);
+    expect(after, contains(ShelfReadingPhase.reading));
+    expect(after, contains(ShelfReadingPhase.mapping));
+    expect(after.last, ShelfReadingPhase.done);
+    expect((await data.bookMap.load())!.points, hasLength(3));
+    expect(pass.running, isFalse);
+  });
+
+  test('F-MAP-06: пока открыта книга, расчёт карты ждёт', () async {
+    await shelve('a', pagesOf('артерии', 2));
+    await shelve('b', pagesOf('вены', 2));
+    await shelve('c', pagesOf('лимфу', 2));
+    final ShelfReading pass = reading(branch: false);
+    bool opened = false;
+    pass.addListener(() {
+      // Книгу открыли, как только начался расчёт карты, — один раз.
+      if (pass.progress.phase == ShelfReadingPhase.mapping && !opened) {
+        opened = true;
+        pass.held = true;
+      }
+    });
+    pass.start();
+    for (
+      int i = 0;
+      i < 50 && pass.progress.phase != ShelfReadingPhase.held;
+      i++
+    ) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(pass.progress.phase, ShelfReadingPhase.held);
+    expect(await data.bookMap.load(), isNull, reason: 'расчёт стоит');
+    pass.held = false;
+    await pass.settled();
+    expect((await data.bookMap.load())!.points, hasLength(3));
+  });
+
   test('F-MAP-06: в основном приложении итог — под ключом продукта, '
       'экран не держится', () async {
     await shelve('a', pagesOf('артерии', 3));

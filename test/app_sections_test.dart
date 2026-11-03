@@ -319,6 +319,39 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('F-MAP-06: книги добавлены — подготовка для карты '
+        'начинается сразу, остановленная — нет', (WidgetTester tester) async {
+      const String first = '/device/Книги/Онегин.pdf';
+      const String second = '/device/Книги/Ревизор.pdf';
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      await pumpApp(
+        tester,
+        testServices(
+          data: data,
+          shelfReading: reading,
+          onDevice: <ScannedFile>[onDisk(first), onDisk(second)],
+        ),
+      );
+      await open(tester, 'device');
+
+      await tester.tap(find.byKey(const Key('device-card-$first')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('device-add')));
+      await settle(tester);
+      expect(reading.starts, 1);
+
+      reading.stop();
+      await open(tester, 'device');
+      await tester.tap(find.byKey(const Key('device-card-$second')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('device-add')));
+      await settle(tester);
+      expect(reading.starts, 1, reason: 'подготовку остановил читатель');
+
+      await unmount(tester);
+    });
+
     testWidgets('F-MAP-06: на широком окне «Галактика» — в верхней полосе '
         'слева', (WidgetTester tester) async {
       addTearDown(tester.view.resetPhysicalSize);

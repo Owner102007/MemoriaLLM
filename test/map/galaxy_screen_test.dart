@@ -326,6 +326,90 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('F-MAP-17: звезда под именем созвездия выбирается, '
+        'нажатие мимо только закрывает список', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups);
+      await pumpGalaxy(tester, testServices(data: data), mainApp: true);
+
+      await tester.tapAt(placeOf(tester, 'a1'));
+      await tester.pumpAndSettle();
+      expect(mapOf(tester).selectedId, 'a1');
+      expect(mapOf(tester).openGroup, isNull);
+
+      await tester.tapAt(labelOf(tester, 'Ангиология'));
+      await tester.pumpAndSettle();
+      expect(mapOf(tester).openGroup, 'Ангиология');
+      // Звезда выше списка: список на узком экране стоит снизу.
+      await tester.tapAt(placeOf(tester, 'a1'));
+      await tester.pumpAndSettle();
+      expect(mapOf(tester).openGroup, isNull);
+      expect(mapOf(tester).selectedId, isNull, reason: 'только закрыт список');
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-17: «Без категории» — список без слов о типичности', (
+      WidgetTester tester,
+    ) async {
+      await seedGalaxy(data, <ShelfStar>[
+        ...kTwoGroups,
+        const ShelfStar('z1', 'Ничья книга', 0, 0.9),
+      ]);
+      await pumpGalaxy(tester, testServices(data: data), mainApp: true);
+
+      await tester.tapAt(labelOf(tester, kUncategorizedTitle));
+      await tester.pumpAndSettle();
+      expect(find.text('1 книга · без созвездия'), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-11: молчаливый проход кончился — карта перечитана', (
+      WidgetTester tester,
+    ) async {
+      await seedGalaxy(data, kTwoGroups, withMap: false);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      await pumpGalaxy(
+        tester,
+        testServices(data: data, shelfReading: reading),
+        mainApp: true,
+      );
+      expect(find.byKey(const Key('galaxy-no-map')), findsOneWidget);
+
+      // Карту посчитали без видимого хода (после «Остановить» и
+      // «Посчитать карту»): экран узнаёт об этом по «готово».
+      await seedGalaxy(data, kTwoGroups);
+      reading.show(const ShelfReadingProgress(phase: ShelfReadingPhase.done));
+      await tester.pumpAndSettle();
+      expect(find.byType(GalaxyMap), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-11: книги без места — «Дочитать»', (
+      WidgetTester tester,
+    ) async {
+      await seedGalaxy(data, <ShelfStar>[
+        ...kTwoGroups,
+        const ShelfStar('n1', 'Новая книга', 0, 0, onMap: false),
+      ]);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      reading.stop();
+      await pumpGalaxy(
+        tester,
+        testServices(data: data, shelfReading: reading),
+        mainApp: true,
+      );
+      expect(reading.starts, 0, reason: 'остановлено читателем');
+      await tester.tap(find.byKey(const Key('galaxy-missing-read')));
+      await tester.pump();
+      expect(reading.starts, 1);
+
+      await unmount(tester);
+    });
+
     testWidgets('F-MAP-17: на широком окне список — у правого края', (
       WidgetTester tester,
     ) async {

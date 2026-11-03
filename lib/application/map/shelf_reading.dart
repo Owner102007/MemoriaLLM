@@ -522,16 +522,15 @@ class ShelfReading extends ChangeNotifier {
     }
     _delayed?.cancel();
     _delayed = null;
-    final Future<void> work = _run();
-    _running = work;
-    unawaited(
-      work.whenComplete(() {
-        if (identical(_running, work)) {
-          _running = null;
-        }
-      }),
-    );
+    final Completer<void> done = Completer<void>();
+    _running = done.future;
+    unawaited(_run().whenComplete(done.complete));
   }
+
+  /// Идёт ли проход — и тогда, когда он молчит: сверяет готовые книги с
+  /// базой, не показывая хода. Раздел «Галактика» по нему не будит
+  /// подготовку второй раз подряд.
+  bool get running => _running != null;
 
   /// Останавливает подготовку (F-MAP-11, «Остановить» в «Галактике»).
   ///
@@ -557,7 +556,10 @@ class ShelfReading extends ChangeNotifier {
   Future<void> settled() => _running ?? Future<void>.value();
 
   Future<void> _run() async {
-    do {
+    // Проход сам снимает отметку «идёт», и в том же шаге решает, нужен ли
+    // ещё круг: просьба [start], пришедшая в последний миг, не теряется
+    // (вторая пара глаз S59).
+    while (true) {
       _again = false;
       try {
         await _round();
@@ -572,7 +574,11 @@ class ShelfReading extends ChangeNotifier {
         // подготовка не должна выглядеть идущей.
         _show(const ShelfReadingProgress());
       }
-    } while (_again && !_quit);
+      if (!_again || _quit) {
+        _running = null;
+        return;
+      }
+    }
   }
 
   /// Один проход по полке и расчёт карты за ним.
@@ -636,11 +642,17 @@ class ShelfReading extends ChangeNotifier {
     if (_quit) {
       return;
     }
-    summary = summary.copyWith(map: await _buildMap(books.length, before.map));
+    final MapSummary map = await _buildMap(books.length, before.map);
+    if (_disposed || (_stopped && map.state == MapSummary.failed)) {
+      // Остановили, и карта не досчиталась: итог прежний. Досчиталась и
+      // записалась — итог говорит правду и после остановки.
+      return;
+    }
+    summary = summary.copyWith(map: map);
+    await _remember(summary);
     if (_quit) {
       return;
     }
-    await _remember(summary);
     _show(
       ShelfReadingProgress(
         phase: ShelfReadingPhase.done,
@@ -672,6 +684,9 @@ class ShelfReading extends ChangeNotifier {
           fingerprint: current.fingerprint,
         );
       }
+      if (_quit) {
+        return const MapSummary(state: MapSummary.failed);
+      }
       _show(
         _progress.copyWith(
           phase: ShelfReadingPhase.mapping,
@@ -683,8 +698,25 @@ class ShelfReading extends ChangeNotifier {
       final int started = _nowMs();
       final MapOutcome outcome = await _map.build(
         plan,
+        // Фаза — явно: после «Остановить» и нового «Посчитать карту» ход
+        // сброшен, и без неё расчёт шёл бы невидимым (вторая пара глаз).
         onProgress: (int done, int total) {
-          _show(_progress.copyWith(mapDone: done, mapTotal: total));
+          _show(
+            _progress.copyWith(
+              phase: ShelfReadingPhase.mapping,
+              mapDone: done,
+              mapTotal: total,
+            ),
+          );
+        },
+        // Паспорт книги читает тот же движок PDF: пока открыта книга,
+        // расчёт ждёт, как и чтение текста.
+        turn: () async {
+          final bool go = await _waitTurn();
+          if (go) {
+            _show(_progress.copyWith(phase: ShelfReadingPhase.mapping));
+          }
+          return go;
         },
         stopped: () => _quit,
       );
@@ -790,6 +822,7 @@ class ShelfReading extends ChangeNotifier {
           if (page % kShelfReadingNotifyEvery == 0 || page == count) {
             _show(
               _progress.copyWith(
+                phase: ShelfReadingPhase.reading,
                 page: page,
                 pages: count,
                 elapsedMs: _elapsed(),
