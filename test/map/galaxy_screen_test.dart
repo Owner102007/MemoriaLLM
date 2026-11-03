@@ -475,6 +475,27 @@ void main() {
       await unmount(tester);
     });
 
+    testWidgets('F-MAP-06: первое открытие раздела запоминается и '
+        'запускает подготовку', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups);
+      final ShownReading reading = ShownReading(data, wanted: false);
+      addTearDown(reading.dispose);
+      final AppServices services = testServices(
+        data: data,
+        shelfReading: reading,
+      );
+      await pumpGalaxy(tester, services, visible: false, mainApp: true);
+      expect(reading.wants, 0);
+      expect(reading.wanted, isFalse);
+
+      await pumpGalaxy(tester, services, mainApp: true);
+      expect(reading.wants, 1);
+      expect(reading.wanted, isTrue);
+      expect(reading.starts, 1);
+
+      await unmount(tester);
+    });
+
     testWidgets('F-MAP-11: пока книги читаются — прежняя карта на месте, '
         'под ней ход и «Остановить»', (WidgetTester tester) async {
       await seedGalaxy(data, kTwoGroups);

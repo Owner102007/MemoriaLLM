@@ -12,8 +12,11 @@ import 'recording_fakes.dart';
 /// по его ходу и итогу, когда просит начать и когда велит постоять.
 class ShownReading extends ShelfReading {
   /// Создаёт подготовку поверх базы теста.
-  ShownReading(AppData data)
-    : super(
+  ///
+  /// [wanted] — открывали ли «Галактику» раньше (D-048).
+  ShownReading(AppData data, {bool wanted = true})
+    : _wantedNow = wanted,
+      super(
         library: data.library,
         opener: FakeDocumentOpener(FakeReaderDocument.blank(1)),
         texts: data.pageTexts,
@@ -37,8 +40,22 @@ class ShownReading extends ShelfReading {
 
   bool _halted = false;
 
+  bool _wantedNow;
+
+  /// Сколько раз экран сказал, что «Галактику» открыли (D-048).
+  int wants = 0;
+
   @override
   bool get stopped => _halted;
+
+  @override
+  bool get wanted => _wantedNow;
+
+  @override
+  void want() {
+    wants++;
+    _wantedNow = true;
+  }
 
   /// Показанный ход идёт — значит, и проход идёт, как у настоящего.
   @override

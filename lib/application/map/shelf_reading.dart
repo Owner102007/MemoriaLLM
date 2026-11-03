@@ -382,6 +382,11 @@ class _BookResult {
 /// **Читатель может остановить** подготовку ([stop]) — прочитанное
 /// остаётся, следующий [start] продолжит.
 ///
+/// **Когда начинать, решает [resume]** (D-048): в основном приложении —
+/// только если «Галактику» хоть раз открывали ([want]) и читатель не
+/// нажимал «Остановить»; и то и другое помнится после перезапуска. В
+/// ветви II памяти нет: подготовка идёт всегда, как прежде.
+///
 /// Проход идёт, только пока приложение открыто: службы переднего плана
 /// у него нет. Экран он держит, только если ему дали `keepScreenOn`
 /// (ветвь II).
@@ -396,6 +401,10 @@ class ShelfReading extends ChangeNotifier {
   /// бы телефон, а сорокаминутной записи ветви II — было нужно).
   /// [screenBusy] отвечает, держит ли экран включённым кто-то ещё
   /// (запись сессии): тогда подготовка экран не трогает вовсе.
+  /// [openedKey] и [stoppedKey] — ключи настроек, где помнится, что
+  /// «Галактику» открывали и что читатель нажал «Остановить» (D-048);
+  /// `null` — не помнится: подготовка нужна всегда, а остановка — до
+  /// перезапуска (ветвь II).
   ShelfReading({
     required LibraryRepository library,
     required DocumentOpener opener,
@@ -405,6 +414,8 @@ class ShelfReading extends ChangeNotifier {
     String summaryKey = SettingsKeys.shelfReading,
     Future<void> Function(bool on)? keepScreenOn,
     bool Function()? screenBusy,
+    String? openedKey,
+    String? stoppedKey,
     int Function()? nowMs,
     int textVersion = kPageTextVersion,
     int batch = kTextPassBatch,
@@ -416,6 +427,10 @@ class ShelfReading extends ChangeNotifier {
        _summaryKey = summaryKey,
        _keepScreenOn = keepScreenOn,
        _screenBusy = screenBusy,
+       _openedKey = openedKey,
+       _stoppedKey = stoppedKey,
+       // Помнить, открывали ли раздел, негде — значит, подготовка нужна.
+       _wanted = openedKey == null,
        _nowMs = nowMs ?? _monotonicMs,
        _textVersion = textVersion,
        _batch = batch < 1 ? 1 : batch;
@@ -432,6 +447,8 @@ class ShelfReading extends ChangeNotifier {
   final String _summaryKey;
   final Future<void> Function(bool on)? _keepScreenOn;
   final bool Function()? _screenBusy;
+  final String? _openedKey;
+  final String? _stoppedKey;
   final int Function() _nowMs;
   final int _textVersion;
   final int _batch;
@@ -446,6 +463,9 @@ class ShelfReading extends ChangeNotifier {
 
   /// Подготовку остановил читатель ([stop]); снимается [start].
   bool _stopped = false;
+
+  /// Нужна ли карта читателю: «Галактику» открывали ([want]).
+  bool _wanted;
   bool _screenKept = false;
   Completer<void>? _release;
 
@@ -463,6 +483,10 @@ class ShelfReading extends ChangeNotifier {
 
   /// Остановил ли подготовку читатель (F-MAP-11): до [start] она не идёт.
   bool get stopped => _stopped;
+
+  /// Открывал ли читатель «Галактику» хоть раз (D-048): пока нет, [resume]
+  /// подготовку не начинает.
+  bool get wanted => _wanted;
 
   /// Итог подготовки; `null` — её ещё не было.
   ShelfIndexSummary? get summary => _summary;
@@ -486,14 +510,25 @@ class ShelfReading extends ChangeNotifier {
     }
   }
 
-  /// Поднимает итог прежней подготовки из настроек.
+  /// Поднимает из настроек итог прежней подготовки и память о том,
+  /// открывали ли «Галактику» и нажимали ли «Остановить» (D-048).
   ///
-  /// Запуск приложения от него не зависит: не прочитался — итога нет.
+  /// Запуск приложения от него не зависит: не прочитался итог — итога
+  /// нет; не прочиталась память — раздел считается неоткрытым, а
+  /// подготовка неостановленной.
   Future<void> restore() async {
     try {
       _summary = ShelfIndexSummary.decode(await _settings.read(_summaryKey));
     } on Object {
       _summary = null;
+    }
+    // `if (x case final String key)` — «если x не null, назови его key»:
+    // сопоставление с образцом Dart 3.
+    if (_openedKey case final String key) {
+      _wanted = _wanted || await _flag(key);
+    }
+    if (_stoppedKey case final String key) {
+      _stopped = _stopped || await _flag(key);
     }
     if (!_disposed) {
       notifyListeners();
@@ -510,7 +545,11 @@ class ShelfReading extends ChangeNotifier {
     if (_disposed) {
       return;
     }
-    _stopped = false;
+    if (_stopped) {
+      // Читатель сам попросил продолжить: остановка снята и в настройках.
+      _stopped = false;
+      _setFlag(_stoppedKey, on: false);
+    }
     if (_running != null) {
       _again = true;
       return;
@@ -527,6 +566,27 @@ class ShelfReading extends ChangeNotifier {
     unawaited(_run().whenComplete(done.complete));
   }
 
+  /// Продолжает подготовку сама, без просьбы читателя (D-048): при
+  /// запуске приложения, после добавления книг, при открытии
+  /// «Галактики» — если карта читателю нужна ([wanted]) и он не нажимал
+  /// «Остановить» ([stopped]). Иначе ничего не делает.
+  void resume({Duration delay = Duration.zero}) {
+    if (_disposed || !wanted || stopped) {
+      return;
+    }
+    start(delay: delay);
+  }
+
+  /// Читатель открыл «Галактику» (D-048): карта ему нужна, и это
+  /// помнится — со следующего запуска подготовка идёт сама.
+  void want() {
+    if (_disposed || _wanted) {
+      return;
+    }
+    _wanted = true;
+    _setFlag(_openedKey, on: true);
+  }
+
   /// Идёт ли проход — и тогда, когда он молчит: сверяет готовые книги с
   /// базой, не показывая хода. Раздел «Галактика» по нему не будит
   /// подготовку второй раз подряд.
@@ -536,11 +596,15 @@ class ShelfReading extends ChangeNotifier {
   ///
   /// Проход дочитывает страницу, записывает прочитанное и кончается;
   /// карта не считается. Прочитанное остаётся в кэше: [start] — кнопка
-  /// «Посчитать карту» или следующий запуск приложения — продолжит с
-  /// того же места.
+  /// «Посчитать карту» или «Дочитать» — продолжит с того же места.
+  /// В основном приложении остановка помнится и после перезапуска
+  /// (D-048); в ветви II — до перезапуска.
   void stop() {
     if (_disposed) {
       return;
+    }
+    if (!_stopped) {
+      _setFlag(_stoppedKey, on: true);
     }
     _stopped = true;
     _again = false;
@@ -550,6 +614,30 @@ class ShelfReading extends ChangeNotifier {
     _release = null;
     release?.complete();
     _show(const ShelfReadingProgress());
+  }
+
+  /// Читает отметку [key] из настроек: `true` — стоит; не прочиталась —
+  /// не стоит.
+  Future<bool> _flag(String key) async {
+    try {
+      return await _settings.read(key) == 'true';
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Ставит ([on]) или снимает отметку [key] в настройках, не дожидаясь
+  /// записи; `null` — помнить негде. Сбой записи не мешает: забудется
+  /// только память, а подготовка пойдёт как попросили.
+  void _setFlag(String? key, {required bool on}) {
+    if (key == null) {
+      return;
+    }
+    unawaited(
+      (on ? _settings.write(key, 'true') : _settings.remove(key)).catchError(
+        (Object _) {},
+      ),
+    );
   }
 
   /// Ждёт конца идущей подготовки — для тестов.
