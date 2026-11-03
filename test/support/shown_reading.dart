@@ -1,6 +1,6 @@
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/map/map_builder.dart';
-import 'package:memoria/sno/index/shelf_reading.dart';
+import 'package:memoria/application/map/shelf_reading.dart';
 
 import 'fake_reading.dart';
 import 'recording_fakes.dart';
@@ -32,6 +32,25 @@ class ShownReading extends ShelfReading {
   /// Сколько раз экран просил начать подготовку.
   int starts = 0;
 
+  /// Сколько раз читатель нажал «Остановить» (F-MAP-11).
+  int stops = 0;
+
+  bool _halted = false;
+
+  @override
+  bool get stopped => _halted;
+
+  /// Показанный ход идёт — значит, и проход идёт, как у настоящего.
+  @override
+  bool get running => _shown.busy;
+
+  @override
+  void stop() {
+    stops++;
+    _halted = true;
+    show(const ShelfReadingProgress());
+  }
+
   @override
   ShelfReadingProgress get progress => _shown;
 
@@ -41,6 +60,7 @@ class ShownReading extends ShelfReading {
   @override
   void start({Duration delay = Duration.zero}) {
     starts++;
+    _halted = false;
   }
 
   /// Показывает ход [progress] и итог [summary].

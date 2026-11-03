@@ -4,10 +4,10 @@ import 'package:flutter/widgets.dart';
 
 import 'application/app_services.dart';
 import 'application/data/app_data.dart';
+import 'application/map/shelf_reading.dart';
 import 'application/theme/theme_controller.dart';
 import 'domain/library/book_file_picker.dart';
 import 'infrastructure/files/lexicon_asset.dart';
-import 'sno/index/shelf_reading.dart';
 import 'sno/recording/records.dart';
 import 'ui/app.dart';
 
@@ -41,9 +41,11 @@ Future<AppServices> startApp({BookFilePicker? picker}) async {
   return services;
 }
 
-/// Поднимает итог подготовки книг и продолжает её (SNO-F-IDX-04).
+/// Поднимает итог подготовки книг и продолжает её (F-MAP-06,
+/// SNO-F-IDX-04).
 ///
-/// Только в сборке ветви II; в остальных подготовки нет, и вызов пуст.
+/// Там, где есть «Галактика» (основное приложение и ветвь II); в ветви I
+/// подготовки нет, и вызов пуст.
 /// Итог читается до первого кадра — это одна запись настроек, — а сам
 /// проход по полке начинается чуть погодя: первые секунды движок PDF
 /// занят обложками.

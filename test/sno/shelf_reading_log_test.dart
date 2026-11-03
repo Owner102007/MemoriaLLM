@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
-import 'package:memoria/sno/index/shelf_reading.dart';
+import 'package:memoria/application/map/shelf_reading.dart';
 import 'package:memoria/sno/index/shelf_reading_log.dart';
 import 'package:memoria/sno/recording/event.dart';
 

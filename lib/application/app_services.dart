@@ -31,7 +31,6 @@ import '../sno/eye/eye_tracker.dart';
 import '../sno/eye/eye_window.dart';
 import '../sno/eye/qpc_clock.dart';
 import '../sno/flags.dart';
-import '../sno/index/shelf_reading.dart';
 import '../sno/index/shelf_reading_log.dart';
 import '../sno/participant_code.dart';
 import '../sno/recording/device_passport.dart';
@@ -48,6 +47,7 @@ import 'data/app_data.dart';
 import 'library/cover_service.dart';
 import 'library/device_library.dart';
 import 'map/map_builder.dart';
+import 'map/shelf_reading.dart';
 import 'reading/book_times.dart';
 
 /// Всё, чем приложение пользуется извне, собранное в одном месте.
@@ -158,10 +158,10 @@ class AppServices {
       loadTest: Sno.recording && recording != null && _hasLoadTest
           ? _loadTestFor(recording)
           : null,
-      // SNO-F-IDX-04: текст всех книг и карта заранее — только в ветви
-      // II. Условие — константа сборки: в основное приложение и в
-      // ветвь I проход по полке не попадает.
-      shelfReading: Sno.galaxy
+      // F-MAP-06: текст всех книг и карта — там, где есть раздел
+      // «Галактика»: в основном приложении и в ветви II (SNO-F-IDX-04).
+      // Условие — константа сборки: в ветвь I проход по полке не попадает.
+      shelfReading: Sno.galaxySection
           ? _shelfReadingFor(data, opener, recording, storage)
           : null,
       bookTimes: bookTimes,
@@ -202,8 +202,11 @@ class AppServices {
     return eye;
   }
 
-  /// Подготовка книг полки сборки ветви II (SNO-F-IDX-04): текст всех
-  /// книг в кэш текста страниц и карта по нему.
+  /// Подготовка книг полки для «Галактики» (F-MAP-06, SNO-F-IDX-04):
+  /// текст всех книг в кэш текста страниц и карта по нему.
+  ///
+  /// В ветви II — как было: экран не гаснет, пока книги читаются, итог
+  /// под ключом ветви. В основном приложении экран не держится.
   static ShelfReading _shelfReadingFor(
     AppData data,
     DocumentOpener opener,
@@ -226,7 +229,12 @@ class AppServices {
         passportReader: PdfiumPassportReader(storage: storage),
         lexicon: loadLexicon,
       ),
-      device: const PlatformDeviceStatus(),
+      summaryKey: Sno.galaxy
+          ? SnoSettingsKeys.shelfIndex
+          : SettingsKeys.shelfReading,
+      keepScreenOn: Sno.galaxy
+          ? const PlatformDeviceStatus().keepScreenOn
+          : null,
       // Пока идёт запись, экран держит она: подготовка его не трогает.
       screenBusy: () => recording?.recording ?? false,
     );

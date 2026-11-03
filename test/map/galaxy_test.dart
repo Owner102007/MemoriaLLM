@@ -69,6 +69,49 @@ void main() {
     });
   });
 
+  group('F-MAP-17: список созвездия', () {
+    test('F-MAP-17: список созвездия идёт от типичной книги к особенной — '
+        'от центра созвездия к краю', () async {
+      await seedGalaxy(data, kTwoGroups);
+      final Galaxy galaxy = await load();
+
+      List<String> idsOf(String name) => <String>[
+        for (final GalaxyStar star in galaxy.constellations[name]!)
+          star.book.id,
+      ];
+      // Ангиология: середина точек (−0,63; −0,17); ближе всех — a2.
+      expect(idsOf('Ангиология'), <String>['a2', 'a1', 'a3']);
+      expect(idsOf('Математика'), <String>['m2', 'm1', 'm3']);
+      expect(galaxy.constellations.keys.toSet(), <String>{
+        'Ангиология',
+        'Математика',
+      });
+    });
+
+    test('F-MAP-17: книги без созвездия — свой список, книги без места — '
+        'ни в одном', () async {
+      await seedGalaxy(data, <ShelfStar>[
+        ...kTwoGroups,
+        const ShelfStar('z1', 'Ничья книга', 0, 0.9),
+        const ShelfStar('n1', 'Новая книга', 0, 0, onMap: false),
+      ]);
+      final Galaxy galaxy = await load();
+
+      expect(
+        galaxy.constellations[kUncategorizedTitle]!.map(
+          (GalaxyStar star) => star.book.id,
+        ),
+        <String>['z1'],
+      );
+      final Set<String> listed = <String>{
+        for (final List<GalaxyStar> stars in galaxy.constellations.values)
+          for (final GalaxyStar star in stars) star.book.id,
+      };
+      expect(listed, isNot(contains('n1')));
+      expect(listed, hasLength(7));
+    });
+  });
+
   group('F-MAP-06: карта есть', () {
     test('F-MAP-06: у каждой книги полки — звезда на своём месте', () async {
       await seedGalaxy(data, kTwoGroups);

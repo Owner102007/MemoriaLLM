@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'shelf_reading.dart';
+import '../../application/map/shelf_reading.dart';
 
 /// Сколько непрочитанных книг названо поимённо.
 const int kNamedUnread = 3;
@@ -52,30 +52,6 @@ String describeShelfReading(ShelfReadingProgress progress) {
           : 'Считаю карту',
     ShelfReadingPhase.idle || ShelfReadingPhase.done => '',
   };
-}
-
-/// Какая доля подготовки позади — для полосы хода; `null` — не узнать.
-double? shelfReadingShare(ShelfReadingProgress progress) {
-  switch (progress.phase) {
-    case ShelfReadingPhase.reading:
-    case ShelfReadingPhase.held:
-      if (progress.booksTotal <= 0) {
-        return null;
-      }
-      final double inBook = progress.pages > 0
-          ? progress.page / progress.pages
-          : 0.0;
-      final double share = (progress.booksDone + inBook) / progress.booksTotal;
-      return share.clamp(0, 1).toDouble();
-    case ShelfReadingPhase.mapping:
-      if (progress.mapTotal <= 0) {
-        return null;
-      }
-      return (progress.mapDone / progress.mapTotal).clamp(0, 1).toDouble();
-    case ShelfReadingPhase.idle:
-    case ShelfReadingPhase.done:
-      return null;
-  }
 }
 
 /// Что вышло с картой — одной строкой для экспериментатора.

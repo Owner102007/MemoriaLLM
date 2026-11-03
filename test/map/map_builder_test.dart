@@ -322,6 +322,33 @@ void main() {
     expect(after.points, before.points);
   });
 
+  test('F-MAP-06: расчёт ждёт своей очереди к движку PDF перед каждой '
+      'книгой и снимается, когда очередь не дали', () async {
+    await addLibrary();
+    final MapBuilder map = builder();
+    final MapPlan plan = await map.plan();
+    int turns = 0;
+    final MapOutcome built = await map.build(
+      plan,
+      turn: () async {
+        turns++;
+        return true;
+      },
+    );
+    expect(built.kind, MapOutcomeKind.built);
+    expect(turns, plan.sources.length);
+
+    await data.bookMap.clear();
+    int asked = 0;
+    final MapOutcome stopped = await map.build(
+      plan,
+      turn: () async => ++asked < 2,
+    );
+    expect(stopped.kind, MapOutcomeKind.stopped);
+    expect(asked, 2);
+    expect(await data.bookMap.load(), isNull);
+  });
+
   test('F-MAP-02: расчёт в изоляте даёт ту же карту', () async {
     await addLibrary();
     final MapBuilder here = builder();

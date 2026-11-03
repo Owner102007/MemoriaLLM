@@ -59,6 +59,12 @@ abstract final class SettingsKeys {
   /// листать ими — у того, кто держит его в руке.
   static const String volumeKeys = 'reading.volume_keys';
 
+  /// Итог подготовки книг для «Галактики» — JSON
+  /// (`ShelfIndexSummary.encode`): сколько книг прочитано и что вышло с
+  /// картой (F-MAP-06). Служебная: читатель её не видит. В ветвях
+  /// СНО2026 итог лежит под прежним ключом `sno.shelf_index`.
+  static const String shelfReading = 'map.shelf_reading';
+
   /// Листает ли кнопка «тише» вперёд: `true`/`false` (F-READ-26).
   ///
   /// Иначе вперёд листает «громче». Настройка устройства: какая кнопка

@@ -524,13 +524,18 @@ void main() {
     });
   });
 
-  group('SNO-F-IDX-04: подготовка книг — только в ветви II', () {
-    test('SNO-F-IDX-04: проход по полке заводится под флагом карты', () {
-      // Условие — константа сборки: в основном приложении и в ветви I
-      // прохода по полке нет вовсе, и код его туда не попадает.
+  group('SNO-F-IDX-04: подготовка книг — там, где есть «Галактика»', () {
+    test('SNO-F-IDX-04 F-MAP-06: проход по полке заводится под флагом '
+        'раздела', () {
+      // Условие — константа сборки: с S59 проход есть в основном
+      // приложении и в ветви II, а в ветвь I код его не попадает.
       final String services = File('lib/application/app_services.dart')
           .readAsStringSync();
-      expect(services, matches(RegExp(r'shelfReading:\s*Sno\.galaxy\s*\?')));
+      expect(
+        services,
+        matches(RegExp(r'shelfReading:\s*Sno\.galaxySection\s*\?')),
+      );
+      expect(Sno.galaxySection, !Sno.enabled || Sno.galaxy);
       expect(BranchFlags.of('').galaxy, isFalse);
       expect(BranchFlags.of(snoBranchCore).galaxy, isFalse);
       expect(BranchFlags.of(snoBranchTest).galaxy, isTrue);

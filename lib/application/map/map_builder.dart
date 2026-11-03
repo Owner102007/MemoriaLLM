@@ -159,7 +159,7 @@ class MapOutcome {
 /// SNO-F-MAP-01).
 ///
 /// Текст книг берётся из кэша текста страниц — к движку PDF расчёт не
-/// ходит: кэш наполняет проход по полке (`sno/index/shelf_reading.dart`)
+/// ходит: кэш наполняет проход по полке (`shelf_reading.dart`)
 /// или открытая книга. Книга, у которой текста в кэше нет, получает
 /// место по одному названию.
 ///
@@ -325,6 +325,7 @@ class MapBuilder {
     MapPlan plan, {
     void Function(int done, int total)? onProgress,
     bool Function()? stopped,
+    Future<bool> Function()? turn,
   }) async {
     final List<MapSource> sources = plan.sources;
     if (sources.length < kMinMapBooks) {
@@ -337,6 +338,11 @@ class MapBuilder {
     }
     final List<BookBag> bags = <BookBag>[];
     for (int i = 0; i < sources.length; i++) {
+      // Своя очередь к движку PDF (паспорт файла): пока открыта книга,
+      // расчёт ждёт; `false` — расчёт сняли.
+      if (turn != null && !await turn()) {
+        return const MapOutcome(kind: MapOutcomeKind.stopped);
+      }
       if (stopped?.call() ?? false) {
         return const MapOutcome(kind: MapOutcomeKind.stopped);
       }

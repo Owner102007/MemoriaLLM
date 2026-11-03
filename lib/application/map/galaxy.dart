@@ -2,6 +2,7 @@ import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/map/book_map.dart';
 import '../../domain/map/map_layout.dart';
+import '../../domain/map/map_order.dart';
 import '../../domain/map/map_trusted.dart';
 
 /// Книга на карте — звезда (F-MAP-02, SNO-F-MAP-01).
@@ -56,6 +57,7 @@ class Galaxy {
     required this.status,
     required this.books,
     this.stars = const <GalaxyStar>[],
+    this.constellations = const <String, List<GalaxyStar>>{},
   });
 
   /// Что можно показать.
@@ -68,6 +70,11 @@ class Galaxy {
   /// карта считалась: порядок не зависит от того, как книги стоят на
   /// полке.
   final List<GalaxyStar> stars;
+
+  /// Книги каждого созвездия — по его имени ([GalaxyStar.group]), от
+  /// типичной к особенной (F-MAP-17, D-044): список по нажатию на имя
+  /// созвездия. «Без категории» — тоже список, под [kUncategorizedTitle].
+  final Map<String, List<GalaxyStar>> constellations;
 
   /// Сколько книг полки на карте места не получили: их добавили после
   /// расчёта, и место им даст следующая подготовка книг.
@@ -95,21 +102,22 @@ Future<Galaxy> loadGalaxy({
     return Galaxy(status: GalaxyStatus.noMap, books: books.length);
   }
   final List<GalaxyStar> stars = <GalaxyStar>[];
+  final List<MapPoint> placed = <MapPoint>[];
   for (final Book book in books) {
     final MapPoint? point = stored.points[book.id];
     if (point == null || point.key != book.fileHash) {
       continue;
     }
-    stars.add(
-      GalaxyStar(
-        book: book,
-        x: point.x,
-        y: point.y,
-        group: point.constellation < 0 ? kUncategorizedTitle : point.name,
-        ms: times[book.id] ?? 0,
-        reason: point.reason,
-      ),
+    final GalaxyStar star = GalaxyStar(
+      book: book,
+      x: point.x,
+      y: point.y,
+      group: point.constellation < 0 ? kUncategorizedTitle : point.name,
+      ms: times[book.id] ?? 0,
+      reason: point.reason,
     );
+    stars.add(star);
+    placed.add(point);
   }
   if (stars.isEmpty) {
     return Galaxy(status: GalaxyStatus.noMap, books: books.length);
@@ -117,5 +125,42 @@ Future<Galaxy> loadGalaxy({
   stars.sort(
     (GalaxyStar a, GalaxyStar b) => a.book.fileHash.compareTo(b.book.fileHash),
   );
-  return Galaxy(status: GalaxyStatus.ready, books: books.length, stars: stars);
+  return Galaxy(
+    status: GalaxyStatus.ready,
+    books: books.length,
+    stars: stars,
+    constellations: _constellationsOf(stars, placed),
+  );
+}
+
+/// Книги каждого созвездия от типичной к особенной (F-MAP-17).
+///
+/// Порядок даёт `constellationOrder` — с самой карты: типичная книга
+/// стоит ближе всех к центру созвездия. Считаются только точки книг,
+/// которые на полке и на карте ([placed]): книги, снятые с полки,
+/// порядок не сдвигают.
+Map<String, List<GalaxyStar>> _constellationsOf(
+  List<GalaxyStar> stars,
+  List<MapPoint> placed,
+) {
+  // Место на карте у файла одно: две книги полки с одним файлом карта
+  // знает как одну (`MapBuilder.plan`), вторая звезды не получает.
+  final Map<String, GalaxyStar> byKey = <String, GalaxyStar>{
+    for (final GalaxyStar star in stars) star.book.fileHash: star,
+  };
+  final Set<int> numbers = <int>{
+    for (final MapPoint point in placed) point.constellation,
+  };
+  final Map<String, List<GalaxyStar>> out = <String, List<GalaxyStar>>{};
+  for (final int number in numbers.toList()..sort()) {
+    final List<GalaxyStar> ordered = <GalaxyStar>[
+      for (final MapPoint point in constellationOrder(placed, number))
+        byKey[point.key]!,
+    ];
+    // Имена созвездий различаются номером («… 2»), и список по имени не
+    // затирает другой (ALG-MAP-10).
+    assert(!out.containsKey(ordered.first.group), 'имя созвездия повторилось');
+    out[ordered.first.group] = List<GalaxyStar>.unmodifiable(ordered);
+  }
+  return out;
 }

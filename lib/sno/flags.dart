@@ -185,8 +185,13 @@ abstract final class Sno {
   /// Литература в поставке; книги — копии внутри приложения.
   static const bool literature = enabled;
 
-  /// Карта книг «Галактика».
+  /// Карта книг «Галактика» в ветви: её события в журнале записи,
+  /// полоска подготовки над полкой, экран не гаснет, пока книги читаются.
   static const bool galaxy = _raw == snoBranchTest;
+
+  /// Раздел «Галактика» в навигации (F-MAP-06, S59): в основном
+  /// приложении и в ветви II; в ветви I его нет, как не было.
+  static const bool galaxySection = !enabled || galaxy;
 
   /// Индекс, второй мозг, память книги, окно поиска.
   static const bool palimpsest = _raw == snoBranchTest;

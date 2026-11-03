@@ -2,6 +2,7 @@ import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/library/cover_service.dart';
 import 'package:memoria/application/library/device_library.dart';
+import 'package:memoria/application/map/shelf_reading.dart';
 import 'package:memoria/application/reading/book_times.dart';
 import 'package:memoria/domain/library/archive_scan.dart';
 import 'package:memoria/domain/library/book_file_picker.dart';
@@ -15,7 +16,6 @@ import 'package:memoria/domain/reading/volume_keys.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
 import 'package:memoria/sno/clt/load_test.dart';
 import 'package:memoria/sno/eye/eye_tracker.dart';
-import 'package:memoria/sno/index/shelf_reading.dart';
 import 'package:memoria/sno/recording/records.dart';
 import 'package:memoria/sno/recording/session.dart';
 

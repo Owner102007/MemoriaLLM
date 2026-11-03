@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/map/map_builder.dart';
+import 'package:memoria/application/map/shelf_reading.dart';
 import 'package:memoria/domain/library/book.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_source.dart';
@@ -8,7 +9,7 @@ import 'package:memoria/domain/map/book_bag.dart';
 import 'package:memoria/domain/map/book_map.dart';
 import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
-import 'package:memoria/sno/index/shelf_reading.dart';
+import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/sno/settings_keys.dart';
 
 import '../data/test_data.dart';
@@ -131,6 +132,7 @@ void main() {
     int Function()? nowMs,
     bool Function()? screenBusy,
     int batch = 2,
+    bool branch = true,
   }) {
     final ShelfReading pass = ShelfReading(
       library: data.library,
@@ -145,7 +147,12 @@ void main() {
         bags: (BagRequest request) async => bagOfBook(request),
         layout: (List<BookBag> bags) async => buildBookMap(bags),
       ),
-      device: device,
+      // Ветвь II: итог под прежним ключом, экран не гаснет. Основное
+      // приложение ([branch] = false) — значения по умолчанию.
+      summaryKey: branch
+          ? SnoSettingsKeys.shelfIndex
+          : SettingsKeys.shelfReading,
+      keepScreenOn: branch ? device.keepScreenOn : null,
       screenBusy: screenBusy,
       nowMs: nowMs,
       batch: batch,
@@ -625,6 +632,132 @@ void main() {
     made.remove(pass);
     expect(a.textReads.keys.toSet(), <int>{1, 2, 3});
     expect(a.closes, 1);
+  });
+
+  test('F-MAP-11: «Остановить» — проход кончается, прочитанное '
+      'остаётся, карта не считается', () async {
+    final _Volume a = await shelve('a', pagesOf('артерии', 6));
+    await shelve('b', pagesOf('вены', 3));
+    await shelve('c', pagesOf('лимфу', 4));
+    final ShelfReading pass = reading(branch: false);
+    a.onRead = (int page) async {
+      if (page == 3) {
+        pass.stop();
+      }
+    };
+    pass.start();
+    await pass.settled();
+    expect(pass.stopped, isTrue);
+    expect(pass.progress.busy, isFalse);
+    expect(pass.progress.phase, ShelfReadingPhase.idle);
+    expect(a.textReads.keys.toSet(), <int>{1, 2, 3});
+    expect(a.closes, 1, reason: 'свой файл проход закрыл');
+    expect(
+      await data.pageTexts.cachedPages(keyOf('a')),
+      hasLength(3),
+      reason: 'прочитанное записано',
+    );
+    expect(await data.pageTexts.cachedPages(keyOf('b')), isEmpty);
+    expect(await data.bookMap.load(), isNull, reason: 'карта не считалась');
+
+    // «Посчитать карту» — тот же проход с того же места.
+    a.onRead = null;
+    pass.start();
+    expect(pass.stopped, isFalse);
+    await pass.settled();
+    expect(a.textReads.keys.toSet(), <int>{1, 2, 3, 4, 5, 6});
+    expect(a.textReads[1], 1, reason: 'прочитанное не перечитано');
+    expect((await data.bookMap.load())!.points, hasLength(3));
+  });
+
+  test(
+    'F-MAP-11: «Остановить», пока открыта книга, — проход не ждёт её',
+    () async {
+      await shelve('a', pagesOf('артерии', 4));
+      final ShelfReading pass = reading(branch: false);
+      pass.held = true;
+      pass.start();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(pass.progress.phase, ShelfReadingPhase.held);
+      pass.stop();
+      await pass.settled();
+      expect(pass.progress.busy, isFalse);
+      expect(await data.bookMap.load(), isNull);
+    },
+  );
+
+  test('F-MAP-11: «Остановить» и сразу «Посчитать карту» — ход снова '
+      'виден, карта считается', () async {
+    final _Volume a = await shelve('a', pagesOf('артерии', 6));
+    await shelve('b', pagesOf('вены', 3));
+    await shelve('c', pagesOf('лимфу', 4));
+    final ShelfReading pass = reading(branch: false);
+    final List<ShelfReadingPhase> after = <ShelfReadingPhase>[];
+    bool restarted = false;
+    pass.addListener(() {
+      if (restarted && (after.isEmpty || after.last != pass.progress.phase)) {
+        after.add(pass.progress.phase);
+      }
+    });
+    a.onRead = (int page) async {
+      if (page == 3 && !restarted) {
+        // Проход ещё сворачивается, а читатель уже передумал.
+        pass.stop();
+        pass.start();
+        restarted = true;
+      }
+    };
+    pass.start();
+    await pass.settled();
+
+    expect(pass.stopped, isFalse);
+    expect(after, contains(ShelfReadingPhase.reading));
+    expect(after, contains(ShelfReadingPhase.mapping));
+    expect(after.last, ShelfReadingPhase.done);
+    expect((await data.bookMap.load())!.points, hasLength(3));
+    expect(pass.running, isFalse);
+  });
+
+  test('F-MAP-06: пока открыта книга, расчёт карты ждёт', () async {
+    await shelve('a', pagesOf('артерии', 2));
+    await shelve('b', pagesOf('вены', 2));
+    await shelve('c', pagesOf('лимфу', 2));
+    final ShelfReading pass = reading(branch: false);
+    bool opened = false;
+    pass.addListener(() {
+      // Книгу открыли, как только начался расчёт карты, — один раз.
+      if (pass.progress.phase == ShelfReadingPhase.mapping && !opened) {
+        opened = true;
+        pass.held = true;
+      }
+    });
+    pass.start();
+    for (
+      int i = 0;
+      i < 50 && pass.progress.phase != ShelfReadingPhase.held;
+      i++
+    ) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(pass.progress.phase, ShelfReadingPhase.held);
+    expect(await data.bookMap.load(), isNull, reason: 'расчёт стоит');
+    pass.held = false;
+    await pass.settled();
+    expect((await data.bookMap.load())!.points, hasLength(3));
+  });
+
+  test('F-MAP-06: в основном приложении итог — под ключом продукта, '
+      'экран не держится', () async {
+    await shelve('a', pagesOf('артерии', 3));
+    final ShelfReading pass = reading(branch: false);
+    pass.start();
+    await pass.settled();
+    expect(device.screen, isEmpty, reason: 'экран не трогают');
+    expect(settings.values[SettingsKeys.shelfReading], isNotNull);
+    expect(settings.values[SnoSettingsKeys.shelfIndex], isNull);
+    final ShelfReading again = reading(branch: false);
+    await again.restore();
+    expect(again.summary!.complete, isTrue);
   });
 
   test('SNO-F-IDX-04: отложенное начало ждёт своего срока', () async {

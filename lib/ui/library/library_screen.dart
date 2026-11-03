@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../application/app_services.dart';
 import '../../application/library/source_release.dart';
+import '../../application/map/shelf_reading.dart';
 import '../../domain/library/book.dart';
 import '../../domain/library/book_category.dart';
 import '../../domain/library/drag_scroll.dart';
@@ -12,7 +13,6 @@ import '../../domain/library/shelf_title_search.dart';
 import '../../domain/navigation/sections.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/settings/app_settings.dart';
-import '../../sno/index/shelf_reading.dart';
 import '../../sno/index/shelf_reading_view.dart';
 import '../../sno/recording/action_log.dart';
 import '../../sno/recording/event.dart';
@@ -46,8 +46,16 @@ class LibraryScreen extends StatefulWidget {
     this.models = true,
     this.ribbon = true,
     this.visible = true,
+    this.readingStrip = true,
     super.key,
   });
+
+  /// Показывать ли над полкой полоску подготовки книг (SNO-F-IDX-04).
+  ///
+  /// В ветви II — да, как в исследовании. В основном приложении — нет:
+  /// ход подготовки виден в разделе «Галактика» (F-MAP-06), а полка
+  /// стоит как стояла.
+  final bool readingStrip;
 
   /// Службы приложения.
   final AppServices services;
@@ -917,12 +925,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// Кладёт над полкой полоску подготовки книг (SNO-F-IDX-04).
   ///
-  /// Подготовка есть только в сборке ветви II; в остальных полка стоит
-  /// как стояла. Полоска видна, только пока книги читаются или
+  /// Полоска — только в ветви II ([LibraryScreen.readingStrip]); в
+  /// остальных полка стоит как стояла. Полоска видна, только пока книги читаются или
   /// считается карта, и нажатий не принимает.
   Widget _underReadingStrip(Widget shelf) {
     final ShelfReading? reading = widget.services.shelfReading;
-    if (reading == null) {
+    if (reading == null || !widget.readingStrip) {
       return shelf;
     }
     return Column(

@@ -8,9 +8,9 @@
 /// и итог с отпечатком карты.
 library;
 
+import '../../application/map/shelf_reading.dart';
 import '../recording/action_log.dart';
 import '../recording/event.dart';
-import 'shelf_reading.dart';
 
 /// Что о ходе подготовки пишется в журнал.
 Map<String, Object?> shelfReadingFacts(

@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/map/galaxy.dart';
-import 'package:memoria/sno/index/shelf_reading.dart';
+import 'package:memoria/application/map/shelf_reading.dart';
 import 'package:memoria/sno/participant_code.dart';
 import 'package:memoria/ui/galaxy/galaxy_painter.dart';
 import 'package:memoria/ui/galaxy/galaxy_screen.dart';
