@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../application/app_services.dart';
 import '../../application/library/cover_service.dart';
 import '../../application/map/galaxy.dart';
+import '../../application/map/shelf_reading.dart';
 import '../../domain/library/book.dart';
 import '../../domain/map/map_layout.dart';
 import '../../domain/map/map_trusted.dart';
@@ -15,8 +16,6 @@ import '../../domain/map/map_view.dart';
 import '../../domain/navigation/sections.dart';
 import '../../domain/reading/reading.dart';
 import '../../domain/theme/app_palette.dart';
-import '../../sno/index/shelf_reading.dart';
-import '../../sno/index/shelf_reading_view.dart';
 import '../../sno/recording/action_log.dart';
 import '../../sno/recording/event.dart';
 import '../../sno/recording/layout_frames.dart';
@@ -37,19 +36,23 @@ const double kGalaxyDoubleTapSlop = 24;
 /// Ширина карточки книги рядом с точкой — на широком окне.
 const double kGalaxyCardWidth = 340;
 
+/// С каким запасом имя созвездия ловит нажатие, в логических пикселях.
+const double kGalaxyLabelSlop = 8;
+
 /// Раздел «Галактика»: книги полки картой (F-MAP-06, SNO-F-MAP-01,
 /// экран SCR-04).
 ///
-/// Книга — точка; близкие по содержанию книги стоят рядом, книги одной
-/// категории — одной группой под её названием. Карту здесь не считают:
-/// места книг посчитаны заранее подготовкой книг
-/// (`sno/index/shelf_reading.dart`) и лежат на устройстве. Пока
-/// подготовка идёт, карты нет или книг для неё мало, раздел говорит об
-/// этом словами (F-MAP-11) — пустого поля читатель не видит никогда.
+/// Книга — точка; близкие по содержанию книги стоят рядом, книги одного
+/// созвездия — одной группой под его именем; нажатие на имя — список
+/// книг созвездия от типичной к особенной (F-MAP-17). Карту здесь не
+/// считают: места книг посчитаны подготовкой книг
+/// (`application/map/shelf_reading.dart`) и лежат на устройстве. Пока
+/// карты нет или книг для неё мало, раздел говорит об этом словами
+/// (F-MAP-11) — пустого поля читатель не видит никогда.
 ///
-/// Раздел пока есть только в сборке ветви II СНО2026; признак сборки
-/// сюда не приходит — что показывать, решают службы: есть ли подготовка
-/// книг и счёт времени чтения.
+/// Раздел есть в основном приложении (S59) и в сборке ветви II СНО2026.
+/// Признак сборки сюда приходит одним [mainApp]: в ветви II раздел
+/// ведёт себя, как вёл в исследовании.
 class GalaxyScreen extends StatefulWidget {
   /// Создаёт раздел.
   const GalaxyScreen({
@@ -59,8 +62,19 @@ class GalaxyScreen extends StatefulWidget {
     this.canRelink = true,
     this.models = true,
     this.ribbon = true,
+    this.mainApp = false,
     super.key,
   });
+
+  /// Основное приложение (`true`) или ветвь II СНО2026 (F-MAP-06, S59).
+  ///
+  /// В основном приложении книги встают на полку когда угодно, и раздел
+  /// ведёт себя иначе: открытый — проверяет, всё ли прочитано, и при
+  /// нужде запускает подготовку книг; пока она идёт, прежняя карта стоит
+  /// на месте, ход — строкой под ней, с кнопкой «Остановить»; имена
+  /// созвездий нажимаются. В ветви II полку раскладывает архив, и на
+  /// время подготовки карта прячется — как в записях исследования.
+  final bool mainApp;
 
   /// Службы приложения.
   final AppServices services;
@@ -115,6 +129,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     if (widget.visible) {
       _sayOpen = true;
       unawaited(_load());
+      _prepare();
     }
   }
 
@@ -131,6 +146,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     }
     if (widget.visible && !oldWidget.visible) {
       _sayOpen = true;
+      _prepare();
     }
     if (!identical(oldWidget.services, widget.services) ||
         (widget.visible && !oldWidget.visible)) {
@@ -144,6 +160,22 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     super.dispose();
   }
 
+  /// Раздел открыли в основном приложении: если на полке есть
+  /// непрочитанное или карта устарела, подготовка книг начинается
+  /// (F-MAP-06). Когда всё готово, проход только сверяется с базой и
+  /// молчит. Остановленную читателем подготовку раздел сам не будит —
+  /// для этого кнопка «Посчитать карту».
+  void _prepare() {
+    final ShelfReading? reading = _reading;
+    if (!widget.mainApp ||
+        reading == null ||
+        reading.stopped ||
+        reading.progress.busy) {
+      return;
+    }
+    reading.start();
+  }
+
   /// Подготовка книг сдвинулась: ход на экране обновляется, а когда она
   /// кончилась — карта читается заново, она могла пересчитаться.
   void _readingChanged() {
@@ -154,10 +186,11 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     final bool finished = _wasBusy && !busy;
     _wasBusy = busy;
     setState(() {
-      if (finished && widget.visible) {
-        // Прежняя карта посчитана до этой подготовки: на тот кадр,
-        // пока читается новая, её на экране нет — и в журнал записи
-        // она не попадает.
+      if (finished && widget.visible && !widget.mainApp) {
+        // Ветвь II: прежняя карта посчитана до этой подготовки — на тот
+        // кадр, пока читается новая, её на экране нет, и в журнал записи
+        // она не попадает. В основном приложении прежняя карта стоит,
+        // пока не прочитается новая: экран не мигает.
         _galaxy = null;
       }
     });
@@ -205,8 +238,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
   /// Какие слова стоят в разделе вместо карты; `null` — карта на
   /// экране либо раздел ещё читает её.
   String? _emptyState() {
-    final ShelfReadingProgress? progress = _reading?.progress;
-    if (progress != null && progress.busy) {
+    if (_busy && !widget.mainApp) {
       return 'preparing';
     }
     if (_failed) {
@@ -214,10 +246,13 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     }
     return switch (_galaxy?.status) {
       GalaxyStatus.tooFew => 'too_few',
-      GalaxyStatus.noMap => 'no_map',
+      GalaxyStatus.noMap => _busy ? 'preparing' : 'no_map',
       GalaxyStatus.ready || null => null,
     };
   }
+
+  /// Идёт ли подготовка книг.
+  bool get _busy => _reading?.progress.busy ?? false;
 
   /// SNO-F-MAP-01: раздел открыли, а карты в нём нет — в журнале
   /// записи сказано, что участник увидел вместо неё. Карту на экране
@@ -301,8 +336,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
   /// Что раздел показывает: карту или слова вместо неё — то же
   /// ветвление, что в [_body].
   String get _shows {
-    final ShelfReadingProgress? progress = _reading?.progress;
-    if (progress != null && progress.busy) {
+    if (_busy && !widget.mainApp) {
       return 'preparing';
     }
     if (_failed) {
@@ -314,7 +348,7 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
     }
     return switch (galaxy.status) {
       GalaxyStatus.tooFew => 'too_few',
-      GalaxyStatus.noMap => 'no_map',
+      GalaxyStatus.noMap => _busy ? 'preparing' : 'no_map',
       GalaxyStatus.ready => 'map',
     };
   }
@@ -322,9 +356,10 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
   Widget _body(BuildContext context) {
     final ShelfReading? reading = _reading;
     final ShelfReadingProgress? progress = reading?.progress;
-    if (progress != null && progress.busy) {
-      // Карта считается по тексту всех книг: пока он читается, прежняя
-      // карта устарела, а новой ещё нет.
+    final bool busy = progress != null && progress.busy;
+    if (busy && !widget.mainApp) {
+      // Ветвь II: карта считается по тексту всех книг — пока он
+      // читается, прежняя карта устарела, а новой ещё нет.
       return _Notice(
         key: const Key('galaxy-preparing'),
         icon: Icons.hourglass_empty,
@@ -354,6 +389,18 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
           lines: describeTooFew(galaxy.books),
         );
       case GalaxyStatus.noMap:
+        if (busy) {
+          // Основное приложение, карты ещё нет: ход подготовки и
+          // «Остановить» (F-MAP-11). Прочитанное не теряется.
+          return _Notice(
+            key: const Key('galaxy-preparing'),
+            icon: Icons.hourglass_empty,
+            lines: describeGalaxyPreparing(progress),
+            share: shelfReadingShare(progress),
+            action: 'Остановить',
+            onAction: reading?.stop,
+          );
+        }
         return _Notice(
           key: const Key('galaxy-no-map'),
           icon: Icons.auto_awesome_outlined,
@@ -375,9 +422,18 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
                 onOpen: (Book book) => unawaited(_openBook(book)),
                 log: _log,
                 opened: _opens,
+                constellations: widget.mainApp
+                    ? galaxy.constellations
+                    : const <String, List<GalaxyStar>>{},
               ),
             ),
-            if (galaxy.missing > 0)
+            if (busy && reading != null)
+              _PreparingStrip(
+                key: const Key('galaxy-preparing-strip'),
+                progress: progress,
+                onStop: reading.stop,
+              )
+            else if (galaxy.missing > 0)
               _MissingStrip(
                 key: const Key('galaxy-missing'),
                 missing: galaxy.missing,
@@ -510,6 +566,58 @@ class _Notice extends StatelessWidget {
   }
 }
 
+/// Строка под картой, пока книги готовятся (F-MAP-11, основное
+/// приложение): что делается, полоса хода и «Остановить». Карта над ней
+/// — прежняя: новая встанет, когда подготовка кончится.
+class _PreparingStrip extends StatelessWidget {
+  const _PreparingStrip({
+    required this.progress,
+    required this.onStop,
+    super.key,
+  });
+
+  final ShelfReadingProgress progress;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final List<String> lines = describeGalaxyPreparing(progress);
+    return Material(
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 4, 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    lines.isEmpty ? '' : lines.first,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  key: const Key('galaxy-stop'),
+                  onPressed: onStop,
+                  child: const Text('Остановить'),
+                ),
+              ],
+            ),
+            LinearProgressIndicator(value: shelfReadingShare(progress)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Строка под картой: каких книг на ней нет.
 class _MissingStrip extends StatelessWidget {
   const _MissingStrip({required this.missing, super.key});
@@ -560,8 +668,14 @@ class GalaxyMap extends StatefulWidget {
     this.nowMs,
     this.log,
     this.opened = 0,
+    this.constellations = const <String, List<GalaxyStar>>{},
     super.key,
   });
+
+  /// Книги созвездий от типичной к особенной — по имени созвездия
+  /// (F-MAP-17, `Galaxy.constellations`). Нажатие на имя созвездия
+  /// открывает его список; пусто — имена не нажимаются (ветвь II).
+  final Map<String, List<GalaxyStar>> constellations;
 
   /// Журнал действий участника (SNO-F-MAP-01): что на карте, куда она
   /// смотрит, на какую точку нажали; `null` — записи в сборке нет.
@@ -603,6 +717,9 @@ class GalaxyMapState extends State<GalaxyMap> {
   /// Выбранная книга — по идентификатору: звёзды могут прийти заново.
   String? _selectedId;
   double? _progress;
+
+  /// Созвездие, чей список открыт (F-MAP-17); `null` — списка нет.
+  String? _group;
 
   // Щипок и перетаскивание: точка карты, взятая пальцами.
   double _grabX = 0;
@@ -649,6 +766,9 @@ class GalaxyMapState extends State<GalaxyMap> {
   /// Выбранная книга; `null` — карточки нет.
   String? get selectedId => _selectedId;
 
+  /// Созвездие, чей список открыт; `null` — списка нет.
+  String? get openGroup => _group;
+
   @override
   void initState() {
     super.initState();
@@ -679,6 +799,10 @@ class GalaxyMapState extends State<GalaxyMap> {
         // выбранной книги могло вырасти.
         unawaited(_loadProgress(id));
       }
+    }
+    if (_group != null && !widget.constellations.containsKey(_group)) {
+      // Карта пересчиталась, и созвездия с этим именем больше нет.
+      _group = null;
     }
   }
 
@@ -848,6 +972,52 @@ class GalaxyMapState extends State<GalaxyMap> {
     return null;
   }
 
+  /// По имени какого созвездия попала точка экрана [at]; `null` — мимо
+  /// или имена в этой сборке не нажимаются (F-MAP-17).
+  ///
+  /// Имя ловит нажатие с запасом в [kGalaxyLabelSlop] точек: подпись —
+  /// строка мелкого текста, и попасть в неё пальцем трудно.
+  String? groupAt(Offset at) {
+    final GalaxyScene? scene = _scene;
+    if (scene == null || widget.constellations.isEmpty) {
+      return null;
+    }
+    for (final GalaxyLabel label in scene.labels) {
+      if (label.group &&
+          label.rect.inflate(kGalaxyLabelSlop).contains(at) &&
+          widget.constellations.containsKey(label.text)) {
+        return label.text;
+      }
+    }
+    return null;
+  }
+
+  /// Открывает список созвездия [name] (F-MAP-17); карточка книги,
+  /// если была, закрывается.
+  void _openGroup(String name) {
+    final String? before = _selectedId;
+    setState(() {
+      _group = name;
+      _selectedId = null;
+      _progress = null;
+    });
+    if (before != null) {
+      _sayCard(widget.stars, before, open: false, by: 'group');
+    }
+  }
+
+  /// Читатель выбрал книгу в списке созвездия: список уходит, у звезды
+  /// открывается карточка книги — оттуда её читают.
+  void _pickFromList(GalaxyStar star) {
+    setState(() {
+      _group = null;
+      _selectedId = star.book.id;
+      _progress = null;
+    });
+    _sayCard(widget.stars, star.book.id, open: true);
+    unawaited(_loadProgress(star.book.id));
+  }
+
   /// По какой звезде попала точка экрана [at]; `null` — мимо
   /// (ALG-MAP-13).
   int? starAt(Offset at) {
@@ -882,6 +1052,15 @@ class GalaxyMapState extends State<GalaxyMap> {
       });
       _sayView('double_tap');
       return;
+    }
+    final String? name = groupAt(at);
+    if (name != null) {
+      _openGroup(name);
+      return;
+    }
+    if (_group != null) {
+      // Нажатие по карте мимо имени закрывает список созвездия.
+      setState(() => _group = null);
     }
     final int? hit = starAt(at);
     final String? id = hit == null ? null : widget.stars[hit].book.id;
@@ -1056,10 +1235,41 @@ class GalaxyMapState extends State<GalaxyMap> {
               ),
               if (selected != null)
                 _placeCard(scene, selected, constraints.biggest),
+              if (_group case final String group)
+                _placeList(group, constraints.biggest),
             ],
           ),
         );
       },
+    );
+  }
+
+  /// Ставит список созвездия [group]: на узком экране — у нижнего края
+  /// во всю ширину, не выше половины карты; на окне от [kTopNavWidth]
+  /// точек — у правого края во всю высоту (набросок SCR-04.9).
+  Widget _placeList(String group, Size size) {
+    final Widget list = GalaxyConstellationList(
+      key: const Key('galaxy-list'),
+      name: group,
+      stars: widget.constellations[group] ?? const <GalaxyStar>[],
+      onPick: _pickFromList,
+      onClose: () => setState(() => _group = null),
+    );
+    if (navPlacementFor(size.width) == NavPlacement.bottom) {
+      return Positioned(
+        left: 8,
+        right: 8,
+        bottom: 8,
+        height: math.max(160, size.height / 2 - 8),
+        child: list,
+      );
+    }
+    return Positioned(
+      right: 8,
+      top: 8,
+      bottom: 8,
+      width: kGalaxyCardWidth,
+      child: list,
     );
   }
 
@@ -1115,6 +1325,122 @@ class GalaxyMapState extends State<GalaxyMap> {
       child: card,
     );
   }
+}
+
+/// Список созвездия по нажатию на его имя (F-MAP-17, D-044): книги от
+/// самой типичной — у неё больше всего общего с остальными книгами
+/// созвездия — к самой особенной.
+class GalaxyConstellationList extends StatelessWidget {
+  /// Создаёт список.
+  const GalaxyConstellationList({
+    required this.name,
+    required this.stars,
+    required this.onPick,
+    required this.onClose,
+    super.key,
+  });
+
+  /// Имя созвездия.
+  final String name;
+
+  /// Книги созвездия — уже по порядку (`Galaxy.constellations`).
+  final List<GalaxyStar> stars;
+
+  /// Читатель выбрал книгу.
+  final ValueChanged<GalaxyStar> onPick;
+
+  /// Закрыть список.
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surface,
+      elevation: 6,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 4, 4),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        name,
+                        key: const Key('galaxy-list-name'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      Text(
+                        describeConstellationCount(stars.length),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  key: const Key('galaxy-list-close'),
+                  icon: const Icon(Icons.close, size: 18),
+                  tooltip: 'Закрыть',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onClose,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView.builder(
+              itemCount: stars.length,
+              itemBuilder: (BuildContext context, int i) {
+                final GalaxyStar star = stars[i];
+                final String? author = star.book.author;
+                return ListTile(
+                  key: Key('galaxy-list-${star.book.id}'),
+                  dense: true,
+                  title: Text(
+                    star.book.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: author == null || author.isEmpty
+                      ? null
+                      : Text(
+                          author,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                  onTap: () => onPick(star),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Строка под именем созвездия: сколько в нём книг и в каком они
+/// порядке — «6 книг · от типичной к особенной».
+String describeConstellationCount(int books) {
+  final int last = books % 10;
+  final int lastTwo = books % 100;
+  final String word = lastTwo >= 11 && lastTwo <= 14
+      ? 'книг'
+      : last == 1
+      ? 'книга'
+      : last >= 2 && last <= 4
+      ? 'книги'
+      : 'книг';
+  return '$books $word · от типичной к особенной';
 }
 
 /// Карточка книги у звезды (F-MAP-08, кадр SCR-04.3): обложка,

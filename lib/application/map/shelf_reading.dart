@@ -1,16 +1,32 @@
+/// Подготовка книг полки для «Галактики»: текст всех книг и карта
+/// (F-MAP-06, F-MAP-11; родом из ветви II — SNO-F-IDX-04).
+///
+/// Зачем. Карта складывается из текста книг, а текст книги в кэш
+/// кладёт открытая книга — от места чтения вперёд. Книгу, которую не
+/// открывали, карта знала бы только по названию. Подготовка читает
+/// книги полки по одной в тот же кэш, а когда прочитаны все — считает
+/// карту (`MapBuilder`).
+///
+/// Кто зовёт: `AppServices` создаёт, `main.dart` запускает после старта,
+/// раздел «Галактика» показывает ход, «Остановить» и «Посчитать карту»;
+/// оболочка (`ui/app.dart`) говорит, когда открыта книга
+/// ([ShelfReading.held]).
+///
+/// До S59 файл жил в `lib/sno/index/` и работал только в сборке ветви II
+/// СНО2026; перенесён в продукт по D-003 (см. учебную заметку S59).
+library;
+
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
-import '../../application/map/map_builder.dart';
-import '../../application/reading/book_text.dart';
 import '../../domain/library/book.dart';
 import '../../domain/reading/page_text.dart';
 import '../../domain/reading/reader_document.dart';
 import '../../domain/settings/app_settings.dart';
-import '../recording/device_status.dart';
-import '../settings_keys.dart';
+import '../reading/book_text.dart';
+import 'map_builder.dart';
 
 /// Через сколько после запуска приложения начинается проход по полке.
 ///
@@ -38,7 +54,8 @@ enum ShelfReadingPhase {
   done,
 }
 
-/// Ход подготовки книг — для полоски на полке и раздела «Тестирование».
+/// Ход подготовки книг — для раздела «Галактика», полоски на полке и
+/// раздела «Тестирование» ветвей СНО2026.
 @immutable
 class ShelfReadingProgress {
   /// Создаёт ход.
@@ -110,6 +127,30 @@ class ShelfReadingProgress {
       mapTotal: mapTotal ?? this.mapTotal,
       elapsedMs: elapsedMs ?? this.elapsedMs,
     );
+  }
+}
+
+/// Какая доля подготовки позади — для полосы хода; `null` — не узнать.
+double? shelfReadingShare(ShelfReadingProgress progress) {
+  switch (progress.phase) {
+    case ShelfReadingPhase.reading:
+    case ShelfReadingPhase.held:
+      if (progress.booksTotal <= 0) {
+        return null;
+      }
+      final double inBook = progress.pages > 0
+          ? progress.page / progress.pages
+          : 0.0;
+      final double share = (progress.booksDone + inBook) / progress.booksTotal;
+      return share.clamp(0, 1).toDouble();
+    case ShelfReadingPhase.mapping:
+      if (progress.mapTotal <= 0) {
+        return null;
+      }
+      return (progress.mapDone / progress.mapTotal).clamp(0, 1).toDouble();
+    case ShelfReadingPhase.idle:
+    case ShelfReadingPhase.done:
+      return null;
   }
 }
 
@@ -312,17 +353,16 @@ class _BookResult {
   final int fresh;
 }
 
-/// Подготовка книг полки: текст всех книг и карта (SNO-F-IDX-04,
-/// SNO-F-MAP-01, расхождение SNO-DIV-04).
+/// Подготовка книг полки: текст всех книг и карта (F-MAP-06,
+/// SNO-F-IDX-04).
 ///
-/// В основном приложении текст книги запоминает открытая книга — от
-/// места чтения вперёд. В ветви II литература известна заранее, а
-/// сессия длится сорок минут: карта и поиск по содержимому обязаны
-/// существовать до первого участника. Поэтому после раскладки архива —
-/// и при каждом запуске, если что-то осталось, — книги полки читаются
-/// по одной, тем же движком и в тот же кэш текста страниц, что у
-/// открытой книги (`page_texts`), а когда прочитаны все, считается
-/// карта (`MapBuilder`).
+/// Открытая книга запоминает свой текст сама — от места чтения вперёд.
+/// Карте нужен текст всех книг полки, поэтому при каждом запуске
+/// приложения (и по «Посчитать карту») книги полки читаются по одной,
+/// тем же движком и в тот же кэш текста страниц, что у открытой книги
+/// (`page_texts`), а когда прочитаны все, считается карта (`MapBuilder`).
+/// В ветви II СНО2026 так же — после раскладки архива: там карта обязана
+/// существовать до первого участника.
 ///
 /// **Проход уступает читателю.** Движок PDF один на приложение: пока
 /// открыта книга ([held]), проход стоит и свой файл закрывает, а когда
@@ -339,12 +379,21 @@ class _BookResult {
 /// текст уже прочитан и карта посчитана — проход сверяет это с базой и
 /// молчит, полоска над полкой не появляется.
 ///
+/// **Читатель может остановить** подготовку ([stop]) — прочитанное
+/// остаётся, следующий [start] продолжит.
+///
 /// Проход идёт, только пока приложение открыто: службы переднего плана
-/// у него нет. Пока он читает, экран не гаснет.
+/// у него нет. Экран он держит, только если ему дали `keepScreenOn`
+/// (ветвь II).
 class ShelfReading extends ChangeNotifier {
   /// Создаёт подготовку.
   ///
   /// [nowMs] — часы, которые не идут назад; в тестах подменяются.
+  /// [summaryKey] — под каким ключом настроек лежит итог: у ветвей
+  /// СНО2026 он прежний, `sno.shelf_index`.
+  /// [keepScreenOn] держит экран включённым, пока проход читает; `null`
+  /// — экран не трогается (обычное приложение: читателю это разрядило
+  /// бы телефон, а сорокаминутной записи ветви II — было нужно).
   /// [screenBusy] отвечает, держит ли экран включённым кто-то ещё
   /// (запись сессии): тогда подготовка экран не трогает вовсе.
   ShelfReading({
@@ -353,7 +402,8 @@ class ShelfReading extends ChangeNotifier {
     required PageTextRepository texts,
     required AppSettingsRepository settings,
     required MapBuilder map,
-    DeviceStatus device = const NoDeviceStatus(),
+    String summaryKey = SettingsKeys.shelfReading,
+    Future<void> Function(bool on)? keepScreenOn,
     bool Function()? screenBusy,
     int Function()? nowMs,
     int textVersion = kPageTextVersion,
@@ -363,7 +413,8 @@ class ShelfReading extends ChangeNotifier {
        _texts = texts,
        _settings = settings,
        _map = map,
-       _device = device,
+       _summaryKey = summaryKey,
+       _keepScreenOn = keepScreenOn,
        _screenBusy = screenBusy,
        _nowMs = nowMs ?? _monotonicMs,
        _textVersion = textVersion,
@@ -378,7 +429,8 @@ class ShelfReading extends ChangeNotifier {
   final PageTextRepository _texts;
   final AppSettingsRepository _settings;
   final MapBuilder _map;
-  final DeviceStatus _device;
+  final String _summaryKey;
+  final Future<void> Function(bool on)? _keepScreenOn;
   final bool Function()? _screenBusy;
   final int Function() _nowMs;
   final int _textVersion;
@@ -391,6 +443,9 @@ class ShelfReading extends ChangeNotifier {
   bool _again = false;
   bool _held = false;
   bool _disposed = false;
+
+  /// Подготовку остановил читатель ([stop]); снимается [start].
+  bool _stopped = false;
   bool _screenKept = false;
   Completer<void>? _release;
 
@@ -400,8 +455,14 @@ class ShelfReading extends ChangeNotifier {
   /// Сколько миллисекунд чтения набралось в прежних отрезках.
   int _activeMs = 0;
 
+  /// Пора ли проходу кончать: подготовку выбросили или остановили.
+  bool get _quit => _disposed || _stopped;
+
   /// Ход подготовки.
   ShelfReadingProgress get progress => _progress;
+
+  /// Остановил ли подготовку читатель (F-MAP-11): до [start] она не идёт.
+  bool get stopped => _stopped;
 
   /// Итог подготовки; `null` — её ещё не было.
   ShelfIndexSummary? get summary => _summary;
@@ -430,9 +491,7 @@ class ShelfReading extends ChangeNotifier {
   /// Запуск приложения от него не зависит: не прочитался — итога нет.
   Future<void> restore() async {
     try {
-      _summary = ShelfIndexSummary.decode(
-        await _settings.read(SnoSettingsKeys.shelfIndex),
-      );
+      _summary = ShelfIndexSummary.decode(await _settings.read(_summaryKey));
     } on Object {
       _summary = null;
     }
@@ -451,6 +510,7 @@ class ShelfReading extends ChangeNotifier {
     if (_disposed) {
       return;
     }
+    _stopped = false;
     if (_running != null) {
       _again = true;
       return;
@@ -473,6 +533,26 @@ class ShelfReading extends ChangeNotifier {
     );
   }
 
+  /// Останавливает подготовку (F-MAP-11, «Остановить» в «Галактике»).
+  ///
+  /// Проход дочитывает страницу, записывает прочитанное и кончается;
+  /// карта не считается. Прочитанное остаётся в кэше: [start] — кнопка
+  /// «Посчитать карту» или следующий запуск приложения — продолжит с
+  /// того же места.
+  void stop() {
+    if (_disposed) {
+      return;
+    }
+    _stopped = true;
+    _again = false;
+    _delayed?.cancel();
+    _delayed = null;
+    final Completer<void>? release = _release;
+    _release = null;
+    release?.complete();
+    _show(const ShelfReadingProgress());
+  }
+
   /// Ждёт конца идущей подготовки — для тестов.
   Future<void> settled() => _running ?? Future<void>.value();
 
@@ -487,13 +567,18 @@ class ShelfReading extends ChangeNotifier {
         _show(_progress.copyWith(phase: ShelfReadingPhase.idle));
       }
       await _keepScreen(false);
-    } while (_again && !_disposed);
+      if (_stopped) {
+        // Проход мог успеть показать ход после [stop]: остановленная
+        // подготовка не должна выглядеть идущей.
+        _show(const ShelfReadingProgress());
+      }
+    } while (_again && !_quit);
   }
 
   /// Один проход по полке и расчёт карты за ним.
   Future<void> _round() async {
     final List<Book> books = await _library.books();
-    if (_disposed) {
+    if (_quit) {
       return;
     }
     _activeMs = 0;
@@ -548,11 +633,11 @@ class ShelfReading extends ChangeNotifier {
       map: before.map,
     );
     await _remember(summary);
-    if (_disposed) {
+    if (_quit) {
       return;
     }
     summary = summary.copyWith(map: await _buildMap(books.length, before.map));
-    if (_disposed) {
+    if (_quit) {
       return;
     }
     await _remember(summary);
@@ -601,7 +686,7 @@ class ShelfReading extends ChangeNotifier {
         onProgress: (int done, int total) {
           _show(_progress.copyWith(mapDone: done, mapTotal: total));
         },
-        stopped: () => _disposed,
+        stopped: () => _quit,
       );
       final int ms = _nowMs() - started;
       return switch (outcome.kind) {
@@ -688,7 +773,7 @@ class ShelfReading extends ChangeNotifier {
           if (cached.containsKey(page)) {
             continue;
           }
-          if (_held || _disposed) {
+          if (_held || _quit) {
             interrupted = true;
             break;
           }
@@ -726,11 +811,11 @@ class ShelfReading extends ChangeNotifier {
       waited = true;
       _pause();
       await _keepScreen(false);
-      if (_disposed) {
+      if (_quit) {
         return null;
       }
     }
-    if (_disposed) {
+    if (_quit) {
       return null;
     }
     final int known = pageCount ?? 0;
@@ -808,13 +893,13 @@ class ShelfReading extends ChangeNotifier {
 
   /// Ждёт, пока книгу закроют; `false` — подготовку сняли.
   Future<bool> _waitTurn() async {
-    while (_held && !_disposed) {
+    while (_held && !_quit) {
       _pause();
       _show(_progress.copyWith(phase: ShelfReadingPhase.held));
       final Completer<void> release = _release ??= Completer<void>();
       await release.future;
     }
-    return !_disposed;
+    return !_quit;
   }
 
   void _resume() {
@@ -850,9 +935,13 @@ class ShelfReading extends ChangeNotifier {
       _screenKept = false;
       return;
     }
+    final Future<void> Function(bool on)? keep = _keepScreenOn;
+    if (keep == null) {
+      return;
+    }
     _screenKept = on;
     try {
-      await _device.keepScreenOn(on);
+      await keep(on);
     } on Object {
       // Экран может погаснуть; проход при этом идёт, пока его не
       // остановит система.
@@ -862,7 +951,7 @@ class ShelfReading extends ChangeNotifier {
   Future<void> _remember(ShelfIndexSummary summary) async {
     _summary = summary;
     try {
-      await _settings.write(SnoSettingsKeys.shelfIndex, summary.encode());
+      await _settings.write(_summaryKey, summary.encode());
     } on Object {
       // Итог не записался — он посчитается заново при следующем запуске.
     }

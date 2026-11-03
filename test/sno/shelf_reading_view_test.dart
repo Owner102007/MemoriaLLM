@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/data/app_data.dart';
+import 'package:memoria/application/map/shelf_reading.dart';
 import 'package:memoria/sno/flags.dart';
-import 'package:memoria/sno/index/shelf_reading.dart';
 import 'package:memoria/sno/index/shelf_reading_view.dart';
 import 'package:memoria/sno/testing_screen.dart';
 import 'package:memoria/ui/library/library_screen.dart';

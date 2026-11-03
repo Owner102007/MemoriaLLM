@@ -35,7 +35,7 @@ void main() {
   const String galaxyOnly =
       'проверяется прогоном ветви II (--dart-define=SNO_BRANCH=II)';
   const String othersOnly =
-      'прогон ветви II: проверяется основным прогоном и прогоном ветви I';
+      'прогон ветви II: проверяется прогоном ветви I (--dart-define=SNO_BRANCH=I)';
 
   Future<void> pumpApp(WidgetTester tester, AppServices services) async {
     await tester.pumpWidget(
@@ -196,8 +196,10 @@ void main() {
     });
   }, skip: Sno.galaxy ? false : galaxyOnly);
 
-  group('SNO-F-MAP-01: основное приложение и ветвь I', () {
-    testWidgets('SNO-F-MAP-01: раздела «Галактика» в них нет', (
+  // С S59 «Галактика» есть и в основном приложении (F-MAP-06,
+  // `test/app_sections_test.dart`); без неё осталась только ветвь I.
+  group('SNO-F-MAP-01: ветвь I', () {
+    testWidgets('SNO-F-MAP-01: раздела «Галактика» в ней нет', (
       WidgetTester tester,
     ) async {
       await seedGalaxy(data, kTwoGroups);
@@ -211,5 +213,5 @@ void main() {
 
       await unmount(tester);
     });
-  }, skip: Sno.galaxy ? othersOnly : false);
+  }, skip: Sno.galaxySection ? othersOnly : false);
 }

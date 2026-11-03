@@ -108,7 +108,8 @@ class _MemoriaAppState extends State<MemoriaApp> {
 
 /// Оболочка приложения: разделы и навигация между ними (F-APP-02).
 ///
-/// Разделов три — «Полка», «Устройство», «Настройки». На телефоне и в
+/// Разделов четыре — «Полка», «Устройство», «Галактика», «Настройки»
+/// (D-024; «Галактика» — с S59, F-MAP-06). На телефоне и в
 /// узком окне навигация стоит у нижнего края, в окне от
 /// [kTopNavWidth] точек — полосой наверху; где ей стоять, решает
 /// `domain/navigation/sections.dart`.
@@ -120,7 +121,7 @@ class _MemoriaAppState extends State<MemoriaApp> {
 /// Какие разделы есть, решают флаги сборки (`sno/flags.dart`): это
 /// константы, и в основном приложении раздела «Тестирование» нет вовсе.
 /// В сборке ветви II между «Полкой» и «Тестированием» стоит «Галактика»
-/// (SNO-F-MAP-01) — книги полки картой.
+/// (SNO-F-MAP-01) — книги полки картой; в ветви I её нет.
 ///
 /// Каждый раздел **остаётся там, где его оставили**: все они живут в
 /// одном `IndexedStack`, и переключение раздела не сбрасывает ни место
@@ -154,7 +155,7 @@ class _HomeShellState extends State<HomeShell> {
   final List<AppSection> _visible = sectionsFor(
     scanner: Sno.scanner,
     testing: Sno.recording,
-    galaxy: Sno.galaxy,
+    galaxy: Sno.galaxySection,
   );
 
   AppSection _section = AppSection.shelf;
@@ -443,6 +444,9 @@ class _HomeShellState extends State<HomeShell> {
           models: Sno.models,
           // SNO-F-READ-02: в ветви книга листается только листами.
           ribbon: Sno.ribbon,
+          // SNO-F-IDX-04: полоска подготовки книг над полкой — только в
+          // ветви II; в основном приложении ход виден в «Галактике».
+          readingStrip: Sno.galaxy,
           // SNO-F-LIB-02: пока сессия записи не завершена, полка стоит
           // на месте.
           locked: _session?.locked ?? false,
@@ -467,9 +471,9 @@ class _HomeShellState extends State<HomeShell> {
           ),
         );
       case AppSection.galaxy:
-        // SNO-F-MAP-01. Условие — константа сборки: в основное
-        // приложение и в ветвь I раздел не попадает.
-        if (Sno.galaxy) {
+        // F-MAP-06, SNO-F-MAP-01. Условие — константа сборки: в ветвь I
+        // раздел не попадает.
+        if (Sno.galaxySection) {
           return GalaxyScreen(
             // Новый номер сброса — новый раздел: карта читается заново,
             // а выбранная книга и приближение прежнего участника уходят.
@@ -483,6 +487,9 @@ class _HomeShellState extends State<HomeShell> {
             models: Sno.models,
             // SNO-F-READ-02: в ветви книга листается только листами.
             ribbon: Sno.ribbon,
+            // F-MAP-06: основное приложение или ветвь II — раздел ведёт
+            // себя по-разному (см. `GalaxyScreen.mainApp`).
+            mainApp: !Sno.galaxy,
           );
         }
         return const SizedBox.shrink();

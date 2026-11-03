@@ -11,9 +11,11 @@ import 'package:memoria/domain/library/device_scan.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
 import 'package:memoria/infrastructure/files/device_scanner.dart';
 import 'package:memoria/ui/app.dart';
+import 'package:memoria/ui/galaxy/galaxy_screen.dart';
 import 'package:memoria/ui/library/device_book_card.dart';
 
 import 'data/test_data.dart';
+import 'support/galaxy_shelf.dart';
 import 'support/shown_reading.dart';
 import 'support/test_services.dart';
 
@@ -286,6 +288,48 @@ void main() {
           reason: 'назад из «$section»',
         );
       }
+
+      await unmount(tester);
+    });
+  });
+
+  group('F-MAP-06: «Галактика» — четвёртый раздел', () {
+    testWidgets('F-MAP-06: внизу — «Полка · Устройство · Галактика · '
+        'Настройки», раздел открывается', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups);
+      await pumpApp(tester, testServices(data: data));
+
+      final List<double> xs = <double>[
+        for (final String key in <String>[
+          'nav-library',
+          'nav-device',
+          'nav-galaxy',
+          'nav-settings',
+        ])
+          tester.getCenter(find.byKey(Key(key))).dx,
+      ];
+      for (int i = 1; i < xs.length; i++) {
+        expect(xs[i - 1], lessThan(xs[i]), reason: 'порядок разделов');
+      }
+
+      await open(tester, 'galaxy');
+      expect(find.byType(GalaxyScreen), findsOneWidget);
+      expect(find.byType(GalaxyMap), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-06: на широком окне «Галактика» — в верхней полосе '
+        'слева', (WidgetTester tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      resize(tester, const Size(1280, 800));
+      await pumpApp(tester, testServices(data: data));
+
+      expect(find.byKey(const Key('nav-top')), findsOneWidget);
+      final double galaxy = tester
+          .getTopRight(find.byKey(const Key('nav-galaxy')))
+          .dx;
+      expect(galaxy, lessThan(1280 / 2));
 
       await unmount(tester);
     });

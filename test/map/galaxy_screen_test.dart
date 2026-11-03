@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memoria/application/app_services.dart';
 import 'package:memoria/application/data/app_data.dart';
 import 'package:memoria/application/map/galaxy.dart';
+import 'package:memoria/application/map/shelf_reading.dart';
 import 'package:memoria/application/reading/book_times.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/category_style.dart';
@@ -15,7 +16,6 @@ import 'package:memoria/domain/map/map_view.dart';
 import 'package:memoria/domain/reading/reading.dart';
 import 'package:memoria/domain/theme/app_palette.dart';
 import 'package:memoria/domain/theme/contrast.dart';
-import 'package:memoria/sno/index/shelf_reading.dart';
 import 'package:memoria/ui/galaxy/galaxy_painter.dart';
 import 'package:memoria/ui/galaxy/galaxy_screen.dart';
 import 'package:memoria/ui/reader/reader_screen.dart';
@@ -60,6 +60,7 @@ void main() {
     AppServices services, {
     bool visible = true,
     ValueChanged<bool>? onReading,
+    bool mainApp = false,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -69,6 +70,7 @@ void main() {
           onReading: onReading,
           canRelink: false,
           models: false,
+          mainApp: mainApp,
         ),
       ),
     );
@@ -268,6 +270,198 @@ void main() {
       expect(mapOf(tester).scene!.stars, hasLength(6));
 
       await unmount(tester);
+    });
+  });
+
+  group('F-MAP-06: основное приложение (S59)', () {
+    /// Где на экране стоит имя созвездия [name].
+    Offset labelOf(WidgetTester tester, String name) {
+      final GalaxyLabel label = mapOf(tester).scene!.labels
+          .firstWhere((GalaxyLabel l) => l.group && l.text == name);
+      return tester.getTopLeft(find.byKey(const Key('galaxy-map'))) +
+          label.rect.center;
+    }
+
+    testWidgets('F-MAP-17: нажатие на имя созвездия — список от типичной '
+        'книги к особенной', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups);
+      await pumpGalaxy(tester, testServices(data: data), mainApp: true);
+
+      await tester.tapAt(labelOf(tester, 'Ангиология'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('galaxy-list')), findsOneWidget);
+      expect(mapOf(tester).openGroup, 'Ангиология');
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('galaxy-list')),
+          matching: find.text('3 книги · от типичной к особенной'),
+        ),
+        findsOneWidget,
+      );
+      final List<double> rows = <double>[
+        for (final String id in <String>['a2', 'a1', 'a3'])
+          tester.getTopLeft(find.byKey(Key('galaxy-list-$id'))).dy,
+      ];
+      expect(rows[0], lessThan(rows[1]));
+      expect(rows[1], lessThan(rows[2]));
+      expect(find.byKey(const Key('galaxy-list-m1')), findsNothing);
+
+      // Книга из списка — карточка у её звезды, список уходит.
+      await tester.tap(find.byKey(const Key('galaxy-list-a1')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('galaxy-list')), findsNothing);
+      expect(mapOf(tester).selectedId, 'a1');
+      expect(find.byKey(const Key('galaxy-card-a1')), findsOneWidget);
+
+      // Снова имя — карточка уходит, список закрывается крестиком.
+      await tester.tapAt(labelOf(tester, 'Математика'));
+      await tester.pumpAndSettle();
+      expect(mapOf(tester).selectedId, isNull);
+      expect(mapOf(tester).openGroup, 'Математика');
+      await tester.tap(find.byKey(const Key('galaxy-list-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('galaxy-list')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-17: на широком окне список — у правого края', (
+      WidgetTester tester,
+    ) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      tester.view.physicalSize =
+          const Size(1280, 800) * tester.view.devicePixelRatio;
+      await seedGalaxy(data, kTwoGroups);
+      await pumpGalaxy(tester, testServices(data: data), mainApp: true);
+
+      await tester.tapAt(labelOf(tester, 'Математика'));
+      await tester.pumpAndSettle();
+      final Rect list = tester.getRect(find.byKey(const Key('galaxy-list')));
+      expect(list.width, kGalaxyCardWidth);
+      expect(list.right, closeTo(1280 - 8, 0.5));
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-17: в ветви II имя созвездия не нажимается', (
+      WidgetTester tester,
+    ) async {
+      await seedGalaxy(data, kTwoGroups);
+      await pumpGalaxy(tester, testServices(data: data));
+
+      await tester.tapAt(labelOf(tester, 'Ангиология'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('galaxy-list')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-11: три книги — уже карта', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups.sublist(0, 3));
+      await pumpGalaxy(tester, testServices(data: data), mainApp: true);
+
+      expect(find.byType(GalaxyMap), findsOneWidget);
+      expect(find.byKey(const Key('galaxy-too-few')), findsNothing);
+      expect(mapOf(tester).scene!.stars, hasLength(3));
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-06: открытый раздел запускает подготовку книг, '
+        'остановленную — нет', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      final AppServices services = testServices(
+        data: data,
+        shelfReading: reading,
+      );
+      await pumpGalaxy(tester, services, visible: false, mainApp: true);
+      expect(reading.starts, 0, reason: 'раздел не открыт');
+
+      await pumpGalaxy(tester, services, mainApp: true);
+      expect(reading.starts, 1);
+
+      reading.stop();
+      await pumpGalaxy(tester, services, visible: false, mainApp: true);
+      await pumpGalaxy(tester, services, mainApp: true);
+      expect(reading.starts, 1, reason: 'остановил читатель');
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-11: пока книги читаются — прежняя карта на месте, '
+        'под ней ход и «Остановить»', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      reading.show(
+        const ShelfReadingProgress(
+          phase: ShelfReadingPhase.reading,
+          booksDone: 2,
+          booksTotal: 6,
+        ),
+      );
+      await pumpGalaxy(
+        tester,
+        testServices(data: data, shelfReading: reading),
+        mainApp: true,
+      );
+
+      expect(find.byType(GalaxyMap), findsOneWidget);
+      expect(find.byKey(const Key('galaxy-preparing')), findsNothing);
+      expect(find.byKey(const Key('galaxy-preparing-strip')), findsOneWidget);
+      expect(find.text('Книги ещё читаются · 2 из 6'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('galaxy-stop')));
+      await tester.pumpAndSettle();
+      expect(reading.stops, 1);
+      expect(find.byKey(const Key('galaxy-preparing-strip')), findsNothing);
+      expect(find.byType(GalaxyMap), findsOneWidget);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-11: карты ещё нет — ход и «Остановить», потом '
+        '«Посчитать карту»', (WidgetTester tester) async {
+      await seedGalaxy(data, kTwoGroups, withMap: false);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      reading.show(
+        const ShelfReadingProgress(
+          phase: ShelfReadingPhase.mapping,
+          mapDone: 3,
+          mapTotal: 6,
+        ),
+      );
+      await pumpGalaxy(
+        tester,
+        testServices(data: data, shelfReading: reading),
+        mainApp: true,
+      );
+
+      expect(find.byKey(const Key('galaxy-preparing')), findsOneWidget);
+      expect(find.text('Считаю карту · 3 из 6'), findsOneWidget);
+      expect(find.text('Остановить'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('galaxy-action')));
+      await tester.pumpAndSettle();
+      expect(reading.stops, 1);
+
+      expect(find.byKey(const Key('galaxy-no-map')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('galaxy-action')));
+      await tester.pump();
+      expect(reading.starts, 1, reason: '«Посчитать карту»');
+
+      await unmount(tester);
+    });
+
+    test('F-MAP-17: счёт книг в списке — по-русски', () {
+      expect(describeConstellationCount(1), startsWith('1 книга ·'));
+      expect(describeConstellationCount(3), startsWith('3 книги ·'));
+      expect(describeConstellationCount(5), startsWith('5 книг ·'));
+      expect(describeConstellationCount(12), startsWith('12 книг ·'));
+      expect(describeConstellationCount(22), startsWith('22 книги ·'));
     });
   });
 
