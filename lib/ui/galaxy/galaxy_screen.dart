@@ -359,11 +359,13 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
           actions: <Widget>[
             // F-MAP-04: полный пересчёт — только по просьбе читателя.
             if (_canRebuild)
-              IconButton(
+              // Словом, а не значком: значок «пересчитать» читается как
+              // «обновить» или «копировать» (самопроверка S60).
+              TextButton.icon(
                 key: const Key('galaxy-rebuild'),
-                tooltip: 'Перестроить карту',
-                icon: const Icon(Icons.auto_awesome_motion_outlined),
                 onPressed: _rebuild,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Перестроить'),
               ),
           ],
         ),
