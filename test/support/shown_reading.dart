@@ -38,6 +38,15 @@ class ShownReading extends ShelfReading {
   /// Сколько раз читатель нажал «Остановить» (F-MAP-11).
   int stops = 0;
 
+  /// Сколько раз читатель нажал «Перестроить» (F-MAP-04).
+  int rebuilds = 0;
+
+  @override
+  void rebuild() {
+    rebuilds++;
+    super.rebuild();
+  }
+
   bool _halted = false;
 
   bool _wantedNow;

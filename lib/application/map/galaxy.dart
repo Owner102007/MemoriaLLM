@@ -15,6 +15,7 @@ class GalaxyStar {
     required this.group,
     required this.ms,
     this.reason = MapReason.none,
+    this.seated = false,
   });
 
   /// Книга полки.
@@ -36,6 +37,21 @@ class GalaxyStar {
 
   /// Почему книга без созвездия (F-MAP-18) — строкой в карточке.
   final MapReason reason;
+
+  /// Досажена ли книга к готовой карте (ALG-MAP-08): такие считает
+  /// строка «Добавлено N книг · Перестроить» (F-MAP-11).
+  final bool seated;
+
+  /// Та же звезда в точке ([x], [y]) — для перелёта при «Перестроить».
+  GalaxyStar at(double x, double y) => GalaxyStar(
+    book: book,
+    x: x,
+    y: y,
+    group: group,
+    ms: ms,
+    reason: reason,
+    seated: seated,
+  );
 }
 
 /// Что раздел «Галактика» может показать.
@@ -79,6 +95,10 @@ class Galaxy {
   /// Сколько книг полки на карте места не получили: их добавили после
   /// расчёта, и место им даст следующая подготовка книг.
   int get missing => books - stars.length;
+
+  /// Сколько книг досажено к карте после полного расчёта (F-MAP-04):
+  /// их места — рядом с похожими, своё созвездие — при «Перестроить».
+  int get seated => stars.where((GalaxyStar star) => star.seated).length;
 }
 
 /// Собирает карту для экрана из того, что лежит на устройстве.
@@ -115,6 +135,7 @@ Future<Galaxy> loadGalaxy({
       group: point.constellation < 0 ? kUncategorizedTitle : point.name,
       ms: times[book.id] ?? 0,
       reason: point.reason,
+      seated: point.seated,
     );
     stars.add(star);
     placed.add(point);

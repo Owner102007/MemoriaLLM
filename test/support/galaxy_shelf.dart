@@ -17,6 +17,7 @@ class ShelfStar {
     this.category,
     this.onMap = true,
     this.reason = MapReason.none,
+    this.seated = false,
   });
 
   /// Идентификатор книги; отпечаток файла — `hash-<id>`.
@@ -39,6 +40,9 @@ class ShelfStar {
 
   /// Почему книга без созвездия (F-MAP-18).
   final MapReason reason;
+
+  /// Досажена ли книга к карте (ALG-MAP-08).
+  final bool seated;
 }
 
 /// Полка из двух категорий — как архив владельца: «Ангиология» слева,
@@ -123,6 +127,7 @@ Future<void> seedGalaxy(
                   : ids.indexOf(star.category!),
               name: kGalaxyCategories[star.category] ?? '',
               reason: star.reason,
+              seated: star.seated,
             ),
       },
     ),

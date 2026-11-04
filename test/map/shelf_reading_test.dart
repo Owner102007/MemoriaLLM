@@ -837,6 +837,34 @@ void main() {
     await again.settled();
   });
 
+  test('F-MAP-04: новая книга досаживается, «Перестроить» считает карту '
+      'заново', () async {
+    for (final String id in <String>['a', 'b', 'c']) {
+      await shelve(id, pagesOf('артерии', 3));
+    }
+    final ShelfReading pass = reading(branch: false);
+    pass.start();
+    await pass.settled();
+    expect((await data.bookMap.load())!.points, hasLength(3));
+
+    await shelve('d', pagesOf('артерии', 3));
+    pass.start();
+    await pass.settled();
+    Map<String, MapPoint> points = (await data.bookMap.load())!.points;
+    expect(points['d']!.seated, isTrue);
+    expect(pass.rebuilding, isFalse);
+
+    final List<ShelfReadingPhase> phases = <ShelfReadingPhase>[];
+    pass.addListener(() => phases.add(pass.progress.phase));
+    pass.rebuild();
+    expect(pass.rebuilding, isTrue);
+    await pass.settled();
+    expect(phases, contains(ShelfReadingPhase.mapping));
+    expect(pass.rebuilding, isFalse);
+    points = (await data.bookMap.load())!.points;
+    expect(points.values.every((MapPoint p) => !p.seated), isTrue);
+  });
+
   test('SNO-F-IDX-04: отложенное начало ждёт своего срока', () async {
     final _Volume a = await shelve('a', pagesOf('артерии', 2));
     final ShelfReading pass = reading();

@@ -40,6 +40,10 @@ const double kGalaxyCardWidth = 340;
 /// С каким запасом имя созвездия ловит нажатие, в логических пикселях.
 const double kGalaxyLabelSlop = 8;
 
+/// Сколько миллисекунд звёзды летят на новые места, когда карту
+/// перестроили (F-MAP-04).
+const int kGalaxyFlightMs = 700;
+
 /// Раздел «Галактика»: книги полки картой (F-MAP-06, SNO-F-MAP-01,
 /// экран SCR-04).
 ///
@@ -350,10 +354,36 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
       id: 'galaxy',
       info: () => <String, Object?>{'shows': _shows},
       child: Scaffold(
-        appBar: AppBar(title: Text(sectionTitle(AppSection.galaxy))),
+        appBar: AppBar(
+          title: Text(sectionTitle(AppSection.galaxy)),
+          actions: <Widget>[
+            // F-MAP-04: полный пересчёт — только по просьбе читателя.
+            if (_canRebuild)
+              IconButton(
+                key: const Key('galaxy-rebuild'),
+                tooltip: 'Перестроить карту',
+                icon: const Icon(Icons.auto_awesome_motion_outlined),
+                onPressed: _rebuild,
+              ),
+          ],
+        ),
         body: _body(context),
       ),
     );
+  }
+
+  /// Можно ли сейчас перестроить карту (F-MAP-04): основное приложение,
+  /// карта на экране, подготовка книг не идёт.
+  bool get _canRebuild =>
+      widget.mainApp &&
+      _reading != null &&
+      !(_reading?.progress.busy ?? false) &&
+      _galaxy?.status == GalaxyStatus.ready;
+
+  /// «Перестроить» (F-MAP-04, D-049): карта считается заново; когда
+  /// посчитается, звёзды перелетят на новые места.
+  void _rebuild() {
+    _reading?.rebuild();
   }
 
   /// Что раздел показывает: карту или слова вместо неё — то же
@@ -478,6 +508,17 @@ class _GalaxyScreenState extends State<GalaxyScreen> {
                 // Основное приложение: дочитать книги без места можно
                 // сразу — и после «Остановить».
                 onRead: widget.mainApp ? reading?.start : null,
+              )
+            else if (!busy &&
+                widget.mainApp &&
+                reading != null &&
+                galaxy.seated > 0)
+              // F-MAP-11, F-MAP-04: книги досажены к карте — своё
+              // созвездие они получат при «Перестроить».
+              _SeatedStrip(
+                key: const Key('galaxy-seated'),
+                seated: galaxy.seated,
+                onRebuild: _rebuild,
               ),
           ],
         );
@@ -706,6 +747,53 @@ class _MissingStrip extends StatelessWidget {
   }
 }
 
+/// Строка под картой: сколько книг досажено после полного расчёта
+/// (F-MAP-11, F-MAP-04) и «Перестроить».
+class _SeatedStrip extends StatelessWidget {
+  const _SeatedStrip({
+    required this.seated,
+    required this.onRebuild,
+    super.key,
+  });
+
+  final int seated;
+  final VoidCallback onRebuild;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                describeSeated(seated),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+            TextButton(
+              key: const Key('galaxy-seated-rebuild'),
+              onPressed: onRebuild,
+              child: const Text('Перестроить'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Строка о досаженных книгах (F-MAP-11): «Добавлено 2 книги — они
+/// встали рядом с похожими».
+String describeSeated(int books) =>
+    'Добавлено ${_booksWord(books)} — '
+    '${books == 1 ? 'она встала' : 'они встали'} рядом с похожими.';
+
 /// Полотно карты: точки, подписи, жесты и карточка выбранной книги
 /// (F-MAP-07, F-MAP-08).
 ///
@@ -763,8 +851,20 @@ class GalaxyMap extends StatefulWidget {
 
 /// Состояние полотна карты. Открыто тестам: по окну карты они находят,
 /// где на экране стоит книга.
-class GalaxyMapState extends State<GalaxyMap> {
+class GalaxyMapState extends State<GalaxyMap>
+    with SingleTickerProviderStateMixin {
   static final Stopwatch _watch = Stopwatch()..start();
+
+  /// Перелёт звёзд на новые места (F-MAP-04): карту перестроили, и
+  /// звезда летит от прежней точки к новой, а не прыгает.
+  late final AnimationController _flight = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: kGalaxyFlightMs),
+  )..addListener(_flown);
+
+  /// Откуда летит каждая звезда — по идентификатору книги; пусто —
+  /// перелёта нет.
+  Map<String, Offset> _from = const <String, Offset>{};
 
   late MapExtent _extent;
   late StarGrid _grid;
@@ -836,6 +936,7 @@ class GalaxyMapState extends State<GalaxyMap> {
   void didUpdateWidget(GalaxyMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.stars, widget.stars)) {
+      _takeOff(oldWidget.stars);
       _measure();
       final MapCamera? camera = _camera;
       if (camera != null) {
@@ -863,8 +964,70 @@ class GalaxyMapState extends State<GalaxyMap> {
     }
   }
 
+  /// Кадр перелёта: звёзды сдвинулись на шаг.
+  void _flown() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (_flight.isCompleted) {
+        _from = const <String, Offset>{};
+      }
+    });
+  }
+
+  /// Карта пришла заново: если звёзды, что были и раньше, стоят теперь
+  /// в других местах (карту перестроили), они летят туда из прежних.
+  /// Досадка старых звёзд не двигает — тогда и лететь некому. Если
+  /// система просит меньше движения — звёзды встают на места сразу.
+  void _takeOff(List<GalaxyStar> before) {
+    final List<GalaxyStar> shown = _shown(before);
+    final Map<String, Offset> from = <String, Offset>{
+      for (final GalaxyStar star in shown) star.book.id: Offset(star.x, star.y),
+    };
+    bool moved = false;
+    for (final GalaxyStar star in widget.stars) {
+      final Offset? was = from[star.book.id];
+      if (was != null && (was.dx != star.x || was.dy != star.y)) {
+        moved = true;
+        break;
+      }
+    }
+    final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (!moved || still) {
+      _flight.stop();
+      _from = const <String, Offset>{};
+      return;
+    }
+    _from = from;
+    _flight.forward(from: 0);
+  }
+
+  /// Звёзды, как они видны сейчас: в полёте — между прежним местом и
+  /// новым; иначе — на местах [stars].
+  List<GalaxyStar> _shown(List<GalaxyStar> stars) {
+    if (_from.isEmpty || !_flight.isAnimating) {
+      return stars;
+    }
+    final double t = Curves.easeInOut.transform(_flight.value);
+    return <GalaxyStar>[
+      for (final GalaxyStar star in stars)
+        if (_from[star.book.id] case final Offset was)
+          star.at(
+            was.dx + (star.x - was.dx) * t,
+            was.dy + (star.y - was.dy) * t,
+          )
+        else
+          star,
+    ];
+  }
+
+  /// Летят ли звёзды сейчас — для тестов.
+  bool get flying => _from.isNotEmpty && _flight.isAnimating;
+
   @override
   void dispose() {
+    _flight.dispose();
     _wheelSaid.dispose();
     _scene?.dispose();
     _scene = null;
@@ -1259,7 +1422,7 @@ class GalaxyMapState extends State<GalaxyMap> {
         _size = constraints.biggest;
         final int? selected = _selectedIndex();
         final GalaxyScene scene = GalaxyScene(
-          stars: widget.stars,
+          stars: _shown(widget.stars),
           viewport: viewport,
           palette: palette,
           // Подписи — основным цветом текста: под ночной красной темой
