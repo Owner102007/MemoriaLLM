@@ -273,6 +273,178 @@ void main() {
     });
   });
 
+  group('F-MAP-04: досадка и «Перестроить» (S60)', () {
+    testWidgets('F-MAP-11: досаженные книги — строка «N книг встали рядом» '
+        'и «Перестроить»', (WidgetTester tester) async {
+      await seedGalaxy(data, <ShelfStar>[
+        ...kTwoGroups,
+        const ShelfStar(
+          'a4',
+          'Новая ангиология',
+          -0.5,
+          0.0,
+          category: 'ang',
+          seated: true,
+        ),
+        const ShelfStar(
+          'k1',
+          'Хлеб',
+          0.0,
+          0.9,
+          seated: true,
+          reason: MapReason.awaiting,
+        ),
+      ]);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      await pumpGalaxy(
+        tester,
+        testServices(data: data, shelfReading: reading),
+        mainApp: true,
+      );
+      expect(find.byKey(const Key('galaxy-seated')), findsOneWidget);
+      expect(
+        find.text(
+          '2 книги встали рядом с похожими. Перестроить — карта сложится '
+          'заново.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('galaxy-seated-rebuild')));
+      await tester.pump();
+      expect(reading.rebuilds, 1);
+      expect(reading.starts, greaterThanOrEqualTo(1));
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-04: «Перестроить карту» — в шапке раздела основного '
+        'приложения; пока книги готовятся, её нет', (
+      WidgetTester tester,
+    ) async {
+      await seedGalaxy(data, kTwoGroups);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      await pumpGalaxy(
+        tester,
+        testServices(data: data, shelfReading: reading),
+        mainApp: true,
+      );
+      expect(find.byKey(const Key('galaxy-seated')), findsNothing);
+      await tester.tap(find.byKey(const Key('galaxy-rebuild')));
+      await tester.pump();
+      expect(reading.rebuilds, 1);
+
+      reading.show(
+        const ShelfReadingProgress(
+          phase: ShelfReadingPhase.mapping,
+          mapDone: 1,
+          mapTotal: 6,
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('galaxy-rebuild')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    testWidgets('F-MAP-04: в ветви II «Перестроить» нет', (
+      WidgetTester tester,
+    ) async {
+      await seedGalaxy(data, kTwoGroups);
+      final ShownReading reading = ShownReading(data);
+      addTearDown(reading.dispose);
+      await pumpGalaxy(tester, testServices(data: data, shelfReading: reading));
+      expect(find.byKey(const Key('galaxy-rebuild')), findsNothing);
+
+      await unmount(tester);
+    });
+
+    /// Полотно карты само по себе — со звёздами [stars].
+    Widget canvas(List<GalaxyStar> stars, {bool still = false}) {
+      final AppServices services = testServices(data: data);
+      return MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: still),
+          child: Scaffold(
+            body: GalaxyMap(
+              stars: stars,
+              covers: services.covers,
+              reading: services.data.reading,
+              onOpen: (_) {},
+            ),
+          ),
+        ),
+      );
+    }
+
+    GalaxyStar star(String id, double x, double y) => GalaxyStar(
+      book: testBook(id: id, hash: hashOfStar(id)),
+      x: x,
+      y: y,
+      group: 'Ангиология',
+      ms: 0,
+    );
+
+    final List<GalaxyStar> before = <GalaxyStar>[
+      star('a1', -0.8, -0.6),
+      star('a2', -0.4, -0.2),
+      star('a3', 0.7, 0.3),
+    ];
+
+    testWidgets('F-MAP-04: карту перестроили — звёзды перелетают на новые '
+        'места', (WidgetTester tester) async {
+      await tester.pumpWidget(canvas(before));
+      final List<GalaxyStar> after = <GalaxyStar>[
+        star('a1', 0.8, 0.6),
+        before[1],
+        before[2],
+      ];
+      await tester.pumpWidget(canvas(after));
+      await tester.pump(const Duration(milliseconds: kGalaxyFlightMs ~/ 2));
+      expect(mapOf(tester).flying, isTrue);
+      final double middle = mapOf(tester).scene!.stars.first.x;
+      expect(middle, greaterThan(-0.8));
+      expect(middle, lessThan(0.8));
+      await tester.pumpAndSettle();
+      expect(mapOf(tester).flying, isFalse);
+      expect(mapOf(tester).scene!.stars.first.x, 0.8);
+    });
+
+    testWidgets('F-MAP-04: система просит меньше движения — звёзды встают '
+        'на места сразу', (WidgetTester tester) async {
+      await tester.pumpWidget(canvas(before, still: true));
+      await tester.pumpWidget(
+        canvas(<GalaxyStar>[
+          star('a1', 0.8, 0.6),
+          ...before.skip(1),
+        ], still: true),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(mapOf(tester).flying, isFalse);
+      expect(mapOf(tester).scene!.stars.first.x, 0.8);
+    });
+
+    testWidgets('F-MAP-04: досадка старые звёзды не двигает — лететь '
+        'некому', (WidgetTester tester) async {
+      await tester.pumpWidget(canvas(before));
+      await tester.pumpWidget(
+        canvas(<GalaxyStar>[...before, star('a4', -0.5, 0.0)]),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(mapOf(tester).flying, isFalse);
+    });
+
+    test('F-MAP-11: строка о досаженных — по-русски', () {
+      expect(describeSeated(1), startsWith('1 книга встала рядом'));
+      expect(describeSeated(5), startsWith('5 книг встали рядом'));
+      expect(
+        describeMapReason(MapReason.awaiting),
+        'Новая книга — созвездие получит при «Перестроить»',
+      );
+    });
+  });
+
   group('F-MAP-06: основное приложение (S59)', () {
     /// Где на экране стоит имя созвездия [name].
     Offset labelOf(WidgetTester tester, String name) {

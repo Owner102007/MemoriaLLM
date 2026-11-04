@@ -40,9 +40,9 @@ void main() {
     await data.close();
   });
 
-  test('версия схемы — четырнадцатая: паспорт файла (F-MAP-18)', () {
+  test('F-MAP-04: версия схемы — пятнадцатая: досадка у точки карты', () {
     expect(data.database.schemaVersion, appSchemaVersion);
-    expect(appSchemaVersion, 14);
+    expect(appSchemaVersion, 15);
   });
 
   test('созданы все таблицы слоя данных', () async {
@@ -170,6 +170,8 @@ void main() {
       'constellation',
       'constellation_name',
       'reason',
+      'seated',
+      'input',
     ]);
   });
 

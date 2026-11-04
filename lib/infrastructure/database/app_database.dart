@@ -24,7 +24,7 @@ part 'app_database.g.dart';
 /// с производным. 13 — созвездие и его имя у точки карты (S56). 14 —
 /// паспорт файла и доверие тексту (S58, F-MAP-18): таблица устройства
 /// по отпечатку файла; причина «без созвездия» у точки карты.
-const int appSchemaVersion = 14;
+const int appSchemaVersion = 15;
 
 /// База данных приложения.
 ///
@@ -163,6 +163,14 @@ class AppDatabase extends _$AppDatabase {
           // Паспорт файла и доверие тексту (F-MAP-18) заводятся пустыми:
           // их считает расчёт карты, когда до книги дойдёт очередь.
           await m.createTable(filePassports);
+        }
+        if (from >= 12 && from < 15) {
+          // Досадка (ALG-MAP-08, S60): отметка «досажена» и отпечаток
+          // входа у точки карты. Из версий до 12 таблица заводится выше
+          // сразу с ними. Старые точки получают пустой отпечаток — при
+          // первом расчёте после обновления карта считается целиком.
+          await m.addColumn(mapPoints, mapPoints.seated);
+          await m.addColumn(mapPoints, mapPoints.input);
         }
       },
       beforeOpen: (OpeningDetails details) async {

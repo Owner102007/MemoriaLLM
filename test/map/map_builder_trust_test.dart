@@ -15,6 +15,7 @@ import 'package:memoria/domain/map/book_bag.dart';
 import 'package:memoria/domain/map/book_map.dart';
 import 'package:memoria/domain/map/book_passport.dart';
 import 'package:memoria/domain/map/file_passport.dart';
+import 'package:memoria/domain/map/map_seating.dart';
 import 'package:memoria/domain/map/map_trusted.dart';
 import 'package:memoria/domain/map/text_trust.dart';
 import 'package:memoria/domain/reading/page_text.dart';
@@ -101,6 +102,8 @@ void main() {
     store: data.bookMap,
     bags: (BagRequest request) async => bagOfBook(request),
     layout: (List<BookBag> found) async => buildBookMap(found),
+    seat: (List<BookBag> found, Map<String, MapPoint> kept) async =>
+        seatBooks(found, kept),
     passports: data.passports,
     passportReader: passports ?? reader,
     lexicon: words ?? () async => lexicon,

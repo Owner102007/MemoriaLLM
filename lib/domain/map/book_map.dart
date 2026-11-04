@@ -28,6 +28,9 @@ import 'map_vectors.dart';
 /// (F-MAP-16), у созвездий есть имена (F-MAP-03).
 /// 3 — S57: внутри созвездия типичная книга ближе к центру (F-MAP-17).
 /// 4 — S58: книга с ненадёжным текстом созвездий не заводит (F-MAP-18).
+///
+/// Досадка (S60, ALG-MAP-08) версию не поднимает: полный расчёт тот же,
+/// досадка лишь ставит новые книги к готовой карте.
 const int kBookMapVersion = 4;
 
 /// Группа раскладки по номеру созвездия: `art:0000`, `art:0001` …;
@@ -47,6 +50,8 @@ class MapPoint {
     this.constellation = kNoCategory,
     this.name = '',
     this.reason = MapReason.none,
+    this.seated = false,
+    this.input = '',
   });
 
   /// Отпечаток файла книги.
@@ -69,6 +74,29 @@ class MapPoint {
   /// «не уверены — поставьте сами»; у остальных — [MapReason.none].
   final MapReason reason;
 
+  /// Досажена ли книга к готовой карте (ALG-MAP-08), а не разложена
+  /// полным расчётом: по таким книгам экран пишет «Добавлено N книг ·
+  /// Перестроить» (F-MAP-11). После «Перестроить» — у всех `false`.
+  final bool seated;
+
+  /// Отпечаток входа книги — того, от чего зависит её место: названия,
+  /// автора, сколько страниц запомнено (`MapBuilder.inputOf`). Изменился
+  /// — книга досаживается заново. Пусто — расчёт его не знает (точка
+  /// прямо из расчёта, ещё не положенная на устройство).
+  final String input;
+
+  /// Та же точка с другим отпечатком входа [input].
+  MapPoint withInput(String input) => MapPoint(
+    key: key,
+    x: x,
+    y: y,
+    constellation: constellation,
+    name: name,
+    reason: reason,
+    seated: seated,
+    input: input,
+  );
+
   @override
   bool operator ==(Object other) =>
       other is MapPoint &&
@@ -77,14 +105,18 @@ class MapPoint {
       other.y == y &&
       other.constellation == constellation &&
       other.name == name &&
-      other.reason == reason;
+      other.reason == reason &&
+      other.seated == seated &&
+      other.input == input;
 
   @override
-  int get hashCode => Object.hash(key, x, y, constellation, name, reason);
+  int get hashCode =>
+      Object.hash(key, x, y, constellation, name, reason, seated, input);
 
   @override
   String toString() =>
-      'MapPoint($key, $x, $y, $constellation, $name, ${reason.name})';
+      'MapPoint($key, $x, $y, $constellation, $name, ${reason.name}'
+      '${seated ? ', досажена' : ''})';
 }
 
 /// Посчитанная карта.
@@ -154,32 +186,14 @@ BookMap? buildBookMap(List<BookBag> bags) {
   if (bags.length < kMinMapBooks || bags.length > kExactBooksLimit) {
     return null;
   }
-  final List<BookBag> sorted = List<BookBag>.of(bags)
-    ..sort((BookBag a, BookBag b) => a.key.compareTo(b.key));
+  final MapGround ground = MapGround.of(bags);
+  final List<BookBag> sorted = ground.books;
   final int n = sorted.length;
-  // F-MAP-18: у книг с ненадёжным текстом в карту идут только слова,
-  // которые есть у книг с надёжным; книга без надёжного текста остаётся
-  // со словами названия и автора.
-  final List<BookTrust> trust = <BookTrust>[
-    for (final BookBag bag in sorted) bag.trust,
-  ];
-  final List<int> builders = buildersOf(trust);
-  if (builders.length < n) {
-    final Set<String> known = <String>{
-      for (final int i in builders) ...sorted[i].terms,
-    };
-    final Set<int> building = builders.toSet();
-    for (int i = 0; i < n; i++) {
-      if (!building.contains(i) && !trust[i].littleText) {
-        sorted[i] = sorted[i].onlyWords(known);
-      }
-    }
-  }
-  final MapVocabulary vocabulary = vocabularyOf(sorted);
-  final List<SparseRow> rows = bm25Rows(sorted, vocabulary);
-  final Float64List gram = gramOf(rows);
-  final LatentRows latent = latentRows(gram, n);
-  final MapEdges edges = edgesOf(neighboursOf(latent));
+  final List<BookTrust> trust = ground.trust;
+  final MapVocabulary vocabulary = ground.vocabulary;
+  final Float64List gram = ground.gram;
+  final LatentRows latent = ground.latent;
+  final MapEdges edges = edgesOf(ground.neighbours);
   // Созвездия складывает адаптивный резонанс (F-MAP-16, D-029) по книгам
   // с надёжным текстом (F-MAP-18); группа раскладки — созвездие, а не
   // категория полки.
@@ -218,6 +232,84 @@ BookMap? buildBookMap(List<BookBag> bags) {
     edges: edges.length,
     groups: groups.toSet().length,
   );
+}
+
+/// Общая подготовка полного расчёта и досадки (ALG-MAP-02…05): книги по
+/// возрастанию отпечатка файла, доверие тексту, словарь корпуса, BM25,
+/// матрица Грама, главные компоненты, соседи.
+///
+/// Досадка (`map_seating.dart`) обязана видеть книги ровно так же, как
+/// полный расчёт, — поэтому подготовка одна на двоих.
+class MapGround {
+  MapGround._({
+    required this.books,
+    required this.trust,
+    required this.builders,
+    required this.vocabulary,
+    required this.gram,
+    required this.latent,
+    required this.neighbours,
+  });
+
+  /// Подготовка по мешкам [bags] — в любом порядке.
+  factory MapGround.of(List<BookBag> bags) {
+    final List<BookBag> sorted = List<BookBag>.of(bags)
+      ..sort((BookBag a, BookBag b) => a.key.compareTo(b.key));
+    final int n = sorted.length;
+    // F-MAP-18: у книг с ненадёжным текстом в карту идут только слова,
+    // которые есть у книг с надёжным; книга без надёжного текста остаётся
+    // со словами названия и автора.
+    final List<BookTrust> trust = <BookTrust>[
+      for (final BookBag bag in sorted) bag.trust,
+    ];
+    final List<int> builders = buildersOf(trust);
+    if (builders.length < n) {
+      final Set<String> known = <String>{
+        for (final int i in builders) ...sorted[i].terms,
+      };
+      final Set<int> building = builders.toSet();
+      for (int i = 0; i < n; i++) {
+        if (!building.contains(i) && !trust[i].littleText) {
+          sorted[i] = sorted[i].onlyWords(known);
+        }
+      }
+    }
+    final MapVocabulary vocabulary = vocabularyOf(sorted);
+    final List<SparseRow> rows = bm25Rows(sorted, vocabulary);
+    final Float64List gram = gramOf(rows);
+    final LatentRows latent = latentRows(gram, n);
+    return MapGround._(
+      books: sorted,
+      trust: trust,
+      builders: builders,
+      vocabulary: vocabulary,
+      gram: gram,
+      latent: latent,
+      neighbours: neighboursOf(latent),
+    );
+  }
+
+  /// Книги по возрастанию отпечатка файла; у ненадёжных — только слова
+  /// надёжных.
+  final List<BookBag> books;
+
+  /// Доверие тексту каждой книги.
+  final List<BookTrust> trust;
+
+  /// Номера книг, которые строят созвездия (F-MAP-18).
+  final List<int> builders;
+
+  /// Словарь корпуса.
+  final MapVocabulary vocabulary;
+
+  /// Матрица Грама книг: попарные косинусы строк BM25.
+  final Float64List gram;
+
+  /// Книги в пространстве главных компонент.
+  final LatentRows latent;
+
+  /// Соседи по смыслу и сходство каждой пары.
+  final Neighbours neighbours;
 }
 
 /// Карта, как она лежит на устройстве.

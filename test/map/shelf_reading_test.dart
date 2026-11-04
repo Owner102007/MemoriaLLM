@@ -7,6 +7,7 @@ import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/map/book_bag.dart';
 import 'package:memoria/domain/map/book_map.dart';
+import 'package:memoria/domain/map/map_seating.dart';
 import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
@@ -146,6 +147,8 @@ void main() {
         store: data.bookMap,
         bags: (BagRequest request) async => bagOfBook(request),
         layout: (List<BookBag> bags) async => buildBookMap(bags),
+        seat: (List<BookBag> bags, Map<String, MapPoint> kept) async =>
+            seatBooks(bags, kept),
       ),
       // Ветвь II: итог под прежним ключом, экран не гаснет. Основное
       // приложение ([branch] = false) — значения по умолчанию.
@@ -832,6 +835,69 @@ void main() {
     again.resume();
     expect(again.running, isTrue);
     await again.settled();
+  });
+
+  test('F-MAP-04: новая книга досаживается, «Перестроить» считает карту '
+      'заново', () async {
+    for (final String id in <String>['a', 'b', 'c']) {
+      await shelve(id, pagesOf('артерии', 3));
+    }
+    final ShelfReading pass = reading(branch: false);
+    pass.start();
+    await pass.settled();
+    expect((await data.bookMap.load())!.points, hasLength(3));
+
+    await shelve('d', pagesOf('артерии', 3));
+    pass.start();
+    await pass.settled();
+    Map<String, MapPoint> points = (await data.bookMap.load())!.points;
+    expect(points['d']!.seated, isTrue);
+    expect(pass.rebuilding, isFalse);
+
+    final List<ShelfReadingPhase> phases = <ShelfReadingPhase>[];
+    pass.addListener(() => phases.add(pass.progress.phase));
+    pass.rebuild();
+    expect(pass.rebuilding, isTrue);
+    await pass.settled();
+    expect(phases, contains(ShelfReadingPhase.mapping));
+    expect(pass.rebuilding, isFalse);
+    points = (await data.bookMap.load())!.points;
+    expect(points.values.every((MapPoint p) => !p.seated), isTrue);
+  });
+
+  test('F-MAP-04: «Перестроить», остановленное посреди, доводит до конца '
+      'следующее «Посчитать карту»', () async {
+    for (final String id in <String>['a', 'b', 'c']) {
+      await shelve(id, pagesOf('артерии', 3));
+    }
+    final ShelfReading pass = reading(branch: false);
+    pass.start();
+    await pass.settled();
+    await shelve('d', pagesOf('артерии', 3));
+    pass.start();
+    await pass.settled();
+    expect((await data.bookMap.load())!.points['d']!.seated, isTrue);
+
+    // Остановили, как только начался расчёт карты.
+    void stopAtMapping() {
+      if (pass.progress.phase == ShelfReadingPhase.mapping && !pass.stopped) {
+        pass.stop();
+      }
+    }
+
+    pass.addListener(stopAtMapping);
+    pass.rebuild();
+    await pass.settled();
+    pass.removeListener(stopAtMapping);
+    expect(pass.stopped, isTrue);
+    expect(pass.rebuilding, isTrue, reason: 'просьба не потерялась');
+    expect((await data.bookMap.load())!.points['d']!.seated, isTrue);
+
+    pass.start();
+    await pass.settled();
+    expect(pass.rebuilding, isFalse);
+    final Map<String, MapPoint> points = (await data.bookMap.load())!.points;
+    expect(points.values.every((MapPoint p) => !p.seated), isTrue);
   });
 
   test('SNO-F-IDX-04: отложенное начало ждёт своего срока', () async {

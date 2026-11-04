@@ -466,6 +466,15 @@ class ShelfReading extends ChangeNotifier {
 
   /// Нужна ли карта читателю: «Галактику» открывали ([want]).
   bool _wanted;
+
+  /// Читатель нажал «Перестроить» ([rebuild]): следующий расчёт карты —
+  /// заново, как в первый раз (F-MAP-04, D-049).
+  ///
+  /// Снимается, только когда карта досчитана. Остановили посреди или
+  /// расчёт не удался — просьба остаётся, и следующий проход (кнопкой
+  /// или сам) перестроит до конца. Живёт до закрытия приложения: после
+  /// перезапуска карта остаётся досаженной, пока не нажмут снова.
+  bool _fresh = false;
   bool _screenKept = false;
   Completer<void>? _release;
 
@@ -576,6 +585,22 @@ class ShelfReading extends ChangeNotifier {
     }
     start(delay: delay);
   }
+
+  /// «Перестроить» (F-MAP-04, D-049): карта считается заново, как в
+  /// первый раз, — та же, что у другого устройства с теми же книгами.
+  ///
+  /// Это просьба читателя, как «Посчитать карту»: остановку она снимает.
+  /// Остановили посреди — следующий [start] перестроит до конца.
+  void rebuild() {
+    if (_disposed) {
+      return;
+    }
+    _fresh = true;
+    start();
+  }
+
+  /// Ждёт ли карта перестройки ([rebuild]) — для тестов и журнала.
+  bool get rebuilding => _fresh;
 
   /// Читатель открыл «Галактику» (D-048): карта ему нужна, и это
   /// помнится — со следующего запуска подготовка идёт сама.
@@ -756,7 +781,9 @@ class ShelfReading extends ChangeNotifier {
     try {
       final MapPlan plan = await _map.plan();
       final MapOutcome? current = plan.current;
-      if (current != null) {
+      // «Перестроить» считает и свежую карту: читатель просит заново.
+      final bool fresh = _fresh;
+      if (current != null && !fresh) {
         // Карта лежит готовой: время её расчёта известно только из
         // прежнего итога.
         return MapSummary(
@@ -807,7 +834,11 @@ class ShelfReading extends ChangeNotifier {
           return go;
         },
         stopped: () => _quit,
+        fresh: fresh,
       );
+      if (fresh && outcome.kind != MapOutcomeKind.stopped) {
+        _fresh = false;
+      }
       final int ms = _nowMs() - started;
       return switch (outcome.kind) {
         MapOutcomeKind.built => MapSummary(

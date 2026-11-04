@@ -587,6 +587,16 @@ class MapPoints extends Table {
   /// уверены — поставьте сами».
   IntColumn get reason => integer().withDefault(const Constant<int>(0))();
 
+  /// Досажена ли книга к готовой карте, а не разложена полным расчётом
+  /// (ALG-MAP-08, схема 15): по таким экран пишет «Добавлено N книг ·
+  /// Перестроить».
+  BoolColumn get seated => boolean().withDefault(const Constant<bool>(false))();
+
+  /// Отпечаток входа книги (схема 15): изменились название, автор или
+  /// запомненный текст — книга досаживается заново. Пусто — точка
+  /// положена до S60, и при первом расчёте карта считается целиком.
+  TextColumn get input => text().withDefault(const Constant<String>(''))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{bookId};
 }

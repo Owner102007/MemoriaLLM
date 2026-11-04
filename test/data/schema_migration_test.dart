@@ -62,9 +62,20 @@ void main() {
     return row.read<int>('user_version');
   }
 
+  /// Откатывает базу к версии 14: досадки у точки карты тогда не было.
+  Future<void> undoSeating(AppData data) async {
+    await data.database.customStatement(
+      'ALTER TABLE map_points DROP COLUMN input',
+    );
+    await data.database.customStatement(
+      'ALTER TABLE map_points DROP COLUMN seated',
+    );
+  }
+
   /// Откатывает базу к версии 13: ни паспорта файла, ни причины «без
   /// созвездия» у точки карты тогда не было.
   Future<void> undoPassports(AppData data) async {
+    await undoSeating(data);
     await data.database.customStatement('DROP TABLE file_passports');
     await data.database.customStatement(
       'ALTER TABLE map_points DROP COLUMN reason',
@@ -195,6 +206,57 @@ void main() {
     );
     expect(data.searchIndexed, isTrue);
     await data.close();
+  });
+
+  test('F-MAP-04: база версии 14 доезжает до 15 с досадкой у точки '
+      'карты', () async {
+    final AppData first = await launch();
+    await first.library.save(testBook());
+    await first.bookMap.replace(
+      const StoredBookMap(
+        layoutKey: 'набор',
+        version: kBookMapVersion,
+        points: <String, MapPoint>{
+          'book-1': MapPoint(key: 'hash-1', x: 0.25, y: -0.5),
+        },
+      ),
+    );
+    await undoSeating(first);
+    await first.database.customStatement('PRAGMA user_version = 14');
+    expect(await columnsOf(first, 'map_points'), isNot(contains('seated')));
+    await first.close();
+
+    final AppData second = await launch();
+    expect(await versionOf(second), appSchemaVersion);
+    expect(
+      await columnsOf(second, 'map_points'),
+      containsAll(<String>['seated', 'input']),
+    );
+    final MapPoint? old = (await second.bookMap.load())?.points['book-1'];
+    expect(old?.x, 0.25, reason: 'прежняя точка осталась');
+    expect(old?.seated, isFalse);
+    expect(old?.input, '', reason: 'карта посчитается целиком');
+    await second.bookMap.replace(
+      const StoredBookMap(
+        layoutKey: 'набор',
+        version: kBookMapVersion,
+        points: <String, MapPoint>{
+          'book-1': MapPoint(
+            key: 'hash-1',
+            x: 0.25,
+            y: -0.5,
+            reason: MapReason.awaiting,
+            seated: true,
+            input: 'вход',
+          ),
+        },
+      ),
+    );
+    final MapPoint? now = (await second.bookMap.load())?.points['book-1'];
+    expect(now?.seated, isTrue);
+    expect(now?.input, 'вход');
+    expect(now?.reason, MapReason.awaiting);
+    await second.close();
   });
 
   test('F-MAP-18: база версии 13 доезжает до 14 с паспортом файла', () async {
