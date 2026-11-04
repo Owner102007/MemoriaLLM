@@ -10,6 +10,7 @@ import '../../domain/map/book_map.dart';
 import '../../domain/map/book_passport.dart';
 import '../../domain/map/file_passport.dart';
 import '../../domain/map/map_layout.dart';
+import '../../domain/map/map_seating.dart';
 import '../../domain/map/map_trusted.dart';
 import '../../domain/map/map_vectors.dart';
 import '../../domain/map/text_trust.dart';
@@ -20,6 +21,13 @@ typedef BagRunner = Future<BookBag> Function(BagRequest request);
 
 /// Считает карту по мешкам книг.
 typedef MapRunner = Future<BookMap?> Function(List<BookBag> bags);
+
+/// Досаживает новые книги к готовой карте (ALG-MAP-08): [kept] —
+/// прежние места книг, которые свои места сохраняют.
+typedef SeatRunner = Future<BookMap?> Function(
+  List<BookBag> bags,
+  Map<String, MapPoint> kept,
+);
 
 /// Судит текст книги (F-MAP-18): `null` — язык книги без словаря, она
 /// идёт в карту как есть.
@@ -61,6 +69,11 @@ TextTrust? judgeText(
 /// Карта в фоновом изоляте: разложение и раскладка — секунды счёта.
 Future<BookMap?> mapInIsolate(List<BookBag> bags) {
   return Isolate.run(() => buildBookMap(bags));
+}
+
+/// Досадка в фоновом изоляте: разложение — то же, что у полной карты.
+Future<BookMap?> seatInIsolate(List<BookBag> bags, Map<String, MapPoint> kept) {
+  return Isolate.run(() => seatBooks(bags, kept));
 }
 
 /// Сколько страниц читается из кэша текста одним запросом.
@@ -140,10 +153,15 @@ class MapOutcome {
     this.books = 0,
     this.groups = 0,
     this.fingerprint = '',
+    this.seated = 0,
   });
 
   /// Чем кончилось.
   final MapOutcomeKind kind;
+
+  /// Сколько книг досажено этим расчётом (ALG-MAP-08); ноль — карта
+  /// посчитана целиком или только сняты убранные книги.
+  final int seated;
 
   /// Сколько книг на карте.
   final int books;
@@ -164,8 +182,14 @@ class MapOutcome {
 /// место по одному названию.
 ///
 /// Карта **стабильна**: пересчитывается, только когда изменился набор
-/// книг, их категории, названия, запомненный текст или версия расчёта, —
-/// всё это сложено в ключ набора.
+/// книг, их названия, запомненный текст или версия расчёта, — всё это
+/// сложено в ключ набора.
+///
+/// И пересчёт не перекладывает карту (F-MAP-04, D-049): новые и
+/// изменившиеся книги досаживаются к прежним звёздам (`map_seating.dart`),
+/// убранные просто снимаются. Заново, как в первый раз, карта считается,
+/// когда карты нет, поднялась версия расчёта, читатель нажал
+/// «Перестроить» или изменилось больше четверти книг.
 class MapBuilder {
   /// Создаёт расчёт.
   ///
@@ -178,6 +202,7 @@ class MapBuilder {
     required BookMapRepository store,
     BagRunner bags = bagInIsolate,
     MapRunner layout = mapInIsolate,
+    SeatRunner seat = seatInIsolate,
     int textVersion = kPageTextVersion,
     PassportRepository? passports,
     PassportReader? passportReader,
@@ -193,6 +218,7 @@ class MapBuilder {
        _store = store,
        _bags = bags,
        _layout = layout,
+       _seat = seat,
        _textVersion = textVersion;
 
   final LibraryRepository _library;
@@ -201,6 +227,7 @@ class MapBuilder {
   final BookMapRepository _store;
   final BagRunner _bags;
   final MapRunner _layout;
+  final SeatRunner _seat;
   final int _textVersion;
 
   /// Паспорт и доверие (F-MAP-18). Без хранилища и словаря текст не
@@ -232,6 +259,19 @@ class MapBuilder {
         ..write('\n');
     }
     return sha256.convert(utf8.encode(text.toString())).toString();
+  }
+
+  /// Отпечаток входа книги — того, от чего зависит её место: версии
+  /// текста и паспорта, название, автор, сколько страниц запомнено.
+  ///
+  /// Лежит у точки карты (`MapPoint.input`): изменился — книга
+  /// досаживается заново (ALG-MAP-08), остальные стоят.
+  static String inputOf(MapSource source, {required int textVersion}) {
+    final String text =
+        'text/$textVersion/passport/$kPassportVersion\u001f'
+        '${source.book.title}\u001f${source.book.author ?? ''}\u001f'
+        '${source.cachedPages}';
+    return sha256.convert(utf8.encode(text)).toString().substring(0, 16);
   }
 
   /// Смотрит, по каким книгам считать карту и свежа ли лежащая.
@@ -321,11 +361,14 @@ class MapBuilder {
   /// [onProgress] зовётся после каждой разобранной книги: сколько
   /// разобрано и сколько всего. [stopped] спрашивается между книгами:
   /// `true` — расчёт бросается, прежняя карта остаётся как была.
+  /// [fresh] — «Перестроить» (F-MAP-04): карта считается заново, как в
+  /// первый раз, даже если книги можно досадить.
   Future<MapOutcome> build(
     MapPlan plan, {
     void Function(int done, int total)? onProgress,
     bool Function()? stopped,
     Future<bool> Function()? turn,
+    bool fresh = false,
   }) async {
     final List<MapSource> sources = plan.sources;
     if (sources.length < kMinMapBooks) {
@@ -336,6 +379,22 @@ class MapBuilder {
       await _store.clear();
       return const MapOutcome(kind: MapOutcomeKind.tooMany);
     }
+    final Map<String, String> inputs = <String, String>{
+      for (final MapSource source in sources)
+        source.book.id: inputOf(source, textVersion: _textVersion),
+    };
+    // ALG-MAP-08, D-049: какие книги сохраняют места. «Перестроить» —
+    // ни одна.
+    final Map<String, MapPoint> kept = fresh
+        ? const <String, MapPoint>{}
+        : await _keptPlaces(sources, inputs);
+    final int changed = sources.length - kept.length;
+    if (changed == 0) {
+      // Книги только убрали (или ключ набора сменился без перемен в
+      // книгах): убранные снимаются, остальные стоят — считать нечего.
+      return _keep(plan, sources, kept, inputs);
+    }
+    final bool seating = seatingFits(kept: kept.length, changed: changed);
     final List<BookBag> bags = <BookBag>[];
     for (int i = 0; i < sources.length; i++) {
       // Своя очередь к движку PDF (паспорт файла): пока открыта книга,
@@ -365,13 +424,78 @@ class MapBuilder {
     if (stopped?.call() ?? false) {
       return const MapOutcome(kind: MapOutcomeKind.stopped);
     }
-    final BookMap? map = await _layout(bags);
+    final BookMap? map = seating
+        ? await _seat(bags, kept)
+        : await _layout(bags);
     if (map == null) {
       await _store.clear();
       return const MapOutcome(kind: MapOutcomeKind.tooFew);
     }
+    await _save(plan, sources, map.points, inputs);
+    return MapOutcome(
+      kind: MapOutcomeKind.built,
+      books: map.points.length,
+      groups: map.groups,
+      fingerprint: map.fingerprint,
+      seated: seating ? changed : 0,
+    );
+  }
+
+  /// Прежние места книг [sources], которые их сохраняют (ALG-MAP-08):
+  /// отпечаток файла → точка. Место сохраняет книга, у которой точка
+  /// лежит на устройстве, посчитана этой версией расчёта, и вход книги
+  /// с тех пор не изменился. Карты нет или версия другая — ни одна.
+  Future<Map<String, MapPoint>> _keptPlaces(
+    List<MapSource> sources,
+    Map<String, String> inputs,
+  ) async {
+    final StoredBookMap? stored = await _store.load();
+    if (stored == null || stored.version != kBookMapVersion) {
+      return const <String, MapPoint>{};
+    }
+    final Map<String, MapPoint> kept = <String, MapPoint>{};
+    for (final MapSource source in sources) {
+      final MapPoint? point = stored.points[source.book.id];
+      if (point != null &&
+          point.key == source.book.fileHash &&
+          point.input.isNotEmpty &&
+          point.input == inputs[source.book.id]) {
+        kept[point.key] = point;
+      }
+    }
+    return kept;
+  }
+
+  /// Все книги сохраняют места: карта кладётся без убранных, под новым
+  /// ключом набора.
+  Future<MapOutcome> _keep(
+    MapPlan plan,
+    List<MapSource> sources,
+    Map<String, MapPoint> kept,
+    Map<String, String> inputs,
+  ) async {
+    final List<MapPoint> points = <MapPoint>[
+      for (final MapSource source in sources) kept[source.book.fileHash]!,
+    ];
+    await _save(plan, sources, points, inputs);
+    return MapOutcome(
+      kind: MapOutcomeKind.built,
+      books: points.length,
+      groups: _groupsOf(points),
+      fingerprint: mapFingerprint(points),
+    );
+  }
+
+  /// Кладёт точки [points] на устройство: у книги — её точка с
+  /// отпечатком входа.
+  Future<void> _save(
+    MapPlan plan,
+    List<MapSource> sources,
+    List<MapPoint> points,
+    Map<String, String> inputs,
+  ) async {
     final Map<String, MapPoint> byKey = <String, MapPoint>{
-      for (final MapPoint point in map.points) point.key: point,
+      for (final MapPoint point in points) point.key: point,
     };
     await _store.replace(
       StoredBookMap(
@@ -379,16 +503,10 @@ class MapBuilder {
         version: kBookMapVersion,
         points: <String, MapPoint>{
           for (final MapSource source in sources)
-            if (byKey[source.book.fileHash] != null)
-              source.book.id: byKey[source.book.fileHash]!,
+            if (byKey[source.book.fileHash] case final MapPoint point)
+              source.book.id: point.withInput(inputs[source.book.id]!),
         },
       ),
-    );
-    return MapOutcome(
-      kind: MapOutcomeKind.built,
-      books: map.points.length,
-      groups: map.groups,
-      fingerprint: map.fingerprint,
     );
   }
 

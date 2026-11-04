@@ -10,6 +10,7 @@ import 'package:memoria/domain/map/map_categories.dart';
 import 'package:memoria/domain/map/map_layout.dart';
 import 'package:memoria/domain/map/map_names.dart';
 import 'package:memoria/domain/map/map_order.dart';
+import 'package:memoria/domain/map/map_seating.dart';
 import 'package:memoria/domain/map/map_trusted.dart';
 import 'package:memoria/domain/map/map_vectors.dart';
 
@@ -224,6 +225,107 @@ void main() {
     expect(map.edges, listOf('edges').length);
     // Пять созвездий и книги без созвездия (скан, одиночка) — шесть групп.
     expect(map.groups, 6);
+  });
+
+  group('ALG-MAP-08: досадка', () {
+    late Map<String, Object?> seating;
+    late Set<String> added;
+    late BookMap before;
+    late Map<String, MapPoint> kept;
+
+    setUp(() {
+      seating = golden['seating']! as Map<String, Object?>;
+      added = <String>{
+        for (final Object? key in seating['added']! as List<Object?>)
+          key! as String,
+      };
+      before = buildBookMap(<BookBag>[
+        for (final BookBag bag in bags)
+          if (!added.contains(bag.key)) bag,
+      ])!;
+      kept = <String, MapPoint>{
+        for (final MapPoint point in before.points) point.key: point,
+      };
+    });
+
+    test('ALG-MAP-08: карта до досадки та же, что у другой реализации', () {
+      final List<Object?> rows = seating['before']! as List<Object?>;
+      expect(before.points.length, rows.length);
+      for (int i = 0; i < rows.length; i++) {
+        final List<Object?> row = rows[i]! as List<Object?>;
+        final MapPoint point = before.points[i];
+        expect(point.key, row[0]);
+        expect(
+          (point.x - numberOf(row[1])).abs(),
+          lessThanOrEqualTo(_tolerance),
+        );
+        expect(
+          (point.y - numberOf(row[2])).abs(),
+          lessThanOrEqualTo(_tolerance),
+        );
+        expect(point.constellation, row[3]);
+        expect(point.name, row[4]);
+      }
+    });
+
+    test('ALG-MAP-08: досаженные книги — те же места, созвездия и причины, '
+        'что у другой реализации', () {
+      final BookMap map = seatBooks(bags, kept)!;
+      final List<Object?> rows = seating['points']! as List<Object?>;
+      expect(map.points.length, rows.length);
+      double worst = 0;
+      for (int i = 0; i < rows.length; i++) {
+        final List<Object?> row = rows[i]! as List<Object?>;
+        final MapPoint point = map.points[i];
+        expect(point.key, row[0]);
+        worst = math.max(worst, (point.x - numberOf(row[1])).abs());
+        worst = math.max(worst, (point.y - numberOf(row[2])).abs());
+        expect(point.constellation, row[3], reason: point.key);
+        expect(point.name, row[4], reason: point.key);
+        expect(point.reason.name, row[5], reason: point.key);
+        expect(point.seated, row[6], reason: point.key);
+      }
+      stdout.writeln(
+        'ЗАМЕР ALG-MAP-08 | досадка | расхождение с эталоном | $worst',
+      );
+      expect(worst, lessThanOrEqualTo(_tolerance));
+      expect(map.fingerprint, seating['fingerprint']);
+    });
+
+    test('F-MAP-04: досадка не сдвигает прежние звёзды вовсе (ε = 0)', () {
+      final BookMap map = seatBooks(bags, kept)!;
+      for (final MapPoint point in map.points) {
+        final MapPoint? was = kept[point.key];
+        if (was != null) {
+          expect(point, was, reason: 'старая звезда — до бита');
+        } else {
+          expect(point.seated, isTrue);
+          expect(point.x.abs(), lessThanOrEqualTo(1.0));
+          expect(point.y.abs(), lessThanOrEqualTo(1.0));
+        }
+      }
+      // Каждая новая звезда — не ближе наименьшего просвета к любой другой.
+      final double gap = kGapShare / math.sqrt(map.points.length.toDouble());
+      for (final MapPoint a in map.points.where((MapPoint p) => p.seated)) {
+        for (final MapPoint b in map.points) {
+          if (identical(a, b)) continue;
+          final double dx = a.x - b.x;
+          final double dy = a.y - b.y;
+          expect(
+            math.sqrt(dx * dx + dy * dy),
+            greaterThanOrEqualTo(gap * 0.999),
+            reason: '${a.key} у ${b.key}',
+          );
+        }
+      }
+    });
+
+    test('ALG-MAP-08: порядок мешков на досадку не влияет', () {
+      final BookMap a = seatBooks(bags, kept)!;
+      final BookMap b = seatBooks(bags.reversed.toList(), kept)!;
+      expect(b.fingerprint, a.fingerprint);
+      expect(b.points, a.points);
+    });
   });
 
   test('ALG-MAP-16: созвездия те же, что у другой реализации', () {

@@ -7,6 +7,7 @@ import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/library/book_source.dart';
 import 'package:memoria/domain/map/book_bag.dart';
 import 'package:memoria/domain/map/book_map.dart';
+import 'package:memoria/domain/map/map_seating.dart';
 import 'package:memoria/domain/reading/page_text.dart';
 import 'package:memoria/domain/reading/reader_document.dart';
 import 'package:memoria/domain/settings/app_settings.dart';
@@ -146,6 +147,8 @@ void main() {
         store: data.bookMap,
         bags: (BagRequest request) async => bagOfBook(request),
         layout: (List<BookBag> bags) async => buildBookMap(bags),
+        seat: (List<BookBag> bags, Map<String, MapPoint> kept) async =>
+            seatBooks(bags, kept),
       ),
       // Ветвь II: итог под прежним ключом, экран не гаснет. Основное
       // приложение ([branch] = false) — значения по умолчанию.

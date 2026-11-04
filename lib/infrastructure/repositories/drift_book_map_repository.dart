@@ -41,6 +41,8 @@ class DriftBookMapRepository implements BookMapRepository {
               reason: row.reason >= 0 && row.reason < MapReason.values.length
                   ? MapReason.values[row.reason]
                   : MapReason.none,
+              seated: row.seated,
+              input: row.input,
             ),
       },
     );
@@ -63,6 +65,8 @@ class DriftBookMapRepository implements BookMapRepository {
               constellation: Value<int>(entry.value.constellation),
               constellationName: Value<String>(entry.value.name),
               reason: Value<int>(entry.value.reason.index),
+              seated: Value<bool>(entry.value.seated),
+              input: Value<String>(entry.value.input),
             ),
         ]);
       });

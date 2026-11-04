@@ -522,6 +522,7 @@ String describeMapReason(MapReason reason) => switch (reason) {
   MapReason.none => '',
   MapReason.littleText => 'Мало надёжного текста',
   MapReason.unsure => 'Не уверены — поставьте сами',
+  MapReason.awaiting => 'Новая книга — созвездие получит при «Перестроить»',
 };
 
 /// Сколько времени провели в книге — словами для карточки; пусто —

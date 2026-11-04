@@ -4,6 +4,8 @@ import 'package:memoria/application/map/map_builder.dart';
 import 'package:memoria/domain/library/book_category.dart';
 import 'package:memoria/domain/map/book_bag.dart';
 import 'package:memoria/domain/map/book_map.dart';
+import 'package:memoria/domain/map/map_seating.dart';
+import 'package:memoria/domain/map/map_trusted.dart';
 import 'package:memoria/domain/reading/page_text.dart';
 
 import '../data/test_data.dart';
@@ -38,7 +40,7 @@ void main() {
     await data.close();
   });
 
-  MapBuilder builder({BagRunner? bags, MapRunner? layout}) {
+  MapBuilder builder({BagRunner? bags, MapRunner? layout, SeatRunner? seat}) {
     return MapBuilder(
       library: data.library,
       categories: data.categories,
@@ -46,8 +48,34 @@ void main() {
       store: data.bookMap,
       bags: bags ?? (BagRequest request) async => bagOfBook(request),
       layout: layout ?? (List<BookBag> found) async => buildBookMap(found),
+      seat:
+          seat ??
+          (List<BookBag> found, Map<String, MapPoint> kept) async =>
+              seatBooks(found, kept),
     );
   }
+
+  /// Расчёт, который считает, сколько раз карта считалась целиком
+  /// ([layouts]) и сколько раз досаживалась ([seats]).
+  ({MapBuilder map, List<int> layouts, List<int> seats}) counted() {
+    final List<int> layouts = <int>[];
+    final List<int> seats = <int>[];
+    final MapBuilder map = builder(
+      layout: (List<BookBag> found) async {
+        layouts.add(found.length);
+        return buildBookMap(found);
+      },
+      seat: (List<BookBag> found, Map<String, MapPoint> kept) async {
+        seats.add(found.length - kept.length);
+        return seatBooks(found, kept);
+      },
+    );
+    return (map: map, layouts: layouts, seats: seats);
+  }
+
+  /// Места книг, как они лежат на устройстве: идентификатор → точка.
+  Future<Map<String, MapPoint>> stored() async =>
+      (await data.bookMap.load())!.points;
 
   Future<void> addBook(
     String id, {
@@ -209,6 +237,179 @@ void main() {
     final MapPlan shrunk = await map.plan();
     expect(shrunk.upToDate, isFalse);
     expect(shrunk.key, longer.key);
+  });
+
+  test('F-MAP-04: новая книга досаживается — прежние звёзды стоят до '
+      'бита, полного расчёта нет', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+    final Map<String, MapPoint> before = await stored();
+    expect(before.values.every((MapPoint p) => !p.seated), isTrue);
+    expect(before.values.every((MapPoint p) => p.input.isNotEmpty), isTrue);
+
+    // Новая книга — о том же, что три книги о сосудах.
+    await addBook(
+      'a4',
+      category: 'angio',
+      pages: <String>[
+        'Артерия несёт кровь от сердца, вена — к сердцу.',
+        'Капилляр соединяет артерию и вену; сосуд a4.',
+      ],
+    );
+    final MapPlan grown = await map.plan();
+    expect(grown.upToDate, isFalse);
+    final MapOutcome outcome = await map.build(grown);
+    expect(outcome.kind, MapOutcomeKind.built);
+    expect(outcome.seated, 1);
+    expect(layouts, <int>[6], reason: 'целиком — только первый раз');
+    expect(seats, <int>[1]);
+
+    final Map<String, MapPoint> after = await stored();
+    expect(after, hasLength(7));
+    for (final MapEntry<String, MapPoint> was in before.entries) {
+      expect(after[was.key], was.value, reason: 'звезда ${was.key} на месте');
+    }
+    final MapPoint added = after['a4']!;
+    expect(added.seated, isTrue);
+    expect(added.name, after['a1']!.name, reason: 'к сосудам');
+    expect(added.constellation, after['a1']!.constellation);
+    expect(added.reason, MapReason.none);
+    expect((await map.plan()).upToDate, isTrue);
+  });
+
+  test('F-MAP-04: книгу, не похожую ни на одно созвездие, досадка '
+      'оставляет без созвездия — до «Перестроить»', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+    await addBook(
+      'k1',
+      pages: <String>[
+        'Тесто замешивают на муке и воде, сосуд накрывают.',
+        'Хлеб печётся в печи; функция печи — жар.',
+      ],
+    );
+    await map.build(await map.plan());
+    MapPoint lone = (await stored())['k1']!;
+    expect(lone.constellation, -1);
+    expect(lone.reason, MapReason.awaiting);
+    expect(lone.seated, isTrue);
+
+    await map.build(await map.plan(), fresh: true);
+    lone = (await stored())['k1']!;
+    expect(lone.reason, isNot(MapReason.awaiting));
+    expect(lone.seated, isFalse);
+  });
+
+  test('F-MAP-04: убранная книга снимается, остальные стоят, ничего не '
+      'считается', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+    final Map<String, MapPoint> before = await stored();
+
+    await data.library.delete('m3');
+    final MapPlan shrunk = await map.plan();
+    expect(shrunk.upToDate, isFalse);
+    final MapOutcome outcome = await map.build(shrunk);
+    expect(outcome.kind, MapOutcomeKind.built);
+    expect(outcome.books, 5);
+    expect(layouts, <int>[6]);
+    expect(seats, isEmpty);
+    final Map<String, MapPoint> after = await stored();
+    expect(after.keys.toSet(), before.keys.toSet()..remove('m3'));
+    for (final String id in after.keys) {
+      expect(after[id], before[id]);
+    }
+    expect((await map.plan()).upToDate, isTrue);
+  });
+
+  test('F-MAP-04: книга с дочитанным текстом досаживается заново, '
+      'остальные стоят', () async {
+    await addLibrary();
+    // Седьмая и восьмая — чтобы одна изменившаяся была не больше четверти.
+    await addBook('a4', category: 'angio', pages: <String>['Сосуд и вена.']);
+    await addBook('m4', category: 'math', pages: <String>['Ряд и предел.']);
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+    final Map<String, MapPoint> before = await stored();
+
+    await data.pageTexts.savePageTexts(
+      const PageTextKey(bookId: 'm1', fingerprint: 'hash-m1'),
+      <int, String>{3: 'Ещё страница про интеграл и производную.'},
+    );
+    await map.build(await map.plan());
+    expect(layouts, <int>[8]);
+    expect(seats, <int>[1]);
+    final Map<String, MapPoint> after = await stored();
+    for (final String id in before.keys.where((String id) => id != 'm1')) {
+      expect(after[id], before[id], reason: id);
+    }
+    expect(after['m1']!.seated, isTrue);
+    expect(after['m1']!.input, isNot(before['m1']!.input));
+  });
+
+  test('F-MAP-04: изменилось больше четверти книг — карта считается '
+      'заново (D-049)', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+
+    // Шесть книг на карте и три новые: 3 из 9 — больше четверти.
+    for (final String id in <String>['a4', 'm4', 'm5']) {
+      await addBook(id, category: 'math', pages: <String>['Ряд $id.']);
+    }
+    final MapOutcome outcome = await map.build(await map.plan());
+    expect(outcome.seated, 0);
+    expect(layouts, <int>[6, 9]);
+    expect(seats, isEmpty);
+    expect((await stored()).values.every((MapPoint p) => !p.seated), isTrue);
+  });
+
+  test('F-MAP-04: «Перестроить» считает карту заново, как в первый '
+      'раз: та же карта, что у нового устройства', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+    await addBook('a4', category: 'angio', pages: <String>['Сосуд и вена.']);
+    final MapOutcome seated = await map.build(await map.plan());
+    expect(seated.seated, 1);
+
+    final MapPlan plan = await map.plan();
+    expect(plan.upToDate, isTrue, reason: 'карта свежа — но читатель просит');
+    final MapOutcome rebuilt = await map.build(plan, fresh: true);
+    expect(rebuilt.seated, 0);
+    expect(layouts, <int>[6, 7]);
+    expect((await stored()).values.every((MapPoint p) => !p.seated), isTrue);
+
+    // Новое устройство с теми же книгами считает ту же карту.
+    await data.bookMap.clear();
+    final MapOutcome anew = await map.build(await map.plan());
+    expect(anew.fingerprint, rebuilt.fingerprint);
+  });
+
+  test('F-MAP-04: карта, положенная до S60 (без отпечатка входа), при '
+      'первой перемене считается целиком', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+    final StoredBookMap old = (await data.bookMap.load())!;
+    await data.bookMap.replace(
+      StoredBookMap(
+        layoutKey: old.layoutKey,
+        version: old.version,
+        points: <String, MapPoint>{
+          for (final MapEntry<String, MapPoint> e in old.points.entries)
+            e.key: e.value.withInput(''),
+        },
+      ),
+    );
+    expect((await map.plan()).upToDate, isTrue, reason: 'без перемен — стоит');
+    await addBook('a4', category: 'angio', pages: <String>['Сосуд и вена.']);
+    await map.build(await map.plan());
+    expect(layouts, <int>[6, 7]);
+    expect(seats, isEmpty);
   });
 
   test('F-MAP-02: ключ набора не зависит от идентификаторов книг', () {
