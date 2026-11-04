@@ -40,8 +40,14 @@ void main() {
     await data.close();
   });
 
-  MapBuilder builder({BagRunner? bags, MapRunner? layout, SeatRunner? seat}) {
+  MapBuilder builder({
+    BagRunner? bags,
+    MapRunner? layout,
+    SeatRunner? seat,
+    bool seating = true,
+  }) {
     return MapBuilder(
+      seating: seating,
       library: data.library,
       categories: data.categories,
       texts: data.pageTexts,
@@ -57,10 +63,13 @@ void main() {
 
   /// Расчёт, который считает, сколько раз карта считалась целиком
   /// ([layouts]) и сколько раз досаживалась ([seats]).
-  ({MapBuilder map, List<int> layouts, List<int> seats}) counted() {
+  ({MapBuilder map, List<int> layouts, List<int> seats}) counted({
+    bool seating = true,
+  }) {
     final List<int> layouts = <int>[];
     final List<int> seats = <int>[];
     final MapBuilder map = builder(
+      seating: seating,
       layout: (List<BookBag> found) async {
         layouts.add(found.length);
         return buildBookMap(found);
@@ -410,6 +419,51 @@ void main() {
     await map.build(await map.plan());
     expect(layouts, <int>[6, 7]);
     expect(seats, isEmpty);
+  });
+
+  test('SNO-F-IDX-04: в ветви II досадки нет — новая книга пересчитывает '
+      'карту целиком, как до S60', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted(
+      seating: false,
+    );
+    await map.build(await map.plan());
+    await addBook('a4', category: 'angio', pages: <String>['Сосуд и вена.']);
+    await map.build(await map.plan());
+    await data.library.delete('a4');
+    await map.build(await map.plan());
+    expect(layouts, <int>[6, 7, 6]);
+    expect(seats, isEmpty);
+    expect((await stored()).values.every((MapPoint p) => !p.seated), isTrue);
+  });
+
+  test('F-MAP-04: у двух книг с одним файлом звезда одна — убрали первую, '
+      'вторая её наследует', () async {
+    await addLibrary();
+    final (:MapBuilder map, :List<int> layouts, :List<int> seats) = counted();
+    await map.build(await map.plan());
+    final MapPoint star = (await stored())['a1']!;
+    // Тот же файл на полке второй раз — под другим идентификатором.
+    await data.library.save(
+      testBook(id: 'z-a1', title: 'Том a1', hash: 'hash-a1'),
+    );
+    // Текст страниц двойника прочитан, как у первой книги.
+    await data.pageTexts.savePageTexts(
+      const PageTextKey(bookId: 'z-a1', fingerprint: 'hash-a1'),
+      await data.pageTexts.pageTexts(
+        const PageTextKey(bookId: 'a1', fingerprint: 'hash-a1'),
+        from: 1,
+        to: 2,
+      ),
+    );
+    await data.library.delete('a1');
+    await map.build(await map.plan());
+    expect(layouts, <int>[6]);
+    expect(seats, isEmpty);
+    final MapPoint now = (await stored())['z-a1']!;
+    expect(now.x, star.x);
+    expect(now.y, star.y);
+    expect(now.seated, isFalse);
   });
 
   test('F-MAP-02: ключ набора не зависит от идентификаторов книг', () {

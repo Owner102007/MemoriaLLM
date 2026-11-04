@@ -1063,10 +1063,10 @@ def seat_measure(g, hi):
     return library_measure([[g[a][b] for b in hi] for a in hi])
 
 
-def seat_spot(g_sims, i, old, labels, label, xs, ys):
+def seat_spot(g_sims, i, old, was, label, xs, ys):
     n = len(old)
     candidates = [j for j in range(n)
-                  if old[j] and (label < 0 or labels[j] == label)]
+                  if old[j] and (label < 0 or was[j] == label)]
     if not candidates:
         candidates = [j for j in range(n) if old[j]]
     near = [j for j in candidates if g_sims[i][j] > 0.0]
@@ -1118,14 +1118,14 @@ def seat_spread(xs, ys, old, fresh, gap):
                     uy = dy / d
                 if old[j]:
                     push = gap - d
-                    xs[i] -= ux * push
-                    ys[i] -= uy * push
+                    xs[i] = unit_clamp(xs[i] - ux * push)
+                    ys[i] = unit_clamp(ys[i] - uy * push)
                 else:
                     push = (gap - d) * 0.5
-                    xs[i] -= ux * push
-                    ys[i] -= uy * push
-                    xs[j] += ux * push
-                    ys[j] += uy * push
+                    xs[i] = unit_clamp(xs[i] - ux * push)
+                    ys[i] = unit_clamp(ys[i] - uy * push)
+                    xs[j] = unit_clamp(xs[j] + ux * push)
+                    ys[j] = unit_clamp(ys[j] + uy * push)
         if not moved:
             break
 
@@ -1149,6 +1149,10 @@ def seat(books, kept):
     _, sims = neighbours(components)
     n = len(books)
     old = [book['key'] in kept for book in books]
+    trusts = [book.get('trust') for book in books]
+    hi = builders_of(trusts)
+    building = set(hi)
+    was = [-1] * n
     labels = [-1] * n
     canon_of = {}
     original = []
@@ -1162,35 +1166,39 @@ def seat(books, kept):
         xs[i] = point['x']
         ys[i] = point['y']
         c = point['constellation']
-        if c >= 0:
+        if c < 0:
+            continue
+        was[i] = c
+        names.setdefault(c, point['name'])
+        if i in building and g[i][i] > 0.0:
             if c not in canon_of:
                 original.append(c)
                 canon_of[c] = len(original) - 1
             labels[i] = canon_of[c]
-            names.setdefault(c, point['name'])
-    trusts = [book.get('trust') for book in books]
-    hi = builders_of(trusts)
     c0 = seat_measure(g, hi)
     cats = Cats.of(g, labels, c0, ART_PHI * c0)
-    building = set(hi)
     fresh = [i for i in range(n) if not old[i]]
-    joined = list(labels)
+    joined = [-1] * n
     reasons = ['none'] * n
     gap = GAP_SHARE / math.sqrt(float(n))
     for i in fresh:
-        if trusts[i] == 'little':
-            reasons[i] = 'littleText'
-        elif g[i][i] > 0.0:
-            if i in building:
+        words = g[i][i] > 0.0
+        chosen = None
+        if i in building:
+            if words:
                 chosen = art_choose(cats, i)
-            else:
-                placed = place(g, i, labels, c0, trusts[i] or 0.0)
-                chosen = None if placed < 0 else placed
-            if chosen is not None:
-                joined[i] = chosen
-            else:
-                reasons[i] = 'awaiting' if i in building else 'unsure'
-        seat_spot(sims, i, old, labels, joined[i], xs, ys)
+                if chosen is None:
+                    reasons[i] = 'awaiting'
+        elif trusts[i] == 'little':
+            reasons[i] = 'littleText'
+        elif words:
+            placed = place(g, i, labels, c0, trusts[i] or 0.0)
+            chosen = None if placed < 0 else placed
+            if chosen is None:
+                reasons[i] = 'unsure'
+        if chosen is not None:
+            joined[i] = original[chosen]
+        seat_spot(sims, i, old, was, joined[i], xs, ys)
         rng = Mulberry(stable_hash(books[i]['key']))
         xs[i] += (rng.unit() * 2.0 - 1.0) * gap * 0.5
         ys[i] += (rng.unit() * 2.0 - 1.0) * gap * 0.5
@@ -1204,7 +1212,7 @@ def seat(books, kept):
                 'key': key, 'x': point['x'], 'y': point['y'],
                 'constellation': point['constellation'],
                 'name': point['name'], 'reason': point.get('reason', 'none'),
-                'seated': False,
+                'seated': point.get('seated', False),
             })
             continue
         label = joined[i]
@@ -1212,17 +1220,17 @@ def seat(books, kept):
             'key': key,
             'x': unit_clamp(xs[i]),
             'y': unit_clamp(ys[i]),
-            'constellation': -1 if label < 0 else original[label],
-            'name': '' if label < 0 else names[original[label]],
+            'constellation': label,
+            'name': '' if label < 0 else names[label],
             'reason': reasons[i],
             'seated': True,
         })
     return points
 
 
-def seating_case(books):
-    """Карта без трёх книг, затем досадка этих трёх к ней."""
-    added = ['hash-07', 'hash-12', 'hash-lone']
+def seating_case(books, added=('hash-07', 'hash-12', 'hash-lone')):
+    """Карта без книг [added], затем досадка этих книг к ней."""
+    added = list(added)
     before_books = [book for book in books if book['key'] not in added]
     before = build(before_books)
     kept = {}
@@ -1234,6 +1242,7 @@ def seating_case(books):
             'constellation': c,
             'name': '' if c < 0 else before['names'][c],
             'reason': before['reasons'][i],
+            'seated': False,
         }
     points = seat(books, kept)
     return {
@@ -1253,6 +1262,38 @@ def seating_case(books):
             for p in points
         )),
     }
+
+
+def trust_seating_case():
+    """Досадка с доверием тексту (F-MAP-18): к карте трёх тем, где уже
+    стоит шумная копия темы 0 (ненадёжная, в созвездие не строит),
+    досаживаются книга темы 2, смесь тем 1 и 2 («не уверены»), книга
+    без надёжного текста («мало текста») и две книги новой темы — их не
+    принимает ни одно созвездие («ждёт перестройки»)."""
+    books = [dict(book) for book in trust_cases()['books']]
+    rng = Mulberry(60)
+    odd = ['тема9_%02d' % i for i in range(12)]
+    common = ['общее%02d' % i for i in range(10)]
+    for k in range(2):
+        counts = {}
+        for words, times in ((odd, 80), (common, 20)):
+            for _ in range(times):
+                share = rng.unit()
+                word = words[int(len(words) * share * share)]
+                counts[word] = counts.get(word, 0) + 1
+        terms = sorted(counts.items())
+        books.append({
+            'key': 'tr-odd-%d' % k, 'group': '',
+            'terms': [[w, c] for w, c in terms],
+            'length': sum(c for _, c in terms), 'trust': None,
+        })
+    return dict(
+        seating_case(
+            books,
+            ('tr-2-3', 'tr-mixed', 'tr-little', 'tr-odd-0', 'tr-odd-1'),
+        ),
+        books=sorted(books, key=lambda b: b['key']),
+    )
 
 
 # --- Корпус эталона -------------------------------------------------------
@@ -1463,7 +1504,9 @@ def main():
         'points': [[x, y] for x, y in zip(result['xs'], result['ys'])],
         'fingerprint': fingerprint(
             result['books'], result['xs'], result['ys'],
-        ),        'seating': seating_case(books),
+        ),
+        'seating': seating_case(books),
+        'seating_trust': trust_seating_case(),
     }
     for x, value in data['ln']:
         assert abs(value - math.log(x)) < 1e-13, (x, value)

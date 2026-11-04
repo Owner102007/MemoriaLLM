@@ -228,6 +228,9 @@ class AppServices {
         passports: data.passports,
         passportReader: PdfiumPassportReader(storage: storage),
         lexicon: loadLexicon,
+        // D-049: досадка — только в основном приложении; в ветви II
+        // «Перестроить» нет, и карта считается целиком, как была.
+        seating: !Sno.galaxy,
       ),
       summaryKey: Sno.galaxy
           ? SnoSettingsKeys.shelfIndex

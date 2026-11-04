@@ -288,7 +288,7 @@ void main() {
       stdout.writeln(
         'ЗАМЕР ALG-MAP-08 | досадка | расхождение с эталоном | $worst',
       );
-      expect(worst, lessThanOrEqualTo(_tolerance));
+      expect(worst, 0.0, reason: 'до бита');
       expect(map.fingerprint, seating['fingerprint']);
     });
 
@@ -326,6 +326,63 @@ void main() {
       expect(b.fingerprint, a.fingerprint);
       expect(b.points, a.points);
     });
+  });
+
+  test('ALG-MAP-08: досадка с доверием тексту — созвездия, причины и места '
+      'те же, что у другой реализации', () {
+    final Map<String, Object?> seating =
+        golden['seating_trust']! as Map<String, Object?>;
+    final List<BookBag> all = <BookBag>[
+      for (final Object? book in seating['books']! as List<Object?>)
+        _bagOf(book! as Map<String, Object?>),
+    ];
+    final Set<String> added = <String>{
+      for (final Object? key in seating['added']! as List<Object?>)
+        key! as String,
+    };
+    final BookMap before = buildBookMap(<BookBag>[
+      for (final BookBag bag in all)
+        if (!added.contains(bag.key)) bag,
+    ])!;
+    final List<Object?> was = seating['before']! as List<Object?>;
+    for (int i = 0; i < was.length; i++) {
+      final List<Object?> row = was[i]! as List<Object?>;
+      expect(before.points[i].key, row[0]);
+      expect(before.points[i].x, numberOf(row[1]));
+      expect(before.points[i].constellation, row[3]);
+    }
+    final BookMap map = seatBooks(all, <String, MapPoint>{
+      for (final MapPoint point in before.points) point.key: point,
+    })!;
+    final List<Object?> rows = seating['points']! as List<Object?>;
+    expect(map.points.length, rows.length);
+    final Set<String> reasons = <String>{};
+    for (int i = 0; i < rows.length; i++) {
+      final List<Object?> row = rows[i]! as List<Object?>;
+      final MapPoint point = map.points[i];
+      expect(point.key, row[0]);
+      expect(point.x, numberOf(row[1]), reason: point.key);
+      expect(point.y, numberOf(row[2]), reason: point.key);
+      expect(point.constellation, row[3], reason: point.key);
+      expect(point.reason.name, row[5], reason: point.key);
+      expect(point.seated, row[6], reason: point.key);
+      if (point.seated) reasons.add(point.reason.name);
+    }
+    // Эталон проходит все ветви досадки.
+    expect(
+      reasons,
+      containsAll(<String>['none', 'awaiting', 'unsure', 'littleText']),
+    );
+    expect(map.fingerprint, seating['fingerprint']);
+  });
+
+  test('F-MAP-04: порог досадки — не больше четверти изменившихся и не '
+      'меньше трёх старых звёзд (D-049)', () {
+    expect(seatingFits(kept: 6, changed: 2), isTrue, reason: '2 из 8');
+    expect(seatingFits(kept: 6, changed: 3), isFalse, reason: '3 из 9');
+    expect(seatingFits(kept: 3, changed: 1), isTrue, reason: '1 из 4');
+    expect(seatingFits(kept: 2, changed: 0), isFalse, reason: 'старых мало');
+    expect(seatingFits(kept: 2, changed: 1), isFalse);
   });
 
   test('ALG-MAP-16: созвездия те же, что у другой реализации', () {

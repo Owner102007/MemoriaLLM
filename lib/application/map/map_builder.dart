@@ -203,6 +203,7 @@ class MapBuilder {
     BagRunner bags = bagInIsolate,
     MapRunner layout = mapInIsolate,
     SeatRunner seat = seatInIsolate,
+    bool seating = true,
     int textVersion = kPageTextVersion,
     PassportRepository? passports,
     PassportReader? passportReader,
@@ -219,6 +220,7 @@ class MapBuilder {
        _bags = bags,
        _layout = layout,
        _seat = seat,
+       _seating = seating,
        _textVersion = textVersion;
 
   final LibraryRepository _library;
@@ -228,6 +230,11 @@ class MapBuilder {
   final BagRunner _bags;
   final MapRunner _layout;
   final SeatRunner _seat;
+
+  /// Досаживать ли книги (D-049); `false` — любая перемена считает карту
+  /// заново, как до S60 (ветвь II СНО2026: кнопки «Перестроить» там нет,
+  /// и ответвление новым не меняется).
+  final bool _seating;
   final int _textVersion;
 
   /// Паспорт и доверие (F-MAP-18). Без хранилища и словаря текст не
@@ -385,7 +392,7 @@ class MapBuilder {
     };
     // ALG-MAP-08, D-049: какие книги сохраняют места. «Перестроить» —
     // ни одна.
-    final Map<String, MapPoint> kept = fresh
+    final Map<String, MapPoint> kept = fresh || !_seating
         ? const <String, MapPoint>{}
         : await _keptPlaces(sources, inputs);
     final int changed = sources.length - kept.length;
@@ -453,9 +460,16 @@ class MapBuilder {
     if (stored == null || stored.version != kBookMapVersion) {
       return const <String, MapPoint>{};
     }
+    // Точка ищется по книге, а если её нет — по файлу: у двух книг
+    // полки с одним файлом место одно (`plan`), и если «первую» убрали,
+    // вторая наследует её звезду, а не досаживается заново.
+    final Map<String, MapPoint> byFile = <String, MapPoint>{
+      for (final MapPoint point in stored.points.values) point.key: point,
+    };
     final Map<String, MapPoint> kept = <String, MapPoint>{};
     for (final MapSource source in sources) {
-      final MapPoint? point = stored.points[source.book.id];
+      final MapPoint? point =
+          stored.points[source.book.id] ?? byFile[source.book.fileHash];
       if (point != null &&
           point.key == source.book.fileHash &&
           point.input.isNotEmpty &&

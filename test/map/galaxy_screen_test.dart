@@ -274,7 +274,7 @@ void main() {
   });
 
   group('F-MAP-04: досадка и «Перестроить» (S60)', () {
-    testWidgets('F-MAP-11: досаженные книги — строка «Добавлено N книг» '
+    testWidgets('F-MAP-11: досаженные книги — строка «N книг встали рядом» '
         'и «Перестроить»', (WidgetTester tester) async {
       await seedGalaxy(data, <ShelfStar>[
         ...kTwoGroups,
@@ -304,7 +304,10 @@ void main() {
       );
       expect(find.byKey(const Key('galaxy-seated')), findsOneWidget);
       expect(
-        find.text('Добавлено 2 книги — они встали рядом с похожими.'),
+        find.text(
+          '2 книги встали рядом с похожими. Перестроить — карта сложится '
+          'заново.',
+        ),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const Key('galaxy-seated-rebuild')));
@@ -433,11 +436,8 @@ void main() {
     });
 
     test('F-MAP-11: строка о досаженных — по-русски', () {
-      expect(
-        describeSeated(1),
-        'Добавлено 1 книга — она встала рядом с похожими.',
-      );
-      expect(describeSeated(5), startsWith('Добавлено 5 книг — они'));
+      expect(describeSeated(1), startsWith('1 книга встала рядом'));
+      expect(describeSeated(5), startsWith('5 книг встали рядом'));
       expect(
         describeMapReason(MapReason.awaiting),
         'Новая книга — созвездие получит при «Перестроить»',

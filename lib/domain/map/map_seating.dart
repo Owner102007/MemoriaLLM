@@ -77,8 +77,14 @@ BookMap? seatBooks(List<BookBag> bags, Map<String, MapPoint> kept) {
     for (final BookBag book in books) kept.containsKey(book.key),
   ];
 
-  // Номера прежних созвездий подряд — 0, 1, 2 … по первому появлению:
-  // так их ждут правила резонанса и сканов. [original] — обратно.
+  final Set<int> building = ground.builders.toSet();
+  // [was] — прежнее созвездие старой книги (−1 — без него или книга
+  // новая): по нему ищутся соседи по месту. Принимают новую книгу только
+  // книги, которые строят созвездия (F-MAP-18) и у которых есть слова, —
+  // как при полном расчёте; их номера идут подряд — 0, 1, 2 … по первому
+  // появлению ([labels]): так их ждут правила резонанса и сканов.
+  // [original] — обратно, от номера подряд к прежнему.
+  final List<int> was = List<int>.filled(n, kNoCategory);
   final List<int> labels = List<int>.filled(n, kNoCategory);
   final Map<int, int> canonOf = <int, int>{};
   final List<int> original = <int>[];
@@ -93,53 +99,63 @@ BookMap? seatBooks(List<BookBag> bags, Map<String, MapPoint> kept) {
     xs[i] = point.x;
     ys[i] = point.y;
     final int c = point.constellation;
-    if (c >= 0) {
+    if (c < 0) {
+      continue;
+    }
+    was[i] = c;
+    names.putIfAbsent(c, () => point.name);
+    if (building.contains(i) && gram[i * n + i] > 0.0) {
       labels[i] = canonOf.putIfAbsent(c, () {
         original.add(c);
         return original.length - 1;
       });
-      names.putIfAbsent(c, () => point.name);
     }
   }
 
   final double c0 = _measureOf(ground);
   final ArtJoin join = ArtJoin(gram, n, labels, c0);
-  final Set<int> building = ground.builders.toSet();
   final List<int> fresh = <int>[
     for (int i = 0; i < n; i++)
       if (!old[i]) i,
   ];
-  final List<int> joined = List<int>.of(labels);
+  // Созвездие новой книги — прежним номером; −1 — без созвездия.
+  final List<int> joined = List<int>.filled(n, kNoCategory);
   final List<MapReason> reasons = List<MapReason>.filled(n, MapReason.none);
   final double gap = kGapShare / math.sqrt(n.toDouble());
   for (final int i in fresh) {
     final BookTrust trust = ground.trust[i];
-    if (trust.littleText) {
-      reasons[i] = MapReason.littleText;
-    } else if (gram[i * n + i] > 0.0) {
-      final int? chosen;
-      if (building.contains(i)) {
+    final bool words = gram[i * n + i] > 0.0;
+    int? chosen;
+    if (building.contains(i)) {
+      // Строит созвездия — значит, и в чужое встаёт по правилу резонанса.
+      // Сюда же книга «мало текста», когда надёжных книг меньше трёх и
+      // строят все (`buildersOf`), — как при полном расчёте.
+      if (words) {
         chosen = join.choose(i);
-      } else {
-        final int placed = placeUnreliable(
-          gram,
-          n,
-          i,
-          labels,
-          c0,
-          trust.trust ?? 0.0,
-        );
-        chosen = placed < 0 ? null : placed;
+        if (chosen == null) {
+          reasons[i] = MapReason.awaiting;
+        }
       }
-      if (chosen != null) {
-        joined[i] = chosen;
-      } else {
-        reasons[i] = building.contains(i)
-            ? MapReason.awaiting
-            : MapReason.unsure;
+    } else if (trust.littleText) {
+      reasons[i] = MapReason.littleText;
+    } else if (words) {
+      final int placed = placeUnreliable(
+        gram,
+        n,
+        i,
+        labels,
+        c0,
+        trust.trust ?? 0.0,
+      );
+      chosen = placed < 0 ? null : placed;
+      if (chosen == null) {
+        reasons[i] = MapReason.unsure;
       }
     }
-    _spot(ground, i, old, labels, joined[i], xs, ys);
+    if (chosen != null) {
+      joined[i] = original[chosen];
+    }
+    _spot(ground, i, old, was, joined[i], xs, ys);
     // Малый сдвиг от отпечатка файла: книга с теми же словами, что у
     // соседки, не встаёт в её точку, и сдвиг один на любом устройстве.
     final MapRandom random = MapRandom(stableHash(books[i].key));
@@ -157,8 +173,8 @@ BookMap? seatBooks(List<BookBag> bags, Map<String, MapPoint> kept) {
           key: books[i].key,
           x: _unitClamp(xs[i]),
           y: _unitClamp(ys[i]),
-          constellation: joined[i] < 0 ? kNoCategory : original[joined[i]],
-          name: joined[i] < 0 ? '' : names[original[joined[i]]]!,
+          constellation: joined[i],
+          name: joined[i] < 0 ? '' : names[joined[i]]!,
           reason: reasons[i],
           seated: true,
         ),
@@ -194,15 +210,16 @@ double _measureOf(MapGround ground) {
 /// Место новой книги [i] — в [xs], [ys]: среднее мест её ближайших
 /// старых соседей с весом сходства по смыслу.
 ///
-/// Соседи — старые книги её созвездия [label] (или все старые, если
-/// созвездия нет), не больше [kNeighbours], от самого похожего. Похожих
+/// Соседи — старые книги её созвездия [label] (прежний номер; у старых
+/// книг он в [was]) или все старые, если созвездия нет; не больше
+/// [kNeighbours], от самого похожего. Похожих
 /// нет (у книги нет значимых слов) — середина её созвездия или всех
 /// старых звёзд.
 void _spot(
   MapGround ground,
   int i,
   List<bool> old,
-  List<int> labels,
+  List<int> was,
   int label,
   Float64List xs,
   Float64List ys,
@@ -211,7 +228,7 @@ void _spot(
   final Float64List sims = ground.neighbours.similarity;
   List<int> candidates = <int>[
     for (int j = 0; j < n; j++)
-      if (old[j] && (label < 0 || labels[j] == label)) j,
+      if (old[j] && (label < 0 || was[j] == label)) j,
   ];
   if (candidates.isEmpty) {
     candidates = <int>[
@@ -291,16 +308,18 @@ void _spreadFresh(
           ux = dx / d;
           uy = dy / d;
         }
+        // Звезда не выходит за край карты (−1…1) сразу же: обрезка после
+        // раздвигания снова сблизила бы звёзды у края.
         if (old[j]) {
           final double push = gap - d;
-          xs[i] -= ux * push;
-          ys[i] -= uy * push;
+          xs[i] = _unitClamp(xs[i] - ux * push);
+          ys[i] = _unitClamp(ys[i] - uy * push);
         } else {
           final double push = (gap - d) * 0.5;
-          xs[i] -= ux * push;
-          ys[i] -= uy * push;
-          xs[j] += ux * push;
-          ys[j] += uy * push;
+          xs[i] = _unitClamp(xs[i] - ux * push);
+          ys[i] = _unitClamp(ys[i] - uy * push);
+          xs[j] = _unitClamp(xs[j] + ux * push);
+          ys[j] = _unitClamp(ys[j] + uy * push);
         }
       }
     }
