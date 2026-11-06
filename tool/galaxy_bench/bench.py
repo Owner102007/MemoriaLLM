@@ -104,7 +104,9 @@ def nmi(a, b):
 
 
 def layers_of(layer_row, ideal_row):
-    yield 'язык ' + layer_row['lang']
+    # Язык — из идеала (судья читал книгу): опись по доле латиницы пишет «en» и польской,
+    # и испанской книге, а у сканов её догадка — по случайным буквам обложки.
+    yield 'язык ' + (ideal_row.get('язык') or layer_row['lang'])
     yield 'качество ' + layer_row['quality']
     yield 'вид ' + (ideal_row.get('вид') or '?')
     p = int(layer_row['pages'])
