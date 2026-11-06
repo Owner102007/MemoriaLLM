@@ -76,7 +76,9 @@ void main(List<String> args) {
   final String setPath = args[0], cache = args[1], mode = args[2];
   final Lexicon lexicon = SetLexicon(
     utf8
-        .decode(gzip.decode(File('assets/lexicon/words.txt.gz').readAsBytesSync()))
+        .decode(
+          gzip.decode(File('assets/lexicon/words.txt.gz').readAsBytesSync()),
+        )
         .split('\n')
         .where((String w) => w.isNotEmpty),
   );
