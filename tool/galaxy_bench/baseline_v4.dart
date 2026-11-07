@@ -5,7 +5,8 @@
 // прогоняет их через тот же код, что и приложение: доверие тексту
 // (`textTrustOf`, F-MAP-18), мешок слов (`bagOfBook`, ALG-MAP-02) и карту
 // (`buildBookMap`). Пишет `результат.csv` для `bench.py`: отпечаток книги,
-// номер созвездия (−1 — вне созвездий) и имя созвездия.
+// номер созвездия (−1 — вне созвездий), имя созвездия и (S63) место звезды
+// на карте x, y — чтобы карту стенда можно было нарисовать и посмотреть.
 //
 // Строгий режим: у книги нет ни названия, ни автора, ни категории полки —
 // в приложении название обычно берётся из имени файла, а это подсказка.
@@ -96,9 +97,9 @@ void main(List<String> args) {
     bags.add(bag.withTrust(trust));
   }
   final BookMap map = buildBookMap(bags)!;
-  final StringBuffer out = StringBuffer('fp,группа,имя\n');
+  final StringBuffer out = StringBuffer('fp,группа,имя,x,y\n');
   for (final MapPoint p in map.points) {
-    out.writeln('${p.key},${p.constellation},${cell(p.name)}');
+    out.writeln('${p.key},${p.constellation},${cell(p.name)},${p.x},${p.y}');
   }
   File(args[3]).writeAsStringSync(out.toString());
   stdout.writeln(
