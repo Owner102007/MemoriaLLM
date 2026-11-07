@@ -5,13 +5,17 @@
 - УДК и DDC — самое длинное начало кода; LCC и NLM — самый узкий диапазон номера;
 - спор двух кодов решает более подробный; один код дважды — один голос;
 - каждая тема переходников и сопоставления с идеалом есть в каркасе;
-- запись MARC из NKP: название кириллицей из поля 880, УДК из 080, только русские книги.
+- запись MARC из NKP: название кириллицей из поля 880, УДК из 080, только русские книги;
+- книги tgpathfinder (S67): ярлык из кода, отсев книг стенда, база только читается.
 
 Запуск (из папки MemoriaLLM): python -m unittest discover tool/galaxy_bench -v
 """
 import gzip
+import hashlib
 import io
 import os
+import pathlib
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -20,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import catalogs as C  # noqa: E402
 import taxonomy as T  # noqa: E402
+import universal as U  # noqa: E402
 
 
 class Skeleton(unittest.TestCase):
@@ -115,6 +120,70 @@ class Transliteration(unittest.TestCase):
         self.assertEqual(C.cyrillic_from_alalc('gruzinskoĭ zhivopisi, AĖS, Rospisʹ'), 'грузинской живописи, АЭС, Роспись')
         self.assertEqual(C.cyrillic_from_alalc('Shchedrin'), 'Щедрин')
         self.assertEqual(C.cyrillic_from_alalc('otsenka'), 'отсенка')
+
+
+class Tgpathfinder(unittest.TestCase):
+    """S67 (D-053): тексты книг tgpathfinder — ярлык из кода, отсев стенда, база только читается."""
+
+    def make_db(self, d, stand_size, stand_print):
+        """Маленький индекс tgpathfinder: только нужные стенду столбцы."""
+        path = os.path.join(d, 'index.db')
+        db = sqlite3.connect(path)
+        db.executescript('''
+            create table files (id integer primary key, size integer, head_tail_hash text);
+            create table books (id integer primary key, file_id integer, title text, inner_path text);
+            create table page_texts (book_id integer, page_no integer, text text, primary key (book_id, page_no));''')
+        books = [
+            # id, название, размер, отпечаток, путь в архиве, страницы
+            (1, 'Гистология', 123456, 'aaa', '', ['Гистология\nучебник для студентов вузов', 'УДК 611.018(075.8)\nББК 28.706я73']),
+            (2, 'Записки', 2000, None, '', ['Записки путешественника\nо дальних странах', 'глава первая']),
+            (3, 'Нормальная физиология', stand_size, stand_print, '', ['Нормальная физиология\nучебник', 'УДК 612']),
+            (4, 'Фармакология', stand_size, stand_print, 'том/фарм.pdf', ['Фармакология\nлекарства рецепты', 'УДК 615']),
+            (5, 'Атлас анатомии человека. Том 2', 3000, None, '', ['Атлас\nкниги', 'УДК 611']),
+            (6, 'Анатомия', 4000, None, '', ['Анатомия\nкости суставы связки мышцы остеология артрология миология', 'УДК 611']),
+        ]
+        for bid, title, size, fp, inner, pages in books:
+            db.execute('insert into files values (?, ?, ?)', (bid, size, fp))
+            db.execute('insert into books values (?, ?, ?, ?)', (bid, bid, title, inner))
+            for no, text in enumerate(pages, 1):
+                db.execute('insert into page_texts values (?, ?, ?)', (bid, no, text))
+        db.commit()
+        db.close()
+        return path
+
+    def test_alg_map_24_tgpathfinder_label_from_codes_and_stand_excluded(self):
+        """ALG-MAP-24: ярлык — из кода УДК/ББК в тексте; без кода — не берётся; книга стенда отсеяна
+        по отпечатку и размеру файла (но не книга внутри архива того же размера), по началу названия
+        и по почти тому же паспорту; база не меняется и рядом не появляется файлов."""
+        with tempfile.TemporaryDirectory() as d:
+            stand = os.path.join(d, 'стенд.pdf')
+            with open(stand, 'wb') as f:
+                f.write(b'%PDF-1.4 ' + bytes(range(256)) * 40)
+            db = self.make_db(d, os.path.getsize(stand), C.file_fingerprint(stand))
+            before = pathlib.Path(db).read_bytes()
+            set_rows = [{'fp': 's1', 'path': stand}]
+            set_pp = {'s1': dict(title='Атлас анатомии человека. Том 1', meta={}, codes=[], subjects=[],
+                                 toc='кости суставы связки мышцы остеология артрология миология')}
+            rows, tally = U.tgpathfinder_rows(db, set_rows, set_pp)
+            self.assertEqual(pathlib.Path(db).read_bytes(), before)
+            self.assertEqual(sorted(os.listdir(d)), ['index.db', 'стенд.pdf'])
+        self.assertEqual(sorted(r['тема'] for r in rows), ['MED.HIST', 'MED.PHARM'])
+        self.assertEqual(tally, {'книг с текстом': 6, 'без кода': 1, 'тот же файл': 1, 'то же название': 1,
+                                 'тот же паспорт': 1, 'сверх предела': 0, 'взято': 2})
+        self.assertTrue(all(r['источник'] == 'tgpathfinder' and r['хэш'] == 'ff' for r in rows))
+        self.assertTrue(all('УДК' not in r['текст'] and '611' not in r['текст'] for r in rows))  # коды не в словах
+
+    def test_alg_map_24_fingerprint_like_tgpathfinder(self):
+        """ALG-MAP-24: отпечаток — sha1 «размер:» и кусков по 4 КБ: малый файл — все куски подряд,
+        большой — голова, середина, хвост (как F-RUN-09 в tgpathfinder: 1 000 000 → 0, 499712, 999424)."""
+        with tempfile.TemporaryDirectory() as d:
+            for size, offsets in ((9000, [0, 4096, 8192]), (1_000_000, [0, 499712, 999424])):
+                data = hashlib.sha256(str(size).encode()).digest() * (size // 32 + 1)
+                data = data[:size]
+                path = os.path.join(d, f'{size}.pdf')
+                pathlib.Path(path).write_bytes(data)
+                want = hashlib.sha1(f'{size}:'.encode() + b''.join(data[o:o + 4096] for o in offsets)).hexdigest()
+                self.assertEqual(C.file_fingerprint(path), want)
 
 
 if __name__ == '__main__':
