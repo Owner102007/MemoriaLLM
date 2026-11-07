@@ -31,6 +31,7 @@ from sklearn.svm import LinearSVC
 
 import taxonomy as T
 import variants as V
+import concepts as C
 
 csv.field_size_limit(10 ** 7)
 MARGINS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8]
@@ -39,6 +40,20 @@ TARGET_PRECISION = 0.9  # осторожный порог: на отложенн
 # «указатель» — предметный указатель (итерация 2, откат: роста нет). По умолчанию — «выходные».
 DEFAULT_PARTS = 'выходные'
 PARTS = set()
+# S66: «понятия» — метки понятий MeSH из Wikidata в признаках классификатора (итерация 1, `concepts.py`);
+# «голос» — понятия голосуют за тему по веткам MeSH, когда перевес классификатора < VOTE_BELOW (итерация 2).
+CONCEPTS = None
+VOTER = None
+VOTE_BELOW = 0.3
+
+
+def prep(text):
+    """Текст для классификатора: с метками понятий, если они включены (S66)."""
+    return CONCEPTS.annotate(text) if CONCEPTS else text
+
+
+def analyzer():
+    return C.analyzer if CONCEPTS else V.stems
 
 
 def passport_words(p):
@@ -50,7 +65,7 @@ def passport_words(p):
         parts.append(p.get('imprint_text', ''))  # аннотация, гриф, издательство
     if 'указатель' in PARTS:
         parts.append(p.get('index', ''))  # термины предметного указателя
-    return '\n'.join(x for x in parts if x)
+    return prep('\n'.join(x for x in parts if x))
 
 
 def load_training(path):
@@ -63,8 +78,8 @@ def load_training(path):
 
 
 def fit(train):
-    vec = TfidfVectorizer(analyzer=V.stems, sublinear_tf=True, min_df=3, max_df=0.3, norm='l2')
-    X = vec.fit_transform([r['текст'] for r in train])
+    vec = TfidfVectorizer(analyzer=analyzer(), sublinear_tf=True, min_df=3, max_df=0.3, norm='l2')
+    X = vec.fit_transform([prep(r['текст']) for r in train])
     model = LinearSVC(C=0.5, class_weight='balanced', random_state=0).fit(X, [r['тема'] for r in train])
     return vec, model
 
@@ -82,7 +97,7 @@ def decide(vec, model, texts, margin):
 
 def pick_margin(vec, model, held):
     """Наименьший порог, при котором на отложенных записях верных ≥ TARGET_PRECISION из решённых."""
-    answers = decide(vec, model, [r['текст'] for r in held], 0.0)
+    answers = decide(vec, model, [prep(r['текст']) for r in held], 0.0)
     table = []
     for m in MARGINS:
         done = [(a, r['тема']) for (a, g), r in zip(answers, held) if g >= m]
@@ -99,7 +114,15 @@ def classify_books(vec, model, passports, margin):
     out = {}
     for f, (topic, gap) in zip(fps, answers):
         by_code = T.topic_of_codes(passports[f]['codes'])
-        out[f] = (by_code, 'код') if by_code else ((topic, 'слова') if topic else (None, 'нет'))
+        if by_code:
+            out[f] = (by_code, 'код')
+            continue
+        if VOTER and gap < VOTE_BELOW:  # S66: классификатор не уверен — голос понятий по веткам MeSH
+            by_concepts = C.vote(VOTER.marks(passport_words(passports[f])))
+            if by_concepts:
+                out[f] = (by_concepts, 'понятия')
+                continue
+        out[f] = (topic, 'слова') if topic else (None, 'нет')
     return out
 
 
@@ -148,6 +171,12 @@ def coded_library_rows(set_rows, lib_rows, set_pp, lib_pp):
 def main(train_path, set_path, lib_path, cache, out, with_library='', parts=''):
     os.makedirs(out, exist_ok=True)
     PARTS.update(x for x in (parts or DEFAULT_PARTS).split(',') if x and x != '-')  # «-» — без доп. частей
+    global CONCEPTS, VOTER
+    if {'понятия', 'голос'} & PARTS:  # таблица понятий лежит рядом с обучающими записями: <каталоги>/wikidata/mesh.tsv
+        table = C.Concepts.load(os.path.join(os.path.dirname(train_path), 'wikidata', 'mesh.tsv'))
+        CONCEPTS = table if 'понятия' in PARTS else None
+        VOTER = table if 'голос' in PARTS else None
+        print(f'понятий в таблице: {len(table.table)} цепочек', flush=True)
     started = time.time()
     train, held = load_training(train_path)
     set_rows = list(csv.DictReader(open(set_path, encoding='utf-8')))
