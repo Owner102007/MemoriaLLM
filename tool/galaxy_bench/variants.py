@@ -379,8 +379,10 @@ def load_passports(rows, cache, out_dir, use_ocr):
     for r in rows:
         path = os.path.join(out_dir, r['fp'] + '.json')
         if os.path.exists(path):
-            got[r['fp']] = json.load(open(path, encoding='utf-8'))
-            continue
+            cached = json.load(open(path, encoding='utf-8'))
+            if 'index' in cached:  # паспорт S65 (с выходными данными и указателем); старый — пересобрать
+                got[r['fp']] = cached
+                continue
         edge = os.path.join(cache, 'края', r['fp'] + '.json')
         if not os.path.exists(edge):
             continue
