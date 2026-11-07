@@ -35,7 +35,10 @@ import variants as V
 csv.field_size_limit(10 ** 7)
 MARGINS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8]
 TARGET_PRECISION = 0.9  # осторожный порог: на отложенных записях верных ≥ 90 % из решённых
-PARTS = set()  # S65: «выходные» — страница выходных данных, «указатель» — предметный указатель
+# S65: «выходные» — страница выходных данных (итерация 1, оставлена: 79 → 81 «верно + допустимо»);
+# «указатель» — предметный указатель (итерация 2, откат: роста нет). По умолчанию — «выходные».
+DEFAULT_PARTS = 'выходные'
+PARTS = set()
 
 
 def passport_words(p):
@@ -144,7 +147,7 @@ def coded_library_rows(set_rows, lib_rows, set_pp, lib_pp):
 
 def main(train_path, set_path, lib_path, cache, out, with_library='', parts=''):
     os.makedirs(out, exist_ok=True)
-    PARTS.update(x for x in parts.split(',') if x)
+    PARTS.update(x for x in (parts or DEFAULT_PARTS).split(',') if x and x != '-')  # «-» — без доп. частей
     started = time.time()
     train, held = load_training(train_path)
     set_rows = list(csv.DictReader(open(set_path, encoding='utf-8')))
