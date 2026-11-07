@@ -13,7 +13,9 @@
    (папки здесь — только проверка, D-052).
 
 Запуск (из папки MemoriaLLM):
-  python tool/galaxy_bench/universal.py <обучение.tsv> <набор.csv> <обучение-все.csv> <кэш стенда> <папка вывода>
+  python tool/galaxy_bench/universal.py <обучение.tsv> <набор.csv> <обучение-все.csv> <кэш стенда> <папка вывода> [+код]
+  (+код — дополнить обучение книгами библиотеки с кодом каталога; тогда проверка на библиотеке
+  неполная: книги с кодом сами были в обучении — меряется только набор стенда)
 """
 import collections
 import csv
@@ -116,20 +118,40 @@ def library_check(decided, rows):
     return tally
 
 
-def main(train_path, set_path, lib_path, cache, out):
+def coded_library_rows(set_rows, lib_rows, set_pp, lib_pp):
+    """Книги библиотеки с однозначным кодом каталога как обучающие записи (вариант «У+код»).
+
+    Ярлык — из кода внутри книги, не из папки (D-052). Книги набора и тома той же работы
+    (то же начало названия или почти тот же паспорт, `variants.training_rows`) не берутся.
+    """
+    cand = [r for r in lib_rows if r['fp'] in lib_pp and T.topic_of_codes(lib_pp[r['fp']]['codes'])]
+    titles = {f: p['title'] for f, p in {**set_pp, **lib_pp}.items()}
+    c_text = [V.passport_text(lib_pp[r['fp']]) for r in cand]
+    s_text = [V.passport_text(set_pp[r['fp']]) for r in set_rows]
+    vec = V.tfidf(c_text, s_text)
+    kept, _ = V.training_rows(cand, set_rows, titles, V.near_pairs(vec.transform(c_text), vec.transform(s_text)))
+    return [dict(источник='библиотека-код', язык=lib_pp[r['fp']]['language'], тема=T.topic_of_codes(lib_pp[r['fp']]['codes']),
+                 текст=passport_words(lib_pp[r['fp']]), хэш='ff') for r in kept]
+
+
+def main(train_path, set_path, lib_path, cache, out, with_library=''):
     os.makedirs(out, exist_ok=True)
     started = time.time()
     train, held = load_training(train_path)
+    set_rows = list(csv.DictReader(open(set_path, encoding='utf-8')))
+    lib_rows = list(csv.DictReader(open(lib_path, encoding='utf-8')))
+    set_pp = V.load_passports(set_rows, cache, os.path.join(cache, 'паспорт'), True)
+    lib_pp = V.load_passports(lib_rows, cache, os.path.join(cache, 'паспорт-обучение'), False)
+    if with_library:
+        extra = coded_library_rows(set_rows, lib_rows, set_pp, lib_pp)
+        train += extra
+        print(f'+ книг библиотеки с кодом: {len(extra)}', flush=True)
     vec, model = fit(train)
     margin, table = pick_margin(vec, model, held)
     held_acc = table[0][1]
     print(f'обучение: записей {len(train)}, отложено {len(held)}, слов {len(vec.vocabulary_)}, '
           f'тем {len(model.classes_)}; на отложенных верно {held_acc}; порог {margin}; '
           f'{time.time() - started:.0f} с', flush=True)
-    set_rows = list(csv.DictReader(open(set_path, encoding='utf-8')))
-    lib_rows = list(csv.DictReader(open(lib_path, encoding='utf-8')))
-    set_pp = V.load_passports(set_rows, cache, os.path.join(cache, 'паспорт'), True)
-    lib_pp = V.load_passports(lib_rows, cache, os.path.join(cache, 'паспорт-обучение'), False)
     log = {'записей': len(train), 'отложено': len(held), 'слов': len(vec.vocabulary_),
            'отложенные: порог → точность, доля решённых': table, 'порог': margin,
            'по источникам': dict(collections.Counter(r['источник'] for r in train)),
@@ -144,4 +166,4 @@ def main(train_path, set_path, lib_path, cache, out):
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:6])
+    main(*sys.argv[1:7])
