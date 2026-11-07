@@ -22,6 +22,11 @@
 Сколько. Не больше `CAP` записей на тему из каждого источника: иначе тема с миллионом записей
 (художественная проза) заглушает тему с тысячей. Отбор — по хэшу ключа записи, детерминированно.
 
+Ещё один источник (S67, D-053) — тексты страниц книг из индекса tgpathfinder
+(`PRO Tgpathfinder/data/index.db`). Он не идёт в `обучение.tsv`: ярлык ему ставит паспорт
+книги (код УДК/ББК внутри текста), а отсев книг стенда зависит от набора — это делает
+`universal.tgpathfinder_rows`. Здесь — только чтение базы и отпечаток файла.
+
 Запуск (из папки MemoriaLLM): python tool/galaxy_bench/catalogs.py <папка каталогов> [источники]
 Файлы каталогов — чужие данные: скрипт только читает их и не исполняет ничего из них.
 """
@@ -29,9 +34,12 @@ import collections
 import csv
 import gzip
 import hashlib
+import itertools
 import json
 import os
+import pathlib
 import re
+import sqlite3
 import sys
 import xml.etree.ElementTree as ET
 
@@ -186,6 +194,57 @@ def _openlibrary_parse(stream, want):
         if lang == 'ru':
             text = cyrillic_from_alalc(text)
         yield d.get('key', ''), lang, codes, text
+
+
+# --- tgpathfinder: тексты страниц книг (S67, D-053) --------------------------------------------
+# Проект владельца, только чтение (запрет владельца 07.11): база открывается с mode=ro (запись
+# запрещена) и immutable=1 (SQLite не создаёт файлов рядом и не ждёт чужих блокировок).
+PIECE = 4 * 1024  # кусок отпечатка — как в tgpathfinder (tpf/copies.py, PIECE)
+
+
+def read_only(db_path):
+    """Соединение с базой SQLite только для чтения.
+
+    URI вида file:///C:/…?mode=ro&immutable=1 — так SQLite понимает путь с пробелами и кириллицей
+    (pathlib сам кодирует их как %20 и %D0%…)."""
+    uri = pathlib.Path(db_path).resolve().as_uri() + '?mode=ro&immutable=1'
+    return sqlite3.connect(uri, uri=True)
+
+
+def tgpathfinder_books(db_path):
+    """Книги индекса tgpathfinder с текстами страниц.
+
+    Отдаёт по одной: (id книги, название из индекса, размер файла, отпечаток файла или '',
+    книга — весь файл (не часть архива), {номер страницы строкой: текст}). Подсказки индекса —
+    канал, описание LLM, подпись поста, имя файла — не читаются вовсе (D-053 п. 1).
+    Страницы идут одним запросом по порядку книг: память держит только одну книгу.
+    """
+    db = read_only(db_path)
+    try:
+        info = {bid: (title or '', size, fp or '', inner == '') for bid, title, size, fp, inner in db.execute(
+            'select b.id, b.title, f.size, f.head_tail_hash, b.inner_path from books b join files f on f.id = b.file_id')}
+        rows = db.execute('select book_id, page_no, text from page_texts order by book_id, page_no')
+        for bid, pages in itertools.groupby(rows, key=lambda r: r[0]):  # groupby — см. Словарь
+            texts = {str(no): text for _, no, text in pages if text}
+            if texts and bid in info:
+                yield (bid, *info[bid], texts)
+    finally:
+        db.close()
+
+
+def file_fingerprint(path):
+    """Отпечаток файла, как его считает tgpathfinder (F-RUN-09, `tpf/copies.py`): sha1 от
+    «размер:» и трёх кусков по 4 КБ — голова, середина, хвост (файл до трёх кусков — все подряд).
+    Совпал с отпечатком файла в индексе — это тот же файл."""
+    size = os.path.getsize(path)
+    last = (size - 1) // PIECE * PIECE if size else -1
+    offsets = list(range(0, last + 1, PIECE)) if last <= 2 * PIECE else [0, size // 2 // PIECE * PIECE, last]
+    h = hashlib.sha1(f'{size}:'.encode())
+    with open(path, 'rb') as f:
+        for off in offsets:
+            f.seek(off)
+            h.update(f.read(min(PIECE, size - off)))
+    return h.hexdigest()
 
 
 SOURCES = {

@@ -13,9 +13,10 @@
    (папки здесь — только проверка, D-052).
 
 Запуск (из папки MemoriaLLM):
-  python tool/galaxy_bench/universal.py <обучение.tsv> <набор.csv> <обучение-все.csv> <кэш стенда> <папка вывода> [+код|-] [выходные,указатель]
+  python tool/galaxy_bench/universal.py <обучение.tsv> <набор.csv> <обучение-все.csv> <кэш стенда> <папка вывода> [+код|-] [выходные,указатель] [<index.db tgpathfinder>|-]
   (+код — дополнить обучение книгами библиотеки с кодом каталога; тогда проверка на библиотеке
-  неполная: книги с кодом сами были в обучении — меряется только набор стенда)
+  неполная: книги с кодом сами были в обучении — меряется только набор стенда;
+  index.db — S67: дополнить обучение текстами книг tgpathfinder с кодом УДК/ББК, база только читается)
 """
 import collections
 import csv
@@ -29,6 +30,8 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import LinearSVC
 
+import catalogs as CAT
+import passport as P
 import taxonomy as T
 import variants as V
 import concepts as C
@@ -168,7 +171,62 @@ def coded_library_rows(set_rows, lib_rows, set_pp, lib_pp):
                  текст=passport_words(lib_pp[r['fp']]), хэш='ff') for r in kept]
 
 
-def main(train_path, set_path, lib_path, cache, out, with_library='', parts=''):
+TG_CAP = 3000  # не больше записей tgpathfinder на тему: там три четверти — анатомия (проба S67)
+
+
+def tgpathfinder_rows(db_path, set_rows, set_pp):
+    """Книги tgpathfinder как обучающие записи (S67, D-053): ярлык — только код УДК/ББК в тексте.
+
+    set_rows, set_pp — книги проверки (строки с путём к файлу и их паспорта): набор стенда и
+    библиотека вне набора (итерация 2 S67: иначе рост на библиотеке — отчасти утечка).
+    1. Паспорт — из текстов страниц индекса тем же `passport.build`, что у книг стенда.
+    2. Тема — по кодам каталога паспорта (`taxonomy`); без узнанного кода книга не берётся:
+       канал, описание LLM, имя файла как ярлык не годятся (шум и утечка, D-053).
+    3. Отсев книг проверки и томов той же работы: тот же файл (отпечаток tgpathfinder или размер —
+       только у книги, которая сама файл, не часть архива), то же начало названия (из индекса или
+       паспорта), почти тот же паспорт (`variants.near_pairs`).
+    4. Не больше TG_CAP на тему, отбор по хэшу id книги — детерминированно.
+    Записи идут с хэшем 'ff' — всегда в обучение, не в отложенные: порог «без темы»
+    подбирается на тех же записях каталогов, что в S65, и прогоны сравнимы.
+    Возвращает (записи, {причина отсева: число}).
+    """
+    sizes = {os.path.getsize(r['path']) for r in set_rows}
+    prints = {CAT.file_fingerprint(r['path']) for r in set_rows}
+    set_title = {V.title_key(p['title']) for p in set_pp.values()} - {''}
+    tally, cand = collections.Counter(), []
+    for bid, title, size, fp, whole, pages in CAT.tgpathfinder_books(db_path):
+        tally['книг с текстом'] += 1
+        p = P.build(dict(fp=f'tg{bid}', pages=len(pages), meta={}, outline=[], text=pages, big={}))
+        topic = T.topic_of_codes(p['codes'])
+        if not topic:
+            tally['без кода'] += 1
+        elif whole and (fp in prints or size in sizes):
+            tally['тот же файл'] += 1
+        elif {V.title_key(title), V.title_key(p['title'])} & set_title:
+            tally['то же название'] += 1
+        else:
+            cand.append((bid, topic, p))
+    if cand:  # почти тот же паспорт, что у книги стенда, — та же работа
+        c_text = [V.passport_text(p) for _, _, p in cand]
+        s_text = [V.passport_text(p) for p in set_pp.values()]
+        vec = V.tfidf(c_text, s_text)
+        near = V.near_pairs(vec.transform(c_text), vec.transform(s_text))
+        tally['тот же паспорт'] = len(near)
+        cand = [c for i, c in enumerate(cand) if i not in near]
+    by_topic = collections.defaultdict(list)
+    for bid, topic, p in cand:
+        by_topic[topic].append((CAT.rank(f'tgpathfinder{bid}'), p))
+    rows = []
+    for topic, items in sorted(by_topic.items()):
+        items.sort(key=lambda x: x[0])
+        tally['сверх предела'] += max(0, len(items) - TG_CAP)
+        rows += [dict(источник='tgpathfinder', язык=p['language'], тема=topic, текст=passport_words(p), хэш='ff')
+                 for _, p in items[:TG_CAP]]
+    tally['взято'] = len(rows)
+    return rows, dict(tally)
+
+
+def main(train_path, set_path, lib_path, cache, out, with_library='', parts='', tgpathfinder=''):
     os.makedirs(out, exist_ok=True)
     PARTS.update(x for x in (parts or DEFAULT_PARTS).split(',') if x and x != '-')  # «-» — без доп. частей
     global CONCEPTS, VOTER
@@ -187,6 +245,12 @@ def main(train_path, set_path, lib_path, cache, out, with_library='', parts=''):
         extra = coded_library_rows(set_rows, lib_rows, set_pp, lib_pp)
         train += extra
         print(f'+ книг библиотеки с кодом: {len(extra)}', flush=True)
+    tg_tally = None
+    if tgpathfinder and tgpathfinder != '-':  # S67: тексты книг tgpathfinder с ярлыком из кода (D-053)
+        check_rows = set_rows + [r for r in lib_rows if r['fp'] in lib_pp]  # набор и библиотека — обе проверка
+        extra, tg_tally = tgpathfinder_rows(tgpathfinder, check_rows, {**set_pp, **lib_pp})
+        train += extra
+        print(f'+ книг tgpathfinder: {tg_tally}', flush=True)
     vec, model = fit(train)
     margin, table = pick_margin(vec, model, held)
     held_acc = table[0][1]
@@ -197,6 +261,8 @@ def main(train_path, set_path, lib_path, cache, out, with_library='', parts=''):
            'отложенные: порог → точность, доля решённых': table, 'порог': margin,
            'по источникам': dict(collections.Counter(r['источник'] for r in train)),
            'по языкам': dict(collections.Counter(r['язык'] for r in train))}
+    if tg_tally:
+        log['tgpathfinder'] = tg_tally
     for name, m in (('смело', 0.0), ('осторожно', margin)):
         decided = classify_books(vec, model, set_pp, m)
         write_result(os.path.join(out, f'результат-У-{name}.csv'), decided)
@@ -207,4 +273,4 @@ def main(train_path, set_path, lib_path, cache, out, with_library='', parts=''):
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:8])
+    main(*sys.argv[1:9])
