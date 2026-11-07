@@ -96,5 +96,31 @@ class Title(unittest.TestCase):
         self.assertEqual(P.clean_meta('Basic Histology: Text and Atlas'), 'Basic Histology: Text and Atlas')
 
 
+class ImprintAndIndex(unittest.TestCase):
+    def test_alg_map_21_imprint_words_without_codes_and_print_lines(self):
+        """ALG-MAP-21 (S65): слова выходных данных — гриф и издательство остаются; УДК, ISBN, ©, тираж уходят."""
+        page = '\n'.join(['УДК 616-091(075.8)', 'ББК 52.5я73',
+                          'Патологическая анатомия : атлас : учеб. пособие для студентов медицинских вузов',
+                          'М. : ГЭОТАР-Медиа, 2014', 'ISBN 978-5-9704-1234-5', '© Коллектив авторов, 2014',
+                          'Тираж 1000 экз.'])
+        words = P.imprint_words([(1, 'Титул'), (4, page)], 4)
+        self.assertIn('медицинских вузов', words)
+        self.assertIn('ГЭОТАР-Медиа', words)
+        for junk in ('УДК', 'ISBN', '©', 'Тираж'):
+            self.assertNotIn(junk, words)
+        self.assertEqual(P.imprint_words([(1, 'Просто текст без выходных данных')], None), '')
+
+    def test_alg_map_21_index_terms_from_tail_pages(self):
+        """ALG-MAP-21 (S65): термины указателя — с последних страниц, без номеров; первые страницы не смотрятся."""
+        names = ['аксон', 'дендрит', 'синапс', 'миелин', 'нейрон', 'глия', 'медиатор', 'рецептор',
+                 'потенциал', 'мембрана', 'ганглий', 'рефлекс', 'нерв', 'ствол']
+        index = '\n'.join(['Предметный указатель'] + [f'{w} {i}, {i + 7}, {i + 30}' for i, w in enumerate(names, 1)])
+        pages = [(n, 'текст') for n in range(1, 26)] + [(300, index)]
+        terms = P.index_terms(pages)
+        self.assertIn('синапс миелин', terms)
+        self.assertNotRegex(terms, r'\d{2}')
+        self.assertEqual(P.index_terms([(2, index)] + [(n, 'текст') for n in range(3, 27)]), '')
+
+
 if __name__ == '__main__':
     unittest.main()

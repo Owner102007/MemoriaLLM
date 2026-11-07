@@ -38,6 +38,7 @@ import xml.etree.ElementTree as ET
 import taxonomy as T
 
 CAP = 6000
+EXTRA = False  # S65, итерация 3: добавить к тексту записи издательство и предметные рубрики
 MARC = '{http://www.loc.gov/MARC21/slim}'
 csv.field_size_limit(10 ** 7)
 
@@ -77,9 +78,14 @@ def _nkp_parse(stream):
                 udc += [v for c, v in sub if c == 'a']
             elif tag in ('245', '505'):
                 latin[tag] = ' '.join(v for c, v in sub if c in 'abnpt')
+            elif tag in ('260', '264'):
+                latin['pub'] = ' '.join(v for c, v in sub if c == 'b')  # издательство
             elif tag == '880':
                 link = next((v for c, v in sub if c == '6'), '')
-                cyr[link[:3]] = ' '.join(v for c, v in sub if c in 'abnpt')
+                if link[:3] in ('260', '264'):
+                    cyr['pub'] = ' '.join(v for c, v in sub if c == 'b')
+                else:
+                    cyr[link[:3]] = ' '.join(v for c, v in sub if c in 'abnpt')
         rec.clear()
         lang = fields.get('008', '')[35:38]
         if leader[7] != 'm' or lang != 'rus' or not udc:
@@ -87,6 +93,8 @@ def _nkp_parse(stream):
         title = cyr.get('245') or latin.get('245', '')
         toc = cyr.get('505') or (latin.get('505', '') if re.search('[а-яА-Я]', latin.get('505', '')) else '')
         text = clean(title) + ('\n' + clean(toc) if toc else '')
+        if EXTRA and (cyr.get('pub') or latin.get('pub')):
+            text += '\n' + clean(cyr.get('pub') or latin.get('pub'))
         if re.search('[а-яА-Я]', text):
             yield fields.get('001', ''), 'ru', [['УДК', u] for u in udc], text
 
@@ -171,6 +179,10 @@ def _openlibrary_parse(stream, want):
         items = [x.get('title', '') if isinstance(x, dict) else str(x) for x in toc]
         title = ' '.join(x for x in (d.get('title', ''), d.get('subtitle', '')) if isinstance(x, str))
         text = clean(title) + ('\n' + '; '.join(i for i in items if i) if items else '')
+        if EXTRA:  # издательство и рубрики издания (S65, итерация 3)
+            pubs = [x for x in d.get('publishers', []) if isinstance(x, str)]
+            subj = [x for x in d.get('subjects', []) if isinstance(x, str)][:20]
+            text += ''.join('\n' + '; '.join(x) for x in (pubs, subj) if x)
         if lang == 'ru':
             text = cyrillic_from_alalc(text)
         yield d.get('key', ''), lang, codes, text
@@ -208,12 +220,15 @@ def collect(folder, name):
     return out
 
 
-def main(folder, wanted=None):
+def main(folder, wanted=None, extra=''):
+    """extra='+издатель' — S65: в текст записи издательство и рубрики, файл `обучение+издатель.tsv`."""
+    global EXTRA
+    EXTRA = extra == '+издатель'
     names = (wanted or 'nkp,gutenberg,openlibrary,openlibrary_ru').split(',')
     rows = []
     for name in names:
         rows += collect(folder, name)
-    path = os.path.join(folder, 'обучение.tsv')
+    path = os.path.join(folder, 'обучение+издатель.tsv' if EXTRA else 'обучение.tsv')
     with open(path, 'w', encoding='utf-8', newline='') as f:
         w = csv.writer(f, delimiter='\t')
         w.writerow(['источник', 'язык', 'тема', 'текст', 'хэш'])
@@ -225,4 +240,4 @@ def main(folder, wanted=None):
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:3])
+    main(*sys.argv[1:4])

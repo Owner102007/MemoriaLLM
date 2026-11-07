@@ -262,6 +262,41 @@ def page_texts(record, ocr):
     return out, fixed, from_ocr
 
 
+# --- Выходные данные и предметный указатель (S65) --------------------------------------------
+IMPRINT_WORDS, INDEX_WORDS = 150, 300
+_IMPRINT_NOISE = re.compile(r'^(ISBN|©|\(c\)|УДК|ББК|Copyright|All rights reserved|Все права защищены|'
+                            r'Printed in|Отпечатано|Подписано в печать|Формат|Тираж|Заказ|www\.|https?:)', re.I)
+
+
+def imprint_words(pages, imprint):
+    """Слова страницы выходных данных — аннотация, гриф, издательство, серия — без кодов,
+    ISBN, знака © и типографских строк (тираж, формат). Страница — та, где нашлись коды,
+    а без кодов — первая из 12 первых страниц со знаками выходных данных (ISBN, ©).
+    Возвращает до IMPRINT_WORDS слов (S65, ALG-MAP-21)."""
+    if imprint is None:
+        imprint = next((n for n, t in pages[:12] if _IMPRINT.search(t)), None)
+    if imprint is None:
+        return ''
+    text = dict(pages).get(imprint, '')
+    kept = [ln for ln in text.splitlines() if ln.strip() and not _IMPRINT_NOISE.match(ln.strip())]
+    return ' '.join(' '.join(kept).split()[:IMPRINT_WORDS])
+
+
+def index_terms(pages, first=25):
+    """Термины предметного указателя с последних страниц: «аксон 12, 45» → «аксон».
+    Страница указателя — как в `_index_like` (много строк «термин, 12, 45»).
+    Возвращает до INDEX_WORDS слов (S65, ALG-MAP-21)."""
+    terms = []
+    for number, text in pages[first:]:
+        if not _index_like(text):
+            continue
+        for line in text.splitlines():
+            term = re.split(r'\d', line, maxsplit=1)[0].strip(' ,;.:–-—')
+            if len(term) >= 3 and re.search('[A-Za-zА-Яа-яЁё]{3}', term):
+                terms.append(term)
+    return ' '.join(' '.join(terms).split()[:INDEX_WORDS])
+
+
 def build(record, ocr=None):
     """Паспорт одной книги из записи кэша краёв и OCR её страниц ({номер: текст})."""
     ocr = ocr or {}
@@ -281,6 +316,7 @@ def build(record, ocr=None):
         fp=record['fp'], pages=record['pages'], read=len(pages), ocr_pages=from_ocr, fixed_pages=fixed,
         language=language(all_text), title=title, meta=meta, codes=codes, subjects=subjects,
         imprint_page=imprint, toc_from=toc_from, toc_pages=toc_pages, toc=toc, toc_words=len(words(toc)),
+        imprint_text=imprint_words(pages, imprint), index=index_terms(pages),
     )
 
 

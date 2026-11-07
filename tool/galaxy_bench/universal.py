@@ -13,7 +13,7 @@
    (папки здесь — только проверка, D-052).
 
 Запуск (из папки MemoriaLLM):
-  python tool/galaxy_bench/universal.py <обучение.tsv> <набор.csv> <обучение-все.csv> <кэш стенда> <папка вывода> [+код]
+  python tool/galaxy_bench/universal.py <обучение.tsv> <набор.csv> <обучение-все.csv> <кэш стенда> <папка вывода> [+код|-] [выходные,указатель]
   (+код — дополнить обучение книгами библиотеки с кодом каталога; тогда проверка на библиотеке
   неполная: книги с кодом сами были в обучении — меряется только набор стенда)
 """
@@ -35,12 +35,21 @@ import variants as V
 csv.field_size_limit(10 ** 7)
 MARGINS = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8]
 TARGET_PRECISION = 0.9  # осторожный порог: на отложенных записях верных ≥ 90 % из решённых
+# S65: «выходные» — страница выходных данных (итерация 1, оставлена: 79 → 81 «верно + допустимо»);
+# «указатель» — предметный указатель (итерация 2, откат: роста нет). По умолчанию — «выходные».
+DEFAULT_PARTS = 'выходные'
+PARTS = set()
 
 
 def passport_words(p):
     """Текст паспорта без кодов каталога: коды решаются отдельно и точнее (taxonomy)."""
     parts = [p['title']] * 2 + [v for v in p['meta'].values() if v] + p['subjects']
     parts.append(' '.join(p['toc'].split()[:V.TOC_WORDS]))
+    # S65: доп. части паспорта по одной — каждую меряет отдельный прогон
+    if 'выходные' in PARTS:
+        parts.append(p.get('imprint_text', ''))  # аннотация, гриф, издательство
+    if 'указатель' in PARTS:
+        parts.append(p.get('index', ''))  # термины предметного указателя
     return '\n'.join(x for x in parts if x)
 
 
@@ -136,15 +145,16 @@ def coded_library_rows(set_rows, lib_rows, set_pp, lib_pp):
                  текст=passport_words(lib_pp[r['fp']]), хэш='ff') for r in kept]
 
 
-def main(train_path, set_path, lib_path, cache, out, with_library=''):
+def main(train_path, set_path, lib_path, cache, out, with_library='', parts=''):
     os.makedirs(out, exist_ok=True)
+    PARTS.update(x for x in (parts or DEFAULT_PARTS).split(',') if x and x != '-')  # «-» — без доп. частей
     started = time.time()
     train, held = load_training(train_path)
     set_rows = list(csv.DictReader(open(set_path, encoding='utf-8')))
     lib_rows = list(csv.DictReader(open(lib_path, encoding='utf-8')))
     set_pp = V.load_passports(set_rows, cache, os.path.join(cache, 'паспорт'), True)
     lib_pp = V.load_passports(lib_rows, cache, os.path.join(cache, 'паспорт-обучение'), False)
-    if with_library:
+    if with_library and with_library != '-':
         extra = coded_library_rows(set_rows, lib_rows, set_pp, lib_pp)
         train += extra
         print(f'+ книг библиотеки с кодом: {len(extra)}', flush=True)
@@ -168,4 +178,4 @@ def main(train_path, set_path, lib_path, cache, out, with_library=''):
 
 
 if __name__ == '__main__':
-    main(*sys.argv[1:7])
+    main(*sys.argv[1:8])
