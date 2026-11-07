@@ -266,7 +266,9 @@ def main(train_path, set_path, lib_path, cache, out, with_library='', parts='', 
     for name, m in (('смело', 0.0), ('осторожно', margin)):
         decided = classify_books(vec, model, set_pp, m)
         write_result(os.path.join(out, f'результат-У-{name}.csv'), decided)
-        lib = library_check(classify_books(vec, model, {r['fp']: lib_pp[r['fp']] for r in lib_rows if r['fp'] in lib_pp}, m), lib_rows)
+        lib_decided = classify_books(vec, model, {r['fp']: lib_pp[r['fp']] for r in lib_rows if r['fp'] in lib_pp}, m)
+        write_result(os.path.join(out, f'библиотека-У-{name}.csv'), lib_decided)  # S68: темы библиотеки — для созвездий
+        lib = library_check(lib_decided, lib_rows)
         log[f'библиотека {name}'] = dict(lib)
         print(name, 'библиотека:', dict(lib), flush=True)
     json.dump(log, open(os.path.join(out, 'настройки.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
