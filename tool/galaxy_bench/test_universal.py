@@ -107,5 +107,15 @@ class Catalogs(unittest.TestCase):
         self.assertEqual(C.clean('Гистология :  учебник / '), 'Гистология учебник')
 
 
+class Transliteration(unittest.TestCase):
+    def test_alg_map_24_alalc_back_to_cyrillic(self):
+        """ALG-MAP-24: ALA-LC → кириллица: связки (i͡a — я, t͡s — ц), ʹ — ь, ĭ — й, ė — э; без связки «ts» — «тс»."""
+        self.assertEqual(C.cyrillic_from_alalc('Gistologii͡a︡'), 'Гистология')
+        self.assertEqual(C.cyrillic_from_alalc('Biosfera i t͡s︡ivilizat͡s︡ii͡a︡'), 'Биосфера и цивилизация')
+        self.assertEqual(C.cyrillic_from_alalc('gruzinskoĭ zhivopisi, AĖS, Rospisʹ'), 'грузинской живописи, АЭС, Роспись')
+        self.assertEqual(C.cyrillic_from_alalc('Shchedrin'), 'Щедрин')
+        self.assertEqual(C.cyrillic_from_alalc('otsenka'), 'отсенка')
+
+
 if __name__ == '__main__':
     unittest.main()

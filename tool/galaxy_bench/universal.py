@@ -46,15 +46,17 @@ def passport_words(p):
 
 def load_training(path):
     rows = list(csv.DictReader(open(path, encoding='utf-8'), delimiter='\t'))
-    held = [r for r in rows if int(r['хэш'][:2], 16) < 26]  # ≈ 10 %
-    train = [r for r in rows if int(r['хэш'][:2], 16) >= 26]
+    # Отложить ≈ 10 % по КОНЦУ хэша: записи отбирались по его началу (наименьшие — раньше),
+    # и деление по началу отложило бы почти все отобранные записи (ошибка первой пробы S64).
+    held = [r for r in rows if int(r['хэш'][-2:], 16) < 26]
+    train = [r for r in rows if int(r['хэш'][-2:], 16) >= 26]
     return train, held
 
 
 def fit(train):
     vec = TfidfVectorizer(analyzer=V.stems, sublinear_tf=True, min_df=3, max_df=0.3, norm='l2')
     X = vec.fit_transform([r['текст'] for r in train])
-    model = LinearSVC(C=0.5, class_weight='balanced').fit(X, [r['тема'] for r in train])
+    model = LinearSVC(C=0.5, class_weight='balanced', random_state=0).fit(X, [r['тема'] for r in train])
     return vec, model
 
 

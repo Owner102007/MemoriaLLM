@@ -14,8 +14,10 @@
   (лидер, позиция 7 = «m») на русском (008, позиции 35–37). Чешские рубрики 650 не берутся.
 - Project Gutenberg (`gutenberg/pg_catalog.csv`) — английские книги: LoCC, название, рубрики
   LCSH (английские — годятся как «оглавление в словах»).
-- Open Library (`openlibrary/ol_dump_editions_latest.txt.gz`) — английские издания: LCC
-  (`lc_classifications`), DDC (`dewey_decimal_class`), название, подзаголовок, оглавление.
+- Open Library (`openlibrary/ol_dump_editions_latest.txt.gz`) — издания с LCC
+  (`lc_classifications`) и DDC (`dewey_decimal_class`): название, подзаголовок, оглавление.
+  Английские, немецкие, испанские — источник `openlibrary`; русские — `openlibrary_ru`: их
+  названия записаны латиницей ALA-LC и переводятся обратно в кириллицу (`cyrillic_from_alalc`).
 
 Сколько. Не больше `CAP` записей на тему из каждого источника: иначе тема с миллионом записей
 (художественная проза) заглушает тему с тысячей. Отбор — по хэшу ключа записи, детерминированно.
@@ -103,12 +105,56 @@ def gutenberg_records(path):
         yield 'pg' + r['Text#'], lang, codes, text
 
 
+# --- обратная транслитерация ALA-LC (русский) ------------------------------------------------
+# Open Library пишет русские названия латиницей по таблице ALA-LC: «Gistologii͡a︡» = «Гистология».
+# Связка двух букв (U+0361 между ними, U+FE20/FE21 — её половинки) — одна русская буква:
+# t͡s = ц, i͡a = я, i͡u = ю, i͡e = ѣ (дореформенная «ять», пишем «е»). Без связки «ts» — это «тс».
+_PAIRS = [('shch', 'щ'), ('zh', 'ж'), ('kh', 'х'), ('ch', 'ч'), ('sh', 'ш')]
+_ONE = dict(zip('abvgdeziklmnoprstufy', 'абвгдезиклмнопрстуфы'))
+_ONE.update({'ĭ': 'й', 'ė': 'э', 'ī': 'и', 'ë': 'ё', 'ʹ': 'ь', 'ʺ': 'ъ', 'j': 'й', 'h': 'х', 'c': 'ц', 'w': 'в', 'x': 'кс', 'q': 'к'})
+_TIED = {'ts': 'ц', 'ia': 'я', 'iu': 'ю', 'ie': 'е'}
+_TIE = re.compile('([A-Za-z])[︠͡]([A-Za-z])︡?')
+
+
+def cyrillic_from_alalc(text):
+    """Русский текст из записи ALA-LC; латинские слова с чужими знаками остаются как есть."""
+    def tied(m):
+        pair = (m.group(1) + m.group(2)).lower()
+        cyr = _TIED.get(pair, m.group(1) + m.group(2))
+        return cyr.upper() if m.group(1).isupper() else cyr
+    text = _TIE.sub(tied, text).replace('︡', '').replace('︠', '').replace('͡', '')
+    out, i = [], 0
+    while i < len(text):
+        for lat, cyr in _PAIRS:
+            chunk = text[i:i + len(lat)]
+            if chunk.lower() == lat:
+                out.append(cyr.upper() if chunk[0].isupper() else cyr)
+                i += len(lat)
+                break
+        else:
+            ch = text[i]
+            cyr = _ONE.get(ch.lower())
+            out.append((cyr.upper() if ch.isupper() else cyr) if cyr else ch)
+            i += 1
+    return ''.join(out)
+
+
 # --- Open Library: строки «тип \t ключ \t ревизия \t дата \t JSON» ---------------------------
 OL_LANG = {'/languages/eng': 'en', '/languages/rus': 'ru', '/languages/ger': 'de', '/languages/spa': 'es'}
 
 
-def openlibrary_records(path):
-    for line in gzip.open(path, 'rt', encoding='utf-8', errors='replace'):
+def openlibrary_records(path, want=('en', 'de', 'es')):
+    """Издания Open Library с LCC или DDC на языках `want`; русские — кириллицей из ALA-LC."""
+    with gzip.open(path, 'rt', encoding='utf-8', errors='replace') as stream:
+        yield from _openlibrary_parse(stream, want)
+
+
+def openlibrary_ru_records(path):
+    return openlibrary_records(path, want=('ru',))
+
+
+def _openlibrary_parse(stream, want):
+    for line in stream:
         if '"lc_classifications"' not in line and '"dewey_decimal_class"' not in line:
             continue
         try:
@@ -117,14 +163,16 @@ def openlibrary_records(path):
             continue
         langs = [OL_LANG.get(x.get('key', '')) for x in d.get('languages', []) if isinstance(x, dict)]
         lang = next((x for x in langs if x), None)
-        if lang not in ('en', 'de', 'es'):
-            continue  # русские названия в Open Library — латиницей (ALA-LC): русские берём из NKP
+        if lang not in want:
+            continue
         codes = [['LCC', c] for c in d.get('lc_classifications', []) if isinstance(c, str)]
         codes += [['DDC', c] for c in d.get('dewey_decimal_class', []) if isinstance(c, str)]
         toc = d.get('table_of_contents') or []
         items = [x.get('title', '') if isinstance(x, dict) else str(x) for x in toc]
         title = ' '.join(x for x in (d.get('title', ''), d.get('subtitle', '')) if isinstance(x, str))
         text = clean(title) + ('\n' + '; '.join(i for i in items if i) if items else '')
+        if lang == 'ru':
+            text = cyrillic_from_alalc(text)
         yield d.get('key', ''), lang, codes, text
 
 
@@ -132,6 +180,7 @@ SOURCES = {
     'nkp': ('nkp/slk.xml.gz', nkp_records),
     'gutenberg': ('gutenberg/pg_catalog.csv', gutenberg_records),
     'openlibrary': ('openlibrary/ol_dump_editions_latest.txt.gz', openlibrary_records),
+    'openlibrary_ru': ('openlibrary/ol_dump_editions_latest.txt.gz', openlibrary_ru_records),
 }
 
 
@@ -160,7 +209,7 @@ def collect(folder, name):
 
 
 def main(folder, wanted=None):
-    names = (wanted or 'nkp,gutenberg,openlibrary').split(',')
+    names = (wanted or 'nkp,gutenberg,openlibrary,openlibrary_ru').split(',')
     rows = []
     for name in names:
         rows += collect(folder, name)
