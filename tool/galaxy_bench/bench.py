@@ -135,6 +135,45 @@ def layers_of(layer_row, ideal_row):
     yield 'объём ' + ('≤ 150' if p <= 150 else ('> 800' if p > 800 else '150–800'))
 
 
+def structure(ideal, out, groups_of, names, mapping=None):
+    """Мерка 6 «Строение» (S61; функцией — S69, для `bench.py` и `final.py`).
+
+    Рассыпанная тема — её книги в ≥ 2 крупных группах (≥ 2 книг и ≥ 20 % темы);
+    слитая группа — в ней ≥ 2 тем идеала по ≥ 2 книги; лишняя — группа без своей темы
+    при строгом сопоставлении. Возвращает словарь: members, split, merged, extra, singles, ari, nmi.
+    """
+    if mapping is None:
+        mapping = score(ideal, [{'fp': b, 'группа': g} for b, g in groups_of.items()], strict=True)[0]
+    by_topic = collections.defaultdict(list)
+    for b in out:
+        by_topic[ideal[b]['тема']].append(b)
+    members = collections.defaultdict(list)
+    for b, g in groups_of.items():
+        if g != '-1':
+            members[g].append(b)
+    split = []
+    for t, bs in by_topic.items():
+        gs = collections.Counter(groups_of[b] for b in bs if groups_of[b] != '-1')
+        big = [g for g, k in gs.items() if k >= max(2, 0.2 * len(bs))]
+        if len(big) >= 2:
+            split.append(f'{t} ({len(big)} групп)')
+    merged = []
+    for g, bs in members.items():
+        ts = collections.Counter(ideal[b]['тема'] for b in bs)
+        many = [t for t, k in ts.items() if k >= 2]
+        if len(many) >= 2:
+            merged.append(f'«{names.get(g) or g}»: ' + ', '.join(f'{t} {ts[t]}' for t in many))
+    extra = [g for g in members if g not in mapping]
+    singles = sum(1 for bs in members.values() if len(bs) == 1)
+    # «Без темы» у каждой книги — своя группа: иначе все такие книги считались бы одной темой.
+    order = sorted(out)
+    system = [groups_of[b] if groups_of[b] != '-1' else 'без:' + b for b in order]
+    truth = [ideal[b]['тема'] for b in order]
+    agree_ari, agree_nmi = ari(truth, system), nmi(truth, system)
+    return {'members': members, 'split': split, 'merged': merged, 'extra': extra, 'singles': singles,
+            'ari': agree_ari, 'nmi': agree_nmi}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('ideal')
@@ -177,29 +216,9 @@ def main():
         gone_text = ', '.join(f'{k} → {v}' for k, v in gone.most_common()) or '—'
         L.append(f'| {t} | {len(bs)} | {c["верно"]} | {c["допустимо"]} | {gone_text} | {c["без темы"]} |')
 
-    members = collections.defaultdict(list)
-    for b, g in groups_of.items():
-        if g != '-1':
-            members[g].append(b)
-    split = []
-    for t, bs in by_topic.items():
-        gs = collections.Counter(groups_of[b] for b in bs if groups_of[b] != '-1')
-        big = [g for g, k in gs.items() if k >= max(2, 0.2 * len(bs))]
-        if len(big) >= 2:
-            split.append(f'{t} ({len(big)} групп)')
-    merged = []
-    for g, bs in members.items():
-        ts = collections.Counter(ideal[b]['тема'] for b in bs)
-        many = [t for t, k in ts.items() if k >= 2]
-        if len(many) >= 2:
-            merged.append(f'«{names.get(g) or g}»: ' + ', '.join(f'{t} {ts[t]}' for t in many))
-    extra = [g for g in members if g not in mapping]
-    singles = sum(1 for bs in members.values() if len(bs) == 1)
-    # «Без темы» у каждой книги — своя группа: иначе все такие книги считались бы одной темой.
-    order = sorted(out)
-    system = [groups_of[b] if groups_of[b] != '-1' else 'без:' + b for b in order]
-    truth = [ideal[b]['тема'] for b in order]
-    agree_ari, agree_nmi = ari(truth, system), nmi(truth, system)
+    st = structure(ideal, out, groups_of, names, mapping)
+    members, split, merged, extra, singles = st['members'], st['split'], st['merged'], st['extra'], st['singles']
+    agree_ari, agree_nmi = st['ari'], st['nmi']
     L += ['', '## 3. Строение', '',
           f'- Рассыпанные темы (книги темы в ≥ 2 крупных группах): {len(split)} — {"; ".join(split) or "нет"}',
           f'- Слитые группы (≥ 2 тем по ≥ 2 книги): {len(merged)} — {"; ".join(merged) or "нет"}',
