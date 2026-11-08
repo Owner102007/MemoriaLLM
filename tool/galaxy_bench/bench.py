@@ -103,6 +103,28 @@ def nmi(a, b):
     return 1.0 if ha + hb == 0 else 2 * mi / (ha + hb)
 
 
+def sections(ideal, result, out):
+    """S68, мерка 7 «Разделы»: созвездия внутри темы против разделов идеала.
+
+    Меряются только книги с верной темой: книга в чужой теме уже ошибка, и созвездие её не спасёт.
+    Внутри каждой темы идеала созвездия системы сопоставляются разделам идеала один к одному
+    (тот же венгерский алгоритм, что для тем, `match`): второе созвездие того же раздела — ошибка
+    («раздел рассыпан»), созвездие из двух разделов засчитывается только за один.
+    Возвращает ({книга: в разделе ли}, {тема идеала: [книги с верной темой]}, {книга: созвездие}).
+    """
+    cons = {r['fp']: r.get('созвездие') or '-' for r in result}
+    by_topic = collections.defaultdict(list)
+    for b, o in out.items():
+        if o == 'верно':
+            by_topic[ideal[b]['тема']].append(b)
+    hit = {}
+    for t, bs in by_topic.items():
+        mapping = match({b: cons[b] for b in bs}, {b: ideal[b]['раздел'] for b in bs}, strict=True)
+        for b in bs:
+            hit[b] = mapping.get(cons[b]) == ideal[b]['раздел']
+    return hit, by_topic, cons
+
+
 def layers_of(layer_row, ideal_row):
     # Язык — из идеала (судья читал книгу): опись по доле латиницы пишет «en» и польской,
     # и испанской книге, а у сканов её догадка — по случайным буквам обложки.
@@ -216,8 +238,29 @@ def main():
         L += ['', '## 7. Разница с прошлым прогоном', '',
               f'- Исправились ({len(fixed)}): {num(fixed)}', f'- Сломались ({len(broke)}): {num(broke)}']
 
+    in_section = ''
+    if result and 'созвездие' in result[0]:  # S68: результат со вторым уровнем — мерка «Разделы»
+        hit, sec_topics, cons = sections(ideal, result, out)
+        n_hit = sum(hit.values())
+        in_section = f'разделы {n_hit} из {len(hit)}'
+        L += ['', '## 8. Разделы (созвездия внутри темы)', '',
+              f'В разделе идеала: **{n_hit}** из {len(hit)} книг с верной темой '
+              f'({100 * n_hit // max(1, len(hit))} %); из всех книг набора — {n_hit} из {len(out)}.', '',
+              '| Тема идеала | Книг с верной темой | В разделе | Созвездия системы (книг) |', '|---|---|---|---|']
+        for t in sorted(sec_topics):
+            bs = sec_topics[t]
+            cs = collections.Counter(cons[b] for b in bs)
+            L.append(f'| {t} | {len(bs)} | {sum(hit[b] for b in bs)} | '
+                     + ', '.join(f'{c} {k}' for c, k in cs.most_common()) + ' |')
+        L += ['', '| № | Книга | Раздел идеала | Созвездие системы |', '|---|---|---|---|']
+        for b in sorted(hit, key=lambda b: int(ideal[b]['n'])):
+            if not hit[b]:
+                L.append(f'| {ideal[b]["n"]} | {ideal[b]["название"][:60]} | {ideal[b]["раздел"]} | {cons[b]} |')
+        print(in_section)
+
     open(a.report, 'w', encoding='utf-8').write('\n'.join(L) + '\n')
-    line = (f'| {datetime.date.today():%d.%m} | {a.version} | {tally["верно"]} | {tally["допустимо"]} | '
+    version = f'{a.version} — {in_section}' if in_section else a.version
+    line = (f'| {datetime.date.today():%d.%m} | {version} | {tally["верно"]} | {tally["допустимо"]} | '
             f'{tally["неподходящая"]} | {tally["без темы"]} | {soft_tally["верно"] + soft_tally["допустимо"]} | '
             f'{n_groups} | {len(split)} / {len(merged)} | {agree_ari:.2f} |')
     if a.journal:

@@ -88,6 +88,25 @@ class CompareWithIdeal(unittest.TestCase):
         self.assertAlmostEqual(bench.ari(a, b), adjusted_rand_score(a, b), places=12)
         self.assertAlmostEqual(bench.nmi(a, b), normalized_mutual_info_score(a, b), places=12)
 
+    def test_alg_map_20_sections_one_constellation_per_section(self):
+        """ALG-MAP-20 (S68): разделы — внутри темы созвездие = раздел один к одному; книга
+        с неверной темой не меряется; второе созвездие того же раздела — ошибка."""
+        sec = {'a1': 'кости', 'a2': 'кости', 'a3': 'мышцы', 'h1': 'ткани', 'h2': 'ткани', 'm1': 'хирургия'}
+        for b, s in sec.items():
+            self.ideal[b]['раздел'] = s
+        self.ideal['r1']['раздел'] = 'медицина'
+        groups = {'a1': '0', 'a2': '0', 'a3': '0', 'h1': '1', 'h2': '1', 'r1': '-1', 'm1': '0'}
+        cons = {'a1': 'Остеология', 'a2': 'Остеология', 'a3': 'Миология',
+                'h1': 'Ткани', 'h2': 'Ткани плюс', 'r1': '', 'm1': 'Хирургия'}
+        result = [{'fp': b, 'группа': g, 'созвездие': cons[b]} for b, g in groups.items()]
+        _, out, _ = bench.score(self.ideal, result, strict=True)
+        hit, by_topic, _ = bench.sections(self.ideal, result, out)
+        self.assertEqual(out['m1'], 'неподходящая')
+        self.assertNotIn('m1', hit)                      # чужая тема — вне мерки
+        self.assertEqual(sorted(by_topic), ['Анатомия', 'Гистология'])
+        self.assertEqual([hit[b] for b in ('a1', 'a2', 'a3')], [True, True, True])
+        self.assertEqual(sorted(hit[b] for b in ('h1', 'h2')), [False, True])  # «ткани» рассыпаны
+
 
 class SelectSet(unittest.TestCase):
     def inventory(self):
