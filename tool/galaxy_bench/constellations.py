@@ -8,19 +8,21 @@
 Как устроено (по образцу ALG-GAL-04 из проекта владельца WaLLE, `wiki/build_galaxy.py`, D-053; RS-11).
 1. Словарь `constellations.json`: на тему — список созвездий {name, seeds — начала слов, w — вес}.
 2. Очки книги для каждого созвездия: совпадения начал слов в названии ×3, в предметных рубриках ×2,
-   в выходных данных ×1, в оглавлении ×0,3; на созвездие и поле — не больше 3 совпадений
+   в выходных данных ×1 (без шаблона об авторском праве), в оглавлении ×0,3; на созвездие и поле — не больше 3 совпадений
    (длинное оглавление не «перекричит» название); итог × вес созвездия.
    Считается в целых числах (веса × 10): на телефоне и ПК — одно и то же (правило карты, RS-01).
 3. Книга получает созвездие с наибольшими очками, если очков ≥ 1 (в целых — ≥ 100).
 4. Книга без совпадений — к созвездию 8 самых похожих книг той же темы (косинус TF-IDF паспортов).
-5. Созвездие меньше порога (6 книг) распускается — по одному, самое мелкое, и раскладка
+5. Созвездие меньше порога распускается — по одному, самое мелкое, и раскладка
    пересчитывается: его книги уходят ко второму по очкам созвездию или к соседям.
+   Порог — доля темы, по умолчанию «5%» (S68 и4), или число книг, как 6 в WaLLE: в WaLLE 7760 книг, а у нас
+   в теме бывает 50 — порог 6 распускает в ней всё, кроме одного созвездия (см. `threshold`).
 Тема без списка в словаре — одно созвездие с именем темы.
 
 Кто зовёт. Запускается после `universal.py` (нужны его темы книг); результат — `bench.py`.
 
 Запуск (из папки MemoriaLLM):
-  python tool/galaxy_bench/constellations.py <набор.csv> <обучение-все.csv> <кэш стенда> <прогон тем> <папка вывода> [порог] [словарь|-] [вес оглавления, десятые]
+  python tool/galaxy_bench/constellations.py <набор.csv> <обучение-все.csv> <кэш стенда> <прогон тем> <папка вывода> [порог: 5% или 6] [словарь|-] [вес оглавления, десятые]
   (словарь «-» — без словаря: одно созвездие на тему, нулевая линия; прогон тем — папка `universal.py` с `результат-У-смело.csv` и `библиотека-У-смело.csv`)
 """
 import collections
@@ -38,12 +40,18 @@ import variants as V
 HERE = os.path.dirname(os.path.abspath(__file__))
 DICTIONARY = os.path.join(HERE, 'constellations.json')
 MIN_SIZE = 6        # меньше книг — созвездие на карту не выходит (как в WaLLE)
+SHARE = '5%'        # порог по умолчанию (S68 и4): доля темы, от 2 до MIN_SIZE книг
 NEIGHBOURS = 8      # сколько похожих книг голосуют за созвездие книги без совпадений
 MAX_HITS = 3        # совпадений на поле и созвездие не больше
 FIELD_WEIGHTS = [('title', 30), ('subjects', 20), ('imprint', 10), ('toc', 3)]  # × 10: 3; 2; 1; 0,3 (как в WaLLE)
 ENOUGH = 100        # очков хватает (1,0 в дробях): веса полей и созвездий — в десятых
-TOKEN = re.compile(r'[0-9a-zà-ɏа-я]+')
+TOKEN = re.compile(r'[0-9a-zß-ɏа-я]+')  # латиница с умлаутами и «ß», кириллица
 FIELD_CHARS = 1500  # из выходных данных и оглавления — только начало (там всё главное)
+# S68 и5: шаблон об авторском праве есть почти в каждой книге — «This work is subject to copyright…
+# laws…», «Все права защищены…». Он не о теме книги, но слово «law» тянуло хирургию в «Этику и право».
+BOILERPLATE = re.compile(r'copyright|©|rights|trademark|publisher|permission|liabilit|warrant'
+                         r'|права защищены|авторск|законом|разрешения|воспроизвед', re.I)
+SENTENCE = re.compile(r'(?<=[.!?;])\s+(?=[A-ZА-ЯЁ0-9«"(])')  # «etc. does not…» — не конец предложения
 
 
 def load_dictionary(path=DICTIONARY):
@@ -58,12 +66,17 @@ def words(text):
     return TOKEN.findall(text.lower().replace('ё', 'е'))
 
 
+def without_boilerplate(text):
+    """Текст выходных данных без предложений об авторском праве, правах и издателе (S68 и5)."""
+    return ' '.join(x for x in SENTENCE.split(text) if not BOILERPLATE.search(x))
+
+
 def fields_of(p):
     """Поля паспорта книги в порядке FIELD_WEIGHTS."""
     return {'title': p.get('title') or '',
             'subjects': ' '.join(p.get('subjects') or []),
             'imprint': ' '.join([v for v in (p.get('meta') or {}).values() if v]
-                                + [(p.get('imprint_text') or '')[:FIELD_CHARS]]),
+                                + [without_boilerplate(p.get('imprint_text') or '')[:FIELD_CHARS]]),
             'toc': (p.get('toc') or '')[:FIELD_CHARS]}
 
 
@@ -111,6 +124,18 @@ class Index:
         return total
 
 
+def threshold(rule, n):
+    """Порог роспуска для темы из n книг. rule — число книг (6) или доля темы («4%»).
+
+    Доля — не меньше 2 книг (созвездие из одной книги — не созвездие) и не больше MIN_SIZE.
+    Целые числа: 4 % от 51 книги → (51 × 4 + 50) // 100 = 2.
+    """
+    rule = str(rule)
+    if not rule.endswith('%'):
+        return int(rule)
+    return max(2, min(MIN_SIZE, (n * int(rule[:-1]) + 50) // 100))
+
+
 def assign(fps, passports, items, vectors, min_size=MIN_SIZE):
     """Книги одной темы → {fp: (номер созвездия, откуда)}.
 
@@ -147,7 +172,7 @@ def assign(fps, passports, items, vectors, min_size=MIN_SIZE):
     return {f: (label[j], how[j]) for j, f in enumerate(fps)}
 
 
-def constellations(topics, passports, dictionary, min_size=MIN_SIZE):
+def constellations(topics, passports, dictionary, min_size=SHARE):
     """{fp: тема каркаса или None} → {fp: (имя созвездия или '', откуда)}."""
     by_topic = collections.defaultdict(list)
     for f in sorted(topics):
@@ -163,7 +188,7 @@ def constellations(topics, passports, dictionary, min_size=MIN_SIZE):
             out.update({f: (T.TOPICS[topic][1], 'тема') for f in fps})
             continue
         X = vec.transform([texts[f] for f in fps])
-        for f, (i, how) in assign(fps, passports, items, X, min_size).items():
+        for f, (i, how) in assign(fps, passports, items, X, threshold(min_size, len(fps))).items():
             out[f] = (items[i]['name'], how)
     return out
 
@@ -188,7 +213,7 @@ def report(out_path, topics, cons, passports, in_set):
     open(out_path, 'w', encoding='utf-8').write('\n'.join(L) + '\n')
 
 
-def main(set_path, lib_path, cache, topics_dir, out, min_size=str(MIN_SIZE), dictionary=DICTIONARY, toc=''):
+def main(set_path, lib_path, cache, topics_dir, out, min_size=SHARE, dictionary=DICTIONARY, toc=''):
     if toc and toc != '-':  # S68 и2: вес оглавления (в десятых), по умолчанию — как в WaLLE
         FIELD_WEIGHTS[-1] = ('toc', int(toc))
     os.makedirs(out, exist_ok=True)
@@ -200,7 +225,7 @@ def main(set_path, lib_path, cache, topics_dir, out, min_size=str(MIN_SIZE), dic
     in_set = set(topics)
     topics.update(read_topics(os.path.join(topics_dir, 'библиотека-У-смело.csv')))
     topics = {f: t for f, t in topics.items() if f in passports}
-    cons = constellations(topics, passports, {} if dictionary == '-' else load_dictionary(dictionary), int(min_size))
+    cons = constellations(topics, passports, {} if dictionary == '-' else load_dictionary(dictionary), min_size)
     # результат для bench.py: группа (тема идеала) — как у universal.py, плюс созвездие
     rows = list(csv.DictReader(open(os.path.join(topics_dir, 'результат-У-смело.csv'), encoding='utf-8')))
     with open(os.path.join(out, 'результат-С.csv'), 'w', encoding='utf-8', newline='') as f:

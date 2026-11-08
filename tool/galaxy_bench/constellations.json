@@ -1,6 +1,6 @@
 {
- "_как_править": "Словарь созвездий «Галактики» (ALG-MAP-26, S68). На тему каркаса (taxonomy.py) — список созвездий: name — имя на карте по-русски; seeds — начала слов (русские и английские, строчные, «ё» как «е»; два слова через пробел — фраза), по которым книга попадает в созвездие; w — вес общего созвездия («Учебники …» — 0,3, «Атласы …» — 0,5), чтобы частные выигрывали. Книга без совпадений идёт к созвездию самых похожих книг темы. Созвездие, где меньше книг, чем порог, на карту не выходит. Темы без списка — одно созвездие с именем темы.",
- "_источник": "Образец и часть списков — словарь созвездий проекта владельца WaLLE (wiki/galaxy_topics.json, ALG-GAL-04, 07.11.2026; D-053), списки «из WaLLE» скопированы без изменений, кроме деления каналов по темам каркаса. Остальные — по обычному делению дисциплин (главы учебников, подразделы УДК).",
+ "_как_править": "Словарь созвездий «Галактики» (ALG-MAP-26, S68). На тему каркаса (taxonomy.py) — список созвездий: name — имя на карте по-русски; seeds — начала слов (русские, английские и немецкие, строчные, «ё» как «е»; два слова через пробел — фраза), по которым книга попадает в созвездие; w — вес общего созвездия («Учебники …» — 0,3, «Атласы …» — 0,5), чтобы частные выигрывали. Книга без совпадений идёт к созвездию самых похожих книг темы. Созвездие, где меньше книг, чем порог, на карту не выходит. Темы без списка — одно созвездие с именем темы.",
+ "_источник": "Образец и часть списков — словарь созвездий проекта владельца WaLLE (wiki/galaxy_topics.json, ALG-GAL-04, 07.11.2026; D-053), списки «из WaLLE» скопированы без изменений, кроме деления каналов по темам каркаса. Остальные — по обычному делению дисциплин (главы учебников, подразделы УДК). S68 и5: немецкие начала слов — свои (немецкие учебники в библиотеке не находили созвездия). S68 и6: темы IT.GEN, IT.AI, MATH.MATH — свои списки (в библиотеке по 10–13 книг).",
  "MED.ANAT": [
   {
    "name": "Остеология и артрология",
@@ -20,7 +20,12 @@
     "joint",
     "osteo",
     "arthro",
-    "spine"
+    "spine",
+    "knochen",
+    "skelett",
+    "schädel",
+    "wirbel",
+    "gelenk"
    ]
   },
   {
@@ -34,7 +39,9 @@
     "muscul",
     "myolog",
     "fascia",
-    "tendon"
+    "tendon",
+    "muskel",
+    "muskul"
    ]
   },
   {
@@ -58,7 +65,9 @@
     "urinar",
     "abdomin",
     "thorax",
-    "thoracic"
+    "thoracic",
+    "eingeweide",
+    "verdauung"
    ]
   },
   {
@@ -81,7 +90,10 @@
     "heart",
     "cardi",
     "lymph",
-    "angio"
+    "angio",
+    "gefäß",
+    "gefäss",
+    "herz"
    ]
   },
   {
@@ -99,7 +111,11 @@
     "cerebr",
     "spinal",
     "neural",
-    "cns"
+    "cns",
+    "gehirn",
+    "hirn",
+    "rückenmark",
+    "nervensystem"
    ]
   },
   {
@@ -135,7 +151,9 @@
     "sensory",
     "ophthalm",
     "visual",
-    "orbit"
+    "orbit",
+    "auge",
+    "sinnesorgan"
    ]
   },
   {
@@ -157,7 +175,11 @@
     "oral",
     "face",
     "facial",
-    "maxill"
+    "maxill",
+    "kopf",
+    "hals",
+    "zahn",
+    "zähne"
    ]
   },
   {
@@ -257,7 +279,9 @@
     "лекци",
     "экзамен",
     "textbook",
-    "review"
+    "review",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -274,7 +298,8 @@
     "tissue",
     "epithel",
     "connective",
-    "cartilag"
+    "cartilag",
+    "gewebe"
    ]
   },
   {
@@ -287,7 +312,10 @@
     "cell",
     "cytopath",
     "мазк",
-    "smear"
+    "smear",
+    "zelle",
+    "zellen",
+    "zellbiolog"
    ]
   },
   {
@@ -313,7 +341,8 @@
     "embryo",
     "develop",
     "placent",
-    "fetal"
+    "fetal",
+    "entwicklung"
    ]
   },
   {
@@ -372,7 +401,9 @@
     "учебн",
     "лекци",
     "практикум",
-    "textbook"
+    "textbook",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -390,7 +421,9 @@
     "necros",
     "общая патолог",
     "general patholog",
-    "pathophysiol"
+    "pathophysiol",
+    "entzünd",
+    "allgemein patholog"
    ]
   },
   {
@@ -424,7 +457,8 @@
     "neoplas",
     "oncol",
     "carcinom",
-    "lymphom"
+    "lymphom",
+    "krebs"
    ]
   },
   {
@@ -434,7 +468,8 @@
     "кож",
     "skin",
     "cutaneous",
-    "dermato"
+    "dermato",
+    "haut"
    ]
   },
   {
@@ -545,7 +580,9 @@
     "robbins",
     "учебн",
     "textbook",
-    "лекци"
+    "лекци",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -569,7 +606,9 @@
     "ecg",
     "hypertens",
     "arrhythm",
-    "coronar"
+    "coronar",
+    "herz",
+    "kardio"
    ]
   },
   {
@@ -588,7 +627,9 @@
     "respir",
     "asthma",
     "copd",
-    "pneumon"
+    "pneumon",
+    "lunge",
+    "atemweg"
    ]
   },
   {
@@ -608,7 +649,10 @@
     "bowel",
     "pancrea",
     "digest",
-    "intestin"
+    "intestin",
+    "magen",
+    "darm",
+    "leber"
    ]
   },
   {
@@ -623,7 +667,8 @@
     "kidney",
     "nephro",
     "urinar",
-    "dialys"
+    "dialys",
+    "niere"
    ]
   },
   {
@@ -640,7 +685,9 @@
     "thyroid",
     "obesit",
     "hormon",
-    "adrenal"
+    "adrenal",
+    "endokrin",
+    "schilddrüse"
    ]
   },
   {
@@ -659,7 +706,9 @@
     "blood",
     "leuk",
     "thromb",
-    "coagul"
+    "coagul",
+    "blut",
+    "hämat"
    ]
   },
   {
@@ -676,7 +725,8 @@
     "lupus",
     "osteopor",
     "gout",
-    "подагр"
+    "подагр",
+    "rheuma"
    ]
   },
   {
@@ -694,7 +744,8 @@
     "virus",
     "antibiot",
     "sepsis",
-    "tubercul"
+    "tubercul",
+    "infekt"
    ]
   },
   {
@@ -705,7 +756,9 @@
     "препарат",
     "pharmac",
     "drug",
-    "therapeutic"
+    "therapeutic",
+    "arznei",
+    "pharmak"
    ]
   },
   {
@@ -820,7 +873,9 @@
     "amino",
     "peptid",
     "kinetic",
-    "кинетик"
+    "кинетик",
+    "eiweiß",
+    "aminosäur"
    ]
   },
   {
@@ -839,7 +894,8 @@
     "glycol",
     "glucos",
     "lipid",
-    "fatty"
+    "fatty",
+    "stoffwechsel"
    ]
   },
   {
@@ -859,7 +915,8 @@
     "rna",
     "genes",
     "genet",
-    "genom"
+    "genom",
+    "molekular"
    ]
   },
   {
@@ -941,7 +998,9 @@
     "учебн",
     "textbook",
     "principles",
-    "fundamentals"
+    "fundamentals",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -955,7 +1014,8 @@
     "organic",
     "bioorganic",
     "синтез",
-    "synthes"
+    "synthes",
+    "organisch"
    ]
   },
   {
@@ -969,7 +1029,10 @@
     "chemistry",
     "химии",
     "элемент",
-    "element"
+    "element",
+    "anorganisch",
+    "chemie",
+    "allgemein chemie"
    ],
    "w": 0.5
   },
@@ -985,7 +1048,8 @@
     "biophys",
     "thermodyn",
     "colloid",
-    "quantum"
+    "quantum",
+    "physikalisch"
    ]
   },
   {
@@ -1000,7 +1064,8 @@
     "chromatogr",
     "spectr",
     "techniq",
-    "method"
+    "method",
+    "analytisch"
    ]
   },
   {
@@ -1078,7 +1143,9 @@
     "learning",
     "language",
     "speech",
-    "mind"
+    "mind",
+    "gedächtnis",
+    "sprache"
    ]
   },
   {
@@ -1118,7 +1185,9 @@
     "vision",
     "auditory",
     "percept",
-    "pain"
+    "pain",
+    "sinnes",
+    "wahrnehm"
    ]
   },
   {
@@ -1130,7 +1199,8 @@
     "мозжеч",
     "motor",
     "movement",
-    "cerebell"
+    "cerebell",
+    "beweg"
    ]
   },
   {
@@ -1262,7 +1332,8 @@
     "ptsd",
     "trauma",
     "obsess",
-    "stress"
+    "stress",
+    "angst"
    ]
   },
   {
@@ -1304,7 +1375,8 @@
     "autis",
     "adhd",
     "pediatr",
-    "paediatr"
+    "paediatr",
+    "kinder"
    ]
   },
   {
@@ -1390,7 +1462,9 @@
     "disorder",
     "учебн",
     "textbook",
-    "handbook"
+    "handbook",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   },
@@ -1467,7 +1541,9 @@
     "нервн болезн",
     "учебн",
     "textbook",
-    "лекци"
+    "лекци",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -1483,7 +1559,8 @@
     "десмург",
     "ран",
     "wound",
-    "хирургическ инфекц"
+    "хирургическ инфекц",
+    "allgemein chirurg"
    ],
    "w": 0.7
   },
@@ -1497,7 +1574,9 @@
     "хирургическ анатом",
     "surgical anatom",
     "доступ",
-    "approach"
+    "approach",
+    "operativ",
+    "operation"
    ]
   },
   {
@@ -1516,7 +1595,8 @@
     "laparosc",
     "лапароск",
     "colorect",
-    "колорект"
+    "колорект",
+    "bauch"
    ]
   },
   {
@@ -1530,7 +1610,9 @@
     "fractur",
     "вывих",
     "dislocat",
-    "spine surg"
+    "spine surg",
+    "unfall",
+    "fraktur"
    ]
   },
   {
@@ -1583,7 +1665,8 @@
     "нейрохир",
     "neurosurg",
     "craniot",
-    "краниот"
+    "краниот",
+    "neurochirurg"
    ]
   },
   {
@@ -1631,7 +1714,9 @@
     "учебн",
     "textbook",
     "principles",
-    "лекци"
+    "лекци",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -1649,7 +1734,9 @@
     "heart",
     "cardiovasc",
     "гемодинам",
-    "hemodynam"
+    "hemodynam",
+    "blut",
+    "kreislauf"
    ]
   },
   {
@@ -1660,7 +1747,9 @@
     "легк",
     "lung",
     "pulmon",
-    "газообмен"
+    "газообмен",
+    "atmung",
+    "lunge"
    ]
   },
   {
@@ -1675,7 +1764,9 @@
     "nutrit",
     "gastrointest",
     "терморегул",
-    "thermoreg"
+    "thermoreg",
+    "verdauung",
+    "stoffwechsel"
    ]
   },
   {
@@ -1687,7 +1778,8 @@
     "водно",
     "электролит",
     "electrolyt",
-    "мочеобраз"
+    "мочеобраз",
+    "niere"
    ]
   },
   {
@@ -1697,7 +1789,8 @@
     "endocr",
     "гормон",
     "hormon",
-    "железы внутренн"
+    "железы внутренн",
+    "endokrin"
    ]
   },
   {
@@ -1715,7 +1808,9 @@
     "нейрофизиол",
     "neurophysiol",
     "сенсор",
-    "sensory"
+    "sensory",
+    "muskel",
+    "erregung"
    ]
   },
   {
@@ -1749,7 +1844,9 @@
     "лекци",
     "guyton",
     "гайтон",
-    "нормальн"
+    "нормальн",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -1764,7 +1861,9 @@
     "цитол",
     "cytol",
     "органелл",
-    "organell"
+    "organell",
+    "zelle",
+    "zellen"
    ]
   },
   {
@@ -1820,7 +1919,8 @@
     "биосфер",
     "biospher",
     "экосист",
-    "ecosyst"
+    "ecosyst",
+    "ökolog"
    ]
   },
   {
@@ -1831,7 +1931,8 @@
     "эмбри",
     "embryo",
     "онтогенез",
-    "ontogen"
+    "ontogen",
+    "entwicklung"
    ]
   },
   {
@@ -1856,7 +1957,9 @@
     "textbook",
     "general",
     "общая",
-    "лекци"
+    "лекци",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -1872,7 +1975,8 @@
     "стрепто",
     "strepto",
     "стафило",
-    "staphylo"
+    "staphylo",
+    "bakter"
    ]
   },
   {
@@ -1909,7 +2013,8 @@
     "гельминт",
     "helminth",
     "протозо",
-    "protozo"
+    "protozo",
+    "pilz"
    ]
   },
   {
@@ -1920,7 +2025,8 @@
     "эпидеми",
     "epidem",
     "сепсис",
-    "sepsis"
+    "sepsis",
+    "infekt"
    ]
   },
   {
@@ -1931,7 +2037,10 @@
     "учебн",
     "textbook",
     "лекци",
-    "medical"
+    "medical",
+    "mikrobiolog",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -1950,7 +2059,9 @@
     "labour",
     "плод",
     "fetal",
-    "fetus"
+    "fetus",
+    "geburt",
+    "schwanger"
    ]
   },
   {
@@ -1964,7 +2075,9 @@
     "яичник",
     "ovar",
     "менструа",
-    "menstru"
+    "menstru",
+    "gynäkolog",
+    "frauenheilk"
    ]
   },
   {
@@ -1979,7 +2092,9 @@
     "neonat",
     "newborn",
     "infant",
-    "детей"
+    "детей",
+    "kinderheilk",
+    "pädiatr"
    ]
   },
   {
@@ -1999,7 +2114,9 @@
     "учебн",
     "textbook",
     "лекци",
-    "руководств"
+    "руководств",
+    "lehrbuch",
+    "kurzlehrbuch"
    ],
    "w": 0.3
   }
@@ -2014,7 +2131,9 @@
     "handbook",
     "reference",
     "энциклоп",
-    "encyclop"
+    "encyclop",
+    "wörterbuch",
+    "lexikon"
    ]
   },
   {
@@ -2065,7 +2184,10 @@
     "врач",
     "doctor",
     "physician",
-    "clinic"
+    "clinic",
+    "medizin",
+    "arzt",
+    "ärzt"
    ],
    "w": 0.3
   }
@@ -2080,14 +2202,19 @@
     "grammatik",
     "wortschatz",
     "wörterbuch",
-    "lesen"
+    "lesen",
+    "kursbuch",
+    "arbeitsbuch",
+    "übungsbuch",
+    "fremdsprache"
    ]
   },
   {
    "name": "Английский язык",
    "seeds": [
     "английск",
-    "english"
+    "english",
+    "englisch"
    ]
   },
   {
@@ -2097,7 +2224,8 @@
     "spanish",
     "español",
     "espanol",
-    "castellano"
+    "castellano",
+    "spanisch"
    ]
   },
   {
@@ -2106,7 +2234,8 @@
     "французск",
     "french",
     "français",
-    "francais"
+    "francais",
+    "französisch"
    ]
   },
   {
@@ -2114,7 +2243,8 @@
    "seeds": [
     "итальянск",
     "italian",
-    "italiano"
+    "italiano",
+    "italienisch"
    ]
   },
   {
@@ -2123,7 +2253,8 @@
     "латин",
     "latin",
     "latina",
-    "latinum"
+    "latinum",
+    "latein"
    ]
   },
   {
@@ -2151,7 +2282,8 @@
    "name": "Русский как иностранный",
    "seeds": [
     "русск",
-    "russian"
+    "russian",
+    "russisch"
    ]
   },
   {
@@ -2160,7 +2292,8 @@
     "словар",
     "dictionar",
     "разговорник",
-    "phrasebook"
+    "phrasebook",
+    "wörterbuch"
    ],
    "w": 0.5
   }
@@ -2177,7 +2310,9 @@
     "memory",
     "внимани",
     "attention",
-    "решен"
+    "решен",
+    "denken",
+    "gedächtnis"
    ]
   },
   {
@@ -2190,7 +2325,8 @@
     "влиян",
     "influence",
     "persuas",
-    "убежден"
+    "убежден",
+    "sozial"
    ]
   },
   {
@@ -2213,7 +2349,8 @@
     "personal",
     "характер",
     "character",
-    "темперамент"
+    "темперамент",
+    "persönlich"
    ]
   },
   {
@@ -2235,6 +2372,135 @@
     "psycholog"
    ],
    "w": 0.5
+  }
+ ],
+ "IT.GEN": [
+  {
+   "name": "Программирование",
+   "seeds": [
+    "программир",
+    "programm",
+    "python",
+    "sql",
+    "code",
+    "coding",
+    "java",
+    "алгоритм",
+    "algorithm",
+    "pragmatic"
+   ]
+  },
+  {
+   "name": "Данные и машинное обучение",
+   "seeds": [
+    "данных",
+    "data",
+    "машинн",
+    "machine learn",
+    "scikit",
+    "keras",
+    "tensorflow",
+    "нейросет",
+    "поиск",
+    "search",
+    "retriev"
+   ]
+  },
+  {
+   "name": "Компьютеры, сети и системы",
+   "seeds": [
+    "компьютер",
+    "computer",
+    "операционн",
+    "operating",
+    "архитектур",
+    "architect",
+    "сети",
+    "сетей",
+    "network",
+    "информатик",
+    "informat"
+   ]
+  }
+ ],
+ "IT.AI": [
+  {
+   "name": "Нейросети и глубокое обучение",
+   "seeds": [
+    "neural",
+    "нейросет",
+    "нейронн",
+    "deep learn",
+    "глубок обучен",
+    "convolut",
+    "сверточ"
+   ]
+  },
+  {
+   "name": "Интеллект, память и обучение",
+   "seeds": [
+    "intelligen",
+    "интеллект",
+    "memory",
+    "памят",
+    "continual",
+    "cognit",
+    "когнитив"
+   ]
+  },
+  {
+   "name": "Тексты и поиск",
+   "seeds": [
+    "text",
+    "текст",
+    "search",
+    "поиск",
+    "retriev",
+    "language model",
+    "nlp"
+   ]
+  },
+  {
+   "name": "Оптимизация и алгоритмы",
+   "seeds": [
+    "optimiz",
+    "оптимиз",
+    "algorithm",
+    "алгоритм",
+    "genetic",
+    "evolution"
+   ]
+  }
+ ],
+ "MATH.MATH": [
+  {
+   "name": "Линейная алгебра",
+   "seeds": [
+    "linear",
+    "линейн",
+    "matrix",
+    "матриц",
+    "vector",
+    "вектор",
+    "algebra",
+    "алгебр"
+   ]
+  },
+  {
+   "name": "Статистика и вероятность",
+   "seeds": [
+    "statist",
+    "статист",
+    "вероятн",
+    "probab"
+   ]
+  },
+  {
+   "name": "Алгоритмы",
+   "seeds": [
+    "algorithm",
+    "алгоритм"
+   ]
   }
  ]
 }

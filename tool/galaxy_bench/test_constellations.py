@@ -4,7 +4,8 @@
 - название весит больше оглавления, общий вес (w) уступает частному, совпадений на поле не больше 3;
 - книга без совпадений идёт к созвездию похожих книг;
 - мелкое созвездие распускается, его книги уходят ко второму по очкам;
-- раскладка не зависит от порядка книг на входе; тема без словаря — одно созвездие с именем темы.
+- раскладка не зависит от порядка книг на входе; тема без словаря — одно созвездие с именем темы;
+- порог роспуска — доля темы (S68 и4); шаблон об авторском праве в выходных данных не считается (и5).
 
 Запуск (из папки MemoriaLLM): python -m unittest discover tool/galaxy_bench -v
 """
@@ -40,6 +41,29 @@ class Scores(unittest.TestCase):
         s = idx.scores(pp('Ёлки и спинной мозг'))
         self.assertEqual(s[0], 300)
         self.assertEqual(s[2], 30 * 2 * 10)  # «мозг» + фраза «спинн мозг»
+
+    def test_alg_map_26_copyright_boilerplate_ignored(self):
+        """ALG-MAP-26 (S68 и5): предложение об авторском праве в выходных данных очков не даёт."""
+        idx = C.Index([{'name': 'Право', 'seeds': ['law']}, {'name': 'Хирургия', 'seeds': ['surg']}])
+        p = pp('Neck dissection')
+        p['imprint_text'] = ('Department of Surgery, Dallas. This work is subject to copyright. '
+                             'The use of registered names, trademarks, etc. does not imply that such names '
+                             'are exempt from the relevant protective laws and regulations.')
+        self.assertEqual(idx.scores(p), [0, 100])
+        p['imprint_text'] = 'Department of Surgery. Series: Medicine and law.'  # не шаблон — считается
+        self.assertEqual(idx.scores(p), [100, 100])
+
+    def test_alg_map_26_german_sharp_s_is_one_word(self):
+        """ALG-MAP-26 (S68 и5): «ß» и умлауты — часть слова: «Gefäße» не рвётся на «gef» и «e»."""
+        self.assertEqual(C.words('Gefäße und Muskeln'), ['gefäße', 'und', 'muskeln'])
+
+
+class Threshold(unittest.TestCase):
+    def test_alg_map_26_threshold_share_of_topic(self):
+        """ALG-MAP-26 (S68 и4): порог — доля темы от 2 до 6 книг; число — как есть."""
+        self.assertEqual([C.threshold('5%', n) for n in (13, 51, 100, 237, 916)], [2, 3, 5, 6, 6])
+        self.assertEqual(C.threshold('6', 51), 6)
+        self.assertEqual(C.threshold(2, 51), 2)
 
 
 class Assign(unittest.TestCase):
